@@ -31,13 +31,13 @@ def put_test(num_threads_per_block, min_message_size, max_message_size):
                     peer_rank = Rank(dst_rank)
                     peer_input_buff = peer_rank.get_input_buffer()
                     peer_output_buff = peer_rank.get_output_buffer()
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = MemoryChannel(dst_rank, src_rank)
                     ch.signal(tb=0, relaxed=True)
-                    ch.wait(tb=0, sync=SyncType.after, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
                     ch.reduce(input_buff[0:1], [peer_input_buff[1:2]], tb=0, local_dst_chunk=output_buff[0:1])
                     ch.put(peer_output_buff[1:2], output_buff[0:1], tb=0)
-                    ch.signal(tb=0, sync=SyncType.before)
-                    ch.wait(tb=0, sync=SyncType.after)
+                    ch.signal(tb=0, data_sync=SyncType.before)
+                    ch.wait(tb=0, data_sync=SyncType.after)
 
         print(JSON())
 

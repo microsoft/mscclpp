@@ -33,25 +33,31 @@ class Gpu:
 
         return self.threadblocks[tb].add_channel(channel)
 
-    def add_remote_buffer(self, tb: int, remote_buffer: RemoteBuffer) -> int:
-        if (remote_buffer.rank, remote_buffer.type) not in self.remote_buffers:
-            remote_buffer.set_id()
-            self.remote_buffers[(remote_buffer.rank, remote_buffer.type)] = remote_buffer
+    def add_remote_buffer(self, tb: int, remote_buffer: RemoteBuffer, channel_access: ChannelType) -> int:
+        if remote_buffer not in self.remote_buffers:
+            remote_buffer_id = len(self.remote_buffers)
         else:
-            gpu_remote_buffer = self.remote_buffers[(remote_buffer.rank, remote_buffer.type)]
-            gpu_remote_buffer.channel_access.update(remote_buffer.channel_access)
-            remote_buffer = gpu_remote_buffer
+            remote_buffer_id = self.remote_buffers.pop(remote_buffer)
+        self.remote_buffers[remote_buffer] = remote_buffer_id
 
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))
 
-        return self.threadblocks[tb].add_remote_buffer(remote_buffer)
+        return self.threadblocks[tb].add_remote_buffer(remote_buffer_id, channel_access)
 
     def add_operation(self, tb: int, operation: BaseOperation):
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))
 
         self.threadblocks[tb].add_operation(operation)
+
+    def optimize_operations(self):
+        for tb in self.threadblocks:
+            tb.optimize_operations()
+
+    def adding_data_sync(self):
+        for tb in self.threadblocks:
+            tb.adding_data_sync()
 
     def to_json(self) -> dict:
         return {
@@ -62,7 +68,7 @@ class Gpu:
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
             + [ch.to_json() for ch in self.__nvls_channels.values()],
-            "remote_buffers": [rb.to_json() for rb in self.remote_buffers.values()],
+            "remote_buffers": [rb.to_json() for rb in self.remote_buffers.keys()],
         }
 
     @dataclass

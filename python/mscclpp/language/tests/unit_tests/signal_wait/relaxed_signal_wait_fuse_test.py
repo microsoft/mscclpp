@@ -9,30 +9,37 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def read_put_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
-        "read_put_packet_test",
+        "signal_wait_test",
         collective,
         gpus,
-        protocol="LL",
+        protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        scratch_buffers = []
-        for rank in range(gpus):
-            scratch_buffers.append(Buffer(rank, 2))
-
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.put_packet(
-                        scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0, from_packet=True
-                    )
+                    ch.signal(tb=0, data_sync=SyncType.before, relaxed=True)
+                    ch.signal(tb=0, data_sync=SyncType.before, relaxed=True)
+                    ch = MemoryChannel(dst_rank, src_rank)
+                    ch.signal(tb=0, data_sync=SyncType.before, relaxed=True)
+                    ch.signal(tb=0, data_sync=SyncType.before, relaxed=True)
+
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch = MemoryChannel(dst_rank, src_rank)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.before, relaxed=True)
+
+                    ch.signal(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.before, relaxed=True)
 
         print(JSON())
 
@@ -45,4 +52,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-read_put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+signal_wait_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

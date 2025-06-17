@@ -44,17 +44,17 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                 # Skip sending from a rank to itself
                 if src_rank != dst_rank:
                     # Define a channel from src_rank → dst_rank using memory channel
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
+                    ch = Channel(dst_rank, src_rank)
                     # Step 1: source signals to indicate it is ready to receive data
-                    ch.signal(tb=0, sync=None, relaxed=True)
+                    ch.signal(tb=0, relaxed=True)
                     # Step 2: wait for the destination rank to be ready
-                    ch.wait(tb=0, sync="after", relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
                     # Step 3: source rank sends data to destination rank
                     ch.put(dst_chunk, src_chunk, tb=0)
                     # Step 4: source signals to indicate put is done
-                    ch.signal(tb=0, sync="before")
+                    ch.signal(tb=0, data_sync=SyncType.before)
                     # Step 5: wait for receive data from destination rank
-                    ch.wait(tb=0, sync="after")
+                    ch.wait(tb=0, data_sync=SyncType.after)
 
         print(JSON())
 
