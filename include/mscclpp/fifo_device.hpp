@@ -44,7 +44,7 @@ struct FifoDeviceHandle {
     }
     if (numInflights >= size) {
       POLL_MAYBE_JAILBREAK((atomicLoad(&(triggers[prevHead % size].fst), memoryOrderRelaxed) != 0), maxSpinCount);
-      *tailCache = atomicLoad(tail, memoryOrderRelaxed);
+      *tailCache = prevHead + 1;
     }
 
     ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
