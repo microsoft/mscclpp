@@ -10,13 +10,13 @@
 
 namespace mscclpp {
 
-constexpr size_t DEFAULT_FIFO_SIZE = 128;
+constexpr size_t DEFAULT_FIFO_SIZE = 256;
 
 /// Host-side proxy FIFO for device-produced work elements.
 class Fifo {
  public:
   /// Construct a FIFO with a given number of entries.
-  /// @param size Number of entries (default: 128).
+  /// @param size Number of entries (default: 256).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
   /// Destructor.
