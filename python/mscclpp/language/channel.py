@@ -6,7 +6,7 @@ from collections import defaultdict
 
 
 @dataclass
-class Channel:
+class MemoryChannel:
     __channel_counts = defaultdict(int)
 
     def __init__(self, dst_rank: int, src_rank: int):
@@ -16,8 +16,8 @@ class Channel:
         if dst_rank >= num_ranks:
             raise RuntimeError(f"Destination rank {dst_rank} is out of bounds. Number of ranks: {num_ranks}")
 
-        self.channel_id = Channel.__channel_counts[src_rank]
-        Channel.__channel_counts[src_rank] += 1
+        self.channel_id = MemoryChannel.__channel_counts[src_rank]
+        MemoryChannel.__channel_counts[src_rank] += 1
 
         self.dst_rank = dst_rank
         self.src_rank = src_rank

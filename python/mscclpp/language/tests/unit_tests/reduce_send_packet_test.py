@@ -30,7 +30,7 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
             rank = Rank(src_rank)
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    ch = Channel(dst_rank, src_rank)
+                    ch = MemoryChannel(dst_rank, src_rank)
                     rank.reduce(
                         scratch_buffers[src_rank][0:1],
                         [scratch_buffers[src_rank][1:2]],

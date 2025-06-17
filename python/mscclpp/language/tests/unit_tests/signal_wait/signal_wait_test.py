@@ -25,7 +25,7 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    ch = Channel(dst_rank, src_rank)
+                    ch = MemoryChannel(dst_rank, src_rank)
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.wait(tb=0, data_sync=SyncType.after)
 
