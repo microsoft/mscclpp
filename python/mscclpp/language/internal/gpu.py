@@ -1,4 +1,4 @@
-from mscclpp.language.internal.types import RemoteBuffer, ChannelType, BufferType, RankGroup
+from mscclpp.language.internal.dsl_types import RemoteBuffer, ChannelType, BufferType, RankGroup
 from mscclpp.language.internal.threadblock import ThreadBlock
 from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field
@@ -58,6 +58,10 @@ class Gpu:
     def adding_data_sync(self):
         for tb in self.threadblocks:
             tb.adding_data_sync()
+
+    def resolve_data_dependency(self):
+        for tb in self.threadblocks:
+            tb.resolve_data_dependency()
 
     def to_json(self) -> dict:
         return {

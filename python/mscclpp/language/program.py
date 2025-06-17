@@ -3,7 +3,7 @@
 
 from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
-from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
+from mscclpp.language.internal.dsl_types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
 from typing import List
 import json
@@ -72,6 +72,7 @@ class MSCCLPPProgram:
             if self.instr_fusion:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
+            gpu.resolve_data_dependency()
 
     def to_json(self):
         json_obj = {

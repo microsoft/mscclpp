@@ -8,10 +8,10 @@ from collections import defaultdict
 
 
 class SyncType(Enum):
-    both = "both"
+    none = "none"
     before = "before"
     after = "after"
-    none = "none"
+    both = "both"
 
     def __str__(self):
         return self.value
@@ -149,3 +149,27 @@ class RankGroup:
             "size": self.size,
             "ranks": self.ranks,
         }
+
+
+class DataAccessType(Enum):
+    read = "r"
+    write = "w"
+    both = "b"
+
+    def __or__(self, other):
+        if not isinstance(other, DataAccessType):
+            return NotImplemented
+
+        map_num = {DataAccessType.read: 1, DataAccessType.write: 2, DataAccessType.both: 3}
+        return list(map_num.keys())[map_num[self] | map_num[other]]
+
+    def __str__(self):
+        return self.value
+
+@dataclass
+class DataAccess:
+    start: int
+    end: int
+    buffer_type: BufferType
+    data_access_type: DataAccessType
+

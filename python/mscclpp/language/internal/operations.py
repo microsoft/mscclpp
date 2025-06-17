@@ -1,4 +1,4 @@
-from mscclpp.language.internal.types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk, SyncType
+from mscclpp.language.internal.dsl_types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk, SyncType, DataAccess, DataAccessType
 from dataclasses import dataclass
 from typing import List
 
@@ -65,6 +65,20 @@ class CopyOperation(BaseOperation):
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
+
+    def local_data_access(self):
+        access = {}
+        for chunk in self.src_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
+        for chunk in self.dst_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
+        return [DataAccess(*key, value) for key, value in access.items()]
 
     def __add__(self, other):
         return None
@@ -267,6 +281,15 @@ class GetOperation(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
+    def local_data_access(self):
+        access = {}
+        for chunk in self.dst_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
+        return [DataAccess(*key, value) for key, value in access.items()]
+
     def __add__(self, other):
         fused_operation = None
         if (
@@ -333,6 +356,16 @@ class PutOperation(BaseOperation):
         self.to_packet = to_packet
         self.with_signal = with_signal
         self.with_signal_and_flush = with_signal_and_flush
+
+    def local_data_access(self):
+        access = {}
+        for chunk in self.src_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
+        return [DataAccess(*key, value) for key, value in access.items()]
+        
 
     def __add__(self, other):
         fused_operation = None
@@ -414,6 +447,20 @@ class ReduceOperation(BaseOperation):
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
         self.packet = packet
+
+    def local_data_access(self):
+        access = {}
+        for chunk in self.local_src_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
+        for chunk in self.local_dst_buff:
+            if chunk.type not in access:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
+            else:
+                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
+        return [DataAccess(*key, value) for key, value in access.items()]
 
     def __add__(self, other):
         fused_operation = None
@@ -499,10 +546,6 @@ class ReduceOperation(BaseOperation):
             for chunk in self.remote_dst_buff:
                 result["dst_buff"].append(chunk.to_json())
 
-        """ if len(self.channel_ids) > 0:
-            result["channel_ids"] = self.channel_ids
-        if len(self.put_channel_ids) > 0:
-            result["output_channel_ids"] = self.put_channel_ids """
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
