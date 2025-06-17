@@ -4,6 +4,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/numa.hpp>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -25,7 +26,15 @@ struct Fifo::Impl {
         size(size) {}
 };
 
-MSCCLPP_API_CPP Fifo::Fifo(int size) : pimpl(std::make_unique<Impl>(size)) {}
+MSCCLPP_API_CPP Fifo::Fifo(int size) {
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  int numaNode = getDeviceNumaNode(device);
+  if (numaNode >= 0) {
+    numaBind(numaNode);
+  }
+  pimpl = std::make_unique<Impl>(size);
+}
 
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
