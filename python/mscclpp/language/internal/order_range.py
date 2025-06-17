@@ -4,6 +4,7 @@ from mscclpp.language.internal.dsl_types import BufferType, DataAccessType
 from mscclpp.language.internal.operations import *
 from enum import Enum
 
+
 class IntervalMap:
     def __init__(self):
         self.intervals = {
@@ -28,9 +29,8 @@ class IntervalMap:
                     else:
                         raise RuntimeError(f"Data access conflict detected inside same operation for {operation}")
             result_operations.append(operation)
-        
-        return result_operations
 
+        return result_operations
 
     def add_op(self, data_access: DataAccess) -> bool:
         range_element = IntervalMap.RangeElemet(data_access.start, data_access.end)
@@ -47,7 +47,9 @@ class IntervalMap:
                     IntervalMap.RangeElemet(range_element.end + 1, conflict_element.end)
                 ] = conflict_operation_type
             if conflict_element.start < range_element.start:
-                self.intervals[data_access.buffer_type][IntervalMap.RangeElemet(conflict_element.start, range_element.start - 1)] = conflict_operation_type
+                self.intervals[data_access.buffer_type][
+                    IntervalMap.RangeElemet(conflict_element.start, range_element.start - 1)
+                ] = conflict_operation_type
 
             if data_access.data_access_type != DataAccessType.read and data_access.buffer_type != DataAccessType.read:
                 self.clear_data_access()

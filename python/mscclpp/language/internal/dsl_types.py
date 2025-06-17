@@ -166,10 +166,10 @@ class DataAccessType(Enum):
     def __str__(self):
         return self.value
 
+
 @dataclass
 class DataAccess:
     start: int
     end: int
     buffer_type: BufferType
     data_access_type: DataAccessType
-

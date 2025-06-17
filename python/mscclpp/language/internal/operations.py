@@ -1,4 +1,13 @@
-from mscclpp.language.internal.dsl_types import ChannelType, Instruction, BufferType, ReduceOperationType, Chunk, SyncType, DataAccess, DataAccessType
+from mscclpp.language.internal.dsl_types import (
+    ChannelType,
+    Instruction,
+    BufferType,
+    ReduceOperationType,
+    Chunk,
+    SyncType,
+    DataAccess,
+    DataAccessType,
+)
 from dataclasses import dataclass
 from typing import List
 
@@ -365,7 +374,6 @@ class PutOperation(BaseOperation):
             else:
                 access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
         return [DataAccess(*key, value) for key, value in access.items()]
-        
 
     def __add__(self, other):
         fused_operation = None
