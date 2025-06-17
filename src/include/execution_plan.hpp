@@ -118,6 +118,7 @@ struct ExecutionPlan::Impl {
   size_t maxMessageSize;
   uint32_t bufferAlignment;
   bool isInPlace;
+  bool doubleScratchBuffer;
 
  private:
   std::pair<size_t, uint32_t> getSizeAndChunks(size_t inputSize, size_t outputSize) const;

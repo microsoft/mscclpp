@@ -114,6 +114,7 @@ ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
   this->reuseResources = obj.value("reuse_resources", false);
+  this->doubleScratchBuffer = obj.value("use_double_scratch_buffer", false);
   this->bufferAlignment = obj.value("buffer_alignment", 16);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
@@ -190,9 +191,13 @@ size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t output
   }
 
   if (this->isUsingPacket) {
-    size = sizePerChunk * this->scratchChunks * 2 /* data + flag*/ * 2 /*double buffer*/;
+    size = sizePerChunk * this->scratchChunks * 2; /* data + flag*/
   } else {
     size = sizePerChunk * this->scratchChunks;
+  }
+
+  if (this->doubleScratchBuffer) {
+    size = size * 2;
   }
   return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
@@ -200,6 +205,9 @@ size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t output
 size_t ExecutionPlan::Impl::calMaxScratchChunkSize(size_t scratchSize) const {
   if (this->scratchChunks == 0) {
     return 0;
+  }
+  if (this->doubleScratchBuffer) {
+    scratchSize = scratchSize / 2;
   }
   size_t size = (scratchSize + this->scratchChunks - 1) / this->scratchChunks;
   return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
