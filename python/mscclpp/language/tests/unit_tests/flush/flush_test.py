@@ -9,11 +9,11 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def put_with_signal_test(num_threads_per_block, min_message_size, max_message_size):
+def flush_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
-    collective = TestCollective(gpus, 2, 0)
+    collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
-        "put_with_signal_test",
+        "flush_test",
         collective,
         gpus,
         protocol="Simple",
@@ -22,18 +22,8 @@ def put_with_signal_test(num_threads_per_block, min_message_size, max_message_si
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        for src_rank in range(gpus):
-            rank = Rank(src_rank)
-            src_buff = rank.get_input_buffer()
-            for dst_rank in range(gpus):
-                if src_rank != dst_rank:
-                    rank = Rank(dst_rank)
-                    dst_buff = rank.get_input_buffer()
-                    ch = Channel(dst_rank, src_rank, ChannelType.port)
-                    ch.signal(tb=0, relaxed=True)
-                    ch.wait(tb=0, sync=SyncType.after, relaxed=True)
-                    ch.put(dst_buff[1:2], src_buff[0:1], tb=0, with_signal=True)
-                    ch.wait(tb=0, sync=SyncType.after)
+        ch = PortChannel(1, 0)
+        ch.flush(tb=0, data_sync=SyncType.before)
 
         print(JSON())
 
@@ -46,4 +36,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_with_signal_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+flush_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

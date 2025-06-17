@@ -16,6 +16,8 @@ class MSCCLPPProgram:
         collective: Collective,
         num_ranks: int,
         protocol: str = "Simple",
+        instr_fusion: bool = True,
+        reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
         buffer_alignment: int = 16,
@@ -26,6 +28,8 @@ class MSCCLPPProgram:
         self.collective = collective
         self.num_ranks = num_ranks
         self.protocol = protocol
+        self.instr_fusion = instr_fusion
+        self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
         self.buffer_alignment = buffer_alignment
@@ -54,25 +58,28 @@ class MSCCLPPProgram:
 
     def setup_channel(self, tb, channel):
         tb_channel_ids = []
-        if channel.channel_type == ChannelType.switch:
-            for gpu in channel.rank_group.ranks:
-                tb_channel_ids.append(self.gpus[gpu].setup_channel(tb, channel))
-        else:
-            tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
+        tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
         return tb_channel_ids
 
-    def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer):
-        return self.gpus[rank].add_remote_buffer(tb, remote_chunk)
+    def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
+        return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
+
+    def post_process_operations(self):
+        for gpu in self.gpus:
+            if self.instr_fusion:
+                gpu.optimize_operations()
+            gpu.adding_data_sync()
 
     def to_json(self):
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
-            "inplace": self.collective.inplace,
             "protocol": self.protocol,
+            "inplace": self.collective.inplace,
+            "reuse_resources": self.reuse_resources,
             "gpus": [gpu.to_json() for gpu in self.gpus],
             "num_threads_per_block": self.num_threads_per_block,
             "use_double_scratch_buffer": self.use_double_scratch_buffer,

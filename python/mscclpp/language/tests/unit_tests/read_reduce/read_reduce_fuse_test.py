@@ -9,14 +9,14 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def read_reduce_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
-    collective = TestCollective(gpus, 1, 0)
+    collective = TestCollective(gpus, 2, 2)
     with MSCCLPPProgram(
-        "put_packet_test",
+        "read_reduce_test",
         collective,
         gpus,
-        protocol="LL",
+        protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
@@ -24,12 +24,19 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
     ):
         for src_rank in range(gpus):
             rank = Rank(src_rank)
-            src_buff = rank.get_input_buffer()
+            input_buff = rank.get_input_buffer()
+            output_buff = rank.get_output_buffer()
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    dst_buff = Buffer(dst_rank, 1)
+                    peer_rank = Rank(dst_rank)
+                    peer_input_buff = peer_rank.get_input_buffer()
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+                    ch.signal(tb=0, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch.reduce(input_buff[0:1], [peer_input_buff[0:1]], tb=0, local_dst_chunk=output_buff[0:1])
+                    ch.reduce(input_buff[0:1], [peer_input_buff[1:2]], tb=0, local_dst_chunk=output_buff[0:1])
+                    ch.signal(tb=0, data_sync=SyncType.before)
+                    ch.wait(tb=0, data_sync=SyncType.after)
 
         print(JSON())
 
@@ -42,4 +49,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+read_reduce_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

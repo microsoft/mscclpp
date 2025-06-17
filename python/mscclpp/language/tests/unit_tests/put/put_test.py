@@ -9,11 +9,11 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def group_load_reduce_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 3
-    collective = TestCollective(gpus, 1, 1)
+def put_test(num_threads_per_block, min_message_size, max_message_size):
+    gpus = 2
+    collective = TestCollective(gpus, 2, 0)
     with MSCCLPPProgram(
-        "group_load_reduce_test",
+        "put_test",
         collective,
         gpus,
         protocol="Simple",
@@ -22,13 +22,19 @@ def group_load_reduce_test(num_threads_per_block, min_message_size, max_message_
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        dst_chunk = Buffer(0, 2)
-
-        ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-        ch.at_rank(0).group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
-
-        ch = SwitchChannel(rank_list=[0, 2], buffer_type=BufferType.input)
-        ch.at_rank(0).group_load_reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
+        for src_rank in range(gpus):
+            rank = Rank(src_rank)
+            src_buff = rank.get_input_buffer()
+            for dst_rank in range(gpus):
+                if src_rank != dst_rank:
+                    rank = Rank(dst_rank)
+                    dst_buff = rank.get_input_buffer()
+                    ch = MemoryChannel(dst_rank, src_rank)
+                    ch.signal(tb=0, relaxed=True)
+                    ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    ch.put(dst_buff[1:2], src_buff[0:1], tb=0)
+                    ch.signal(tb=0, data_sync=SyncType.before)
+                    ch.wait(tb=0, data_sync=SyncType.after)
 
         print(JSON())
 
@@ -41,4 +47,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-group_load_reduce_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+put_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

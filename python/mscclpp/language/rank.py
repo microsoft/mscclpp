@@ -61,10 +61,6 @@ class Rank:
             raise RuntimeError(
                 f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match."
             )
-        if packet and src_chunk.buffer != BufferType.scratch:
-            raise RuntimeError(f"Source chunk must be of type scratch.")
-        if packet and dst_chunk.buffer != BufferType.scratch:
-            raise RuntimeError(f"Destination chunk must be of type scratch.")
         for chunk in other_chunks:
             if chunk.rank != self.rank:
                 raise RuntimeError(f"Other chunk rank {chunk.rank} does not match current rank {self.rank}.")
@@ -85,10 +81,15 @@ class Rank:
         get_program().add_operation(self.rank, tb, op)
 
     def barrier(self, tb_list: List[int]):
-        op = BarrierOperation(self.rank, tb_list)
-
-        for tb in tb_list:
-            get_program().add_operation(self.rank, tb, op)
+        if len(tb_list) == 0:
+            raise RuntimeError("Barrier requires at least thread block.")
+        elif len(tb_list) == 1:
+            op = SyncOperation()
+            get_program().add_operation(self.rank, tb_list[0], op)
+        else:
+            op = BarrierOperation(self.rank, tb_list)
+            for tb in tb_list:
+                get_program().add_operation(self.rank, tb, op)
 
 
 class BaseBuffer:

@@ -30,18 +30,15 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
             rank = Rank(src_rank)
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
-                    ch.signal(tb=0, relaxed=True)
-                    ch.wait(tb=0, sync=SyncType.after, relaxed=True)
+                    ch = MemoryChannel(dst_rank, src_rank)
                     rank.reduce(
                         scratch_buffers[src_rank][0:1],
                         [scratch_buffers[src_rank][1:2]],
                         tb=0,
                         dst_chunk=scratch_buffers[src_rank][2:3],
+                        packet=True,
                     )
-                    ch.put(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
-                    ch.signal(tb=0, sync=SyncType.before)
-                    ch.wait(tb=0, sync=SyncType.after)
+                    ch.put_packet(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
 
         print(JSON())
 

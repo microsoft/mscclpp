@@ -9,11 +9,11 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def get_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 2
-    collective = TestCollective(gpus, 2, 0)
+def flush_test(num_threads_per_block, min_message_size, max_message_size):
+    gpus = 3
+    collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
-        "get_test",
+        "flush_test",
         collective,
         gpus,
         protocol="Simple",
@@ -22,19 +22,10 @@ def get_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        for src_rank in range(gpus):
-            rank = Rank(src_rank)
-            src_buff = rank.get_input_buffer()
-            for dst_rank in range(gpus):
-                if src_rank != dst_rank:
-                    rank = Rank(dst_rank)
-                    dst_buff = rank.get_input_buffer()
-                    ch = Channel(dst_rank, src_rank, ChannelType.memory)
-                    ch.signal(tb=0, relaxed=True)
-                    ch.wait(tb=0, sync=SyncType.after, relaxed=True)
-                    ch.get(src_buff[0:1], dst_buff[1:2], tb=0)
-                    ch.signal(tb=0, sync=SyncType.before)
-                    ch.wait(tb=0, sync=SyncType.after)
+        ch = PortChannel(1, 0)
+        ch.flush(tb=0, data_sync=SyncType.after)
+        ch = PortChannel(1, 0)
+        ch.flush(tb=0, data_sync=SyncType.before)
 
         print(JSON())
 
@@ -47,4 +38,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-get_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+flush_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
