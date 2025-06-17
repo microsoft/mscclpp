@@ -120,8 +120,6 @@ class Chunk:
 
 @dataclass
 class RemoteBuffer:
-    __remote_buffer_count = defaultdict(int)
-
     def __init__(
         self, local_rank: int, remote_rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False
     ):
