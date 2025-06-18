@@ -557,8 +557,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
   if (op.contains("barrier_id")) {
     operation.deviceSyncerIndex = op["barrier_id"];
   }
-  if (op.contains("nthread_blocks")) {
-    operation.nThreadBlocks = op["nthread_blocks"];
+  if (op.contains("num_threadblocks")) {
+    operation.nThreadBlocks = op["num_threadblocks"];
   }
   if (op.contains("semaphore_ids")) {
     operation.nDeviceSemaphores = op["semaphore_ids"].size();

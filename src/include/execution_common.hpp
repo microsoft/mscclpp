@@ -126,14 +126,14 @@ struct Operation {
   };
 };
 
-// total size = 2304 + 6400 + 4 + 12(padding) = 8720 bytes
+// total size = 2000 + 10240 + 4 + 12(padding) = 12256 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nMemoryChannels;              // 1 bytes
   uint8_t nPortChannels;                // 1 bytes
   uint16_t nOperations;                 // 2 bytes
-  Channels channels;                    // 2304 bytes
-  RemoteBuffers remoteBuffers;          // 192 bytes
-  Operation operations[MAX_OPERATION];  // 64 * 100 = 6400 bytes
+  Channels channels;                    // 1792 bytes
+  RemoteBuffers remoteBuffers;          // 208 bytes
+  Operation operations[MAX_OPERATION];  // 64 * 160 = 10240 bytes
 };
 
 }  // namespace mscclpp
