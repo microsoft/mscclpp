@@ -16,6 +16,7 @@
 namespace mscclpp {
 
 class CudaIpcConnection : public Connection {
+ private:
   std::shared_ptr<CudaStreamWithFlags> stream_;
 
  public:
@@ -33,9 +34,10 @@ class CudaIpcConnection : public Connection {
 };
 
 class IBConnection : public Connection {
+ private:
   Transport transport_;
   Transport remoteTransport_;
-  IbQp* qp;
+  IbQp* qp_;
   std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
   RegisteredMemory dummyAtomicSourceMem_;
   mscclpp::TransportInfo dstTransportInfo_;
@@ -55,6 +57,7 @@ class IBConnection : public Connection {
 };
 
 class EthernetConnection : public Connection {
+ private:
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> recvSocket_;
   std::thread threadRecvMessages_;
@@ -63,6 +66,9 @@ class EthernetConnection : public Connection {
   const uint64_t recvBufferSize_;
   std::vector<char> sendBuffer_;
   std::vector<char> recvBuffer_;
+
+  void recvMessages();
+  void sendMessage();
 
  public:
   EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize = 256 * 1024 * 1024,
@@ -79,11 +85,6 @@ class EthernetConnection : public Connection {
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush(int64_t timeoutUsec) override;
-
- private:
-  void recvMessages();
-
-  void sendMessage();
 };
 
 }  // namespace mscclpp

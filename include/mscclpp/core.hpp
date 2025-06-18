@@ -473,7 +473,7 @@ class Connection {
  public:
   /// Constructor.
   /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
-  Connection(int maxWriteQueueSize) : maxWriteQueueSize(maxWriteQueueSize){};
+  Connection(int maxWriteQueueSize) : maxWriteQueueSize_(maxWriteQueueSize){};
 
   virtual ~Connection() = default;
 
@@ -522,7 +522,7 @@ class Connection {
   // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
-  int maxWriteQueueSize;
+  int maxWriteQueueSize_;
 };
 
 /// Used to configure an endpoint.
