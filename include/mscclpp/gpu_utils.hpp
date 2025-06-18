@@ -47,7 +47,7 @@ struct AvoidCudaGraphCaptureGuard {
 struct CudaStreamWithFlags {
   /// Constructor without flags. This will not create any stream. set() can be called later to create a stream with
   /// specified flags.
-  CudaStreamWithFlags() : stream_(nullptr) {}
+  CudaStreamWithFlags() : stream_(nullptr), dirty_(false) {}
 
   /// Constructor with flags. This will create a stream with the specified flags on the current device.
   /// @param flags The flags to create the stream with.
@@ -69,6 +69,7 @@ struct CudaStreamWithFlags {
   operator cudaStream_t() const { return stream_; }
 
   cudaStream_t stream_;
+  bool dirty_;
 };
 
 class GpuStreamPool;
