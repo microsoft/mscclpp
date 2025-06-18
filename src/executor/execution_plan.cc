@@ -38,11 +38,11 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::FLUSH;
   } else if (str == "re") {
     return mscclpp::OperationType::REDUCE;
-  } else if (str == "rs") {
+  } else if (str == "res") {
     return mscclpp::OperationType::REDUCE_SEND;
-  } else if (str == "rr") {
+  } else if (str == "rre") {
     return mscclpp::OperationType::READ_REDUCE;
-  } else if (str == "rrs") {
+  } else if (str == "rres") {
     return mscclpp::OperationType::READ_REDUCE_SEND;
   } else if (str == "ppkt") {
     return mscclpp::OperationType::PUT_PACKET;
