@@ -8,7 +8,6 @@
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
-#include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>

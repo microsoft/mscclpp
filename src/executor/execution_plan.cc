@@ -99,8 +99,6 @@ auto convertToChannelType = [](const std::string& str) {
   }
 };
 
-std::set groupChannelType{mscclpp::ChannelType::SWITCH};
-
 }  // namespace
 
 namespace mscclpp {
