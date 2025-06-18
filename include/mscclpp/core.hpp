@@ -495,6 +495,9 @@ class Connection {
   /// @param newValue The new value to write.
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
+  ///
+  virtual void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value) = 0;
+
   /// Flush any pending writes to the remote process.
   virtual void flush(int64_t timeoutUsec = 3e7) = 0;
 
@@ -567,9 +570,9 @@ struct EndpointConfig {
 ///   1. The client creates an endpoint with createEndpoint() and sends it to the server.
 ///   2. The server receives the client endpoint, creates its own endpoint with createEndpoint(), sends it to the
 ///      client, and creates a connection with connect().
-///   4. The client receives the server endpoint, creates a connection with connect() and sends a
+///   3. The client receives the server endpoint, creates a connection with connect() and sends a
 ///      RegisteredMemory to the server.
-///   5. The server receives the RegisteredMemory and writes to it using the previously created connection.
+///   4. The server receives the RegisteredMemory and writes to it using the previously created connection.
 /// The client waiting to create a connection before sending the RegisteredMemory ensures that the server can not
 /// write to the RegisteredMemory before the connection is established.
 ///

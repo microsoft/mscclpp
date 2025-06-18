@@ -68,6 +68,13 @@ MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
+MSCCLPP_API_CPP void ProxyService::bindThread() {
+  if (deviceNumaNode_ >= 0) {
+    numaBind(deviceNumaNode_);
+    INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode_);
+  }
+}
+
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];

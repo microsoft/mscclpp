@@ -22,8 +22,9 @@ class Fifo {
   /// Destructor.
   ~Fifo();
 
-  /// Poll and get the trigger at the head.
-  /// @return ProxyTrigger at the head of the FIFO.
+  /// Polls the FIFO for a trigger.
+  ///
+  /// @return A ProxyTrigger which is the trigger at the head of fifo.
   ProxyTrigger poll();
 
   /// Remove the head trigger.

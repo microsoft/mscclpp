@@ -68,11 +68,14 @@ class ProxyService : public BaseProxyService {
   /// Stop the proxy service.
   void stopProxy();
 
- private:
+ protected:
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
+  int deviceNumaNode_;
   std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
+
+  void bindThread();
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
