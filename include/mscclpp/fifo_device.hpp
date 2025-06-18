@@ -15,6 +15,18 @@
 
 namespace mscclpp {
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+MSCCLPP_DEVICE_INLINE uint64_t uncachedLoad(uint64_t* ptr) {
+  uint64_t val;
+#if defined(MSCCLPP_DEVICE_CUDA)
+  asm volatile("ld.global.cv.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
+#else   // !defined(MSCCLPP_DEVICE_CUDA)
+  val = atomicLoad(ptr, memoryOrderRelaxed);
+#endif  // !defined(MSCCLPP_DEVICE_CUDA)
+  return val;
+}
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 /// Used as a work element in the concurrent FIFO.
 /// Most significant bit of snd is reserved.
@@ -40,10 +52,10 @@ struct FifoDeviceHandle {
     // As tail value is cached on device, the device doesn't need to access host memory every time.
     uint64_t numInflights = prevHead - *tailCache;
     if (numInflights >= size / 2) {
-      numInflights = prevHead - (*tailCache = atomicLoad(tail, memoryOrderRelaxed));
+      numInflights = prevHead - (*tailCache = uncachedLoad(tail));
     }
     if (numInflights >= size) {
-      POLL_MAYBE_JAILBREAK((atomicLoad(&(triggers[prevHead % size].fst), memoryOrderRelaxed) != 0), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((uncachedLoad(&(triggers[prevHead % size].fst)) != 0), maxSpinCount);
       *tailCache = prevHead + 1;
     }
 
@@ -72,7 +84,7 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     if (fifoHead < *tailCache) return;
-    POLL_MAYBE_JAILBREAK((atomicLoad(&(triggers[fifoHead % size].fst), memoryOrderRelaxed) != 0), maxSpinCount);
+    POLL_MAYBE_JAILBREAK((uncachedLoad(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
     *tailCache = fifoHead + 1;
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
