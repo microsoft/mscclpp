@@ -21,6 +21,7 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
 MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  deviceNumaNode_ = getDeviceNumaNode(cudaDevice);
   int deviceNumaNode = getDeviceNumaNode(cudaDevice);
   auto initFunc = [cudaDevice, deviceNumaNode]() {
     MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
