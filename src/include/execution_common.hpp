@@ -34,6 +34,7 @@ enum class ChannelType : uint8_t {
 };
 
 // NOTE(chhwang): any modification here requires corresponding updates in `tools/npkit/npkit_trace_generator.py`.
+// As well as NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT in npkit_event.hpp
 enum class OperationType : uint8_t {
   NOP,
   BARRIER,
