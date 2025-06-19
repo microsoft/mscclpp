@@ -19,6 +19,7 @@ namespace mscclpp {
 MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) {
   uint64_t val;
 #if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
+  // This is faster for A100.
   asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
 #else   // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
   val = atomicLoad(ptr, memoryOrderRelaxed);
@@ -57,7 +58,10 @@ struct FifoDeviceHandle {
     trigger.snd ^= flipMask;
 
     // Wait until the trigger is freed by the host.
-    POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
+    if (prevHead - atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed) >= size) {
+      POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
+      atomicStore<uint64_t, scopeDevice>(tailCache, prevHead + 1, memoryOrderRelaxed);
+    }
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
 
@@ -86,7 +90,9 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
+    if (fifoHead < atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed)) return;
     POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
+    atomicStore<uint64_t, scopeDevice>(tailCache, fifoHead + 1, memoryOrderRelaxed);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
