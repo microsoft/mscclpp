@@ -25,7 +25,7 @@ MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highl
 |-------------------------------|
 | <img src="./docs/figs/abstractions.png" alt="MSCCL++ Abstractions" style="width: 800px;"/> |
 
-The followings highlight the key features of MSCCL++.
+The following highlight the key features of MSCCL++.
 
 * **Light-weight and multi-layer abstractions.** MSCCL++ provides communication abstractions at lowest level close to hardware and at the highest level close to application API. The lowest level of abstraction is ultra light weight which enables a user to implement logics of data movement for a collective operation such as AllReduce inside a GPU kernel extremely efficiently without worrying about memory ordering of different ops. The modularity of MSCCL++ enables a user to construct the building blocks of MSCCL++ in a high level abstraction in Python and feed them to a CUDA kernel in order to facilitate the user's productivity.
 
