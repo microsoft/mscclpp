@@ -176,7 +176,7 @@ class MyProxyService {
 
   void stop() { proxy_.stop(); }
 
-  mscclpp::Fifo& fifo() { return proxy_.fifo(); }
+  std::shared_ptr<mscclpp::Fifo> fifo() { return proxy_.fifo(); }
 
   mscclpp::Host2DeviceSemaphore::DeviceHandle getDeviceHandle1(int r) { return deviceSemaphores1_[r]->deviceHandle(); }
 
@@ -249,7 +249,7 @@ int main(int argc, char* argv[]) {
 
   if (rank == 0) printf("Launching MSCCL++ proxy threads\n");
   proxyService.start();
-  mscclpp::FifoDeviceHandle fifo = proxyService.fifo().deviceHandle();
+  mscclpp::FifoDeviceHandle fifo = proxyService.fifo()->deviceHandle();
   if (rank == 0) printf("Testing the correctness of AllGather implementation\n");
   cudaStream_t stream;
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));

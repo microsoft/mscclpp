@@ -16,13 +16,13 @@
 namespace mscclpp {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-MSCCLPP_DEVICE_INLINE uint64_t uncachedLoad(uint64_t* ptr) {
+MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) {
   uint64_t val;
-#if defined(MSCCLPP_DEVICE_CUDA)
-  asm volatile("ld.global.cv.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
-#else   // !defined(MSCCLPP_DEVICE_CUDA)
+#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
+  asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
+#else   // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
   val = atomicLoad(ptr, memoryOrderRelaxed);
-#endif  // !defined(MSCCLPP_DEVICE_CUDA)
+#endif  // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
   return val;
 }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
@@ -43,23 +43,23 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   /// @return Previous head of the FIFO where the trigger was pushed.
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    uint64_t prevHead = atomicFetchAdd(head, uint64_t{1}, memoryOrderRelaxed);
+    uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, uint64_t{1}, memoryOrderRelaxed);
+    int triggerIdx = prevHead % size;
 
-    // Set last bit non-zero for safe polling; host will revert.
-    trigger.snd ^= (uint64_t{1} << uint64_t{63});
-
-    // Proceed if tail advanced or target slot is 0.
-    // As tail value is cached on device, the device doesn't need to access host memory every time.
-    uint64_t numInflights = prevHead - *tailCache;
-    if (numInflights >= size / 2) {
-      numInflights = prevHead - (*tailCache = uncachedLoad(tail));
-    }
-    if (numInflights >= size) {
-      POLL_MAYBE_JAILBREAK((uncachedLoad(&(triggers[prevHead % size].fst)) != 0), maxSpinCount);
-      *tailCache = prevHead + 1;
+    // Ensure that only one thread pushes into the same trigger slot at a time.
+    int* triggerLock = &triggerLocks[triggerIdx];
+    while (atomicFetchAdd<int, scopeDevice>(triggerLock, 1, memoryOrderRelaxed) != 0) {
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(triggerLock, memoryOrderRelaxed) != 0), maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
+    // Flip the last bit for safe polling; host will revert.
+    constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
+    trigger.snd ^= flipMask;
+
+    // Wait until the trigger is freed by the host.
+    POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
+
+    ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
 
     // Ensure data is visible to host before updating tail.
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -76,6 +76,9 @@ struct FifoDeviceHandle {
     atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
+    // Free the trigger lock.
+    atomicStore<int, scopeDevice>(triggerLock, 0, memoryOrderRelaxed);
+
     return prevHead;
   }
 
@@ -83,9 +86,7 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    if (fifoHead < *tailCache) return;
-    POLL_MAYBE_JAILBREAK((uncachedLoad(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
-    *tailCache = fifoHead + 1;
+    POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -97,6 +98,8 @@ struct FifoDeviceHandle {
   uint64_t* tail;
   /// Cached tail value.
   uint64_t* tailCache;
+  /// Array of flags to lock each trigger slot.
+  int* triggerLocks;
   /// FIFO size.
   int size;
 };

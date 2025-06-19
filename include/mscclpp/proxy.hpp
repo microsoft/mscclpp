@@ -31,12 +31,12 @@ class Proxy {
   /// @param handler Handler for each FIFO trigger.
   /// @param threadInit Optional function run in proxy thread before FIFO consumption.
   /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
-  Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = DEFAULT_FIFO_SIZE);
+  Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Proxy constructor.
   /// @param handler Handler for each FIFO trigger.
   /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
-  Proxy(ProxyHandler handler, size_t fifoSize = DEFAULT_FIFO_SIZE);
+  Proxy(ProxyHandler handler, int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Destructor. Stops proxy if running.
   ~Proxy();
@@ -48,12 +48,12 @@ class Proxy {
   void stop();
 
   /// Get reference to FIFO used by proxy.
-  /// @return Reference to FIFO.
-  Fifo& fifo();
+  /// @return Shared pointer to FIFO.
+  std::shared_ptr<Fifo> fifo();
 
  private:
   struct Impl;
-  std::unique_ptr<Impl> pimpl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace mscclpp

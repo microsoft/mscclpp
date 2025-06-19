@@ -16,7 +16,7 @@ constexpr size_t DEFAULT_FIFO_SIZE = 256;
 class Fifo {
  public:
   /// Construct a FIFO with a given number of entries.
-  /// @param size Number of entries (default: 256).
+  /// @param size Number of entries (default: DEFAULT_FIFO_SIZE).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
   /// Destructor.
@@ -39,7 +39,7 @@ class Fifo {
 
  private:
   struct Impl;
-  std::unique_ptr<Impl> pimpl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace mscclpp

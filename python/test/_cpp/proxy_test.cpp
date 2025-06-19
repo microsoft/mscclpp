@@ -64,7 +64,7 @@ class MyProxyService {
 
   void stop() { proxy_.stop(); }
 
-  mscclpp::FifoDeviceHandle fifoDeviceHandle() { return proxy_.fifo().deviceHandle(); }
+  mscclpp::FifoDeviceHandle fifoDeviceHandle() { return proxy_.fifo()->deviceHandle(); }
 };
 
 void init_mscclpp_proxy_test_module(nb::module_ &m) {
