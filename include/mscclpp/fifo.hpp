@@ -10,7 +10,7 @@
 
 namespace mscclpp {
 
-constexpr size_t DEFAULT_FIFO_SIZE = 256;
+constexpr size_t DEFAULT_FIFO_SIZE = 512;
 
 /// Host-side proxy FIFO for device-produced work elements.
 class Fifo {

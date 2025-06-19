@@ -473,8 +473,10 @@ class Connection {
  public:
   /// Constructor.
   /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
-  Connection(int maxWriteQueueSize) : maxWriteQueueSize_(maxWriteQueueSize){};
+  Connection(std::shared_ptr<Context> context, int maxWriteQueueSize)
+      : context_(context), maxWriteQueueSize_(maxWriteQueueSize){};
 
+  /// Destructor.
   virtual ~Connection() = default;
 
   /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
@@ -522,6 +524,8 @@ class Connection {
   // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
+
+  std::shared_ptr<Context> context_;
   int maxWriteQueueSize_;
 };
 
@@ -567,19 +571,19 @@ struct EndpointConfig {
 ///   1. The client creates an endpoint with createEndpoint() and sends it to the server.
 ///   2. The server receives the client endpoint, creates its own endpoint with createEndpoint(), sends it to the
 ///      client, and creates a connection with connect().
-///   4. The client receives the server endpoint, creates a connection with connect() and sends a
+///   3. The client receives the server endpoint, creates a connection with connect() and sends a
 ///      RegisteredMemory to the server.
-///   5. The server receives the RegisteredMemory and writes to it using the previously created connection.
+///   4. The server receives the RegisteredMemory and writes to it using the previously created connection.
 /// The client waiting to create a connection before sending the RegisteredMemory ensures that the server can not
 /// write to the RegisteredMemory before the connection is established.
 ///
 /// While some transports may have more relaxed implementation behavior, this should not be relied upon.
-class Context {
+class Context : public std::enable_shared_from_this<Context> {
  public:
-  /// Create a context.
-  Context();
+  /// Create a new Context instance.
+  static std::shared_ptr<Context> create() { return std::shared_ptr<Context>(new Context()); }
 
-  /// Destroy the context.
+  /// Destructor.
   ~Context();
 
   /// Register a region of GPU memory for use in this context.
@@ -606,6 +610,8 @@ class Context {
   std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
  private:
+  Context();
+
   struct Impl;
   std::unique_ptr<Impl> pimpl_;
 
