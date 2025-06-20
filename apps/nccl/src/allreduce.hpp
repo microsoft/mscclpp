@@ -508,8 +508,8 @@ __global__ void __launch_bounds__(512, 1)
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T>
-MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t srcOffset, uint32_t dstOffset,
-                                                      size_t size, int tid, int nThreads) {
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
+                                                      int tid, int nThreads) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
   // nvls can only handle 4 bytes alignment
@@ -687,7 +687,7 @@ __global__ void __launch_bounds__(1024, 1)
   constexpr int nBlocksForReduce = 8;
   constexpr int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
-  uint32_t sizePerRank = size / NRANKS_PER_NODE;
+  size_t sizePerRank = size / NRANKS_PER_NODE;
   assert(sizePerRank % alignment == 0);
   uint32_t sizePerBlock =
       ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignment - 1) / alignment * alignment;
@@ -728,7 +728,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       __syncthreads();
       for (int i = 0; i < NRANKS_PER_NODE; i++) {
-        uint32_t blockOffset = it * unitSize + bid * sizePerBlock + i * sizePerRank;
+        size_t blockOffset = it * unitSize + bid * sizePerBlock + i * sizePerRank;
         uint32_t scratchOffset = scratchIt * unitSize + bid * scratchSizePerBlock + i * scratchSizePerRank;
         char* srcData = (char*)src + blockOffset;
         char* dstData = (char*)scratch + scratchOffset;
@@ -752,7 +752,7 @@ __global__ void __launch_bounds__(1024, 1)
       T* mcBuff = (T*)multicastPtr->mcPtr;
       for (int i = 0; i < copyReduceRatio; i++) {
         int oriBid = bidForReduce * copyReduceRatio + i;
-        size_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
+        uint32_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
         uint32_t reduceIterSize = iterSize;
         if ((oriBid == nBlocksForCopy - 1) && (it >= nIterLastBlock - 1)) {
           if (it > nIterLastBlock - 1) {
@@ -785,8 +785,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       __syncthreads();
       for (int i = 0; i < NRANKS_PER_NODE; i++) {
-        uint32_t blockOffset =
-            it * unitSize + (bid - nBlocksForCopy - nBlocksForReduce) * sizePerBlock + i * sizePerRank;
+        size_t blockOffset = it * unitSize + (bid - nBlocksForCopy - nBlocksForReduce) * sizePerBlock + i * sizePerRank;
         uint32_t scratchOffset = scratchIt * unitSize +
                                  (bid - nBlocksForCopy - nBlocksForReduce) * scratchSizePerBlock +
                                  i * scratchSizePerRank;
