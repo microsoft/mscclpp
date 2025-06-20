@@ -1,4 +1,4 @@
-from mscclpp.language.internal.types import BufferType, Chunk
+from mscclpp.language.internal.dsl_types import BufferType, Chunk
 from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass

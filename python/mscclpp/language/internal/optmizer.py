@@ -1,5 +1,5 @@
 from mscclpp.language.internal.operations import *
-from mscclpp.language.internal.types import SyncType
+from mscclpp.language.internal.dsl_types import SyncType
 
 
 def fuse_instructions(operations):
@@ -26,7 +26,13 @@ def fuse_instructions(operations):
 
 def adding_data_sync(operations):
     result_operations = []
-    data_sync_operations = {Instruction.signal, Instruction.wait, Instruction.flush}
+    data_sync_operations = {
+        Instruction.signal,
+        Instruction.wait,
+        Instruction.relaxed_signal,
+        Instruction.relaxed_wait,
+        Instruction.flush,
+    }
 
     for operation in operations:
         if operation.name in data_sync_operations and (
