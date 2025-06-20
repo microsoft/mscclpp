@@ -39,7 +39,7 @@ class BuffersAccess:
                 self.clear_data_access()
                 conflict = True
                 break
-            
+
             self.intervals[data_access.buffer_type].pop(conflict_data_access)
             if conflict_data_access.end > data_access.end:
                 self.intervals[data_access.buffer_type][
