@@ -547,7 +547,7 @@ __global__ void __launch_bounds__(1024, 1)
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
-  size_t sizePerRank = size / 8;
+  size_t sizePerRank = size / NRANKS_PER_NODE;
   size_t sizePerBlock = sizePerRank / nBlocks;
   size_t rankOffset = sizePerRank * rank;
   size_t blockOffset = sizePerBlock * bid + rankOffset;
@@ -683,8 +683,8 @@ __global__ void __launch_bounds__(1024, 1)
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
-  constexpr int nBlocksForCopy = 16;
-  constexpr int nBlocksForReduce = 8;
+  constexpr int nBlocksForCopy = NRANKS_PER_NODE * 2;
+  constexpr int nBlocksForReduce = NRANKS_PER_NODE;
   constexpr int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
   constexpr size_t scratchSizePerRank = SCRATCH_SIZE / NRANKS_PER_NODE;
   size_t sizePerRank = size / NRANKS_PER_NODE;
@@ -817,23 +817,23 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
-    int nBlocks = 7;
+    int nBlocks = NPEERS;
     int nThreadsPerBlock = 32;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
         nRanksPerNode, worldSize, nelems, deviceFlag7, numScratchBuff);
   } else if (sizeof(T) * nelems <= (1 << 14)) {
-    int nBlocks = 28;
+    int nBlocks = NPEERS * 4;
     int nThreadsPerBlock = 512;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
         nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
   } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
-    int nBlocks = 28;
+    int nBlocks = NPEERS * 4;
     int nThreadsPerBlock = 1024;
     uint32_t* deviceFlag = deviceFlag28;
     if (nelems >= 8192) {
-      nBlocks = 56;
+      nBlocks = NPEERS * 8;
       nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
       deviceFlag = deviceFlag56;
     }
@@ -849,24 +849,24 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
         nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
 #endif
   } else if (useNvlsWithZeroCopy) {
-    int nBlocks = 8;
+    int nBlocks = NRANKS_PER_NODE;
     int nThreadsPerBlock = 1024;
     allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, nelems * sizeof(T), rank);
   } else if (mscclpp::isNvlsSupported()) {
     if (sizeof(T) * nelems < (1 << 24)) {
-      int nBlocks = 32;
+      int nBlocks = NRANKS_PER_NODE * 4;
       int nThreadsPerBlock = 1024;
       allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
                                                                nelems * sizeof(T), rank);
     } else {
-      int nBlocks = 40;
+      int nBlocks = NRANKS_PER_NODE * 5;
       int nThreadsPerBlock = 1024;
       allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
                                                                nelems * sizeof(T), rank);
     }
   } else {
-    int nBlocks = 35;
+    int nBlocks = NPEERS * 7;
     int nThreadsPerBlock = 512;
     allreduce8<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, memoryOutChannels, channelOutOffset,
