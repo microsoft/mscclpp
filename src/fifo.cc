@@ -16,8 +16,7 @@ struct Fifo::Impl {
   detail::UniqueGpuPtr<uint64_t> triggerTicketHeads;
   detail::UniqueGpuPtr<uint64_t> triggerTicketTails;
   detail::UniqueGpuPtr<uint64_t> head;
-  detail::UniqueGpuHostPtr<uint64_t> tail;
-  detail::UniqueGpuPtr<uint64_t> tailCache;
+  uint64_t tail;
   const int size;
 
   Impl(int size)
@@ -25,8 +24,7 @@ struct Fifo::Impl {
         triggerTicketHeads(detail::gpuCallocUnique<uint64_t>(size)),
         triggerTicketTails(detail::gpuCallocUnique<uint64_t>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
-        tail(detail::gpuCallocHostUnique<uint64_t>()),
-        tailCache(detail::gpuCallocUnique<uint64_t>()),
+        tail(0),
         size(size) {}
 };
 
@@ -44,7 +42,7 @@ MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  ProxyTrigger* ptr = &pimpl_->triggers.get()[*(pimpl_->tail) % pimpl_->size];
+  ProxyTrigger* ptr = &pimpl_->triggers.get()[pimpl_->tail % pimpl_->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
   trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
@@ -52,9 +50,8 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  uint64_t curTail = *(pimpl_->tail);
-  pimpl_->triggers.get()[curTail % pimpl_->size].fst = 0;
-  *(pimpl_->tail) = curTail + 1;
+  pimpl_->triggers.get()[pimpl_->tail % pimpl_->size].fst = 0;
+  pimpl_->tail++;
 }
 
 MSCCLPP_API_CPP int Fifo::size() const { return pimpl_->size; }
@@ -65,8 +62,6 @@ MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   deviceHandle.triggerTicketHeads = pimpl_->triggerTicketHeads.get();
   deviceHandle.triggerTicketTails = pimpl_->triggerTicketTails.get();
   deviceHandle.head = pimpl_->head.get();
-  deviceHandle.tail = pimpl_->tail.get();
-  deviceHandle.tailCache = pimpl_->tailCache.get();
   deviceHandle.size = pimpl_->size;
   return deviceHandle;
 }
