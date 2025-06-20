@@ -34,6 +34,7 @@ class BuffersAccess:
 
         while idx < len(keys) and data_access.overlaps(keys[idx]):
             conflict_data_access = keys[idx]
+            idx += 1
             conflict_operation_type = self.intervals[data_access.buffer_type][conflict_data_access]
             if data_access.check_conflict(conflict_data_access):
                 self.clear_data_access()
