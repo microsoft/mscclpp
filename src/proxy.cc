@@ -30,9 +30,18 @@ MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadI
   pimpl_ = std::make_unique<Impl>(handler, threadInit, fifoSize);
 }
 
-MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, int fifoSize)
-    : Proxy(
-          handler, [] {}, fifoSize) {}
+MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, int fifoSize) {
+  int cudaDevice;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  int deviceNumaNode = getDeviceNumaNode(cudaDevice);
+  auto initFunc = [cudaDevice, deviceNumaNode]() {
+    MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
+    if (deviceNumaNode >= 0) {
+      numaBind(deviceNumaNode);
+    }
+  };
+  pimpl_ = std::make_unique<Impl>(handler, initFunc, fifoSize);
+}
 
 MSCCLPP_API_CPP Proxy::~Proxy() {
   if (pimpl_) {
@@ -43,6 +52,10 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
 MSCCLPP_API_CPP void Proxy::start() {
   pimpl_->running = true;
   pimpl_->service = std::thread([this] {
+    // never capture in a proxy thread
+    auto mode = cudaStreamCaptureModeRelaxed;
+    MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
+
     pimpl_->threadInit();
 
     ProxyHandler handler = this->pimpl_->handler;

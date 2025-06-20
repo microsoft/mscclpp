@@ -28,9 +28,6 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
       numaBind(deviceNumaNode);
       INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode);
     }
-    // never capture in the proxy thread
-    auto mode = cudaStreamCaptureModeRelaxed;
-    MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
   };
   auto handlerFunc = [&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
   proxy_ = std::make_shared<Proxy>(handlerFunc, initFunc, fifoSize);

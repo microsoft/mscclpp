@@ -88,18 +88,13 @@ class MyProxyService {
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores2_;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
   mscclpp::Proxy proxy_;
-  int deviceNumaNode_;
 
  public:
   MyProxyService(mscclpp::Communicator& comm, int* data_d, int dataSize)
       : dataSize_(dataSize),
         remoteMemories_(world_size),
         connections_(world_size),
-        proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
-    int cudaDevice;
-    MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
-    deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
-
+        proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {
     int thisNode = rankToNode(rank);
     int cudaNum = rankToLocalRank(rank);
     std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
@@ -141,12 +136,6 @@ class MyProxyService {
       deviceSemaphores1_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       deviceSemaphores2_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       remoteMemories_[r] = remoteMemoriesFuture[r].get();
-    }
-  }
-
-  void bindThread() {
-    if (deviceNumaNode_ >= 0) {
-      mscclpp::numaBind(deviceNumaNode_);
     }
   }
 
