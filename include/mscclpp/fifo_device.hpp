@@ -94,9 +94,9 @@ struct FifoDeviceHandle {
 
   /// FIFO buffer on host.
   ProxyTrigger* triggers;
-  /// Ticket counter head for each trigger slot.
+  /// Ticket counter head for each trigger slot. On device.
   uint64_t* triggerTicketHeads;
-  /// Ticket counter tail for each trigger slot.
+  /// Ticket counter tail for each trigger slot. On device.
   uint64_t* triggerTicketTails;
   /// FIFO head on device.
   uint64_t* head;

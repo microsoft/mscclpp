@@ -27,13 +27,13 @@ using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 /// Host-side proxy for PortChannels.
 class Proxy {
  public:
-  /// Proxy constructor.
+  /// Constructor.
   /// @param handler Handler for each FIFO trigger.
   /// @param threadInit Optional function run in proxy thread before FIFO consumption.
   /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
   Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize = DEFAULT_FIFO_SIZE);
 
-  /// Proxy constructor.
+  /// Constructor.
   /// @param handler Handler for each FIFO trigger.
   /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
   Proxy(ProxyHandler handler, int fifoSize = DEFAULT_FIFO_SIZE);
