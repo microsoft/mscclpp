@@ -1,6 +1,6 @@
 from mscclpp.language.internal.dsl_types import ChannelType, RemoteBuffer, BufferType
 from mscclpp.language.internal.optmizer import *
-from mscclpp.language.internal.order_range import *
+from mscclpp.language.internal.buffer_access import *
 from dataclasses import dataclass, field
 
 
@@ -55,7 +55,7 @@ class ThreadBlock:
         self.ops = adding_data_sync(self.ops)
 
     def resolve_data_dependency(self):
-        interval_map = IntervalMap()
+        interval_map = BuffersAccess()
         self.ops = interval_map.process_operations(self.ops)
 
     def to_json(self) -> dict:

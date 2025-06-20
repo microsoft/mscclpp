@@ -8,13 +8,18 @@ from mscclpp.language.internal.dsl_types import (
     DataAccess,
     DataAccessType,
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List
+import uuid
 
 
 @dataclass
 class BaseOperation:
+    id: uuid.UUID = field(default_factory=uuid.uuid4, init=False)
     name: str
+
+    def local_data_access(self):
+        return []
 
 
 @dataclass
@@ -40,7 +45,7 @@ class RemoteChunk:
 @dataclass
 class SyncOperation(BaseOperation):
     def __init__(self):
-        self.name = Instruction.nop
+        super().__init__(Instruction.nop)
 
     def __add__(self, other):
         fused_operation = None
@@ -66,28 +71,26 @@ class CopyOperation(BaseOperation):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            self.name = Instruction.copy_packet
+            super().__init__(Instruction.copy_packet)
         elif to_packet:
-            self.name = Instruction.transform_to_packet
+            super().__init__(Instruction.transform_to_packet)
         else:
-            self.name = Instruction.copy
+            super().__init__(Instruction.copy)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
 
     def local_data_access(self):
-        access = {}
+        data_access = []
         for chunk in self.src_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+            )
         for chunk in self.dst_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
-        return [DataAccess(*key, value) for key, value in access.items()]
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+            )
+        return data_access
 
     def __add__(self, other):
         return None
@@ -113,9 +116,9 @@ class SignalOperation(BaseOperation):
         relaxed: bool = False,
     ):
         if relaxed:
-            self.name = Instruction.relaxed_signal
+            super().__init__(Instruction.relaxed_signal)
         else:
-            self.name = Instruction.signal
+            super().__init__(Instruction.signal)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
@@ -161,9 +164,9 @@ class WaitOperation(BaseOperation):
         relaxed: bool = False,
     ):
         if relaxed:
-            self.name = Instruction.relaxed_wait
+            super().__init__(Instruction.relaxed_wait)
         else:
-            self.name = Instruction.wait
+            super().__init__(Instruction.wait)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
@@ -214,7 +217,7 @@ class BarrierOperation(BaseOperation):
         else:
             self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
 
-        self.name = Instruction.barrier
+        super().__init__(Instruction.barrier)
         self.barrier_info = barrier_info
 
     def __add__(self, other):
@@ -245,7 +248,7 @@ class BarrierOperation(BaseOperation):
 @dataclass
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
-        self.name = Instruction.flush
+        super().__init__(Instruction.flush)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
@@ -284,20 +287,19 @@ class GetOperation(BaseOperation):
         channel_ids: List[int],
         channel_type: ChannelType,
     ):
-        self.name = Instruction.get
+        super().__init__(Instruction.get)
         self.src_buff = src_buff
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
     def local_data_access(self):
-        access = {}
+        data_access = []
         for chunk in self.dst_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
-        return [DataAccess(*key, value) for key, value in access.items()]
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+            )
+        return data_access
 
     def __add__(self, other):
         fused_operation = None
@@ -342,21 +344,21 @@ class PutOperation(BaseOperation):
         with_signal_and_flush: bool = False,
     ):
         if from_packet and to_packet:
-            self.name = Instruction.read_put_packet
+            super().__init__(Instruction.read_put_packet)
         elif to_packet:
-            self.name = Instruction.put_packet
+            super().__init__(Instruction.put_packet)
         elif from_packet:
             raise RuntimeError(f"Put Operation from Packet is not Supported.")
         else:
             if with_signal:
                 if with_signal_and_flush:
-                    self.name = Instruction.put_with_signal_and_flush
+                    super().__init__(Instruction.put_with_signal_and_flush)
                 else:
-                    self.name = Instruction.put_with_signal
+                    super().__init__(Instruction.put_with_signal)
             elif with_signal_and_flush:
-                self.name = Instruction.put_with_signal_and_flush
+                super().__init__(Instruction.put_with_signal_and_flush)
             else:
-                self.name = Instruction.put
+                super().__init__(Instruction.put)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
@@ -367,13 +369,11 @@ class PutOperation(BaseOperation):
         self.with_signal_and_flush = with_signal_and_flush
 
     def local_data_access(self):
-        access = {}
+        data_access = []
         for chunk in self.src_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
-        return [DataAccess(*key, value) for key, value in access.items()]
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+            )
 
     def __add__(self, other):
         fused_operation = None
@@ -431,18 +431,18 @@ class ReduceOperation(BaseOperation):
     ):
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
-                self.name = Instruction.reduce_packet
+                super().__init__(Instruction.reduce_packet)
             else:
-                self.name = Instruction.reduce
+                super().__init__(Instruction.reduce)
         elif len(remote_src_buff) == 0:
             if packet:
-                self.name = Instruction.reduce_send_packet
+                super().__init__(Instruction.reduce_send_packet)
             else:
-                self.name = Instruction.reduce_send
+                super().__init__(Instruction.reduce_send)
         elif len(remote_dst_buff) == 0 and not packet:
-            self.name = Instruction.read_reduce
+            super().__init__(Instruction.read_reduce)
         elif not packet:
-            self.name = Instruction.read_reduce_send
+            super().__init__(Instruction.read_reduce_send)
         else:
             raise RuntimeError(f"Reduce Operation invalid parameters.")
 
@@ -457,18 +457,16 @@ class ReduceOperation(BaseOperation):
         self.packet = packet
 
     def local_data_access(self):
-        access = {}
+        data_access = []
         for chunk in self.local_src_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.read
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.read
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+            )
         for chunk in self.local_dst_buff:
-            if chunk.type not in access:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] = DataAccessType.write
-            else:
-                access[(chunk.index, chunk.index + chunk.size - 1, chunk.type)] |= DataAccessType.write
-        return [DataAccess(*key, value) for key, value in access.items()]
+            data_access.append(
+                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+            )
+        return data_access
 
     def __add__(self, other):
         fused_operation = None
@@ -572,7 +570,7 @@ class GroupLoadReduce(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        self.name = Instruction.group_load_reduce
+        super().__init__(Instruction.group_load_reduce)
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
@@ -626,7 +624,7 @@ class GroupStore(BaseOperation):
         channel_ids: List[int] = [],
         channel_type: ChannelType = ChannelType.switch,
     ):
-        self.name = Instruction.group_store
+        super().__init__(Instruction.group_store)
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
@@ -660,7 +658,7 @@ class GroupLoadReduceStore(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        self.name = Instruction.group_load_reduce_store
+        super().__init__(Instruction.group_load_reduce_store)
         self.buffer_type = buffer_type
         self.size = size
         self.src_index = src_index

@@ -169,7 +169,29 @@ class DataAccessType(Enum):
 
 @dataclass
 class DataAccess:
+    operation_id: int
     start: int
     end: int
     buffer_type: BufferType
     data_access_type: DataAccessType
+
+    def __lt__(self, other):
+        if self.start != other.start:
+            return self.start < other.start
+        return self.end < other.end
+
+    def __eq__(self, other):
+        return self.start == other.start and self.end == other.end
+
+    def __hash__(self):
+        return hash((self.start, self.end))
+
+    def overlaps(self, other) -> bool:
+        return self.start <= other.end and other.start <= self.end
+
+    def check_conflict(self, other) -> bool:
+        return (
+            self.overlaps(other)
+            and self.operation_id != other.operation_id
+            and (self.data_access_type != DataAccessType.read or other.data_access_type != DataAccessType.read)
+        )
