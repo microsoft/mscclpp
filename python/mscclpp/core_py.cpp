@@ -148,7 +148,7 @@ void register_core(nb::module_& m) {
       .def_rw("ib_max_wr_per_send", &EndpointConfig::ibMaxWrPerSend);
 
   nb::class_<Context>(m, "Context")
-      .def(nb::init<>())
+      .def_static("create", &Context::create)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {

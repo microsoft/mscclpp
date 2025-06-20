@@ -4,6 +4,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/numa.hpp>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -12,32 +13,36 @@ namespace mscclpp {
 
 struct Fifo::Impl {
   detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
+  detail::UniqueGpuPtr<uint64_t> triggerTicketHeads;
+  detail::UniqueGpuPtr<uint64_t> triggerTicketTails;
   detail::UniqueGpuPtr<uint64_t> head;
-  detail::UniqueGpuPtr<uint64_t> tailReplica;
+  uint64_t tail;
   const int size;
-
-  // The original tail of this fifo allocated on the host. If a tail replica is used
-  // (when `env()->fifoUseTailReplica == true`), it always holds that *tailReplica <= *hostTail.
-  std::shared_ptr<uint64_t> hostTail;
-
-  // for transferring fifo tail
-  CudaStreamWithFlags stream;
 
   Impl(int size)
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
+        triggerTicketHeads(detail::gpuCallocUnique<uint64_t>(size)),
+        triggerTicketTails(detail::gpuCallocUnique<uint64_t>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
-        tailReplica(env()->fifoUseTailReplica ? detail::gpuCallocUnique<uint64_t>() : nullptr),
-        size(size),
-        hostTail(env()->fifoUseTailReplica ? std::make_shared<uint64_t>(0) : detail::gpuCallocHostShared<uint64_t>()),
-        stream(cudaStreamNonBlocking) {}
+        tail(0),
+        size(size) {}
 };
 
-MSCCLPP_API_CPP Fifo::Fifo(int size) : pimpl(std::make_unique<Impl>(size)) {}
+MSCCLPP_API_CPP Fifo::Fifo(int size) {
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  int numaNode = getDeviceNumaNode(device);
+  if (numaNode >= 0) {
+    numaBind(numaNode);
+  }
+  pimpl_ = std::make_unique<Impl>(size);
+}
+
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  ProxyTrigger* ptr = &pimpl->triggers.get()[*(pimpl->hostTail) % pimpl->size];
+  ProxyTrigger* ptr = &pimpl_->triggers.get()[pimpl_->tail % pimpl_->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
   trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
@@ -45,39 +50,19 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  uint64_t curTail = *(pimpl->hostTail);
-  atomicStore(&(pimpl->triggers.get()[curTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
-  *(pimpl->hostTail) = curTail + 1;
+  pimpl_->triggers.get()[pimpl_->tail % pimpl_->size].fst = 0;
+  pimpl_->tail++;
 }
 
-MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
-  if (!env()->fifoUseTailReplica) {
-    // Nothing to flush if the tail is not replicated.
-    return;
-  }
-#if defined(MSCCLPP_DEVICE_HIP)
-  *(pimpl->tailReplica.get()) = *(pimpl->hostTail.get());
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-  // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
-  // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
-  AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), pimpl->hostTail.get(), sizeof(uint64_t),
-                                    cudaMemcpyHostToDevice, pimpl->stream));
-  if (sync) {
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
-  }
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
-}
-
-MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
+MSCCLPP_API_CPP int Fifo::size() const { return pimpl_->size; }
 
 MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
-  deviceHandle.triggers = pimpl->triggers.get();
-  deviceHandle.head = pimpl->head.get();
-  // tailReplica refers to the original tail if `fifoUseTailReplica == false`.
-  deviceHandle.tailReplica = env()->fifoUseTailReplica ? pimpl->tailReplica.get() : pimpl->hostTail.get();
-  deviceHandle.size = pimpl->size;
+  deviceHandle.triggers = pimpl_->triggers.get();
+  deviceHandle.triggerTicketHeads = pimpl_->triggerTicketHeads.get();
+  deviceHandle.triggerTicketTails = pimpl_->triggerTicketTails.get();
+  deviceHandle.head = pimpl_->head.get();
+  deviceHandle.size = pimpl_->size;
   return deviceHandle;
 }
 

@@ -27,8 +27,8 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
-  /// @param fifoSize The size of the FIFO used by the proxy service. Default is DEFAULT_FIFO_SIZE.
-  ProxyService(size_t fifoSize = DEFAULT_FIFO_SIZE);
+  /// @param fifoSize Size of the FIFO used by the proxy service (default: DEFAULT_FIFO_SIZE).
+  ProxyService(int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
@@ -72,10 +72,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
-  int deviceNumaNode;
-  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
-
-  void bindThread();
+  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };

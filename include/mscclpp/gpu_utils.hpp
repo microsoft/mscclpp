@@ -123,7 +123,7 @@ namespace detail {
 void setReadWriteMemoryAccess(void* base, size_t size);
 
 void* gpuCalloc(size_t bytes);
-void* gpuCallocHost(size_t bytes);
+void* gpuCallocHost(size_t bytes, unsigned int flags);
 #if defined(__HIP_PLATFORM_AMD__)
 void* gpuCallocUncached(size_t bytes);
 #endif  // defined(__HIP_PLATFORM_AMD__)
@@ -206,13 +206,13 @@ auto gpuCallocUnique(size_t nelems = 1) {
 }
 
 template <class T>
-auto gpuCallocHostShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems);
+auto gpuCallocHostShared(size_t nelems = 1, unsigned int flags = cudaHostAllocMapped) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems, flags);
 }
 
 template <class T>
-auto gpuCallocHostUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems);
+auto gpuCallocHostUnique(size_t nelems = 1, unsigned int flags = cudaHostAllocMapped) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems, flags);
 }
 
 #if defined(__HIP_PLATFORM_AMD__)

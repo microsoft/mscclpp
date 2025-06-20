@@ -83,10 +83,10 @@ void* gpuCalloc(size_t bytes) {
   return ptr;
 }
 
-void* gpuCallocHost(size_t bytes) {
+void* gpuCallocHost(size_t bytes, unsigned int flags) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
-  MSCCLPP_CUDATHROW(cudaHostAlloc(&ptr, bytes, cudaHostAllocMapped | cudaHostAllocWriteCombined));
+  MSCCLPP_CUDATHROW(cudaHostAlloc(&ptr, bytes, flags));
   ::memset(ptr, 0, bytes);
   return ptr;
 }
