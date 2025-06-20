@@ -13,18 +13,20 @@ namespace mscclpp {
 
 struct Fifo::Impl {
   detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
+  detail::UniqueGpuPtr<uint64_t> triggerTicketHeads;
+  detail::UniqueGpuPtr<uint64_t> triggerTicketTails;
   detail::UniqueGpuPtr<uint64_t> head;
   detail::UniqueGpuHostPtr<uint64_t> tail;
   detail::UniqueGpuPtr<uint64_t> tailCache;
-  detail::UniqueGpuPtr<int> triggerLocks;
   const int size;
 
   Impl(int size)
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
+        triggerTicketHeads(detail::gpuCallocUnique<uint64_t>(size)),
+        triggerTicketTails(detail::gpuCallocUnique<uint64_t>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
         tail(detail::gpuCallocHostUnique<uint64_t>()),
         tailCache(detail::gpuCallocUnique<uint64_t>()),
-        triggerLocks(detail::gpuCallocUnique<int>(size)),
         size(size) {}
 };
 
@@ -60,10 +62,11 @@ MSCCLPP_API_CPP int Fifo::size() const { return pimpl_->size; }
 MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
   deviceHandle.triggers = pimpl_->triggers.get();
+  deviceHandle.triggerTicketHeads = pimpl_->triggerTicketHeads.get();
+  deviceHandle.triggerTicketTails = pimpl_->triggerTicketTails.get();
   deviceHandle.head = pimpl_->head.get();
   deviceHandle.tail = pimpl_->tail.get();
   deviceHandle.tailCache = pimpl_->tailCache.get();
-  deviceHandle.triggerLocks = pimpl_->triggerLocks.get();
   deviceHandle.size = pimpl_->size;
   return deviceHandle;
 }

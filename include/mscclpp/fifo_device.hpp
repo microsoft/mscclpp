@@ -44,14 +44,16 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   /// @return Previous head of the FIFO where the trigger was pushed.
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, uint64_t{1}, memoryOrderRelaxed);
+    uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
     int triggerIdx = prevHead % size;
 
     // Ensure that only one thread pushes into the same trigger slot at a time.
-    int* triggerLock = &triggerLocks[triggerIdx];
-    while (atomicFetchAdd<int, scopeDevice>(triggerLock, 1, memoryOrderRelaxed) != 0) {
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(triggerLock, memoryOrderRelaxed) != 0), maxSpinCount);
-    }
+    // Ensure that each trigger slot serves multiple threads in the order of entrance.
+    // Each trigger slot has its own ticket counter. Head stores the next ticket and tail stores the serving ticket.
+    uint64_t* ticketHead = &triggerTicketHeads[triggerIdx];
+    uint64_t* ticketTail = &triggerTicketTails[triggerIdx];
+    uint64_t ticket = atomicFetchAdd<uint64_t, scopeDevice>(ticketHead, 1, memoryOrderRelaxed);
+    POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeDevice>(ticketTail, memoryOrderRelaxed) != ticket), maxSpinCount);
 
     // Flip the last bit for safe polling; host will revert.
     constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
@@ -66,7 +68,6 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
 
-    // Ensure data is visible to host before updating tail.
 #if defined(MSCCLPP_DEVICE_CUDA)
 #if __CUDA_ARCH__ == 800
     // This is faster than release for A100.
@@ -81,8 +82,8 @@ struct FifoDeviceHandle {
     atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
-    // Free the trigger lock.
-    atomicStore<int, scopeDevice>(triggerLock, 0, memoryOrderRelaxed);
+    // Increment serving ticket counter.
+    atomicFetchAdd<uint64_t, scopeDevice>(ticketTail, 1, memoryOrderRelaxed);
 
     return prevHead;
   }
@@ -100,6 +101,10 @@ struct FifoDeviceHandle {
 
   /// FIFO buffer on host.
   ProxyTrigger* triggers;
+  /// Ticket counter head for each trigger slot.
+  uint64_t* triggerTicketHeads;
+  /// Ticket counter tail for each trigger slot.
+  uint64_t* triggerTicketTails;
   /// FIFO head on device.
   uint64_t* head;
   /// FIFO tail on host.
