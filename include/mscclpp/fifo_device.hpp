@@ -36,7 +36,7 @@ struct alignas(16) ProxyTrigger {
 };
 
 /// Concurrent FIFO for multiple device threads to push work elements and a single host proxy thread to consume them.
-/// Head pointer is on device, tail pointer is on host.
+/// Head pointer is on device, tail pointer is on host (readable by device).
 struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a trigger to the FIFO.
@@ -60,6 +60,10 @@ struct FifoDeviceHandle {
     trigger.snd ^= flipMask;
 
     // Wait until the trigger is freed by the host.
+    // if (prevHead - atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed) >= size) {
+    //   POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
+    //   atomicStore<uint64_t, scopeDevice>(tailCache, prevHead + 1, memoryOrderRelaxed);
+    // }
     POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
@@ -88,6 +92,9 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
+    // if (fifoHead < atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed)) return;
+    // POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
+    // atomicStore<uint64_t, scopeDevice>(tailCache, fifoHead + 1, memoryOrderRelaxed);
     POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
@@ -100,6 +107,12 @@ struct FifoDeviceHandle {
   uint64_t* triggerTicketTails;
   /// FIFO head on device.
   uint64_t* head;
+  /// FIFO tail on host.
+  uint64_t* tail;
+  /// Cached tail value.
+  uint64_t* tailCache;
+  /// Array of flags to lock each trigger slot.
+  int* triggerLocks;
   /// FIFO size.
   int size;
 };

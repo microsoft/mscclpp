@@ -15,7 +15,7 @@ constexpr size_t DEFAULT_FIFO_SIZE = 512;
 /// Host-side proxy FIFO for device-produced work elements.
 class Fifo {
  public:
-  /// Constructor.
+  /// Construct a FIFO with a given number of entries.
   /// @param size Number of entries (default: DEFAULT_FIFO_SIZE).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
