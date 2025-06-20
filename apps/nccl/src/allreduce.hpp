@@ -866,7 +866,7 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
                                                                nelems * sizeof(T), rank);
     }
   } else {
-    int nBlocks = NPEERS * 7;
+    int nBlocks = NPEERS * 5;
     int nThreadsPerBlock = 512;
     allreduce8<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, memoryOutChannels, channelOutOffset,
