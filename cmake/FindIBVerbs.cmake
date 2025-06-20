@@ -10,19 +10,17 @@
 
 # The following are set after configuration is done:
 #  IBVERBS_FOUND
-#  IBVERBS_INCLUDE_DIRS
-#  IBVERBS_LIBRARIES
+#  IBVERBS_INCLUDE_DIR
+#  IBVERBS_LIBRARY
 
-# An imported target MSCCLPP::ibverbs is created if the library is found.
-
-find_path(IBVERBS_INCLUDE_DIRS
+find_path(IBVERBS_INCLUDE_DIR
   NAMES infiniband/verbs.h
   HINTS
   ${IBVERBS_INCLUDE_DIR}
   ${IBVERBS_ROOT_DIR}
   ${IBVERBS_ROOT_DIR}/include)
 
-find_library(IBVERBS_LIBRARIES
+find_library(IBVERBS_LIBRARY
   NAMES ibverbs
   HINTS
   ${IBVERBS_LIB_DIR}
@@ -30,15 +28,5 @@ find_library(IBVERBS_LIBRARIES
   ${IBVERBS_ROOT_DIR}/lib)
 
 include(FindPackageHandleStandardArgs)
-find_package_handle_standard_args(IBVerbs DEFAULT_MSG IBVERBS_INCLUDE_DIRS IBVERBS_LIBRARIES)
-mark_as_advanced(IBVERBS_INCLUDE_DIR IBVERBS_LIBRARIES)
-
-if(IBVERBS_FOUND)
-  if(NOT TARGET MSCCLPP::ibverbs)
-    add_library(MSCCLPP::ibverbs UNKNOWN IMPORTED)
-  endif()
-  set_target_properties(MSCCLPP::ibverbs PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${IBVERBS_INCLUDE_DIR}"
-    IMPORTED_LINK_INTERFACE_LANGUAGES "C"
-    IMPORTED_LOCATION "${IBVERBS_LIBRARIES}")
-endif()
+find_package_handle_standard_args(IBVerbs DEFAULT_MSG IBVERBS_LIBRARY IBVERBS_INCLUDE_DIR)
+mark_as_advanced(IBVERBS_LIBRARY IBVERBS_INCLUDE_DIR)
