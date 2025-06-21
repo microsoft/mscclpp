@@ -93,7 +93,7 @@ class Env {
   /// Env name: `MSCCLPP_FIFO_USE_TAIL_REPLICA`. If set to true, it will replicate the FIFO tail on the GPU memory,
   /// which makes the GPU poll on the tail faster, but requires a periodic FIFO flush to update the replica on the GPU.
   /// If set to false, the GPU will directly read the tail from the host memory, which is slower but does not require
-  /// periodic flushes. Default is false.
+  /// periodic flushes. Default is true.
   const bool fifoUseTailReplica;
 
  private:

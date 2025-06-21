@@ -11,7 +11,7 @@ namespace mscclpp {
 Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<Context> context)
     : bootstrap_(bootstrap) {
   if (!context) {
-    context_ = std::make_shared<Context>();
+    context_ = Context::create();
   } else {
     context_ = context;
   }
