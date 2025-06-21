@@ -15,6 +15,19 @@
 
 namespace mscclpp {
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) {
+  uint64_t val;
+#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
+  // This is faster for A100.
+  asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
+#else   // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
+  val = atomicLoad(ptr, memoryOrderRelaxed);
+#endif  // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
+  return val;
+}
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 ///
 /// This struct is used as a work element in the concurrent FIFO where multiple device threads can push
@@ -45,12 +58,11 @@ struct alignas(16) ProxyTrigger {
 struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a trigger to the FIFO.
-  ///
-  /// @param trigger The trigger to push.
-  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  /// @return The new head of the FIFO.
+  /// @param trigger Trigger to push.
+  /// @param maxSpinCount Max spin count before assert. Never assert if negative.
+  /// @return Previous head of the FIFO where the trigger was pushed.
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead = atomicFetchAdd(this->head, (uint64_t)1, memoryOrderRelaxed);
+    uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
 
     // Flip the last bit for safe polling; host will revert.
     constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
@@ -61,13 +73,13 @@ struct FifoDeviceHandle {
     // for the second condition we need to read CPU memory.
     // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
-    if (curFifoHead >= size + *(this->tailReplica)) {
-      OR_POLL_MAYBE_JAILBREAK((curFifoHead >= size + atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-                              (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
+    if (prevHead >= size + *tailReplica) {
+      OR_POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)),
+                              (hostLoadRelaxed(&(triggers[prevHead % size].fst)) != 0),
                               maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
+    ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
 
 #if defined(MSCCLPP_DEVICE_CUDA)
 #if __CUDA_ARCH__ == 800
@@ -83,7 +95,7 @@ struct FifoDeviceHandle {
     atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
-    return curFifoHead;
+    return prevHead;
   }
 
   /// Wait until a specific trigger is popped from the FIFO.
@@ -92,18 +104,19 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the first condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-                            (atomicLoad(&(this->triggers[fifoHead % size].fst), memoryOrderRelaxed) != 0),
+    if (fifoHead < *tailReplica) return;
+    OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)),
+                            (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0),
                             maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   /// FIFO buffer on host.
   ProxyTrigger* triggers;
-  /// FIFO tail replica on device.
-  uint64_t* tailReplica;
   /// FIFO head on device.
   uint64_t* head;
+  /// FIFO tail replica on device.
+  uint64_t* tailReplica;
   /// FIFO size.
   int size;
 };
