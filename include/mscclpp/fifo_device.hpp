@@ -75,8 +75,7 @@ struct FifoDeviceHandle {
     // condition is not met.
     if (prevHead >= size + *tailReplica) {
       OR_POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)),
-                              (hostLoadRelaxed(&(triggers[prevHead % size].fst)) != 0),
-                              maxSpinCount);
+                              (hostLoadRelaxed(&(triggers[prevHead % size].fst)) != 0), maxSpinCount);
     }
 
     ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
@@ -106,8 +105,7 @@ struct FifoDeviceHandle {
     // to wait for cudaMemcpy to be done.
     if (fifoHead < *tailReplica) return;
     OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)),
-                            (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0),
-                            maxSpinCount);
+                            (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
