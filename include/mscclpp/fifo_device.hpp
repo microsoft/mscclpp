@@ -15,7 +15,7 @@
 
 namespace mscclpp {
 
-/// A struct representing a pair of 64-bit unsigned integers used as a trigger for the proxy.
+/// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 ///
 /// This struct is used as a work element in the concurrent FIFO where multiple device threads can push
 /// ProxyTrigger elements and a single host proxy thread consumes these work elements.
@@ -52,9 +52,9 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead = atomicFetchAdd(this->head, (uint64_t)1, memoryOrderRelaxed);
 
-    // make the last bit intentionally non-zero so that we can safely poll. Don't worry, we will change it back in host
-    // side
-    trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
+    // Flip the last bit for safe polling; host will revert.
+    constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
+    trigger.snd ^= flipMask;
 
     // Only one of two conditions need to be met to proceed. Either the tail has advanced enough or where we need to
     // write to is 0. However, the first condition is faster to check since the tail is flushed periodically anyways but
@@ -69,17 +69,16 @@ struct FifoDeviceHandle {
 
     ProxyTrigger* triggerPtr = &(this->triggers[curFifoHead % size]);
 
-    // Make sure the data is visible to the host before we update the tail.
 #if defined(MSCCLPP_DEVICE_CUDA)
 #if __CUDA_ARCH__ == 800
-    // For A100, threadfence_system is more efficient than release
+    // This is faster than release for A100.
     __threadfence_system();
     asm volatile("st.global.relaxed.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #else
     asm volatile("st.global.release.sys.v2.u64 [%0], {%1,%2};" ::"l"(triggerPtr), "l"(trigger.fst), "l"(trigger.snd));
 #endif
 #else   // !defined(MSCCLPP_DEVICE_CUDA)
-    // store snd no later than fst.
+    // Store snd no later than fst.
     atomicStore(&(triggerPtr->snd), trigger.snd, memoryOrderRelaxed);
     atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
@@ -87,26 +86,25 @@ struct FifoDeviceHandle {
     return curFifoHead;
   }
 
-  /// Wait until there is a place in the FIFO to push a trigger.
-  ///
-  /// @param curFifoHead The current head of the FIFO.
-  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void sync(uint64_t curFifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    // Same as push but in this case checking the fist condition is probably faster since for tail to be pushed we need
+  /// Wait until a specific trigger is popped from the FIFO.
+  /// @param fifoHead FIFO head where the trigger was pushed.
+  /// @param maxSpinCount Max spin count before assert. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
+    // Same as push but in this case checking the first condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK((curFifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
-                            (atomicLoad(&(this->triggers[curFifoHead % size].fst), memoryOrderRelaxed) != 0),
+    OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(this->tailReplica, memoryOrderRelaxed)),
+                            (atomicLoad(&(this->triggers[fifoHead % size].fst), memoryOrderRelaxed) != 0),
                             maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
-  /// The FIFO buffer that is allocated on the host via `cudaHostAlloc()`.
+  /// FIFO buffer on host.
   ProxyTrigger* triggers;
-  /// Replica of the FIFO tail.
+  /// FIFO tail replica on device.
   uint64_t* tailReplica;
-  /// The FIFO head. Allocated on the device and only accessed by the device.
+  /// FIFO head on device.
   uint64_t* head;
-  /// The FIFO size.
+  /// FIFO size.
   int size;
 };
 

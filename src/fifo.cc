@@ -4,6 +4,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/numa.hpp>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -32,12 +33,21 @@ struct Fifo::Impl {
         stream(cudaStreamNonBlocking) {}
 };
 
-MSCCLPP_API_CPP Fifo::Fifo(int size) : pimpl(std::make_unique<Impl>(size)) {}
+MSCCLPP_API_CPP Fifo::Fifo(int size) {
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  int numaNode = getDeviceNumaNode(device);
+  if (numaNode >= 0) {
+    numaBind(numaNode);
+  }
+  pimpl_ = std::make_unique<Impl>(size);
+}
+
 MSCCLPP_API_CPP Fifo::~Fifo() = default;
 
 MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   ProxyTrigger trigger;
-  ProxyTrigger* ptr = &pimpl->triggers.get()[*(pimpl->hostTail) % pimpl->size];
+  ProxyTrigger* ptr = &pimpl_->triggers.get()[*(pimpl_->hostTail) % pimpl_->size];
   // we are loading fst first. if fst is non-zero then snd is also valid
   trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
@@ -45,39 +55,39 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
-  uint64_t curTail = *(pimpl->hostTail);
-  atomicStore(&(pimpl->triggers.get()[curTail % pimpl->size].fst), uint64_t{0}, memoryOrderRelease);
-  *(pimpl->hostTail) = curTail + 1;
+  uint64_t curTail = *(pimpl_->hostTail);
+  atomicStore(&(pimpl_->triggers.get()[curTail % pimpl_->size].fst), uint64_t{0}, memoryOrderRelease);
+  *(pimpl_->hostTail) = curTail + 1;
 }
 
-MSCCLPP_API_CPP void Fifo::flushTail(bool sync) {
+MSCCLPP_API_CPP void Fifo::flushTail([[maybe_unused]] bool sync) {
   if (!env()->fifoUseTailReplica) {
     // Nothing to flush if the tail is not replicated.
     return;
   }
 #if defined(MSCCLPP_DEVICE_HIP)
-  *(pimpl->tailReplica.get()) = *(pimpl->hostTail.get());
+  *(pimpl_->tailReplica.get()) = *(pimpl_->hostTail.get());
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
   AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl->tailReplica.get(), pimpl->hostTail.get(), sizeof(uint64_t),
-                                    cudaMemcpyHostToDevice, pimpl->stream));
+  MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl_->tailReplica.get(), pimpl_->hostTail.get(), sizeof(uint64_t),
+                                    cudaMemcpyHostToDevice, pimpl_->stream));
   if (sync) {
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl->stream));
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(pimpl_->stream));
   }
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
-MSCCLPP_API_CPP int Fifo::size() const { return pimpl->size; }
+MSCCLPP_API_CPP int Fifo::size() const { return pimpl_->size; }
 
 MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   FifoDeviceHandle deviceHandle;
-  deviceHandle.triggers = pimpl->triggers.get();
-  deviceHandle.head = pimpl->head.get();
+  deviceHandle.triggers = pimpl_->triggers.get();
+  deviceHandle.head = pimpl_->head.get();
   // tailReplica refers to the original tail if `fifoUseTailReplica == false`.
-  deviceHandle.tailReplica = env()->fifoUseTailReplica ? pimpl->tailReplica.get() : pimpl->hostTail.get();
-  deviceHandle.size = pimpl->size;
+  deviceHandle.tailReplica = env()->fifoUseTailReplica ? pimpl_->tailReplica.get() : pimpl_->hostTail.get();
+  deviceHandle.size = pimpl_->size;
   return deviceHandle;
 }
 
