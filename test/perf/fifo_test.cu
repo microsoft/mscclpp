@@ -166,8 +166,24 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   cudaStream_t stream;
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
 
+  // Create test name with parallelism range
   std::string testName =
-      "FifoTest_Size" + std::to_string(config.fifoSize) + "_Flush" + std::to_string(config.flushPeriod);
+      "FifoTest_Size" + std::to_string(config.fifoSize) + "_Flush" + std::to_string(config.flushPeriod) + "_Parallel";
+
+  // Add parallelism range to test name (e.g., "P1-16" or "P1-4-16-64")
+  if (!config.parallelismLevels.empty()) {
+    testName += std::to_string(config.parallelismLevels.front());
+    if (config.parallelismLevels.size() > 1) {
+      testName += "-" + std::to_string(config.parallelismLevels.back());
+
+      // If parallelism levels have non-standard steps, include more detail
+      if (config.parallelismLevels.size() > 2 &&
+          (config.parallelismLevels[1] != 2 * config.parallelismLevels[0] || config.parallelismLevels.size() > 3)) {
+        testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_Flush" + std::to_string(config.flushPeriod) +
+                   "_ParallelCustom";
+      }
+    }
+  }
 
   // Print test configuration
   if (mscclpp::test::perf::utils::isMainRank()) {
