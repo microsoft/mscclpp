@@ -18,8 +18,8 @@ using namespace mscclpp::test::perf;
 
 // Constants for timeout and trigger calculation
 constexpr uint64_t TIMEOUT_SPINS = 1000000;
-constexpr int MIN_TRIGGERS = 100;
-constexpr int MIN_WARMUP_TRIGGERS = 10;
+constexpr int MIN_TRIGGERS = 1000;
+constexpr int MIN_WARMUP_TRIGGERS = 100;
 constexpr int TRIGGERS_PER_FIFO_SIZE = 10;
 constexpr int WARMUP_TRIGGERS_PER_FIFO_SIZE = 2;
 
@@ -113,6 +113,8 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   double throughput = totalTriggers / timer.elapsedSeconds();
   double duration_us = timer.elapsedMicroseconds();
 
+  utils::CUDA_CHECK(cudaDeviceSynchronize());
+
   return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
 }
 
@@ -124,9 +126,13 @@ void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t s
   auto [syncThroughput, syncDuration, syncNumTriggers, syncWarmupTriggers] =
       runSingleKernelVariant(kernelFifoPushSync, hostFifo, stream, flushPeriod, numParallel);
 
+  auto formatThroughput = [](double thru) {
+    return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
+  };
+
   std::string prefix = "p" + std::to_string(numParallel) + "_";
-  combinedMetrics[prefix + "push_throughput"] = pushThroughput;
-  combinedMetrics[prefix + "push_sync_throughput"] = syncThroughput;
+  combinedMetrics[prefix + "push_throughput"] = formatThroughput(pushThroughput);
+  combinedMetrics[prefix + "push_sync_throughput"] = formatThroughput(syncThroughput);
   combinedMetrics[prefix + "push_duration_us"] = pushDuration;
   combinedMetrics[prefix + "push_sync_duration_us"] = syncDuration;
   combinedMetrics[prefix + "num_triggers"] = numTriggers;
