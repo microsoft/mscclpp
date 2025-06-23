@@ -10,10 +10,9 @@
 
 namespace mscclpp {
 namespace test {
-namespace perf {
 
 // Global state for results
-static std::vector<PerfResult> g_results;
+static std::vector<TestResult> g_results;
 static int g_mpi_rank = 0;
 static int g_mpi_size = 1;
 static bool g_mpi_initialized = false;
@@ -58,7 +57,7 @@ std::string getCurrentTimestamp() {
 
 void recordResult(const std::string& test_name, const std::string& test_category, const nlohmann::ordered_json& metrics,
                   const std::map<std::string, std::string>& test_params) {
-  PerfResult result;
+  TestResult result;
   result.test_name = test_name;
   result.test_category = test_category;
   result.test_params = test_params;
@@ -93,7 +92,7 @@ void writeResultsToFile(const std::string& filename) {
 void printResults(bool verbose) {
   if (!isMainProcess()) return;
 
-  std::cout << "\n=== Performance Test Results ===" << std::endl;
+  std::cout << "\n=== Test Results ===" << std::endl;
 
   for (const auto& result : g_results) {
     std::cout << "\nTest: " << result.test_name << " (" << result.test_category << ")" << std::endl;
@@ -205,6 +204,5 @@ int runMultipleTests(
 }
 
 }  // namespace utils
-}  // namespace perf
 }  // namespace test
 }  // namespace mscclpp

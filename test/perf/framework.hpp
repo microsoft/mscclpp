@@ -4,13 +4,13 @@
 #ifndef MSCCLPP_TEST_PERF_FRAMEWORK_HPP_
 #define MSCCLPP_TEST_PERF_FRAMEWORK_HPP_
 
-#include <cuda_runtime.h>
 #include <mpi.h>
 
 #include <chrono>
 #include <fstream>
 #include <functional>
 #include <map>
+#include <mscclpp/gpu.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <tuple>
@@ -18,10 +18,9 @@
 
 namespace mscclpp {
 namespace test {
-namespace perf {
 
-// Performance test result structure
-struct PerfResult {
+// Test result structure
+struct TestResult {
   std::string test_name;
   std::string test_category;
   std::map<std::string, std::string> test_params;
@@ -31,7 +30,7 @@ struct PerfResult {
   std::string timestamp;
 };
 
-// Simple utility functions for performance testing
+// Simple utility functions for testing
 namespace utils {
 
 // Test execution utilities
@@ -75,7 +74,6 @@ void cudaCheck(cudaError_t err, const char* file, int line);
 
 }  // namespace utils
 
-}  // namespace perf
 }  // namespace test
 }  // namespace mscclpp
 

@@ -14,7 +14,7 @@
 
 #include "framework.hpp"
 
-using namespace mscclpp::test::perf;
+using namespace mscclpp::test;
 
 // Constants for timeout and trigger calculation
 constexpr uint64_t TIMEOUT_SPINS = 1000000;
@@ -192,7 +192,7 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   }
 
   // Print test configuration
-  if (mscclpp::test::perf::utils::isMainRank()) {
+  if (utils::isMainRank()) {
     std::stringstream ss;
     ss << "Running FIFO test with size=" << config.fifoSize << ", flush_period=" << config.flushPeriod
        << ", parallelism_levels=[";
@@ -291,17 +291,17 @@ int main(int argc, char* argv[]) {
   std::vector<std::tuple<std::string, std::string, std::function<void(int, int, int)>>> tests = {
       {"AllFifoTests", "FIFO performance tests with multiple configurations", runAllFifoTests}};
 
-  int result = mscclpp::test::perf::utils::runMultipleTests(argc, argv, tests);
+  int result = utils::runMultipleTests(argc, argv, tests);
 
-  if (mscclpp::test::perf::utils::isMainRank()) {
+  if (utils::isMainRank()) {
     if (outputFormat == "json") {
-      mscclpp::test::perf::utils::writeResultsToFile(outputFile);
+      utils::writeResultsToFile(outputFile);
     } else {
-      mscclpp::test::perf::utils::printResults(verbose);
+      utils::printResults(verbose);
     }
   }
 
-  mscclpp::test::perf::utils::cleanupMPI();
+  utils::cleanupMPI();
 
   return result;
 }

@@ -6,7 +6,7 @@ find_package(MPI REQUIRED)
 
 # Note: nlohmann_json::nlohmann_json target is already available from the main project
 
-# Set up common libraries and includes for performance tests
+# Set up common libraries and includes for tests
 set(PERF_TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} Threads::Threads MPI::MPI_CXX)
 if(IBVERBS_FOUND)
     list(APPEND PERF_TEST_LIBS_COMMON ${IBVERBS_LIBRARIES})
@@ -16,7 +16,7 @@ set(PERF_TEST_INC_COMMON
     PRIVATE ${PROJECT_SOURCE_DIR}/include 
     SYSTEM PRIVATE ${GPU_INCLUDE_DIRS})
 
-# Function to add a performance test executable
+# Function to add a test executable
 function(add_perf_test_executable name sources)
     if(MSCCLPP_USE_ROCM)
         set_source_files_properties(${sources} PROPERTIES LANGUAGE CXX)
@@ -38,5 +38,5 @@ function(add_perf_test_executable name sources)
     target_compile_features(${name} PRIVATE cxx_std_17)
 endfunction()
 
-# Add FIFO performance test  
+# Add FIFO test  
 add_perf_test_executable(fifo_test "framework.cc;fifo_test.cu")
