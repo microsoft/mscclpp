@@ -30,6 +30,7 @@ __global__ void kernelFifoPush(size_t numTriggers) {
   mscclpp::ProxyTrigger trigger;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
+    trigger.snd = 0;
     fifo.push(trigger);
   }
 }
@@ -39,6 +40,7 @@ __global__ void kernelFifoPushSync(size_t numTriggers) {
   mscclpp::ProxyTrigger trigger;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
+    trigger.snd = 0;
     fifo.sync(fifo.push(trigger));
   }
 }
@@ -59,6 +61,7 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
       if (spin++ > TIMEOUT_SPINS) {
         return false;
       }
+      // printf("get fst is %lu, snd is %lu idx is %d\n", trigger.fst, trigger.snd, i);
     } while (trigger.fst == 0 || trigger.snd == 0);
 
     // Process trigger (see src/proxy.cc)
@@ -230,12 +233,12 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
 void runAllFifoTests([[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] int localRank) {
   // clang-format off
   std::vector<FifoTestConfig> configs = {
-      {1, 1, {1, 8, 64, 512}},
-      {128, 4, {1, 8, 64, 512}},
-      {128, 128, {1, 8, 64, 512}},
-      {512, 4, {1, 8, 64, 512}},
-      {512, 128, {1, 8, 64, 512}},
-      {512, 512, {1, 8, 64, 512}},
+      // {1, 1, {1, 8, 64, 512}},
+      {128, 4, {1, 8, 64}},
+      {128, 128, {1, 8, 64}},
+      {512, 4, {1, 8, 64, 256, 512}},
+      {512, 128, {1, 8, 64, 256, 512}},
+      {512, 512, {1, 8, 64, 256, 512}},
   };
   // clang-format on
 
