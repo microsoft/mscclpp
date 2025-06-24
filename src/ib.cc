@@ -59,8 +59,11 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-  if (cuMemAlloc && dmaBufSupported) {
+  if (cuMemAlloc) {
 #if !defined(__HIP_PLATFORM_AMD__)
+    if (!dmaBufSupported) {
+      throw mscclpp::Error("Please make sure dma buffer is supported by the device", ErrorCode::InvalidUsage);
+    }
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
 

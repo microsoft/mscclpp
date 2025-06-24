@@ -109,7 +109,8 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
 }
 
 NvlsConnection::Impl::~Impl() {
-  // we don't need to free multicast handle object according to NCCL.
+  // Please ensure that all memory mappings are unmapped from the handle before calling the connection destructor.
+  cuMemRelease(mcHandle_);
   if (rootPid_ == getpid()) {
     close(mcFileDesc_);
   }

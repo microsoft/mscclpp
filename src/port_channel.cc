@@ -20,26 +20,47 @@ MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_pt
 
 MSCCLPP_API_CPP ProxyService::ProxyService(size_t fifoSize)
     : proxy_(std::make_shared<Proxy>([&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
-                                     [&]() { bindThread(); }, fifoSize)) {
+                                     [&]() { bindThread(); }, fifoSize)),
+      lock_(false) {
   int cudaDevice;
   MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
-  deviceNumaNode = getDeviceNumaNode(cudaDevice);
+  deviceNumaNode_ = getDeviceNumaNode(cudaDevice);
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
                                                                std::shared_ptr<Connection> connection) {
+  SpinLock spin(lock_);
   semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
   return semaphores_.size() - 1;
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
+  SpinLock spin(lock_);
   semaphores_.push_back(semaphore);
   return semaphores_.size() - 1;
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
+  SpinLock spin(lock_);
+  if (!reusableMemoryIds_.empty()) {
+    auto it = reusableMemoryIds_.begin();
+    MemoryId memoryId = *it;
+    reusableMemoryIds_.erase(it);
+    memories_[memoryId] = memory;
+    return memoryId;
+  }
   memories_.push_back(memory);
   return memories_.size() - 1;
+}
+
+MSCCLPP_API_CPP void ProxyService::removeMemory(MemoryId memoryId) {
+  SpinLock spin(lock_);
+  if (reusableMemoryIds_.find(memoryId) != reusableMemoryIds_.end() || memoryId >= memories_.size()) {
+    WARN("Attempted to remove a memory that is not registered or already removed: %u", memoryId);
+    return;
+  }
+  memories_[memoryId] = RegisteredMemory();
+  reusableMemoryIds_.insert(memoryId);
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(SemaphoreId id) const {
@@ -59,13 +80,14 @@ MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
 MSCCLPP_API_CPP void ProxyService::bindThread() {
-  if (deviceNumaNode >= 0) {
-    numaBind(deviceNumaNode);
-    INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode);
+  if (deviceNumaNode_ >= 0) {
+    numaBind(deviceNumaNode_);
+    INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode_);
   }
 }
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
+  SpinLock spin(lock_, false);
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
 
@@ -77,19 +99,19 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
     RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
     semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
                                    trigger->fields.size);
-    inflightRequests[semaphore->connection()]++;
+    inflightRequests_[semaphore->connection()]++;
   }
 
   if (trigger->fields.type & TriggerFlag) {
     semaphore->signal();
-    inflightRequests[semaphore->connection()]++;
+    inflightRequests_[semaphore->connection()]++;
   }
 
   if (trigger->fields.type & TriggerSync ||
-      (maxWriteQueueSize != -1 && inflightRequests[semaphore->connection()] > maxWriteQueueSize)) {
+      (maxWriteQueueSize != -1 && inflightRequests_[semaphore->connection()] > maxWriteQueueSize)) {
     semaphore->connection()->flush();
     result = ProxyHandlerResult::FlushFifoTailAndContinue;
-    inflightRequests[semaphore->connection()] = 0;
+    inflightRequests_[semaphore->connection()] = 0;
   }
 
   return result;
