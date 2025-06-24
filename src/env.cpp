@@ -67,7 +67,7 @@ Env::Env()
       enableNcclFallback(readEnv<bool>("MSCCLPP_ENABLE_NCCL_FALLBACK", false)),
       disableChannelCache(readEnv<bool>("MSCCLPP_DISABLE_CHANNEL_CACHE", false)),
       forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)),
-      fifoUseTailReplica(readEnv<bool>("MSCCLPP_FIFO_USE_TAIL_REPLICA", false)) {}
+      fifoUseTailReplica(readEnv<bool>("MSCCLPP_FIFO_USE_TAIL_REPLICA", true)) {}
 
 std::shared_ptr<Env> env() {
   static std::shared_ptr<Env> globalEnv = std::shared_ptr<Env>(new Env());
