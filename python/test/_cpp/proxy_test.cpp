@@ -36,16 +36,10 @@ class MyProxyService {
         connections_(conns),
         allRegMem_(allRegMem),
         semaphores_(semaphores),
-        proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }, [&]() { bindThread(); }) {
+        proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {
     int cudaDevice;
     MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
     deviceNumaNode_ = mscclpp::getDeviceNumaNode(cudaDevice);
-  }
-
-  void bindThread() {
-    if (deviceNumaNode_ >= 0) {
-      mscclpp::numaBind(deviceNumaNode_);
-    }
   }
 
   mscclpp::ProxyHandlerResult handleTrigger(mscclpp::ProxyTrigger) {
@@ -64,7 +58,7 @@ class MyProxyService {
 
   void stop() { proxy_.stop(); }
 
-  mscclpp::FifoDeviceHandle fifoDeviceHandle() { return proxy_.fifo().deviceHandle(); }
+  mscclpp::FifoDeviceHandle fifoDeviceHandle() { return proxy_.fifo()->deviceHandle(); }
 };
 
 void init_mscclpp_proxy_test_module(nb::module_ &m) {
