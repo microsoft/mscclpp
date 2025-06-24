@@ -220,9 +220,6 @@ enum class Transport {
   NumTransports,  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
-                                      "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
-
 namespace detail {
 const size_t TransportFlagsSize = 12;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
@@ -377,6 +374,13 @@ inline TransportFlags operator&(Transport transport1, Transport transport2) {
 inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
+
+/// Available device types.
+enum class Device {
+  Unknown,  // Unknown device type.
+  CPU,      // CPU device type.
+  GPU,      // GPU device type.
+};
 
 class Context;
 class Connection;
@@ -562,6 +566,20 @@ struct EndpointConfig {
         maxWriteQueueSize(maxWriteQueueSize) {}
 };
 
+///
+class Flag {
+ public:
+  const RegisteredMemory& memory() const;
+
+ protected:
+  struct Impl;
+  Flag(std::shared_ptr<Impl> pimpl);
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Semaphore;
+};
+
 /// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
 /// where the process group abstraction offered by Communicator is not suitable, e.g., ephemeral client-server
 /// connections. Correct use of this class requires external synchronization when finalizing connections with the
@@ -609,6 +627,12 @@ class Context : public std::enable_shared_from_this<Context> {
   /// @return A shared pointer to the connection.
   std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
+  ///
+  /// @param connection
+  /// @param device
+  /// @return
+  Flag createFlag(std::shared_ptr<Connection> connection, Device device = Device::GPU);
+
  private:
   Context();
 
@@ -617,6 +641,22 @@ class Context : public std::enable_shared_from_this<Context> {
 
   friend class RegisteredMemory;
   friend class Endpoint;
+};
+
+///
+class Semaphore {
+ public:
+  Semaphore(Flag localFlag, RegisteredMemory remoteFlagMemory);
+
+  std::shared_ptr<Connection> connection() const;
+
+  const RegisteredMemory& localMemory() const;
+
+  const RegisteredMemory& remoteMemory() const;
+
+ protected:
+  struct Impl;
+  std::shared_ptr<Impl> pimpl_;
 };
 
 template <typename T>
@@ -796,6 +836,19 @@ class Communicator {
     return connect(remoteRank, tag, localConfig);
   }
 
+  /// 
+  /// @param connection 
+  /// @param device 
+  /// @return 
+  Flag createFlag(std::shared_ptr<Connection> connection, Device device);
+
+  /// 
+  /// @param remoteRank 
+  /// @param tag 
+  /// @param localFlag 
+  /// @return 
+  std::shared_future<Semaphore> buildSemaphore(int remoteRank, int tag, const Flag& localFlag);
+
   /// Get the remote rank a connection is connected to.
   ///
   /// @param connection The connection to get the remote rank for.
@@ -841,6 +894,8 @@ using PacketPayload = typename T::Payload;
 }  // namespace mscclpp
 
 namespace std {
+
+std::string to_string(const mscclpp::Transport& transport);
 
 /// Specialization of the std::hash template for mscclpp::TransportFlags.
 template <>

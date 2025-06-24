@@ -93,6 +93,12 @@ const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc | Tran
 
 namespace std {
 
+std::string to_string(const mscclpp::Transport& transport) {
+  static const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
+                                               "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
+  return TransportNames[static_cast<size_t>(transport)];
+}
+
 template <>
 struct hash<mscclpp::TransportFlags> {
   size_t operator()(const mscclpp::TransportFlags& flags) const {

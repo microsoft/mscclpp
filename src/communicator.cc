@@ -90,6 +90,31 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
   return shared_future;
 }
 
+MSCCLPP_API_CPP Flag Communicator::createFlag(std::shared_ptr<Connection> connection, Device device) {
+  return context()->createFlag(std::move(connection), device);
+}
+
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(int remoteRank, int tag,
+                                                                           const Flag& localFlag) {
+  sendMemory(localFlag.memory(), remoteRank, tag);
+
+  auto future =
+      std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
+                                         localFlag = localFlag]() mutable {
+        if (lastRecvItem) {
+          // Recursive call to the previous receive items
+          lastRecvItem->wait();
+        }
+        std::vector<char> data;
+        bootstrap()->recv(data, remoteRank, tag);
+        auto remoteFlagMemory = RegisteredMemory::deserialize(data);
+        return Semaphore(localFlag, remoteFlagMemory);
+      });
+  auto shared_future = std::shared_future<Semaphore>(std::move(future));
+  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Semaphore>>(shared_future));
+  return shared_future;
+}
+
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
   return pimpl_->connectionInfos_.at(&connection).remoteRank;
 }

@@ -61,7 +61,11 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     if (r == rank) {
       continue;
     }
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
+    auto flag = communicator->createFlag(connectionFutures[r].get(), mscclpp::Device::GPU);
+
+    auto sema = communicator->buildSemaphore(r, 0, flag).get();
+
+    mscclpp::SemaphoreId cid = proxyService->addSemaphore(std::make_shared<mscclpp::Host2DeviceSemaphore>(sema));
 
     portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));

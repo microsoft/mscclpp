@@ -56,9 +56,11 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
     if (r == rank) {
       continue;
     }
-    connections[r] = connectionFutures[r].get();
+    auto flag = communicator->createFlag(connectionFutures[r].get(), mscclpp::Device::GPU);
 
-    memorySemaphores[r] = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[r]);
+    auto sema = communicator->buildSemaphore(r, 0, flag).get();
+
+    memorySemaphores[r] = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema);
 
     memoryChannels.emplace_back(memorySemaphores[r], remoteMemFutures[r].get(), inputBufRegMem.data(),
                                 (isInPlace ? nullptr : outputBufRegMem.data()));

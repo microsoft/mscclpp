@@ -9,6 +9,7 @@
 #include "connection.hpp"
 #include "debug.h"
 #include "endpoint.hpp"
+#include "flag.hpp"
 #include "registered_memory.hpp"
 
 namespace mscclpp {
@@ -96,6 +97,10 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
 
   pimpl_->connections_.push_back(conn);
   return conn;
+}
+
+MSCCLPP_API_CPP Flag Context::createFlag(std::shared_ptr<Connection> connection, Device device) {
+  return Flag(std::make_shared<Flag::Impl>(connection, device, *this));
 }
 
 }  // namespace mscclpp

@@ -12,63 +12,18 @@
 
 namespace mscclpp {
 
-/// A base class for semaphores.
-///
-/// A semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
-/// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
-/// outbound semaphore ID. The incremented outbound semaphore ID is copied to the remote peer's inbound semaphore ID so
-/// that the remote peer can wait for the local peer to complete a data transfer. Vice versa, the remote peer signals
-/// the local peer that it has completed a data transfer by incrementing the remote peer's outbound semaphore ID and
-/// copying the incremented value to the local peer's inbound semaphore ID.
-///
-/// @tparam InboundDeleter The deleter for inbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or CudaDeleter for device memory.
-/// @tparam OutboundDeleter The deleter for outbound semaphore IDs. This is either `std::default_delete` for host memory
-/// or CudaDeleter for device memory.
-///
-template <template <typename> typename InboundDeleter, template <typename> typename OutboundDeleter>
-class BaseSemaphore {
- protected:
-  /// The registered memory for the remote peer's inbound semaphore ID.
-  std::shared_future<RegisteredMemory> remoteInboundSemaphoreIdsRegMem_;
-
-  /// The inbound semaphore ID that is incremented by the remote peer and waited on by the local peer.
-  ///
-  /// The location of localInboundSemaphore_ can be either on the host or on the device.
-  std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundSemaphore_;
-
-  /// The expected inbound semaphore ID to be incremented by the local peer and compared to the
-  /// localInboundSemaphore_.
-  ///
-  /// The location of expectedInboundSemaphore_ can be either on the host or on the device.
-  std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphore_;
-
-  /// The outbound semaphore ID that is incremented by the local peer and copied to the remote peer's
-  /// localInboundSemaphore_.
-  ///
-  /// The location of outboundSemaphore_ can be either on the host or on the device.
-  std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundSemaphore_;
-
- public:
-  /// Constructs a BaseSemaphore.
-  ///
-  /// @param localInboundSemaphoreId The inbound semaphore ID
-  /// @param expectedInboundSemaphoreId The expected inbound semaphore ID
-  /// @param outboundSemaphoreId The outbound semaphore ID
-  BaseSemaphore(std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> localInboundSemaphoreId,
-                std::unique_ptr<uint64_t, InboundDeleter<uint64_t>> expectedInboundSemaphoreId,
-                std::unique_ptr<uint64_t, OutboundDeleter<uint64_t>> outboundSemaphoreId)
-      : localInboundSemaphore_(std::move(localInboundSemaphoreId)),
-        expectedInboundSemaphore_(std::move(expectedInboundSemaphoreId)),
-        outboundSemaphore_(std::move(outboundSemaphoreId)) {}
-};
-
 /// A semaphore for sending signals from the host to the device.
-class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuHostDeleter> {
+class Host2DeviceSemaphore {
  private:
-  std::shared_ptr<Connection> connection_;
+  Semaphore semaphore_;
+  detail::UniqueGpuPtr<uint64_t> expectedInboundFlagId_;
+  detail::UniqueGpuHostPtr<uint64_t> outboundFlagId_;
 
  public:
+  /// Constructor.
+  /// @param semaphore
+  Host2DeviceSemaphore(const Semaphore& semaphore);
+
   /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
@@ -76,7 +31,7 @@ class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::Gp
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
-  std::shared_ptr<Connection> connection();
+  std::shared_ptr<Connection> connection() const;
 
   /// Signal the device.
   void signal();
@@ -85,13 +40,22 @@ class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::Gp
   using DeviceHandle = Host2DeviceSemaphoreDeviceHandle;
 
   /// Returns the device-side handle.
-  DeviceHandle deviceHandle();
+  DeviceHandle deviceHandle() const;
 };
 
 /// A semaphore for sending signals from the local host to a remote host.
-class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::default_delete> {
+class Host2HostSemaphore {
+ private:
+  Semaphore semaphore_;
+  std::unique_ptr<uint64_t> expectedInboundFlagId_;
+  std::unique_ptr<uint64_t> outboundFlagId_;
+
  public:
-  /// Constructor
+  /// Constructor.
+  /// @param semaphore
+  Host2HostSemaphore(const Semaphore& semaphore);
+
+  /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed for
   /// Host2HostSemaphore.
@@ -99,7 +63,7 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
-  std::shared_ptr<Connection> connection();
+  std::shared_ptr<Connection> connection() const;
 
   /// Signal the remote host.
   void signal();
@@ -111,29 +75,34 @@ class Host2HostSemaphore : public BaseSemaphore<std::default_delete, std::defaul
   /// Wait for the remote host to signal.
   /// @param maxSpinCount The maximum number of spin counts before throwing an exception. Never throws if negative.
   void wait(int64_t maxSpinCount = 10000000);
-
- private:
-  std::shared_ptr<Connection> connection_;
 };
 
 /// A semaphore for sending signals from the local device to a peer device via a GPU thread.
-class MemoryDevice2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuDeleter> {
+class MemoryDevice2DeviceSemaphore {
+ private:
+  Semaphore semaphore_;
+  detail::UniqueGpuPtr<uint64_t> expectedInboundFlagId_;
+  detail::UniqueGpuPtr<uint64_t> outboundFlagId_;
+
  public:
+  /// Constructor.
+  /// @param semaphore
+  MemoryDevice2DeviceSemaphore(const Semaphore& semaphore);
+
   /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
   MemoryDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
 
-  /// Constructor.
-  MemoryDevice2DeviceSemaphore() = delete;
+  /// Returns the connection.
+  /// @return The connection associated with this semaphore.
+  std::shared_ptr<Connection> connection() const;
 
   /// Device-side handle for MemoryDevice2DeviceSemaphore.
   using DeviceHandle = MemoryDevice2DeviceSemaphoreDeviceHandle;
 
   /// Returns the device-side handle.
   DeviceHandle deviceHandle() const;
-
-  bool isRemoteInboundSemaphoreIdSet_;
 };
 
 /// @deprecated Use MemoryDevice2DeviceSemaphore instead.

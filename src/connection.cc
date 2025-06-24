@@ -33,8 +33,7 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
 std::string Connection::getTransportName() const {
-  return TransportNames[static_cast<int>(this->transport())] + " -> " +
-         TransportNames[static_cast<int>(this->remoteTransport())];
+  return std::to_string(transport()) + " -> " + std::to_string(remoteTransport());
 }
 
 int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
@@ -49,13 +48,6 @@ CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, Endpoint 
   }
   if (remoteEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made to a Cuda IPC endpoint", ErrorCode::InvalidUsage);
-  }
-  // sanity check: make sure the IPC connection is being made within a node
-  if (getImpl(remoteEndpoint)->hostHash_ != getImpl(localEndpoint)->hostHash_) {
-    std::stringstream ss;
-    ss << "Cuda IPC connection can only be made within a node: " << std::hex << getImpl(remoteEndpoint)->hostHash_
-       << " != " << std::hex << getImpl(localEndpoint)->hostHash_;
-    throw mscclpp::Error(ss.str(), ErrorCode::InvalidUsage);
   }
   INFO(MSCCLPP_P2P, "Cuda IPC connection created");
 }
