@@ -16,16 +16,7 @@
 namespace mscclpp {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) {
-  uint64_t val;
-#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
-  // This is faster for A100.
-  asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
-#else   // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
-  val = atomicLoad(ptr, memoryOrderRelaxed);
-#endif  // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
-  return val;
-}
+MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) { return atomicLoad(ptr, memoryOrderRelaxed); }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
@@ -103,7 +94,6 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the first condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    if (fifoHead < *tailReplica) return;
     OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)),
                             (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
   }
