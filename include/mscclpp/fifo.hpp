@@ -15,7 +15,7 @@ constexpr size_t DEFAULT_FIFO_SIZE = 512;
 /// Host-side proxy FIFO for device-produced work elements.
 class Fifo {
  public:
-  /// Construct a FIFO with a given number of entries.
+  /// Constructor.
   /// @param size Number of entries (default: DEFAULT_FIFO_SIZE).
   Fifo(int size = DEFAULT_FIFO_SIZE);
 
@@ -36,6 +36,9 @@ class Fifo {
   /// Get device-side FIFO handle.
   /// @return FifoDeviceHandle for device access.
   FifoDeviceHandle deviceHandle() const;
+
+  [[deprecated("flushTail() is now no-op and no longer needed. This will be removed in a future release.")]] void
+  flushTail([[maybe_unused]] bool sync = false) {}
 
  private:
   struct Impl;
