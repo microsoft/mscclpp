@@ -18,9 +18,7 @@
 #include "api.h"
 #include "context.hpp"
 #include "debug.h"
-#if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
-#endif  // defined(USE_IBVERBS)
 
 #if !defined(__HIP_PLATFORM_AMD__)
 
@@ -38,7 +36,7 @@ static bool checkNvPeerMemLoaded() {
 
 namespace mscclpp {
 
-#if defined(USE_IBVERBS)
+#if defined(IBVERBS_LIBRARY)
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   if (size == 0) {
@@ -511,7 +509,7 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
   throw Error("IB device not found", ErrorCode::InvalidUsage);
 }
 
-#else  // !defined(USE_IBVERBS)
+#else  // !defined(IBVERBS_LIBRARY)
 
 MSCCLPP_API_CPP int getIBDeviceCount() { return 0; }
 
@@ -519,6 +517,6 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
 
 MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string&) { return Transport::Unknown; }
 
-#endif  // !defined(USE_IBVERBS)
+#endif  // !defined(IBVERBS_LIBRARY)
 
 }  // namespace mscclpp
