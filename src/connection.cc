@@ -224,8 +224,8 @@ void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t 
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
-  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, value, /*signaled=*/true);
-  qp->postSend();
+  qp_->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, value, /*signaled=*/true);
+  qp_->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomicAdd: value %lu to %p", value, (uint8_t*)dstMrInfo.addr + dstOffset);
 }
 
