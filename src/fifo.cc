@@ -57,7 +57,9 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
 MSCCLPP_API_CPP void Fifo::pop() {
   uint64_t curTail = *(pimpl_->tailHost);
   pimpl_->triggers.get()[curTail % pimpl_->size].fst = 0;
-  *(pimpl_->tailHost) = curTail + 1;
+  // *(pimpl_->tailHost) = curTail + 1;
+  // let's ignore uint64_t overflow first
+  atomicStore(pimpl_->tailHost.get(), curTail + 1, memoryOrderRelease);
 }
 
 MSCCLPP_API_CPP void Fifo::flushTail([[maybe_unused]] bool sync) {
