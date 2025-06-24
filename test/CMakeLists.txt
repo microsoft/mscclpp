@@ -57,3 +57,6 @@ gtest_discover_tests(mp_unit_tests DISCOVERY_MODE PRE_TEST)
 
 # mscclpp-test
 add_subdirectory(mscclpp-test)
+
+# Performance tests
+add_subdirectory(perf)

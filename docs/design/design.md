@@ -11,7 +11,7 @@ MSCCL++ redefines inter-GPU communication interfaces, thereby delivering a highl
 MSCCL++ Abstractions Overview
 ```
 
-The followings highlight the key features of MSCCL++.
+The following highlight the key features of MSCCL++.
 * **Light-weight and multi-layer abstractions.** MSCCL++ provides communication abstractions at lowest level close to hardware and at the highest level close to application API. The lowest level of abstraction is ultra light weight which enables a user to implement logics of data movement for a collective operation such as AllReduce inside a GPU kernel extremely efficiently without worrying about memory ordering of different ops. The modularity of MSCCL++ enables a user to construct the building blocks of MSCCL++ in a high level abstraction in Python and feed them to a CUDA kernel in order to facilitate the user's productivity.
 
 * **1-sided 0-copy synchronous and asynchronous abstracts.** MSCCL++ provides fine-grained synchronous and asynchronous 0-copy 1-sided abstracts for communication primitives such as `put()`, `get()`, `signal()`, `flush()`, and `wait()`. The 1-sided abstractions allows a user to asynchronously `put()` their data on the remote GPU as soon as it is ready without requiring the remote side to issue any receive instruction. This enables users to easily implement flexible communication logics, such as overlapping communication with computation, or implementing customized collective communication algorithms without worrying about potential deadlocks. Additionally, the 0-copy capability enables MSCCL++ to directly transfer data between user's buffers without using intermediate internal buffers which saves GPU bandwidth and memory capacity.
@@ -98,7 +98,7 @@ __device__ void gpuKernel(mscclpp::MemoryChannelDeviceHandle* memChans, int flag
 
 As mentioned in the previous section, the offloading of communication logic from the GPU to the CPU is accomplished through the `Fifo` and `Trigger` mechanism.
 
-The accompanying figure details the structure of `Tigger`, employing three bits to denote the operation type: `data transfer`, `signal`, and `flush`. The remaining fields specify the precise data locations for both local and remote buffers.
+The accompanying figure details the structure of `Trigger`, employing three bits to denote the operation type: `data transfer`, `signal`, and `flush`. The remaining fields specify the precise data locations for both local and remote buffers.
 
 ```
 |-------------------|-------------------|-------------------|-----------------|-----------------|---------|-------------------|---------------|
@@ -131,7 +131,7 @@ __device__ void gpuKernel(mscclpp::PortChannelDeviceHandle* portChannel) {
 
 ### Fusion of communication and computation
 
-Traditional communication libraries enforce a separation between communication and computation, creating a bottleneck where communication must await the completion of computation, especially when data dependencies exist. In contrast, MSCCL++ leverages its low-level premitives to facilitate the seamless integration of communication with computation. By segmenting the computation into tiles, MSCCL++ enables the simultaneous pipelining of computation and communication tasks. This approach not only mitigates the communication delay by overlapping processes but also significantly improves throughput by leveraging the low-level API for fine-grained control over the hardware, ensuring optimal efficiency.
+Traditional communication libraries enforce a separation between communication and computation, creating a bottleneck where communication must await the completion of computation, especially when data dependencies exist. In contrast, MSCCL++ leverages its low-level primitives to facilitate the seamless integration of communication with computation. By segmenting the computation into tiles, MSCCL++ enables the simultaneous pipelining of computation and communication tasks. This approach not only mitigates the communication delay by overlapping processes but also significantly improves throughput by leveraging the low-level API for fine-grained control over the hardware, ensuring optimal efficiency.
 
 ### Implementing customized collective communication algorithms
 

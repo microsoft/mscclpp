@@ -14,7 +14,7 @@ namespace mscclpp {
 
 /// A base class for semaphores.
 ///
-/// An semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
+/// A semaphore is a synchronization mechanism that allows the local peer to wait for the remote peer to complete a
 /// data transfer. The local peer signals the remote peer that it has completed a data transfer by incrementing the
 /// outbound semaphore ID. The incremented outbound semaphore ID is copied to the remote peer's inbound semaphore ID so
 /// that the remote peer can wait for the local peer to complete a data transfer. Vice versa, the remote peer signals
@@ -64,7 +64,7 @@ class BaseSemaphore {
 };
 
 /// A semaphore for sending signals from the host to the device.
-class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, std::default_delete> {
+class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuHostDeleter> {
  private:
   std::shared_ptr<Connection> connection_;
 

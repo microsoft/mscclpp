@@ -4,38 +4,18 @@
 #ifndef MSCCLPP_UTILS_HPP_
 #define MSCCLPP_UTILS_HPP_
 
-#include <chrono>
 #include <mscclpp/core.hpp>
 #include <string>
 
 namespace mscclpp {
 
-struct Timer {
-  std::chrono::steady_clock::time_point start_;
-  int timeout_;
-
-  Timer(int timeout = -1);
-
-  ~Timer();
-
-  /// Returns the elapsed time in microseconds.
-  int64_t elapsed() const;
-
-  void set(int timeout);
-
-  void reset();
-
-  void print(const std::string& name);
-};
-
-struct ScopedTimer : public Timer {
-  const std::string name_;
-
-  ScopedTimer(const std::string& name);
-
-  ~ScopedTimer();
-};
-
+/// Get the host name of the system.
+/// @param maxlen The maximum length of the returned string.
+/// @param delim The delimiter to use for the host name; if the delimiter is found before maxlen characters, the
+/// host name will be truncated at that point.
+/// @return The host name of the system, truncated to maxlen characters if necessary, and split by
+/// the specified delimiter.
+/// @throw Error if it fails to retrieve the host name (error code: SystemError).
 std::string getHostName(int maxlen, const char delim);
 
 /// Get the number of available InfiniBand devices.

@@ -12,6 +12,24 @@
 
 namespace mscclpp {
 
+struct Timer {
+  std::chrono::steady_clock::time_point start_;
+  int timeout_;
+
+  Timer(int timeout = -1);
+
+  ~Timer();
+
+  /// Returns the elapsed time in microseconds.
+  int64_t elapsed() const;
+
+  void set(int timeout);
+
+  void reset();
+
+  void print(const std::string& name);
+};
+
 // PCI Bus ID <-> int64 conversion functions
 std::string int64ToBusId(int64_t id);
 int64_t busIdToInt64(const std::string busId);

@@ -11,7 +11,7 @@
 #include "gpu.hpp"
 #include "utils.hpp"
 
-/// Throw @ref mscclpp::CudaError if @p cmd does not return cudaSuccess.
+/// Throw mscclpp::CudaError if @p cmd does not return cudaSuccess.
 /// @param cmd The command to execute.
 #define MSCCLPP_CUDATHROW(cmd)                                                                                       \
   do {                                                                                                               \
@@ -22,21 +22,21 @@
     }                                                                                                                \
   } while (false)
 
-/// Throw @ref mscclpp::CuError if @p cmd does not return CUDA_SUCCESS.
+/// Throw mscclpp::CuError if @p cmd does not return CUDA_SUCCESS.
 /// @param cmd The command to execute.
-#define MSCCLPP_CUTHROW(cmd)                                                                                      \
-  do {                                                                                                            \
-    CUresult err = cmd;                                                                                           \
-    if (err != CUDA_SUCCESS) {                                                                                    \
-      throw mscclpp::CuError(std::string("Call to " #cmd " failed.") + __FILE__ + ":" + std::to_string(__LINE__), \
-                             err);                                                                                \
-    }                                                                                                             \
+#define MSCCLPP_CUTHROW(cmd)                                                                                       \
+  do {                                                                                                             \
+    CUresult err = cmd;                                                                                            \
+    if (err != CUDA_SUCCESS) {                                                                                     \
+      throw mscclpp::CuError(std::string("Call to " #cmd " failed. ") + __FILE__ + ":" + std::to_string(__LINE__), \
+                             err);                                                                                 \
+    }                                                                                                              \
   } while (false)
 
 namespace mscclpp {
 
 /// A RAII guard that will cudaThreadExchangeStreamCaptureMode to cudaStreamCaptureModeRelaxed on construction and
-/// restore the previous mode on destruction. This is helpful when we want to avoid CUDA graph capture.
+/// restore the previous mode on destruction. This is helpful when we want to avoid CUDA/HIP graph capture.
 struct AvoidCudaGraphCaptureGuard {
   AvoidCudaGraphCaptureGuard();
   ~AvoidCudaGraphCaptureGuard();
@@ -45,21 +45,85 @@ struct AvoidCudaGraphCaptureGuard {
 
 /// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
 struct CudaStreamWithFlags {
+  /// Constructor without flags. This will not create any stream. set() can be called later to create a stream with
+  /// specified flags.
   CudaStreamWithFlags() : stream_(nullptr) {}
+
+  /// Constructor with flags. This will create a stream with the specified flags on the current device.
+  /// @param flags The flags to create the stream with.
   CudaStreamWithFlags(unsigned int flags);
+
+  /// Destructor. This will destroy the stream if it was created.
   ~CudaStreamWithFlags();
+
+  /// Set the stream with the specified flags. If the stream was already created, it will raise an error with
+  /// ErrorCode::InvalidUsage.
+  /// @param flags The flags to create the stream with.
+  /// @throws Error if the stream was already created.
   void set(unsigned int flags);
+
+  /// Check if the stream is empty (not created).
+  /// @return true if the stream is empty, false otherwise.
   bool empty() const;
+
   operator cudaStream_t() const { return stream_; }
+
   cudaStream_t stream_;
 };
+
+class GpuStreamPool;
+
+/// A managed non-blocking GPU stream object created by GpuStreamPool.
+/// This object does not own the stream.
+/// When this object is destroyed, it will return the underlying CudaStreamWithFlags to the pool.
+class GpuStream {
+ protected:
+  /// Constructor. Only called by a GpuStreamPool.
+  /// @param pool A shared pointer to the GpuStreamPool that manages this stream.
+  /// @param stream A shared pointer to the CudaStreamWithFlags that represents the underlying stream.
+  GpuStream(std::shared_ptr<GpuStreamPool> pool, std::shared_ptr<CudaStreamWithFlags> stream);
+
+ public:
+  /// Destructor. This will return the underlying CudaStreamWithFlags to the pool, not destroy it.
+  ~GpuStream();
+
+  operator cudaStream_t() const { return stream_->stream_; }
+
+ private:
+  friend class GpuStreamPool;
+
+  std::shared_ptr<GpuStreamPool> pool_;
+  std::shared_ptr<CudaStreamWithFlags> stream_;
+};
+
+/// A pool of managed GPU streams. Only provides non-blocking streams.
+/// This is intended to be used for reusing temporal streams.
+class GpuStreamPool {
+ public:
+  GpuStreamPool();
+
+  /// Get a non-blocking GPU stream from the pool. If no streams are available, a new one will be created.
+  /// @return A GpuStream object.
+  GpuStream getStream();
+
+  /// Clear the pool, which will remove all streams from the pool.
+  void clear();
+
+ protected:
+  friend class GpuStream;
+  std::vector<std::shared_ptr<CudaStreamWithFlags>> streams_;
+};
+
+/// Get the singleton instance of GpuStreamPool.
+/// @return A shared pointer to the GpuStreamPool instance.
+std::shared_ptr<GpuStreamPool> gpuStreamPool();
 
 namespace detail {
 
 void setReadWriteMemoryAccess(void* base, size_t size);
 
 void* gpuCalloc(size_t bytes);
-void* gpuCallocHost(size_t bytes);
+void* gpuCallocHost(size_t bytes, unsigned int flags);
 #if defined(__HIP_PLATFORM_AMD__)
 void* gpuCallocUncached(size_t bytes);
 #endif  // defined(__HIP_PLATFORM_AMD__)
@@ -142,13 +206,13 @@ auto gpuCallocUnique(size_t nelems = 1) {
 }
 
 template <class T>
-auto gpuCallocHostShared(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems);
+auto gpuCallocHostShared(size_t nelems = 1, unsigned int flags = cudaHostAllocMapped) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, std::shared_ptr<T>>(detail::gpuCallocHost, nelems, flags);
 }
 
 template <class T>
-auto gpuCallocHostUnique(size_t nelems = 1) {
-  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems);
+auto gpuCallocHostUnique(size_t nelems = 1, unsigned int flags = cudaHostAllocMapped) {
+  return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems, flags);
 }
 
 #if defined(__HIP_PLATFORM_AMD__)
@@ -188,11 +252,24 @@ size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFla
 
 }  // namespace detail
 
+/// Copies memory from src to dst asynchronously.
+/// @tparam T Type of each element in the memory.
+/// @param dst Destination address.
+/// @param src Source address.
+/// @param nelems Number of elements to copy.
+/// @param stream The stream to use for the copy operation.
+/// @param kind The kind of copy operation. Default is cudaMemcpyDefault.
 template <class T = char>
 void gpuMemcpyAsync(T* dst, const T* src, size_t nelems, cudaStream_t stream, cudaMemcpyKind kind = cudaMemcpyDefault) {
   detail::gpuMemcpyAsync(dst, src, nelems * sizeof(T), stream, kind);
 }
 
+/// Copies memory from src to dst synchronously.
+/// @tparam T Type of each element in the memory.
+/// @param dst Destination address.
+/// @param src Source address.
+/// @param nelems Number of elements to copy.
+/// @param kind The kind of copy operation. Default is cudaMemcpyDefault.
 template <class T = char>
 void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMemcpyDefault) {
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
@@ -203,10 +280,10 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
 /// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
 bool isNvlsSupported();
 
-/// Check if ptr is allocaed by cuMemMap
+/// Check if ptr is allocaed by cuMemMap.
 /// @param ptr The pointer to check.
 /// @return True if the pointer is allocated by cuMemMap, false otherwise.
-bool isCuMemMapAllocated([[maybe_unused]] void* ptr);
+bool isCuMemMapAllocated(void* ptr);
 
 /// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
 /// `GpuBuffer::data()`.

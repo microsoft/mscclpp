@@ -11,32 +11,51 @@
 
 namespace mscclpp {
 
+/// Return values for ProxyHandler.
 enum class ProxyHandlerResult {
+  /// Move to next trigger in FIFO.
   Continue,
+  /// Flush the FIFO and move to next trigger.
   FlushFifoTailAndContinue,
+  /// Stop and exit proxy.
   Stop,
 };
 
 class Proxy;
+
+/// Handler function type for proxy.
 using ProxyHandler = std::function<ProxyHandlerResult(ProxyTrigger)>;
 
+/// Host-side proxy for PortChannels.
 class Proxy {
  public:
-  Proxy(ProxyHandler handler, std::function<void()> threadInit, size_t fifoSize = DEFAULT_FIFO_SIZE);
-  Proxy(ProxyHandler handler, size_t fifoSize = DEFAULT_FIFO_SIZE);
+  /// Constructor.
+  /// @param handler Handler for each FIFO trigger.
+  /// @param threadInit Optional function run in proxy thread before FIFO consumption.
+  /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
+  Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize = DEFAULT_FIFO_SIZE);
+
+  /// Constructor.
+  /// @param handler Handler for each FIFO trigger.
+  /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
+  Proxy(ProxyHandler handler, int fifoSize = DEFAULT_FIFO_SIZE);
+
+  /// Destructor. Stops proxy if running.
   ~Proxy();
 
+  /// Start proxy.
   void start();
+
+  /// Stop proxy.
   void stop();
 
-  /// This is a concurrent fifo which is multiple threads from the device
-  /// can produce for and the sole proxy thread consumes it.
-  /// @return the fifo
-  Fifo& fifo();
+  /// Get reference to FIFO used by proxy.
+  /// @return Shared pointer to FIFO.
+  std::shared_ptr<Fifo> fifo();
 
  private:
   struct Impl;
-  std::unique_ptr<Impl> pimpl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace mscclpp

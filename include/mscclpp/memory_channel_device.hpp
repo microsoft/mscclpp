@@ -35,12 +35,6 @@ struct BaseMemoryChannelDeviceHandle {
   ///
   MSCCLPP_DEVICE_INLINE void relaxedSignal() { semaphore_.relaxedSignal(); }
 
-  /// Increase the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
-
-  /// Read the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
-
   /// Check if the remote semaphore has signaled.
   /// @return true if the remote semaphore has signaled.
   MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
@@ -148,7 +142,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param targetOffset The offset in bytes of the remote address.
   /// @param originOffset The offset in bytes of the local address.
   /// @param originBytes Bytes of the origin to be copied.
@@ -175,7 +169,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
 
   /// Retrieve data from a packet in the local packet buffer.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param index The index of the packet to be read. The offset in bytes is calculated as index * sizeof(PacketType).
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
@@ -191,7 +185,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param targetOffset The offset in bytes of the local packet buffer.
   /// @param originOffset The offset in bytes of the local address.
   /// @param originBytes Bytes of the origin to be copied.
@@ -229,7 +223,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// @deprecated Use @ref MemoryChannelDeviceHandle instead.
+/// @deprecated Use MemoryChannelDeviceHandle instead.
 [[deprecated("Use MemoryChannelDeviceHandle instead.")]] typedef MemoryChannelDeviceHandle SmChannelDeviceHandle;
 
 }  // namespace mscclpp

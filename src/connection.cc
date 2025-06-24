@@ -33,18 +33,18 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
-std::string Connection::getTransportName() {
+std::string Connection::getTransportName() const {
   return TransportNames[static_cast<int>(this->transport())] + " -> " +
          TransportNames[static_cast<int>(this->remoteTransport())];
 }
 
-int Connection::getMaxWriteQueueSize() { return maxWriteQueueSize; }
+int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
 
 // CudaIpcConnection
 
-CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint,
-                                     std::shared_ptr<CudaStreamWithFlags> stream)
-    : Connection(localEndpoint.maxWriteQueueSize()), stream_(stream) {
+CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
+                                     std::shared_ptr<CudaIpcStream> stream)
+    : Connection(context, localEndpoint.maxWriteQueueSize()), stream_(stream) {
   if (localEndpoint.transport() != Transport::CudaIpc) {
     throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
   }
@@ -61,9 +61,9 @@ CudaIpcConnection::CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndp
   INFO(MSCCLPP_P2P, "Cuda IPC connection created");
 }
 
-Transport CudaIpcConnection::transport() { return Transport::CudaIpc; }
+Transport CudaIpcConnection::transport() const { return Transport::CudaIpc; }
 
-Transport CudaIpcConnection::remoteTransport() { return Transport::CudaIpc; }
+Transport CudaIpcConnection::remoteTransport() const { return Transport::CudaIpc; }
 
 void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                               uint64_t size) {
@@ -77,9 +77,8 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
   char* dstPtr = (char*)dst.data();
   char* srcPtr = (char*)src.data();
 
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  stream_->memcpyD2D(dstPtr + dstOffset, srcPtr + srcOffset, size);
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr + dstOffset, srcPtr + srcOffset, size, cudaMemcpyDeviceToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT)
@@ -97,9 +96,8 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
   *src = newValue;
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  stream_->memcpyH2D(dstPtr + dstOffset, src, sizeof(uint64_t));
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(dstPtr, src, sizeof(uint64_t), cudaMemcpyHostToDevice, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
        newValue);
 
@@ -128,10 +126,8 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
     INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
 
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  stream_->sync();
 
-  AvoidCudaGraphCaptureGuard guard;
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
@@ -141,24 +137,24 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // IBConnection
 
-IBConnection::IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context)
-    : Connection(localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
-                                                         : EndpointConfig::DefaultMaxCqSize),
+IBConnection::IBConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint)
+    : Connection(context, localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
+                                                                  : EndpointConfig::DefaultMaxCqSize),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
-  qp = getImpl(localEndpoint)->ibQp_;
-  qp->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
-  qp->rts();
-  dummyAtomicSourceMem_ = context.registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
+  qp_ = getImpl(localEndpoint)->ibQp_;
+  qp_->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
+  qp_->rts();
+  dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   validateTransport(dummyAtomicSourceMem_, transport_);
   dstTransportInfo_ = getImpl(dummyAtomicSourceMem_)->getTransportInfo(transport_);
   INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
 }
 
-Transport IBConnection::transport() { return transport_; }
+Transport IBConnection::transport() const { return transport_; }
 
-Transport IBConnection::remoteTransport() { return remoteTransport_; }
+Transport IBConnection::remoteTransport() const { return remoteTransport_; }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                          uint64_t size) {
@@ -181,10 +177,10 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  qp->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
-                /*signaled=*/true);
+  qp_->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
+                 /*signaled=*/true);
 
-  qp->postSend();
+  qp_->postSend();
   INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
        (uint8_t*)dstMrInfo.addr + dstOffset, size);
 
@@ -209,9 +205,9 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   uint64_t oldValue = *src;
   *src = newValue;
 
-  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue, /*signaled=*/true);
+  qp_->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue, /*signaled=*/true);
 
-  qp->postSend();
+  qp_->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
        oldValue, newValue);
 
@@ -239,20 +235,20 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #endif
 
   Timer timer;
-  while (qp->getNumCqItems()) {
-    int wcNum = qp->pollCq();
+  while (qp_->getNumCqItems()) {
+    int wcNum = qp_->pollCq();
     if (wcNum < 0) {
       throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
     } else if (timeoutUsec >= 0) {
       auto elapsed = timer.elapsed();
       if (elapsed > timeoutUsec) {
         throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
-                        std::to_string(qp->getNumCqItems()) + " signals",
+                        std::to_string(qp_->getNumCqItems()) + " signals",
                     ErrorCode::Timeout);
       }
     }
     for (int i = 0; i < wcNum; ++i) {
-      int status = qp->getWcStatus(i);
+      int status = qp_->getWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
         throw mscclpp::IbError("a work item failed: status " + std::to_string(status), status);
       }
@@ -267,9 +263,9 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 // EthernetConnection
 
-EthernetConnection::EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize,
-                                       uint64_t recvBufferSize)
-    : Connection(localEndpoint.maxWriteQueueSize()),
+EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, Endpoint localEndpoint,
+                                       Endpoint remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize)
+    : Connection(context, localEndpoint.maxWriteQueueSize()),
       abortFlag_(0),
       sendBufferSize_(sendBufferSize),
       recvBufferSize_(recvBufferSize) {
@@ -314,9 +310,9 @@ EthernetConnection::~EthernetConnection() {
   threadRecvMessages_.join();
 }
 
-Transport EthernetConnection::transport() { return Transport::Ethernet; }
+Transport EthernetConnection::transport() const { return Transport::Ethernet; }
 
-Transport EthernetConnection::remoteTransport() { return Transport::Ethernet; }
+Transport EthernetConnection::remoteTransport() const { return Transport::Ethernet; }
 
 void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
                                uint64_t size) {

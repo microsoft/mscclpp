@@ -6,8 +6,17 @@ include(FetchContent)
 FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.4.0)
 FetchContent_MakeAvailable(nanobind)
 
-FetchContent_Declare(dlpack GIT_REPOSITORY https://github.com/dmlc/dlpack.git GIT_TAG v1.1)
-FetchContent_MakeAvailable(dlpack)
+FetchContent_Declare(dlpack
+    GIT_REPOSITORY https://github.com/dmlc/dlpack.git
+    GIT_TAG 5c210da409e7f1e51ddf445134a4376fdbd70d7d
+)
+
+FetchContent_GetProperties(dlpack)
+if(NOT dlpack_POPULATED)
+    FetchContent_Populate(dlpack)
+    # Add dlpack subdirectory but exclude it from installation
+    add_subdirectory(${dlpack_SOURCE_DIR} ${dlpack_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
 nanobind_add_module(mscclpp_py ${SOURCES})
