@@ -111,8 +111,7 @@ void CudaIpcConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint
 
   uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
 
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
-
+  stream_->setStreamIfNeeded();
   MSCCLPP_CUDATHROW(connectionAtomicAdd(dstPtr, value, *stream_));
   INFO(MSCCLPP_P2P, "CudaIpcConnection atomicAdd: value %lu to %p", value, dstPtr);
 }
@@ -224,8 +223,8 @@ void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t 
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
-  qp->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, value, /*signaled=*/true);
-  qp->postSend();
+  qp_->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, value, /*signaled=*/true);
+  qp_->postSend();
   INFO(MSCCLPP_NET, "IBConnection atomicAdd: value %lu to %p", value, (uint8_t*)dstMrInfo.addr + dstOffset);
 }
 

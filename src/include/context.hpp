@@ -18,10 +18,10 @@ class CudaIpcStream {
   std::shared_ptr<CudaStreamWithFlags> stream_;
   bool dirty_;
 
-  void setStreamIfNeeded();
-
  public:
   CudaIpcStream();
+
+  void setStreamIfNeeded();
 
   void memcpyD2D(void *dst, const void *src, size_t nbytes);
 
