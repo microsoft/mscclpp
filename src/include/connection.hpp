@@ -16,10 +16,12 @@
 namespace mscclpp {
 
 class CudaIpcConnection : public Connection {
-  std::shared_ptr<CudaStreamWithFlags> stream_;
+ private:
+  std::shared_ptr<CudaIpcStream> stream_;
 
  public:
-  CudaIpcConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, std::shared_ptr<CudaStreamWithFlags> stream);
+  CudaIpcConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
+                    std::shared_ptr<CudaIpcStream> stream);
 
   Transport transport() const override;
 
@@ -36,15 +38,16 @@ class CudaIpcConnection : public Connection {
 };
 
 class IBConnection : public Connection {
+ private:
   Transport transport_;
   Transport remoteTransport_;
-  IbQp* qp;
+  IbQp* qp_;
   std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
   RegisteredMemory dummyAtomicSourceMem_;
   mscclpp::TransportInfo dstTransportInfo_;
 
  public:
-  IBConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, Context& context);
+  IBConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint);
 
   Transport transport() const override;
 
@@ -61,6 +64,7 @@ class IBConnection : public Connection {
 };
 
 class EthernetConnection : public Connection {
+ private:
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> recvSocket_;
   std::thread threadRecvMessages_;
@@ -70,9 +74,12 @@ class EthernetConnection : public Connection {
   std::vector<char> sendBuffer_;
   std::vector<char> recvBuffer_;
 
+  void recvMessages();
+  void sendMessage();
+
  public:
-  EthernetConnection(Endpoint localEndpoint, Endpoint remoteEndpoint, uint64_t sendBufferSize = 256 * 1024 * 1024,
-                     uint64_t recvBufferSize = 256 * 1024 * 1024);
+  EthernetConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
+                     uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
 
   ~EthernetConnection();
 
@@ -88,11 +95,6 @@ class EthernetConnection : public Connection {
   void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
-
- private:
-  void recvMessages();
-
-  void sendMessage();
 };
 
 }  // namespace mscclpp

@@ -27,8 +27,8 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
-  /// @param fifoSize The size of the FIFO used by the proxy service. Default is DEFAULT_FIFO_SIZE.
-  ProxyService(size_t fifoSize = DEFAULT_FIFO_SIZE);
+  /// @param fifoSize Size of the FIFO used by the proxy service (default: DEFAULT_FIFO_SIZE).
+  ProxyService(int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
