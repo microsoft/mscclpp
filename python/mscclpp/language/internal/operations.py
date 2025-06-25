@@ -18,7 +18,7 @@ class BaseOperation:
     id: uuid.UUID = field(default_factory=uuid.uuid4, init=False)
     name: str
 
-    def local_data_access(self):
+    def local_data_access(self, sync_purpose=True):
         return []
 
 
@@ -80,16 +80,18 @@ class CopyOperation(BaseOperation):
         self.src_buff = src_buff
         self.dst_buff = dst_buff
 
-    def local_data_access(self):
+    def local_data_access(self, sync_purpose=True):
         data_access = []
-        for chunk in self.src_buff:
-            data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
-            )
-        for chunk in self.dst_buff:
-            data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
-            )
+        if self.name != Instruction.copy_packet or not sync_purpose:
+            for chunk in self.src_buff:
+                data_access.append(
+                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                )
+        if self.name != Instruction.transform_to_packet or not sync_purpose:
+            for chunk in self.dst_buff:
+                data_access.append(
+                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+                )
         return data_access
 
     def __add__(self, other):
@@ -293,7 +295,7 @@ class GetOperation(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
-    def local_data_access(self):
+    def local_data_access(self, sync_purpose=True):
         data_access = []
         for chunk in self.dst_buff:
             data_access.append(
@@ -368,12 +370,14 @@ class PutOperation(BaseOperation):
         self.with_signal = with_signal
         self.with_signal_and_flush = with_signal_and_flush
 
-    def local_data_access(self):
+    def local_data_access(self, sync_purpose=True):
         data_access = []
-        for chunk in self.src_buff:
-            data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
-            )
+        if self.name != Instruction.read_put_packet or not sync_purpose:
+            for chunk in self.src_buff:
+                data_access.append(
+                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                )
+        return data_access
 
     def __add__(self, other):
         fused_operation = None
@@ -456,12 +460,14 @@ class ReduceOperation(BaseOperation):
         self.reduce_operation = reduce_operation
         self.packet = packet
 
-    def local_data_access(self):
+    def local_data_access(self, sync_purpose=True):
         data_access = []
-        for chunk in self.local_src_buff:
-            data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
-            )
+        for i in range(len(self.local_src_buff)):
+            chunk = self.local_src_buff[i]
+            if not self.packet or i != 0 or not sync_purpose:
+                data_access.append(
+                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                )
         for chunk in self.local_dst_buff:
             data_access.append(
                 DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)

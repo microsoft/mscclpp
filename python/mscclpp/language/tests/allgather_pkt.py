@@ -33,7 +33,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
             output_buffer = rank.get_output_buffer()
             for peer in range(1, gpu_size):
                 dst_rank = (gpu + peer) % gpu_size
-                ch = Channel(dst_rank, gpu)
+                ch = MemoryChannel(dst_rank, gpu)
                 tb = peer - 1
                 ch.put_packet(scratch_buffer[dst_rank][gpu : gpu + 1], output_buffer[gpu : gpu + 1], tb)
 
