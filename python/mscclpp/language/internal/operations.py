@@ -16,27 +16,31 @@ import uuid
 @dataclass
 class BaseOperation:
     id: uuid.UUID = field(default_factory=uuid.uuid4, init=False)
-    name: str
+    rank: int
+    threadblock: int
+    name: Instruction
+
+    def __add__(self, other):
+        return None
 
     def local_data_access(self):
         return []
 
-
+    
 @dataclass
 class LocalChunk:
     type: BufferType
     index: int
     size: int
+    #orig_data_ref: Chunk = field(init=False)
 
     def to_json(self):
         return {"type": self.type.value, "index": self.index, "size": self.size}
 
 
 @dataclass
-class RemoteChunk:
+class RemoteChunk(LocalChunk):
     buffer_id: int
-    index: int
-    size: int
 
     def to_json(self):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
@@ -44,8 +48,8 @@ class RemoteChunk:
 
 @dataclass
 class SyncOperation(BaseOperation):
-    def __init__(self):
-        super().__init__(Instruction.nop)
+    def __init__(self, rank: int, threadblock: int):
+        super().__init__(rank, threadblock, Instruction.nop)
 
     def __add__(self, other):
         fused_operation = None
@@ -63,6 +67,8 @@ class SyncOperation(BaseOperation):
 class CopyOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         src_buff: List[LocalChunk],
         dst_buff: List[LocalChunk],
         from_packet: bool = False,
@@ -71,11 +77,11 @@ class CopyOperation(BaseOperation):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            super().__init__(Instruction.copy_packet)
+            super().__init__(rank, threadblock, Instruction.copy_packet)
         elif to_packet:
-            super().__init__(Instruction.transform_to_packet)
+            super().__init__(rank, threadblock, Instruction.transform_to_packet)
         else:
-            super().__init__(Instruction.copy)
+            super().__init__(rank, threadblock, Instruction.copy)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
@@ -92,9 +98,6 @@ class CopyOperation(BaseOperation):
             )
         return data_access
 
-    def __add__(self, other):
-        return None
-
     def to_json(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
@@ -110,16 +113,19 @@ class CopyOperation(BaseOperation):
 class SignalOperation(BaseOperation):
     def __init__(
         self,
-        channels_ids: List[int],
+        rank,
+        threadblock: int,
+        channel_ids: List[int],
         channel_type: ChannelType,
         data_sync: SyncType = SyncType.none,
         relaxed: bool = False,
     ):
         if relaxed:
-            super().__init__(Instruction.relaxed_signal)
+            super().__init__(rank, threadblock, Instruction.relaxed_signal)
         else:
-            super().__init__(Instruction.signal)
-        self.channel_ids = set(channels_ids)
+            super().__init__(rank, threadblock, Instruction.signal)
+
+        self.channel_ids = set(channel_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
@@ -127,12 +133,16 @@ class SignalOperation(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, SignalOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and self.channel_type == other.channel_type
             and self.name == other.name
             and not self.channel_ids & other.channel_ids
         ):
             fused_operation = SignalOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                rank=self.rank,
+                threadblock=self.threadblock,
+                channel_ids=self.channel_ids | other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_signal),
@@ -158,16 +168,19 @@ class SignalOperation(BaseOperation):
 class WaitOperation(BaseOperation):
     def __init__(
         self,
-        channels_ids: List[int],
+        rank,
+        threadblock: int,
+        channel_ids: List[int],
         channel_type: ChannelType,
         data_sync: SyncType = SyncType.none,
         relaxed: bool = False,
     ):
         if relaxed:
-            super().__init__(Instruction.relaxed_wait)
+            super().__init__(rank, threadblock, Instruction.relaxed_wait)
         else:
-            super().__init__(Instruction.wait)
-        self.channel_ids = set(channels_ids)
+            super().__init__(rank, threadblock, Instruction.wait)
+
+        self.channel_ids = set(channel_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
@@ -175,12 +188,16 @@ class WaitOperation(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, WaitOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and self.name == other.name
             and not self.channel_ids & other.channel_ids
             and self.channel_type == other.channel_type
         ):
             fused_operation = WaitOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                rank=self.rank,
+                threadblock=self.threadblock,
+                channel_ids=self.channel_ids | other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_wait),
@@ -206,7 +223,7 @@ class WaitOperation(BaseOperation):
 class BarrierOperation(BaseOperation):
     __current_barriers = []
 
-    def __init__(self, rank: int, tb_list: List[int]):
+    def __init__(self, rank: int, threadblock: int, tb_list: List[int]):
         for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
             BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
@@ -217,12 +234,16 @@ class BarrierOperation(BaseOperation):
         else:
             self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
 
-        super().__init__(Instruction.barrier)
+        super().__init__(rank, threadblock, Instruction.barrier)
         self.barrier_info = barrier_info
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+        if (
+            (isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation))
+            and self.rank == other.rank
+            and other.threadblock in self.barrier_info.tb_list
+        ):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
@@ -247,17 +268,20 @@ class BarrierOperation(BaseOperation):
 
 @dataclass
 class FlushOperation(BaseOperation):
-    def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
-        super().__init__(Instruction.flush)
-        self.channel_ids = set(channels_ids)
+    def __init__(self, rank: int, threadblock: int, channel_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
+        super().__init__(rank, threadblock, Instruction.flush)
+
+        self.channel_ids = set(channel_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
+        if isinstance(other, FlushOperation) and self.rank == other.rank and self.threadblock == other.threadblock and self.channel_type == other.channel_type:
             fused_operation = FlushOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                rank=self.rank,
+                threadblock=self.threadblock,
+                channel_ids=self.channel_ids | other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
             )
@@ -282,12 +306,15 @@ class FlushOperation(BaseOperation):
 class GetOperation(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         src_buff: List[RemoteChunk],
         dst_buff: List[LocalChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
     ):
-        super().__init__(Instruction.get)
+        super().__init__(rank, threadblock, Instruction.get)
+
         self.src_buff = src_buff
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
@@ -305,10 +332,14 @@ class GetOperation(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, GetOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and self.src_buff[0].size == other.src_buff[0].size
             and self.channel_type == other.channel_type
         ):
             fused_operation = GetOperation(
+                rank=self.rank,
+                threadblock=self.threadblock,
                 src_buff=self.src_buff + other.src_buff,
                 dst_buff=self.dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids + other.channel_ids,
@@ -334,6 +365,8 @@ class GetOperation(BaseOperation):
 class PutOperation(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         src_buff: List[LocalChunk],
         dst_buff: List[RemoteChunk],
         channel_ids: List[int],
@@ -344,21 +377,21 @@ class PutOperation(BaseOperation):
         with_signal_and_flush: bool = False,
     ):
         if from_packet and to_packet:
-            super().__init__(Instruction.read_put_packet)
+            super().__init__(rank, threadblock, Instruction.read_put_packet)
         elif to_packet:
-            super().__init__(Instruction.put_packet)
+            super().__init__(rank, threadblock, Instruction.put_packet)
         elif from_packet:
             raise RuntimeError(f"Put Operation from Packet is not Supported.")
         else:
             if with_signal:
                 if with_signal_and_flush:
-                    super().__init__(Instruction.put_with_signal_and_flush)
+                    super().__init__(rank, threadblock, Instruction.put_with_signal_and_flush)
                 else:
-                    super().__init__(Instruction.put_with_signal)
+                    super().__init__(rank, threadblock, Instruction.put_with_signal)
             elif with_signal_and_flush:
-                super().__init__(Instruction.put_with_signal_and_flush)
+                super().__init__(rank, threadblock, Instruction.put_with_signal_and_flush)
             else:
-                super().__init__(Instruction.put)
+                super().__init__(rank, threadblock, Instruction.put)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
@@ -374,11 +407,14 @@ class PutOperation(BaseOperation):
             data_access.append(
                 DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
             )
+        return data_access
 
     def __add__(self, other):
         fused_operation = None
         if (
             isinstance(other, PutOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and (
                 self.name == Instruction.put
                 or self.name == Instruction.put_packet
@@ -390,6 +426,8 @@ class PutOperation(BaseOperation):
             and self.channel_type == other.channel_type
         ):
             fused_operation = PutOperation(
+                rank=self.rank,
+                threadblock=self.threadblock,
                 src_buff=self.src_buff + other.src_buff,
                 dst_buff=self.dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids + other.channel_ids,
@@ -419,6 +457,8 @@ class PutOperation(BaseOperation):
 class ReduceOperation(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
         remote_src_buff: List[RemoteChunk] = [],
@@ -431,18 +471,18 @@ class ReduceOperation(BaseOperation):
     ):
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
-                super().__init__(Instruction.reduce_packet)
+                super().__init__(rank, threadblock, Instruction.reduce_packet)
             else:
-                super().__init__(Instruction.reduce)
+                super().__init__(rank, threadblock, Instruction.reduce)
         elif len(remote_src_buff) == 0:
             if packet:
-                super().__init__(Instruction.reduce_send_packet)
+                super().__init__(rank, threadblock, Instruction.reduce_send_packet)
             else:
-                super().__init__(Instruction.reduce_send)
+                super().__init__(rank, threadblock, Instruction.reduce_send)
         elif len(remote_dst_buff) == 0 and not packet:
-            super().__init__(Instruction.read_reduce)
+            super().__init__(rank, threadblock, Instruction.read_reduce)
         elif not packet:
-            super().__init__(Instruction.read_reduce_send)
+            super().__init__(rank, threadblock, Instruction.read_reduce_send)
         else:
             raise RuntimeError(f"Reduce Operation invalid parameters.")
 
@@ -472,6 +512,8 @@ class ReduceOperation(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, ReduceOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and (
                 self.name == Instruction.reduce
                 or self.name == Instruction.reduce_packet
@@ -484,6 +526,8 @@ class ReduceOperation(BaseOperation):
             and self.reduce_operation == other.reduce_operation
         ):
             fused_operation = ReduceOperation(
+                self.rank,
+                self.threadblock,
                 self.local_src_buff + other.local_src_buff[1:],
                 self.local_dst_buff,
                 remote_src_buff=self.remote_src_buff + other.remote_src_buff,
@@ -494,6 +538,8 @@ class ReduceOperation(BaseOperation):
             )
         if (
             isinstance(other, PutOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and (
                 self.name == Instruction.reduce
                 or self.name == Instruction.reduce_send
@@ -505,6 +551,8 @@ class ReduceOperation(BaseOperation):
             and other.channel_type == ChannelType.memory
         ):
             fused_operation = ReduceOperation(
+                self.rank,
+                self.threadblock,
                 self.local_src_buff,
                 self.local_dst_buff,
                 remote_src_buff=self.remote_src_buff,
@@ -517,12 +565,16 @@ class ReduceOperation(BaseOperation):
             )
         if (
             isinstance(other, PutOperation)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and (self.name == Instruction.reduce_packet or self.name == Instruction.reduce_send_packet)
             and other.name == Instruction.put_packet
             and self.local_dst_buff[0] == other.src_buff[0]
             and other.channel_type == ChannelType.memory
         ):
             fused_operation = ReduceOperation(
+                self.rank,
+                self.threadblock,
                 self.local_src_buff,
                 self.local_dst_buff,
                 remote_src_buff=self.remote_src_buff,
@@ -562,6 +614,8 @@ class ReduceOperation(BaseOperation):
 class GroupLoadReduce(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
@@ -570,7 +624,8 @@ class GroupLoadReduce(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        super().__init__(Instruction.group_load_reduce)
+        super().__init__(rank, threadblock, Instruction.group_load_reduce)
+        
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
@@ -583,6 +638,8 @@ class GroupLoadReduce(BaseOperation):
         fused_operation = None
         if (
             isinstance(other, GroupStore)
+            and self.rank == other.rank
+            and self.threadblock == other.threadblock
             and self.buffer_type == other.buffer_type
             and self.size == other.size
             and self.dst_chunk == other.src_chunk
@@ -590,6 +647,8 @@ class GroupLoadReduce(BaseOperation):
             and self.channel_type == other.channel_type
         ):
             fused_operation = GroupLoadReduceStore(
+                rank=self.rank,
+                threadblock=self.threadblock,
                 buffer_type=self.buffer_type,
                 size=self.size,
                 src_index=[self.buffer_offset],
@@ -617,6 +676,8 @@ class GroupLoadReduce(BaseOperation):
 class GroupStore(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         src_chunk: Chunk,
         buffer_type: BufferType,
         buffer_offset: int,
@@ -624,16 +685,14 @@ class GroupStore(BaseOperation):
         channel_ids: List[int] = [],
         channel_type: ChannelType = ChannelType.switch,
     ):
-        super().__init__(Instruction.group_store)
+        super().__init__(rank, threadblock, Instruction.group_store)
+
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
         self.channel_ids = channel_ids
         self.channel_type = channel_type
-
-    def __add__(self, other):
-        return None
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -650,6 +709,8 @@ class GroupStore(BaseOperation):
 class GroupLoadReduceStore(BaseOperation):
     def __init__(
         self,
+        rank: int,
+        threadblock: int,
         buffer_type: BufferType,
         size: int,
         src_index: List[int],
@@ -658,7 +719,8 @@ class GroupLoadReduceStore(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        super().__init__(Instruction.group_load_reduce_store)
+        super().__init__(rank, threadblock, Instruction.group_load_reduce_store)
+
         self.buffer_type = buffer_type
         self.size = size
         self.src_index = src_index
@@ -666,9 +728,6 @@ class GroupLoadReduceStore(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
-
-    def __add__(self, other):
-        return None
 
     def to_json(self):
         result = {"name": self.name.value}

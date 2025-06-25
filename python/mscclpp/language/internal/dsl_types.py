@@ -174,6 +174,7 @@ class DataAccess:
     end: int
     buffer_type: BufferType
     data_access_type: DataAccessType
+    orig_data_ref: Chunk
 
     def __lt__(self, other):
         if self.start != other.start:

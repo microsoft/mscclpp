@@ -26,12 +26,12 @@ class MemoryChannel:
 
     def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
+        op = SignalOperation(self.src_rank, tb, tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
     def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
+        op = WaitOperation(self.src_rank, tb, tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
     def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
@@ -49,7 +49,9 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = GetOperation(
-            src_buff=[RemoteChunk(tb_chunk_id, src_chunk.index, src_chunk.size)],
+            rank=self.src_rank,
+            threadblock=tb,
+            src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
             dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
@@ -81,8 +83,10 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
         )
@@ -112,8 +116,10 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             from_packet=from_packet,
@@ -152,20 +158,23 @@ class MemoryChannel:
 
         remote_chunks = [
             RemoteChunk(
+                chunk.buffer,
+                chunk.index,
+                chunk.size,
                 get_program().setup_remote_chunk(
                     self.src_rank,
                     tb,
                     RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
                     self.channel_type,
-                ),
-                chunk.index,
-                chunk.size,
+                )
             )
             for chunk in remote_src_chunks
         ]
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = ReduceOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             local_src_buff=[LocalChunk(local_src_chunk.buffer, local_src_chunk.index, local_src_chunk.size)],
             local_dst_buff=[LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
             remote_src_buff=remote_chunks,
@@ -199,12 +208,12 @@ class PortChannel:
 
     def signal(self, tb: int, data_sync: SyncType = SyncType.none):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = SignalOperation(tb_channel_ids, self.channel_type, data_sync)
+        op = SignalOperation(self.src_rank, tb, tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
     def wait(self, tb: int, data_sync: SyncType = SyncType.none):
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = WaitOperation(tb_channel_ids, self.channel_type, data_sync)
+        op = WaitOperation(self.src_rank, tb, tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
     def flush(self, tb: int, data_sync: SyncType = SyncType.none):
@@ -212,7 +221,7 @@ class PortChannel:
             raise RuntimeError(f"Flush operation is only supported for ChannelType.port.")
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = FlushOperation(tb_channel_ids, self.channel_type, data_sync)
+        op = FlushOperation(self.src_rank, tb, tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
     def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
@@ -234,8 +243,10 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
         )
@@ -261,8 +272,10 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             with_signal=True,
@@ -289,8 +302,10 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             with_signal_and_flush=True,
@@ -322,8 +337,10 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = PutOperation(
+            rank=self.src_rank,
+            threadblock=tb,
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             from_packet=True,
@@ -383,6 +400,8 @@ class SwitchChannel:
 
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = GroupLoadReduce(
+            self.src_rank,
+            tb,
             self.buffer_type,
             buffer_offset,
             size,
@@ -415,7 +434,7 @@ class SwitchChannel:
                     get_program().gpus[rank].scratch_chunks = buffer_offset + size
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
+        op = GroupStore(self.src_rank, tb, src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
     class SwitchChannelRankView:

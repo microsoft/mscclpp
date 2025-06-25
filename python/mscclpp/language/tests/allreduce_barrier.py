@@ -26,23 +26,24 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         # Creating Channels
         channels = {}
         for gpu in range(gpu_size):
-            for tb in range(num_tb):
-                for peer in range(gpu_size):
-                    if peer != gpu:
-                        channels[(peer, gpu, tb)] = MemoryChannel(peer, gpu)
+            for peer in range(gpu_size):
+                if peer != gpu:
+                    channels[(peer, gpu)] = MemoryChannel(peer, gpu)
 
         # Ensuring the data is ready on the remote side
         for gpu in range(gpu_size):
-            for tb in range(num_tb):
                 for peer in range(gpu_size):
                     if gpu != peer:
-                        channels[(peer, gpu, tb)].signal(tb, relaxed=True)
+                        channels[(peer, gpu)].signal(0, relaxed=True)
 
         for gpu in range(gpu_size):
-            for tb in range(num_tb):
                 for peer in range(gpu_size):
                     if gpu != peer:
-                        channels[(peer, gpu, tb)].wait(tb, data_sync=SyncType.after, relaxed=True)
+                        channels[(peer, gpu)].wait(0, data_sync=SyncType.after, relaxed=True)
+
+        for gpu in range(gpu_size):
+            rank = Rank(gpu)
+            rank.barrier(tb_list=[tb for tb in range(num_tb)])
 
         # Main AllReduce Logic
         for gpu in range(gpu_size):
@@ -58,26 +59,28 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                         peer_rank = Rank(peer)
                         peer_input_buffer = peer_rank.get_input_buffer()
                         chunks.append(peer_input_buffer[index : index + 1])
-                        channels[(peer, gpu, tb)].reduce(src_chunk, [peer_input_buffer[index : index + 1]], tb)
+                        channels[(peer, gpu)].reduce(src_chunk, [peer_input_buffer[index : index + 1]], tb)
 
                 for peer in range(gpu_size):
                     if gpu != peer:
                         peer_rank = Rank(peer)
                         peer_input_buffer = peer_rank.get_input_buffer()
-                        channels[(peer, gpu, tb)].put(peer_input_buffer[index : index + 1], src_chunk, tb)
+                        channels[(peer, gpu)].put(peer_input_buffer[index : index + 1], src_chunk, tb)
 
         # Synchronization and Finalization
         for gpu in range(gpu_size):
-            for tb in range(num_tb):
-                for peer in range(gpu_size):
-                    if gpu != peer:
-                        channels[(peer, gpu, tb)].signal(tb, data_sync=SyncType.before)
+            rank = Rank(gpu)
+            rank.barrier(tb_list=[tb for tb in range(num_tb)])
 
         for gpu in range(gpu_size):
-            for tb in range(num_tb):
                 for peer in range(gpu_size):
                     if gpu != peer:
-                        channels[(peer, gpu, tb)].wait(tb)
+                        channels[(peer, gpu)].signal(0, data_sync=SyncType.before)
+
+        for gpu in range(gpu_size):
+                for peer in range(gpu_size):
+                    if gpu != peer:
+                        channels[(peer, gpu)].wait(0)
 
         print(JSON())
 

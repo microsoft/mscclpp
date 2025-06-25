@@ -34,6 +34,8 @@ class Rank:
             raise RuntimeError(f"Destination chunk must be of type scratch.")
 
         op = CopyOperation(
+            self.rank,
+            tb,
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
             from_packet,
@@ -72,6 +74,8 @@ class Rank:
                 raise RuntimeError(f"Other chunk must be of type scratch.")
 
         op = ReduceOperation(
+            self.rank,
+            tb,
             [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
             + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
             [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
@@ -87,8 +91,8 @@ class Rank:
             op = SyncOperation()
             get_program().add_operation(self.rank, tb_list[0], op)
         else:
-            op = BarrierOperation(self.rank, tb_list)
             for tb in tb_list:
+                op = BarrierOperation(self.rank, tb, tb_list)
                 get_program().add_operation(self.rank, tb, op)
 
 

@@ -38,11 +38,11 @@ def adding_data_sync(operations):
         if operation.name in data_sync_operations and (
             operation.data_sync == SyncType.before or operation.data_sync == SyncType.both
         ):
-            result_operations.append(SyncOperation())
+            result_operations.append(SyncOperation(operation.rank, operation.threadblock))
         result_operations.append(operation)
         if operation.name in data_sync_operations and (
             operation.data_sync == SyncType.after or operation.data_sync == SyncType.both
         ):
-            result_operations.append(SyncOperation())
+            result_operations.append(SyncOperation(operation.rank, operation.threadblock))
 
     return result_operations

@@ -5,6 +5,8 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.dsl_types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.internal.channel_register import ChannelRegister
+from mscclpp.language.internal.topo_dag import OperationDependencyGraph
 from typing import List
 import json
 
@@ -36,6 +38,7 @@ class MSCCLPPProgram:
         self.min_message_size = min_message_size
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
+        self.topo_dag = OperationDependencyGraph()
         self.buffers = collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
@@ -59,6 +62,7 @@ class MSCCLPPProgram:
     def setup_channel(self, tb, channel):
         tb_channel_ids = []
         tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
+        ChannelRegister.add_channel(channel.src_rank, tb, tb_channel_ids[0], channel)
         return tb_channel_ids
 
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
@@ -66,6 +70,12 @@ class MSCCLPPProgram:
 
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
+
+    def filling_topological_dag(self):
+        for gpu in self.gpus:
+            for tb in gpu.threadblocks:
+                for operation in tb.ops:
+                    self.topo_dag.add_operation(operation)
 
     def post_process_operations(self):
         for gpu in self.gpus:
