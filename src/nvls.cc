@@ -61,6 +61,8 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
   bufferSize_ = mcProp_.size;
   MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
+  WARN("NVLS multicast handle created with size %ld, minGranularity %ld and recommendedGranularity %ld, numDevices: %d",
+       mcProp_.size, minMcGran_, mcGran_, mcProp_.numDevices);
   mcFileDesc_ = 0;
   MSCCLPP_CUTHROW(
       cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
