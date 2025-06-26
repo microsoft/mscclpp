@@ -18,13 +18,19 @@ struct BaseMemoryChannel {
   std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore_;
 
  public:
-  /// Default constructor.
+  /// Constructor.
   BaseMemoryChannel() = default;
 
   /// Constructor.
-  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param semaphore Semaphore used to synchronize the communication.
   BaseMemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore);
 
+  /// Constructor.
+  /// @param semaphore Semaphore used to synchronize the communication.
+  BaseMemoryChannel(const Semaphore& semaphore);
+
+  /// Constructor.
+  /// @param other Other BaseMemoryChannel to copy from.
   BaseMemoryChannel(const BaseMemoryChannel& other) = default;
 
   BaseMemoryChannel& operator=(BaseMemoryChannel& other) = default;
@@ -33,9 +39,8 @@ struct BaseMemoryChannel {
   using DeviceHandle = BaseMemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the BaseMemoryChannel is not released when using the returned handle.
-  ///
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };
 
@@ -47,7 +52,7 @@ struct MemoryChannel : public BaseMemoryChannel {
   void* packetBuffer_;
 
  public:
-  /// Default constructor.
+  /// Constructor.
   MemoryChannel() = default;
 
   /// Constructor.
@@ -71,9 +76,8 @@ struct MemoryChannel : public BaseMemoryChannel {
   using DeviceHandle = MemoryChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the MemoryChannel is not released when using the returned handle.
-  ///
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };
 

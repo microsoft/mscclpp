@@ -14,7 +14,15 @@ MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId,
                                                  std::shared_ptr<Proxy> proxy)
     : semaphoreId_(semaphoreId), semaphore_(semaphore), proxy_(proxy) {}
 
+MSCCLPP_API_CPP BasePortChannel::BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
+                                                 std::shared_ptr<Proxy> proxy)
+    : BasePortChannel(semaphoreId, std::make_shared<Host2DeviceSemaphore>(semaphore), proxy) {}
+
 MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
+                                         std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
+    : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
+
+MSCCLPP_API_CPP PortChannel::PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore,
                                          std::shared_ptr<Proxy> proxy, MemoryId dst, MemoryId src)
     : BasePortChannel(semaphoreId, semaphore, proxy), dst_(dst), src_(src) {}
 

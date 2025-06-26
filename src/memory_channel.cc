@@ -11,6 +11,9 @@ namespace mscclpp {
 MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore)
     : semaphore_(semaphore) {}
 
+MSCCLPP_API_CPP BaseMemoryChannel::BaseMemoryChannel(const Semaphore& semaphore)
+    : BaseMemoryChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore)) {}
+
 MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
                                              RegisteredMemory dst, void* src, void* packetBuffer)
     : BaseMemoryChannel(semaphore), dst_(dst), src_(src), packetBuffer_(packetBuffer) {

@@ -367,6 +367,8 @@ struct Device {
   Device() = default;
 
   /// Constructor.
+  /// @param type Device type.
+  /// @param id Device ID. Default is -1 (no specific ID).
   Device(DeviceType type, int id = -1) : type(type), id(id) {}
 
   /// Device Type.
@@ -505,10 +507,6 @@ class Connection {
   /// @return A shared pointer to the context associated with this connection.
   std::shared_ptr<Context> context() const { return context_; }
 
-  /// Get the name of the transport used for this connection.
-  /// @return A string formatted as "localTransportName -> remoteTransportName".
-  std::string getTransportName() const;
-
   /// Get the device used by the local endpoint.
   /// @return The device used by the local endpoint.
   const Device& localDevice() const;
@@ -645,7 +643,6 @@ class Flag {
   Flag(std::shared_ptr<Impl> pimpl);
   std::shared_ptr<Impl> pimpl_;
 
-  friend class Context;
   friend class Semaphore;
 };
 
@@ -752,12 +749,10 @@ class Communicator {
   ~Communicator();
 
   /// Returns the bootstrap held by this communicator.
-  ///
   /// @return The bootstrap held by this communicator.
   std::shared_ptr<Bootstrap> bootstrap();
 
   /// Returns the context held by this communicator.
-  ///
   /// @return The context held by this communicator.
   std::shared_ptr<Context> context();
 
@@ -915,6 +910,8 @@ using PacketPayload = typename T::Payload;
 namespace std {
 
 std::string to_string(const mscclpp::Transport& transport);
+
+std::string to_string(const mscclpp::Device& device);
 
 /// Specialization of the std::hash template for mscclpp::TransportFlags.
 template <>
