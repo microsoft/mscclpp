@@ -12,6 +12,7 @@
 #include <sstream>
 #include <thread>
 
+#include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
 
@@ -32,24 +33,25 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
-std::string Connection::getTransportName() const {
+MSCCLPP_API_CPP std::string Connection::getTransportName() const {
   return std::to_string(transport()) + " -> " + std::to_string(remoteTransport());
 }
 
-int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+MSCCLPP_API_CPP const Device& Connection::localDevice() const { return localEndpoint_.device(); }
+
+MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
 
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
                                      std::shared_ptr<CudaIpcStream> stream)
-    : Connection(context, localEndpoint.maxWriteQueueSize()), stream_(stream) {
-  if (localEndpoint.transport() != Transport::CudaIpc) {
-    throw mscclpp::Error("Cuda IPC connection can only be made from a Cuda IPC endpoint", ErrorCode::InvalidUsage);
+    : Connection(context, localEndpoint), stream_(stream) {
+  if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
+    throw Error("CudaIpc transport is required for CudaIpcConnection", ErrorCode::InvalidUsage);
   }
-  if (remoteEndpoint.transport() != Transport::CudaIpc) {
-    throw mscclpp::Error("Cuda IPC connection can only be made to a Cuda IPC endpoint", ErrorCode::InvalidUsage);
+  if (localEndpoint.device().type != DeviceType::GPU && remoteEndpoint.device().type != DeviceType::GPU) {
+    throw Error("CudaIpcConnection requires at least one GPU endpoint", ErrorCode::InvalidUsage);
   }
-  INFO(MSCCLPP_P2P, "Cuda IPC connection created");
 }
 
 Transport CudaIpcConnection::transport() const { return Transport::CudaIpc; }
@@ -118,11 +120,13 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 // IBConnection
 
 IBConnection::IBConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint)
-    : Connection(context, localEndpoint.maxWriteQueueSize() != -1 ? localEndpoint.maxWriteQueueSize()
-                                                                  : EndpointConfig::DefaultMaxCqSize),
+    : Connection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
+  if (maxWriteQueueSize_ == -1) {
+    maxWriteQueueSize_ = EndpointConfig::DefaultMaxCqSize;
+  }
   qp_ = getImpl(localEndpoint)->ibQp_;
   qp_->rtr(getImpl(remoteEndpoint)->ibQpInfo_);
   qp_->rts();
@@ -232,7 +236,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, Endpoint localEndpoint,
                                        Endpoint remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize)
-    : Connection(context, localEndpoint.maxWriteQueueSize()),
+    : Connection(context, localEndpoint),
       abortFlag_(0),
       sendBufferSize_(sendBufferSize),
       recvBufferSize_(recvBufferSize) {

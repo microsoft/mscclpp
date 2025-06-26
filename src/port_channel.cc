@@ -39,6 +39,11 @@ MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& com
   return semaphores_.size() - 1;
 }
 
+MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(const Semaphore& semaphore) {
+  semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(semaphore));
+  return semaphores_.size() - 1;
+}
+
 MSCCLPP_API_CPP SemaphoreId ProxyService::addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore) {
   semaphores_.push_back(semaphore);
   return semaphores_.size() - 1;

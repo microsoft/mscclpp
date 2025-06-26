@@ -216,7 +216,7 @@ struct Executor::Impl {
     for (int peer : connectedPeers) {
       Transport transport =
           inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
-      connectionFutures.push_back(this->comm->connect(peer, 0, transport));
+      connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
@@ -263,12 +263,12 @@ struct Executor::Impl {
       std::vector<int> connectedPeers = getConnectedPeers(channelInfos);
       std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
       for (int peer : connectedPeers) {
-        comm->sendMemory(memory, peer, 0);
+        comm->sendMemory(memory, peer);
       }
       channelInfos = plan.impl_->getChannelInfos(rank, bufferType);
       connectedPeers = getConnectedPeers(channelInfos);
       for (int peer : connectedPeers) {
-        remoteRegMemoryFutures.push_back(comm->recvMemory(peer, 0));
+        remoteRegMemoryFutures.push_back(comm->recvMemory(peer));
       }
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());

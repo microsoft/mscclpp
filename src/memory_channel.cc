@@ -19,6 +19,10 @@ MSCCLPP_API_CPP MemoryChannel::MemoryChannel(std::shared_ptr<MemoryDevice2Device
   }
 }
 
+MSCCLPP_API_CPP MemoryChannel::MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, void* src,
+                                             void* packetBuffer)
+    : MemoryChannel(std::make_shared<MemoryDevice2DeviceSemaphore>(semaphore), dst, src, packetBuffer) {}
+
 MSCCLPP_API_CPP BaseMemoryChannel::DeviceHandle BaseMemoryChannel::deviceHandle() const {
   return BaseMemoryChannel::DeviceHandle(semaphore_->deviceHandle());
 }

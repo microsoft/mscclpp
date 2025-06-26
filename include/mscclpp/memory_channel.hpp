@@ -59,6 +59,14 @@ struct MemoryChannel : public BaseMemoryChannel {
   MemoryChannel(std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore, RegisteredMemory dst, void* src,
                 void* packetBuffer = nullptr);
 
+  /// Constructor.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param dst Registered memory of the destination.
+  /// @param src The source memory address.
+  /// @param packetBuffer A buffer used to store packets. @p packetBuffer is optional and if it is nullptr,
+  /// unpackPacket() and unpackPackets() methods are not available.
+  MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, void* src, void* packetBuffer = nullptr);
+
   /// Device-side handle for MemoryChannel.
   using DeviceHandle = MemoryChannelDeviceHandle;
 

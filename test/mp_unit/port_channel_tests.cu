@@ -42,30 +42,28 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
       continue;
     }
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
     } else if (useIb) {
-      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connect(ibTransport, r);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::Ethernet);
+      connectionFutures[r] = communicator->connect(mscclpp::Transport::Ethernet, r);
     }
 
     if (isInPlace) {
-      communicator->sendMemory(sendBufRegMem, r, 0);
+      communicator->sendMemory(sendBufRegMem, r);
     } else {
-      communicator->sendMemory(recvBufRegMem, r, 0);
+      communicator->sendMemory(recvBufRegMem, r);
     }
-    remoteMemFutures[r] = communicator->recvMemory(r, 0);
+    remoteMemFutures[r] = communicator->recvMemory(r);
   }
 
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
       continue;
     }
-    auto flag = communicator->createFlag(connectionFutures[r].get(), mscclpp::Device::GPU);
+    auto sema = communicator->buildSemaphore(connectionFutures[r].get(), r).get();
 
-    auto sema = communicator->buildSemaphore(r, 0, flag).get();
-
-    mscclpp::SemaphoreId cid = proxyService->addSemaphore(std::make_shared<mscclpp::Host2DeviceSemaphore>(sema));
+    mscclpp::SemaphoreId cid = proxyService->addSemaphore(sema);
 
     portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));

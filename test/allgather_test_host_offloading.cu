@@ -83,7 +83,6 @@ class MyProxyService {
   int dataSize_;
   std::vector<mscclpp::RegisteredMemory> remoteMemories_;
   mscclpp::RegisteredMemory localMemory_;
-  std::vector<std::shared_ptr<mscclpp::Host2HostSemaphore>> hostSemaphores_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores1_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores2_;
   std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
@@ -105,7 +104,6 @@ class MyProxyService {
     localMemory_ = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     for (int r = 0; r < world_size; ++r) {
       if (r == rank) {
-        hostSemaphores_.emplace_back(nullptr);
         deviceSemaphores1_.emplace_back(nullptr);
         deviceSemaphores2_.emplace_back(nullptr);
         continue;
@@ -117,10 +115,10 @@ class MyProxyService {
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connectionsFuture[r] = comm.connect(r, 0, transport);
-      comm.sendMemory(localMemory_, r, 0);
+      connectionsFuture[r] = comm.connect(transport, r);
+      comm.sendMemory(localMemory_, r);
 
-      remoteMemoriesFuture[r] = comm.recvMemory(r, 0);
+      remoteMemoriesFuture[r] = comm.recvMemory(r);
     }
 
     for (int r = 0; r < world_size; ++r) {
@@ -128,11 +126,6 @@ class MyProxyService {
         continue;
       }
       connections_[r] = connectionsFuture[r].get();
-      if (rankToNode(r) == thisNode) {
-        hostSemaphores_.emplace_back(nullptr);
-      } else {
-        hostSemaphores_.emplace_back(std::make_shared<mscclpp::Host2HostSemaphore>(comm, connections_[r]));
-      }
       deviceSemaphores1_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       deviceSemaphores2_.emplace_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(comm, connections_[r]));
       remoteMemories_[r] = remoteMemoriesFuture[r].get();

@@ -172,12 +172,22 @@ void register_core(nb::module_& m) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
-      .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
-      .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
-      .def("connect", &Communicator::connect, nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+      .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag") = 0)
+      .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag") = 0)
+      .def("connect",
+           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(int, int, EndpointConfig)>(
+               &Communicator::connect),
+           nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+      .def("connect",
+           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(EndpointConfig, int, int)>(
+               &Communicator::connect),
+           nb::arg("localConfig"), nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
-      .def("connect_on_setup", &Communicator::connect, nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+      .def("connect_on_setup",
+           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(int, int, EndpointConfig)>(
+               &Communicator::connect),
+           nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)
       .def("setup", [](Communicator*) {});

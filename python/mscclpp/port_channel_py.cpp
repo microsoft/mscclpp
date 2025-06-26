@@ -20,7 +20,12 @@ void register_port_channel(nb::module_& m) {
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
-      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
+      .def("add_semaphore", static_cast<SemaphoreId (ProxyService::*)(const Semaphore&)>(&ProxyService::addSemaphore),
+           nb::arg("semaphore"))
+      .def("add_semaphore",
+           static_cast<SemaphoreId (ProxyService::*)(std::shared_ptr<Host2DeviceSemaphore>)>(
+               &ProxyService::addSemaphore),
+           nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
       .def("base_port_channel", &ProxyService::basePortChannel, nb::arg("id"))

@@ -39,30 +39,26 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
       continue;
     }
     if (rankToNode(r) == rankToNode(gEnv->rank)) {
-      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
+      connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
     } else {
-      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
+      connectionFutures[r] = communicator->connect(ibTransport, r);
     }
 
     if (isInPlace) {
-      communicator->sendMemory(inputBufRegMem, r, 0);
+      communicator->sendMemory(inputBufRegMem, r);
     } else {
-      communicator->sendMemory(outputBufRegMem, r, 0);
+      communicator->sendMemory(outputBufRegMem, r);
     }
-    remoteMemFutures[r] = communicator->recvMemory(r, 0);
+    remoteMemFutures[r] = communicator->recvMemory(r);
   }
 
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
       continue;
     }
-    auto flag = communicator->createFlag(connectionFutures[r].get(), mscclpp::Device::GPU);
+    auto sema = communicator->buildSemaphore(connectionFutures[r].get(), r).get();
 
-    auto sema = communicator->buildSemaphore(r, 0, flag).get();
-
-    memorySemaphores[r] = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(sema);
-
-    memoryChannels.emplace_back(memorySemaphores[r], remoteMemFutures[r].get(), inputBufRegMem.data(),
+    memoryChannels.emplace_back(sema, remoteMemFutures[r].get(), inputBufRegMem.data(),
                                 (isInPlace ? nullptr : outputBufRegMem.data()));
   }
 }

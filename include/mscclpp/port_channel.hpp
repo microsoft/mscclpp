@@ -38,6 +38,11 @@ class ProxyService : public BaseProxyService {
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
   /// @return The ID of the semaphore.
+  SemaphoreId addSemaphore(const Semaphore& semaphore);
+
+  /// Add a semaphore to the proxy service.
+  /// @param semaphore The semaphore to be added
+  /// @return The ID of the semaphore.
   SemaphoreId addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore);
 
   /// Register a memory region with the proxy service.

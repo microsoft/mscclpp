@@ -9,12 +9,16 @@
 namespace mscclpp {
 
 struct Flag::Impl {
-  Impl(std::shared_ptr<Connection> connection, Device device, Context& context);
+  Impl(std::shared_ptr<Connection> connection);
+
+  Impl(const RegisteredMemory& idMemory, const Device& device);
+
+  Impl(const std::vector<char>& data);
 
   std::shared_ptr<Connection> connection_;
-  Device device_;
   std::shared_ptr<uint64_t> id_;
   RegisteredMemory idMemory_;
+  Device device_;
 };
 
 }  // namespace mscclpp

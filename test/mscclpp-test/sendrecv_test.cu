@@ -155,11 +155,10 @@ void SendRecvTestEngine::setupConnections() {
 
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 
-  auto sendConnFuture =
-      comm_->connect(sendToRank, 0, getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice));
+  auto sendConnFuture = comm_->connect(getTransport(args_.rank, sendToRank, args_.nRanksPerNode, ibDevice), sendToRank);
   if (recvFromRank != sendToRank) {
     auto recvConnFuture =
-        comm_->connect(recvFromRank, 0, getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice));
+        comm_->connect(getTransport(args_.rank, recvFromRank, args_.nRanksPerNode, ibDevice), recvFromRank);
     memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, sendConnFuture.get()));
     memorySemaphores.push_back(std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, recvConnFuture.get()));
   } else {
@@ -172,9 +171,9 @@ void SendRecvTestEngine::setupConnections() {
 
   for (int i : {0, 1}) {
     auto regMem = comm_->registerMemory(devicePtrs_[i].get(), args_.maxBytes, mscclpp::Transport::CudaIpc | ibDevice);
-    comm_->sendMemory(regMem, ranks[i], 0);
+    comm_->sendMemory(regMem, ranks[i]);
     localMemories.push_back(regMem);
-    futureRemoteMemory.push_back(comm_->recvMemory(ranks[1 - i], 0));
+    futureRemoteMemory.push_back(comm_->recvMemory(ranks[1 - i]));
   }
 
   // swap to make sure devicePtrs_[0] in local rank write to devicePtrs_[1] in remote rank

@@ -12,6 +12,7 @@
 #include "api.h"
 #include "context.hpp"
 #include "debug.h"
+#include "serialize.hpp"
 #include "utils_internal.hpp"
 
 #define MSCCLPP_CULOG_WARN(cmd)                             \
@@ -119,43 +120,37 @@ MSCCLPP_API_CPP TransportFlags RegisteredMemory::transports() const { return pim
 
 MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
   std::vector<char> result;
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->originalDataPtr), sizeof(pimpl_->originalDataPtr),
-              std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->size), sizeof(pimpl_->size), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->baseDataSize), sizeof(pimpl_->baseDataSize), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->hostHash), sizeof(pimpl_->hostHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->pidHash), sizeof(pimpl_->pidHash), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->isCuMemMapAlloc), sizeof(pimpl_->isCuMemMapAlloc),
-              std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&pimpl_->transports), sizeof(pimpl_->transports), std::back_inserter(result));
+  detail::serialize(result, pimpl_->originalDataPtr);
+  detail::serialize(result, pimpl_->size);
+  detail::serialize(result, pimpl_->baseDataSize);
+  detail::serialize(result, pimpl_->hostHash);
+  detail::serialize(result, pimpl_->pidHash);
+  detail::serialize(result, pimpl_->isCuMemMapAlloc);
+  detail::serialize(result, pimpl_->transports);
   if (pimpl_->transportInfos.size() > static_cast<size_t>(std::numeric_limits<int8_t>::max())) {
-    throw mscclpp::Error("Too many transport info entries", ErrorCode::InternalError);
+    throw Error("Too many transport info entries", ErrorCode::InternalError);
   }
   int8_t transportCount = pimpl_->transportInfos.size();
-  std::copy_n(reinterpret_cast<char*>(&transportCount), sizeof(transportCount), std::back_inserter(result));
+  detail::serialize(result, transportCount);
   for (auto& entry : pimpl_->transportInfos) {
-    std::copy_n(reinterpret_cast<char*>(&entry.transport), sizeof(entry.transport), std::back_inserter(result));
+    detail::serialize(result, entry.transport);
     if (entry.transport == Transport::CudaIpc) {
       if (pimpl_->isCuMemMapAlloc) {
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
-          std::copy_n(reinterpret_cast<char*>(&entry.shareableHandle), sizeof(entry.shareableHandle),
-                      std::back_inserter(result));
+          detail::serialize(result, entry.shareableHandle);
         } else {
-          std::copy_n(reinterpret_cast<char*>(&entry.rootPid), sizeof(entry.rootPid), std::back_inserter(result));
-          std::copy_n(reinterpret_cast<char*>(&entry.fileDesc), sizeof(entry.fileDesc), std::back_inserter(result));
+          detail::serialize(result, entry.rootPid);
+          detail::serialize(result, entry.fileDesc);
         }
-        std::copy_n(reinterpret_cast<char*>(&entry.offsetFromBase), sizeof(entry.offsetFromBase),
-                    std::back_inserter(result));
+        detail::serialize(result, entry.offsetFromBase);
       } else {
-        std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcBaseHandle), sizeof(entry.cudaIpcBaseHandle),
-                    std::back_inserter(result));
-        std::copy_n(reinterpret_cast<char*>(&entry.cudaIpcOffsetFromBase), sizeof(entry.cudaIpcOffsetFromBase),
-                    std::back_inserter(result));
+        detail::serialize(result, entry.cudaIpcBaseHandle);
+        detail::serialize(result, entry.cudaIpcOffsetFromBase);
       }
     } else if (AllIBTransports.has(entry.transport)) {
-      std::copy_n(reinterpret_cast<char*>(&entry.ibMrInfo), sizeof(entry.ibMrInfo), std::back_inserter(result));
+      detail::serialize(result, entry.ibMrInfo);
     } else {
-      throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
+      throw Error("Unknown transport", ErrorCode::InternalError);
     }
   }
   return result;
@@ -165,62 +160,44 @@ MSCCLPP_API_CPP RegisteredMemory RegisteredMemory::deserialize(const std::vector
   return RegisteredMemory(std::make_shared<Impl>(data));
 }
 
-RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
-  auto it = serialization.begin();
-  std::copy_n(it, sizeof(this->originalDataPtr), reinterpret_cast<char*>(&this->originalDataPtr));
-  it += sizeof(this->originalDataPtr);
-  std::copy_n(it, sizeof(this->size), reinterpret_cast<char*>(&this->size));
-  it += sizeof(this->size);
-  std::copy_n(it, sizeof(this->baseDataSize), reinterpret_cast<char*>(&this->baseDataSize));
-  it += sizeof(this->baseDataSize);
-  std::copy_n(it, sizeof(this->hostHash), reinterpret_cast<char*>(&this->hostHash));
-  it += sizeof(this->hostHash);
-  std::copy_n(it, sizeof(this->pidHash), reinterpret_cast<char*>(&this->pidHash));
-  it += sizeof(this->pidHash);
-  std::copy_n(it, sizeof(this->isCuMemMapAlloc), reinterpret_cast<char*>(&this->isCuMemMapAlloc));
-  it += sizeof(this->isCuMemMapAlloc);
-  std::copy_n(it, sizeof(this->transports), reinterpret_cast<char*>(&this->transports));
-  it += sizeof(this->transports);
+RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
+                             const std::vector<char>::const_iterator& end) {
+  auto it = begin;
+  it = detail::deserialize(it, this->originalDataPtr);
+  it = detail::deserialize(it, this->size);
+  it = detail::deserialize(it, this->baseDataSize);
+  it = detail::deserialize(it, this->hostHash);
+  it = detail::deserialize(it, this->pidHash);
+  it = detail::deserialize(it, this->isCuMemMapAlloc);
+  it = detail::deserialize(it, this->transports);
   int8_t transportCount;
-  std::copy_n(it, sizeof(transportCount), reinterpret_cast<char*>(&transportCount));
-  it += sizeof(transportCount);
+  it = detail::deserialize(it, transportCount);
   for (int i = 0; i < transportCount; ++i) {
     TransportInfo transportInfo;
-    std::copy_n(it, sizeof(transportInfo.transport), reinterpret_cast<char*>(&transportInfo.transport));
-    it += sizeof(transportInfo.transport);
+    it = detail::deserialize(it, transportInfo.transport);
     if (transportInfo.transport == Transport::CudaIpc) {
       if (this->isCuMemMapAlloc) {
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
-          std::copy_n(it, sizeof(transportInfo.shareableHandle),
-                      reinterpret_cast<char*>(&transportInfo.shareableHandle));
-          it += sizeof(transportInfo.shareableHandle);
+          it = detail::deserialize(it, transportInfo.shareableHandle);
         } else {
-          std::copy_n(it, sizeof(transportInfo.rootPid), reinterpret_cast<char*>(&transportInfo.rootPid));
-          it += sizeof(transportInfo.rootPid);
-          std::copy_n(it, sizeof(transportInfo.fileDesc), reinterpret_cast<char*>(&transportInfo.fileDesc));
-          it += sizeof(transportInfo.fileDesc);
+          it = detail::deserialize(it, transportInfo.rootPid);
+          it = detail::deserialize(it, transportInfo.fileDesc);
         }
-        std::copy_n(it, sizeof(transportInfo.offsetFromBase), reinterpret_cast<char*>(&transportInfo.offsetFromBase));
-        it += sizeof(transportInfo.offsetFromBase);
+        it = detail::deserialize(it, transportInfo.offsetFromBase);
       } else {
-        std::copy_n(it, sizeof(transportInfo.cudaIpcBaseHandle),
-                    reinterpret_cast<char*>(&transportInfo.cudaIpcBaseHandle));
-        it += sizeof(transportInfo.cudaIpcBaseHandle);
-        std::copy_n(it, sizeof(transportInfo.cudaIpcOffsetFromBase),
-                    reinterpret_cast<char*>(&transportInfo.cudaIpcOffsetFromBase));
-        it += sizeof(transportInfo.cudaIpcOffsetFromBase);
+        it = detail::deserialize(it, transportInfo.cudaIpcBaseHandle);
+        it = detail::deserialize(it, transportInfo.cudaIpcOffsetFromBase);
       }
     } else if (AllIBTransports.has(transportInfo.transport)) {
-      std::copy_n(it, sizeof(transportInfo.ibMrInfo), reinterpret_cast<char*>(&transportInfo.ibMrInfo));
-      it += sizeof(transportInfo.ibMrInfo);
+      it = detail::deserialize(it, transportInfo.ibMrInfo);
       transportInfo.ibLocal = false;
     } else {
-      throw mscclpp::Error("Unknown transport", ErrorCode::InternalError);
+      throw Error("Unknown transport", ErrorCode::InternalError);
     }
     this->transportInfos.push_back(transportInfo);
   }
-  if (it != serialization.end()) {
-    throw mscclpp::Error("Serialization failed", ErrorCode::InternalError);
+  if (it != end) {
+    throw Error("Serialization failed", ErrorCode::InternalError);
   }
 
   // Next decide how to set this->data
@@ -239,11 +216,11 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
       } else {
         int rootPidFd = syscall(SYS_pidfd_open, entry.rootPid, 0);
         if (rootPidFd < 0) {
-          throw mscclpp::SysError("pidfd_open() failed", errno);
+          throw SysError("pidfd_open() failed", errno);
         }
         int fd = syscall(SYS_pidfd_getfd, rootPidFd, entry.fileDesc, 0);
         if (fd < 0) {
-          throw mscclpp::SysError("pidfd_getfd() failed", errno);
+          throw SysError("pidfd_getfd() failed", errno);
         }
         INFO(MSCCLPP_P2P, "Get file descriptor %d from pidfd %d on peer 0x%lx", fd, rootPidFd, hostHash);
         MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
@@ -274,6 +251,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization) {
     this->data = nullptr;
   }
 }
+
+RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
+    : Impl(serialization.begin(), serialization.end()) {}
 
 RegisteredMemory::Impl::~Impl() {
   // Close the CUDA IPC handle if it was opened during deserialization
