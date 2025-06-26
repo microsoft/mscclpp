@@ -696,12 +696,12 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// // Rank 0
 /// communicator.sendMemory(memory1, 1, tag);
 /// communicator.sendMemory(memory2, 1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// connection.get(); // This will return the connection.
 /// // Rank 1
 /// auto mem1 = communicator.recvMemory(0, tag);
 /// auto mem2 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag);
 /// mem2.get();       // This will return memory2.
 /// connection.get(); // This will return the connection.
 /// mem1.get();       // This will return memory1.
@@ -712,13 +712,13 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// // Rank 0
 /// communicator.sendMemory(memory0, 1, tag);
 /// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// connection.get(); // This will return the connection.
 /// mem1.get();       // This will return memory1.
 /// // Rank 1
 /// auto mem0 = communicator.recvMemory(0, tag);
 /// communicator.sendMemory(memory1, 0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag);
 /// mem0.get();       // This will return memory0.
 /// connection.get(); // This will return the connection.
 /// ```
@@ -728,10 +728,10 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// // Rank 0
 /// communicator.sendMemory(memory0, 1, tag);
 /// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// // Rank 1
 /// auto mem0 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc); // undefined behavior
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag); // undefined behavior
 /// communicator.sendMemory(memory1, 0, tag);
 /// ```
 /// In the wrong example, the connection information from rank 1 will be sent to the `mem1` object on rank 0,

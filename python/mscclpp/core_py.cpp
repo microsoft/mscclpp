@@ -119,6 +119,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<Device>(m, "Device")
       .def(nb::init<>())
+      .def(nb::init_implicit<DeviceType>(), nb::arg("type"))
       .def(nb::init<DeviceType, int>(), nb::arg("type"), nb::arg("id") = -1)
       .def_rw("type", &Device::type)
       .def_rw("id", &Device::id)
