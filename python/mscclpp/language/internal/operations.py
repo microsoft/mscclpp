@@ -33,10 +33,8 @@ class LocalChunk:
 
 
 @dataclass
-class RemoteChunk:
+class RemoteChunk(LocalChunk):
     buffer_id: int
-    index: int
-    size: int
 
     def to_json(self):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}

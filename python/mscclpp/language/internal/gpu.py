@@ -15,13 +15,13 @@ class Gpu:
     remote_buffers: dict = field(default_factory=dict)
 
     __channels: dict = field(default_factory=dict, init=False)
-    __nvls_channels: dict = field(default_factory=dict, init=False)
+    __nvls_channels: list = field(default_factory=list, init=False)
 
     def add_channel(self, channel):
         if channel.channel_type == ChannelType.switch:
-            if channel.buffer_type not in self.__nvls_channels:
-                self.__nvls_channels[channel.buffer_type] = Gpu.NVLSChannel(buffer_type=channel.buffer_type)
-            self.__nvls_channels[channel.buffer_type].rank_groups.append(channel.rank_group)
+            self.__nvls_channels.append(
+                Gpu.NVLSChannel(buffer_type=channel.buffer_type, rank_groups=[channel.rank_group])
+            )
         else:
             if channel.channel_type not in self.__channels:
                 self.__channels[channel.channel_type] = Gpu.Channel(channel_type=channel.channel_type)
@@ -71,7 +71,7 @@ class Gpu:
             "scratch_chunks": self.scratch_chunks,
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
-            + [ch.to_json() for ch in self.__nvls_channels.values()],
+            + [ch.to_json() for ch in self.__nvls_channels],
             "remote_buffers": [rb.to_json() for rb in self.remote_buffers.keys()],
         }
 

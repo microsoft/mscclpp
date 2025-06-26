@@ -49,7 +49,7 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
 
         op = GetOperation(
-            src_buff=[RemoteChunk(tb_chunk_id, src_chunk.index, src_chunk.size)],
+            src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
             dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
@@ -82,7 +82,7 @@ class MemoryChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
         )
@@ -113,7 +113,7 @@ class MemoryChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             from_packet=from_packet,
@@ -152,14 +152,15 @@ class MemoryChannel:
 
         remote_chunks = [
             RemoteChunk(
+                chunk.buffer,
+                chunk.index,
+                chunk.size,
                 get_program().setup_remote_chunk(
                     self.src_rank,
                     tb,
                     RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
                     self.channel_type,
                 ),
-                chunk.index,
-                chunk.size,
             )
             for chunk in remote_src_chunks
         ]
@@ -235,7 +236,7 @@ class PortChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
         )
@@ -262,7 +263,7 @@ class PortChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             with_signal=True,
@@ -290,7 +291,7 @@ class PortChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             with_signal_and_flush=True,
@@ -323,7 +324,7 @@ class PortChannel:
 
         op = PutOperation(
             src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(tb_chunk_id, dst_chunk.index, dst_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
             channel_ids=tb_channel_ids,
             channel_type=self.channel_type,
             from_packet=True,
