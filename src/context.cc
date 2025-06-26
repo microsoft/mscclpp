@@ -109,8 +109,6 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
   } else {
     throw Error("Unsupported transport", ErrorCode::InternalError);
   }
-
-  pimpl_->connections_.push_back(conn);
   return conn;
 }
 
