@@ -157,6 +157,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<EndpointConfig>(m, "EndpointConfig")
       .def(nb::init<>())
+      .def(nb::init_implicit<Transport>(), nb::arg("transport"))
       .def(nb::init<Transport, Device, int, int, int, int, int>(), nb::arg("transport"), nb::arg("device"),
            nb::arg("ibMaxCqSize") = EndpointConfig::DefaultMaxCqSize,
            nb::arg("ibMaxCqPollNum") = EndpointConfig::DefaultMaxCqPollNum,
