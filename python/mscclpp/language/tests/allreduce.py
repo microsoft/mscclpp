@@ -10,86 +10,74 @@ from mscclpp.language.collectives import *
 
 
 def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
-    chunksperloop = gpu_size
-    collective = AllReduce(gpu_size, chunksperloop, True)
+    num_tb = 8
+    collective = AllReduce(gpu_size, num_tb, True)
     with MSCCLPPProgram(
         name,
         collective,
         gpu_size,
-        protocol="LL",
+        protocol="Simple",
         instr_fusion=True,
         num_threads_per_block=num_threads_per_block,
-        use_double_scratch_buffer=True,
+        use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        # Creating Scratch Buffers
-        scratch_buffer = []
-        for gpu in range(gpu_size):
-            scratch_buffer.append(Buffer(gpu, 2 * (gpu_size - 1) * gpu_size))
-
         # Creating Channels
         channels = {}
         for gpu in range(gpu_size):
-            for peer in range(gpu_size):
-                if peer != gpu:
-                    channels[(peer, gpu)] = Channel(peer, gpu)
+            for tb in range(num_tb):
+                for peer in range(gpu_size):
+                    if peer != gpu:
+                        channels[(peer, gpu, tb)] = MemoryChannel(peer, gpu)
 
-        # Each rank sends the nth chunk to the nth rank into scratch space
+        # Ensuring the data is ready on the remote side
+        for gpu in range(gpu_size):
+            for tb in range(num_tb):
+                for peer in range(gpu_size):
+                    if gpu != peer:
+                        channels[(peer, gpu, tb)].signal(tb, relaxed=True)
+
+        for gpu in range(gpu_size):
+            for tb in range(num_tb):
+                for peer in range(gpu_size):
+                    if gpu != peer:
+                        channels[(peer, gpu, tb)].wait(tb, data_sync=SyncType.after, relaxed=True)
+
+        # Main AllReduce Logic
         for gpu in range(gpu_size):
             rank = Rank(gpu)
             input_buffer = rank.get_input_buffer()
-            for peer in range(gpu_size):
-                if peer != gpu:
-                    scratch_index = gpu if gpu < peer else gpu - 1
-                    scratch_index *= gpu_size
-                    input_index = peer * gpu_size
-                    tb = peer if peer < gpu else peer - 1
-                    channels[(peer, gpu)].put_packet(
-                        scratch_buffer[peer][scratch_index : scratch_index + gpu_size],
-                        input_buffer[input_index : input_index + gpu_size],
-                        tb,
-                    )
+            for tb in range(num_tb):
+                index = gpu * num_tb + tb
+                src_chunk = input_buffer[index : index + 1]
 
-        # Each rank performs a local reduction on the nth chunk
-        for gpu in range(gpu_size):
-            for index in range(gpu_size):
                 chunks = []
                 for peer in range(gpu_size):
-                    if peer != gpu:
-                        scratch_index = peer if peer < gpu else peer - 1
-                        scratch_index = scratch_index * gpu_size + index
-                        chunks.append(scratch_buffer[gpu][scratch_index : scratch_index + 1])
-                rank = Rank(gpu)
-                input_buffer = rank.get_input_buffer()
-                input_index = gpu * gpu_size + index
-                rank.reduce(input_buffer[input_index : input_index + 1], chunks, index, packet=True)
+                    if gpu != peer:
+                        peer_rank = Rank(peer)
+                        peer_input_buffer = peer_rank.get_input_buffer()
+                        chunks.append(peer_input_buffer[index : index + 1])
+                        channels[(peer, gpu, tb)].reduce(src_chunk, [peer_input_buffer[index : index + 1]], tb)
 
                 for peer in range(gpu_size):
-                    if peer != gpu:
-                        scratch_index = gpu if gpu < peer else gpu - 1
-                        scratch_index = gpu_size * (gpu_size - 1) + scratch_index * gpu_size + index
-                        channels[(peer, gpu)].put_packet(
-                            scratch_buffer[peer][scratch_index : scratch_index + 1],
-                            input_buffer[input_index : input_index + 1],
-                            index,
-                        )
+                    if gpu != peer:
+                        peer_rank = Rank(peer)
+                        peer_input_buffer = peer_rank.get_input_buffer()
+                        channels[(peer, gpu, tb)].put(peer_input_buffer[index : index + 1], src_chunk, tb)
 
-        # Each rank get final result from scratch space
+        # Synchronization and Finalization
         for gpu in range(gpu_size):
-            rank = Rank(gpu)
-            input_buffer = rank.get_input_buffer()
-            for peer in range(gpu_size):
-                if peer != gpu:
-                    input_index = peer * gpu_size
-                    scratch_index = peer if peer < gpu else peer - 1
-                    scratch_index = gpu_size * (gpu_size - 1) + scratch_index * gpu_size
-                    rank.copy(
-                        input_buffer[input_index : input_index + gpu_size],
-                        scratch_buffer[gpu][scratch_index : scratch_index + gpu_size],
-                        peer,
-                        from_packet=True,
-                    )
+            for tb in range(num_tb):
+                for peer in range(gpu_size):
+                    if gpu != peer:
+                        channels[(peer, gpu, tb)].signal(tb, data_sync=SyncType.before)
+
+        for gpu in range(gpu_size):
+            for tb in range(num_tb):
+                for peer in range(gpu_size):
+                    if gpu != peer:
+                        channels[(peer, gpu, tb)].wait(tb)
 
         print(JSON())
 
@@ -105,5 +93,3 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 args = parser.parse_args()
 
 allreduce_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)
-
-""" allreduce_example("allreduce", 4, 1024, 0, 2**64 - 1) """

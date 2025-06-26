@@ -28,7 +28,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         for gpu in range(gpu_size):
             for peer in range(gpu_size):
                 if peer != gpu:
-                    channels[(peer, gpu)] = Channel(peer, gpu)
+                    channels[(peer, gpu)] = MemoryChannel(peer, gpu)
 
         for gpu in range(gpu_size):
             src_rank = gpu
