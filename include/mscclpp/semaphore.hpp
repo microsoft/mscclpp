@@ -17,7 +17,7 @@ class Host2DeviceSemaphore {
  private:
   Semaphore semaphore_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundFlagId_;
-  detail::UniqueGpuHostPtr<uint64_t> outboundFlagId_;
+  std::unique_ptr<uint64_t> outboundFlagId_;
 
  public:
   /// Constructor.

@@ -39,7 +39,7 @@ static Semaphore buildSemaphoreFromConnection(Communicator& communicator, std::s
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
       expectedInboundFlagId_(detail::gpuCallocUnique<uint64_t>()),
-      outboundFlagId_(detail::gpuCallocHostUnique<uint64_t>()) {
+      outboundFlagId_(std::make_unique<uint64_t>()) {
   if (connection()->localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
