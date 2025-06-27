@@ -650,6 +650,9 @@ class Flag {
 class Semaphore {
  public:
   /// Constructor.
+  Semaphore() = default;
+
+  /// Constructor.
   /// @param localFlag Flag allocated on the local process.
   /// @param remoteFlag Flag allocated on the remote process.
   Semaphore(const Flag& localFlag, const Flag& remoteFlag);
