@@ -64,7 +64,7 @@ class BaseSemaphore {
 };
 
 /// A semaphore for sending signals from the host to the device.
-class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, detail::GpuHostDeleter> {
+class Host2DeviceSemaphore : public BaseSemaphore<detail::GpuDeleter, std::default_delete> {
  private:
   std::shared_ptr<Connection> connection_;
 
