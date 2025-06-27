@@ -190,6 +190,7 @@ void register_core(nb::module_& m) {
       .def_static("deserialize", &Flag::deserialize, nb::arg("data"));
 
   nb::class_<Semaphore>(m, "Semaphore")
+      .def(nb::init<>())
       .def(nb::init<const Flag&, const Flag&>(), nb::arg("localFlag"), nb::arg("remoteFlag"))
       .def("connection", &Semaphore::connection)
       .def("local_memory", &Semaphore::localMemory)
@@ -212,19 +213,23 @@ void register_core(nb::module_& m) {
       .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("connect",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(int, int, EndpointConfig)>(
-               &Communicator::connect),
-           nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
-      .def("connect",
            static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(EndpointConfig, int, int)>(
                &Communicator::connect),
            nb::arg("localConfig"), nb::arg("remoteRank"), nb::arg("tag") = 0)
+      .def(
+          "connect",
+          [](Communicator* self, int remoteRank, int tag, EndpointConfig localConfig) {
+            return self->connect(std::move(localConfig), remoteRank, tag);
+          },
+          nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+      .def(
+          "connect_on_setup",
+          [](Communicator* self, int remoteRank, int tag, EndpointConfig localConfig) {
+            return self->connect(std::move(localConfig), remoteRank, tag);
+          },
+          nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
       .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
-      .def("connect_on_setup",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(int, int, EndpointConfig)>(
-               &Communicator::connect),
-           nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
       .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("localFlag"), nb::arg("remoteRank"),
            nb::arg("tag") = 0)
       .def("remote_rank_of", &Communicator::remoteRankOf)
