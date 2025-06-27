@@ -31,7 +31,7 @@ __global__ void kernelFifoPush(size_t numTriggers) {
   mscclpp::ProxyTrigger trigger;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
-    trigger.snd = tid;
+    trigger.snd = tid ^ i;
     fifo.push(trigger);
   }
 }
@@ -42,7 +42,7 @@ __global__ void kernelFifoPushSync(size_t numTriggers) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
-    trigger.snd = tid;
+    trigger.snd = tid ^ i;
     fifo.sync(fifo.push(trigger));
   }
 }
@@ -69,6 +69,7 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
 
     // Process trigger (see src/proxy.cc)
     trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
+    trigger.snd = trigger.snd ^ trigger.fst;
     assert(triggerCounts[trigger.snd] + 1 == trigger.fst);
     triggerCounts[trigger.snd]++;
     hostFifo->pop();
