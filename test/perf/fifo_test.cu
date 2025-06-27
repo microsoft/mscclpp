@@ -27,10 +27,11 @@ __constant__ mscclpp::FifoDeviceHandle gFifoDeviceHandle;
 
 __global__ void kernelFifoPush(size_t numTriggers) {
   mscclpp::FifoDeviceHandle& fifo = gFifoDeviceHandle;
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
   mscclpp::ProxyTrigger trigger;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
-    trigger.snd = 0;
+    trigger.snd = tid;
     fifo.push(trigger);
   }
 }
@@ -38,9 +39,10 @@ __global__ void kernelFifoPush(size_t numTriggers) {
 __global__ void kernelFifoPushSync(size_t numTriggers) {
   mscclpp::FifoDeviceHandle& fifo = gFifoDeviceHandle;
   mscclpp::ProxyTrigger trigger;
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
   for (size_t i = 1; i <= numTriggers; ++i) {
     trigger.fst = i;
-    trigger.snd = 0;
+    trigger.snd = tid;
     fifo.sync(fifo.push(trigger));
   }
 }
@@ -52,8 +54,10 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
 }
 
 // Helper function to consume triggers from FIFO
-static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTriggers, int flushPeriod) {
-  for (int i = 0; i < numTriggers; ++i) {
+static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTriggers, int parallel, int flushPeriod) {
+  int totalTriggers = numTriggers * parallel;
+  std::unordered_map<int, int> triggerCounts;
+  for (int i = 0; i < totalTriggers; ++i) {
     mscclpp::ProxyTrigger trigger;
     uint64_t spin = 0;
     do {
@@ -66,6 +70,8 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
 
     // Process trigger (see src/proxy.cc)
     trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
+    assert(triggerCounts[trigger.snd] + 1 == trigger.fst);
+    triggerCounts[trigger.snd]++;
     hostFifo->pop();
 
     // Flush periodically
@@ -90,7 +96,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   utils::CUDA_CHECK(cudaGetLastError());
 
   // Process warmup triggers (note: total triggers = warmupTriggers * numParallel)
-  if (!consumeTriggers(hostFifo, warmupTriggers * numParallel, flushPeriod)) {
+  if (!consumeTriggers(hostFifo, warmupTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};  // Return error values
   }
   hostFifo->flushTail();
@@ -104,7 +110,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   utils::CUDA_CHECK(cudaGetLastError());
 
   // Process all triggers
-  if (!consumeTriggers(hostFifo, numTriggers * numParallel, flushPeriod)) {
+  if (!consumeTriggers(hostFifo, numTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};
   }
   hostFifo->flushTail(true);
