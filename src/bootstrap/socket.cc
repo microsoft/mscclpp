@@ -50,7 +50,7 @@ const char* SocketToString(union SocketAddress* addr, char* buf, const int numer
 static int getTcpFinTimeout() {
   std::ifstream ifs("/proc/sys/net/ipv4/tcp_fin_timeout");
   if (!ifs.is_open()) {
-    throw mscclpp::SysError("open /proc/sys/net/ipv4/tcp_fin_timeout failed", errno);
+    throw SysError("open /proc/sys/net/ipv4/tcp_fin_timeout failed", errno);
   }
   int timeout;
   ifs >> timeout;
@@ -80,12 +80,12 @@ static int findInterfaces(const char* prefixList, char* names, union SocketAddre
 #ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
-  struct mscclpp::netIf userIfs[MAX_IFS];
+  struct netIf userIfs[MAX_IFS];
   bool searchNot = prefixList && prefixList[0] == '^';
   if (searchNot) prefixList++;
   bool searchExact = prefixList && prefixList[0] == '=';
   if (searchExact) prefixList++;
-  int nUserIfs = mscclpp::parseStringList(prefixList, userIfs, MAX_IFS);
+  int nUserIfs = parseStringList(prefixList, userIfs, MAX_IFS);
 
   int found = 0;
   struct ifaddrs *interfaces, *interface;
@@ -110,7 +110,7 @@ static int findInterfaces(const char* prefixList, char* names, union SocketAddre
     }
 
     // check against user specified interfaces
-    if (!(mscclpp::matchIfList(interface->ifa_name, -1, userIfs, nUserIfs, searchExact) ^ searchNot)) {
+    if (!(matchIfList(interface->ifa_name, -1, userIfs, nUserIfs, searchExact) ^ searchNot)) {
       continue;
     }
 
@@ -224,16 +224,16 @@ int FindInterfaceMatchSubnet(char* ifNames, union SocketAddress* localAddrs, uni
 
 void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) {
   if (!(ip_port_pair && strlen(ip_port_pair) > 1)) {
-    throw mscclpp::Error("Net : string is null", mscclpp::ErrorCode::InvalidUsage);
+    throw Error("Net : string is null", ErrorCode::InvalidUsage);
   }
 
   bool ipv6 = ip_port_pair[0] == '[';
   /* Construct the sockaddress structure */
   if (!ipv6) {
-    struct mscclpp::netIf ni;
+    struct netIf ni;
     // parse <ip_or_hostname>:<port> string, expect one pair
-    if (mscclpp::parseStringList(ip_port_pair, &ni, 1) != 1) {
-      throw mscclpp::Error("Net : No valid <IPv4_or_hostname>:<port> pair found", mscclpp::ErrorCode::InvalidUsage);
+    if (parseStringList(ip_port_pair, &ni, 1) != 1) {
+      throw Error("Net : No valid <IPv4_or_hostname>:<port> pair found", ErrorCode::InvalidUsage);
     }
 
     struct addrinfo hints, *p;
@@ -245,7 +245,7 @@ void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) 
     if ((rv = getaddrinfo(ni.prefix, NULL, &hints, &p)) != 0) {
       std::stringstream ss;
       ss << "Net : error encountered when getting address info : " << gai_strerror(rv);
-      throw mscclpp::Error(ss.str(), mscclpp::ErrorCode::InvalidUsage);
+      throw Error(ss.str(), ErrorCode::InvalidUsage);
     }
 
     // use the first
@@ -263,7 +263,7 @@ void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) 
       sin6.sin6_flowinfo = 0;           // needed by IPv6, but possibly obsolete
       sin6.sin6_scope_id = 0;           // should be global scope, set to 0
     } else {
-      throw mscclpp::Error("Net : unsupported IP family", mscclpp::ErrorCode::InvalidUsage);
+      throw Error("Net : unsupported IP family", ErrorCode::InvalidUsage);
     }
 
     freeaddrinfo(p);  // all done with this structure
@@ -276,7 +276,7 @@ void SocketGetAddrFromString(union SocketAddress* ua, const char* ip_port_pair) 
     }
     if (i == len) {
       WARN("Net : No valid [IPv6]:port pair found");
-      throw mscclpp::Error("Net : No valid [IPv6]:port pair found", mscclpp::ErrorCode::InvalidUsage);
+      throw Error("Net : No valid [IPv6]:port pair found", ErrorCode::InvalidUsage);
     }
     bool global_scope = (j == -1 ? true : false);  // If no % found, global scope; otherwise, link scope
 
@@ -448,7 +448,7 @@ void Socket::bindAndListen() {
 }
 
 void Socket::connect(int64_t timeout) {
-  mscclpp::Timer timer;
+  Timer timer;
 #ifdef MSCCLPP_ENABLE_TRACE
   char line[SOCKET_NAME_MAXLEN + 1];
 #endif
@@ -483,7 +483,7 @@ void Socket::connect(int64_t timeout) {
 }
 
 void Socket::accept(const Socket* listenSocket, int64_t timeout) {
-  mscclpp::Timer timer;
+  Timer timer;
 
   if (listenSocket == NULL) {
     throw Error("listenSocket is NULL", ErrorCode::InvalidUsage);

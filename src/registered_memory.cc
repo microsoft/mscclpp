@@ -237,9 +237,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
 #else
-      throw mscclpp::Error(
-          "CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
-          mscclpp::ErrorCode::InvalidUsage);
+      throw Error("CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
+                  ErrorCode::InvalidUsage);
 #endif
     } else {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));

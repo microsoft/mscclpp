@@ -238,7 +238,7 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, Endpoin
       recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
-    throw mscclpp::Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
+    throw Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
   }
 
   // Instanciating Buffers
