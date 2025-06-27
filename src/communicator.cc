@@ -66,8 +66,8 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
   return shared_future;
 }
 
-MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
-                                                                                      EndpointConfig localConfig) {
+MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(EndpointConfig localConfig,
+                                                                                      int remoteRank, int tag) {
   auto localEndpoint = context()->createEndpoint(localConfig);
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
@@ -87,6 +87,32 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
       });
   auto shared_future = std::shared_future<std::shared_ptr<Connection>>(std::move(future));
   pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<std::shared_ptr<Connection>>>(shared_future));
+  return shared_future;
+}
+
+MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
+                                                                                      EndpointConfig localConfig) {
+  return connect(localConfig, remoteRank, tag);
+}
+
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const Flag& localFlag, int remoteRank,
+                                                                           int tag) {
+  bootstrap()->send(localFlag.serialize(), remoteRank, tag);
+
+  auto future =
+      std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
+                                         localFlag = localFlag]() mutable {
+        if (lastRecvItem) {
+          // Recursive call to the previous receive items
+          lastRecvItem->wait();
+        }
+        std::vector<char> data;
+        bootstrap()->recv(data, remoteRank, tag);
+        auto remoteFlag = Flag::deserialize(data);
+        return Semaphore(localFlag, remoteFlag);
+      });
+  auto shared_future = std::shared_future<Semaphore>(std::move(future));
+  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Semaphore>>(shared_future));
   return shared_future;
 }
 

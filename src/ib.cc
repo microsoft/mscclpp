@@ -52,7 +52,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff) - addr) + pageSize - 1) / pageSize;
 
   CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(buff);
-  bool cuMemAlloc = mscclpp::isCuMemMapAllocated((void*)dptr);
+  bool cuMemAlloc = isCuMemMapAllocated((void*)dptr);
   int dmaBufSupported = 0;
 #if !defined(__HIP_PLATFORM_AMD__)
   CUdevice dev;
@@ -71,11 +71,10 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     if (this->mr == nullptr) {
       std::stringstream err;
       err << "ibv_reg_dmabuf_mr failed (errno " << errno << ")";
-      throw mscclpp::IbError(err.str(), errno);
+      throw IbError(err.str(), errno);
     }
 #else
-    throw mscclpp::Error("Registeration of dma-buf based memory region failed on HIP platform",
-                         ErrorCode::InvalidUsage);
+    throw Error("Registeration of dma-buf based memory region failed on HIP platform", ErrorCode::InvalidUsage);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
     this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
@@ -84,7 +83,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     if (this->mr == nullptr) {
       std::stringstream err;
       err << "ibv_reg_mr failed (errno " << errno << ")";
-      throw mscclpp::IbError(err.str(), errno);
+      throw IbError(err.str(), errno);
     }
   }
 
@@ -111,7 +110,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   if (this->cq == nullptr) {
     std::stringstream err;
     err << "ibv_create_cq failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
 
   struct ibv_qp_init_attr qpInitAttr;
@@ -130,14 +129,14 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   if (_qp == nullptr) {
     std::stringstream err;
     err << "ibv_create_qp failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
 
   struct ibv_port_attr portAttr;
   if (IBVerbs::ibv_query_port_w(ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   this->info.lid = portAttr.lid;
   this->info.port = port;
@@ -151,7 +150,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
     if (IBVerbs::ibv_query_gid(ctx, port, 0, &gid) != 0) {
       std::stringstream err;
       err << "ibv_query_gid failed (errno " << errno << ")";
-      throw mscclpp::IbError(err.str(), errno);
+      throw IbError(err.str(), errno);
     }
     this->info.spn = gid.global.subnet_prefix;
     this->info.iid = gid.global.interface_id;
@@ -166,7 +165,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   if (IBVerbs::ibv_modify_qp(_qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   this->qp = _qp;
   this->wrn = 0;
@@ -210,7 +209,7 @@ void IbQp::rtr(const IbQpInfo& info) {
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
 }
 
@@ -229,7 +228,7 @@ void IbQp::rts() {
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_modify_qp failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
 }
 
@@ -237,7 +236,7 @@ IbQp::WrInfo IbQp::getNewWrInfo() {
   if (this->wrn >= this->maxWrPerSend) {
     std::stringstream err;
     err << "too many outstanding work requests. limit is " << this->maxWrPerSend;
-    throw mscclpp::Error(err.str(), ErrorCode::InvalidUsage);
+    throw Error(err.str(), ErrorCode::InvalidUsage);
   }
   int wrn = this->wrn;
 
@@ -306,7 +305,7 @@ void IbQp::postSend() {
   if (ret != 0) {
     std::stringstream err;
     err << "ibv_post_send failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   this->wrn = 0;
   this->numSignaledPostedItems += this->numSignaledStagedItems;
@@ -332,7 +331,7 @@ int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
 #if !defined(__HIP_PLATFORM_AMD__)
   if (!checkNvPeerMemLoaded()) {
-    throw mscclpp::Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
+    throw Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
   }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   int num;
@@ -347,13 +346,13 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName) {
   if (this->ctx == nullptr) {
     std::stringstream err;
     err << "ibv_open_device failed (errno " << errno << ", device name << " << devName << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   this->pd = IBVerbs::ibv_alloc_pd(this->ctx);
   if (this->pd == nullptr) {
     std::stringstream err;
     err << "ibv_alloc_pd failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
 }
 
@@ -373,7 +372,7 @@ bool IbCtx::isPortUsable(int port) const {
   if (IBVerbs::ibv_query_port_w(this->ctx, port, &portAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_port failed (errno " << errno << ", port << " << port << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   return portAttr.state == IBV_PORT_ACTIVE &&
          (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || portAttr.link_layer == IBV_LINK_LAYER_INFINIBAND);
@@ -384,7 +383,7 @@ int IbCtx::getAnyActivePort() const {
   if (IBVerbs::ibv_query_device(this->ctx, &devAttr) != 0) {
     std::stringstream err;
     err << "ibv_query_device failed (errno " << errno << ")";
-    throw mscclpp::IbError(err.str(), errno);
+    throw IbError(err.str(), errno);
   }
   for (uint8_t port = 1; port <= devAttr.phys_port_cnt; ++port) {
     if (this->isPortUsable(port)) {
@@ -399,10 +398,10 @@ IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRec
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
-      throw mscclpp::Error("No active port found", ErrorCode::InvalidUsage);
+      throw Error("No active port found", ErrorCode::InvalidUsage);
     }
   } else if (!this->isPortUsable(port)) {
-    throw mscclpp::Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
+    throw Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
   }
   qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
   return qps.back().get();

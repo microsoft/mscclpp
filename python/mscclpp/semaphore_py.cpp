@@ -11,7 +11,7 @@ using namespace mscclpp;
 
 void register_semaphore(nb::module_& m) {
   nb::class_<Host2DeviceSemaphore> host2DeviceSemaphore(m, "Host2DeviceSemaphore");
-  host2DeviceSemaphore
+  host2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &Host2DeviceSemaphore::connection)
       .def("signal", &Host2DeviceSemaphore::signal)
@@ -26,6 +26,7 @@ void register_semaphore(nb::module_& m) {
       });
 
   nb::class_<Host2HostSemaphore>(m, "Host2HostSemaphore")
+      .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &Host2HostSemaphore::connection)
       .def("signal", &Host2HostSemaphore::signal)
@@ -34,8 +35,9 @@ void register_semaphore(nb::module_& m) {
            nb::arg("max_spin_count") = 10000000);
 
   nb::class_<MemoryDevice2DeviceSemaphore> memoryDevice2DeviceSemaphore(m, "MemoryDevice2DeviceSemaphore");
-  memoryDevice2DeviceSemaphore
+  memoryDevice2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
+      .def("connection", &MemoryDevice2DeviceSemaphore::connection)
       .def("device_handle", &MemoryDevice2DeviceSemaphore::deviceHandle);
 
   nb::class_<MemoryDevice2DeviceSemaphore::DeviceHandle>(memoryDevice2DeviceSemaphore, "DeviceHandle")
