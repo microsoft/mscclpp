@@ -61,7 +61,6 @@ else()
         message(FATAL_ERROR "Neither NVIDIA/CUDA nor AMD/ROCm is found.")
     endif()
 endif()
-
 if(MSCCLPP_GPU_ARCHS)
     string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
     string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")

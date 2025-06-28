@@ -50,7 +50,6 @@ TEST(FifoTest, Fifo) {
   trigger.snd = 0;
 
   uint64_t spin = 0;
-  uint64_t flushCnt = 0;
   mscclpp::Timer timer(3);
   for (uint64_t i = 0; i < ITER; ++i) {
     trigger = hostFifo.poll();
@@ -66,12 +65,8 @@ TEST(FifoTest, Fifo) {
     ASSERT_TRUE(trigger.fst == (i + 1));
     ASSERT_TRUE(trigger.snd == (i + 1));
     hostFifo.pop();
-    if ((++flushCnt % hostFifo.size()) == 0) {
-      hostFifo.flushTail();
-    }
     spin = 0;
   }
-  hostFifo.flushTail(true);
 
   std::stringstream ss;
   ss << "FifoTest.Fifo: " << (float)timer.elapsed() / ITER << " us/iter\n";
