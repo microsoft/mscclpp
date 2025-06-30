@@ -37,8 +37,10 @@ class Gpu:
         if remote_buffer not in self.remote_buffers:
             remote_buffer_id = len(self.remote_buffers)
         else:
-            remote_buffer_id = self.remote_buffers.pop(remote_buffer)
-        self.remote_buffers[remote_buffer] = remote_buffer_id
+            remote_buffer_key = self.remote_buffers.pop(remote_buffer)
+            remote_buffer.channel_access |= remote_buffer_key[1].channel_access
+            remote_buffer_id = remote_buffer_key[0]
+        self.remote_buffers[remote_buffer] = (remote_buffer_id, remote_buffer)
 
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))

@@ -16,13 +16,16 @@ class BuffersAccess:
     def process_operations(self, operations):
         result_operations = []
         for operation in operations:
-            data_access = operation.local_data_access()
+            if operation.name == Instruction.nop or operation.name == Instruction.barrier:
+                self.clear_data_access()
+            else:
+                data_access = operation.local_data_access()
+                sync_added = False
+                for data_access_element in data_access:
+                    if self.compute_data_access(data_access_element) and not sync_added:
+                        result_operations.append(SyncOperation())
+                        sync_added = True
 
-            for data_access_element in data_access:
-                if operation.name == Instruction.nop or operation.name == Instruction.barrier:
-                    self.clear_data_access()
-                elif self.compute_data_access(data_access_element):
-                    result_operations.append(SyncOperation())
             result_operations.append(operation)
 
         return result_operations

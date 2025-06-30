@@ -87,3 +87,22 @@ class AllReduce(Collective):
             }
             rank_buffers.append(buffers)
         return rank_buffers
+
+
+class ReduceScatter(Collective):
+    def __init__(self, num_ranks, chunk_factor, inplace):
+        Collective.__init__(self, num_ranks, chunk_factor, inplace)
+        self.name = "reducescatter"
+
+    # Initializes input buffer for an allgather
+    def init_buffers(self):
+        rank_buffers = []
+        for rank in range(self.num_ranks):
+            input_buffer_size = self.num_ranks * self.chunk_factor
+            output_buffer_size = self.num_ranks
+            buffers = {
+                BufferType.input: BaseBuffer(rank, BufferType.input, 0, input_buffer_size),
+                BufferType.output: BaseBuffer(rank, BufferType.output, 0, output_buffer_size),
+            }
+            rank_buffers.append(buffers)
+        return rank_buffers
