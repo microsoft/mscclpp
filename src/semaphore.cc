@@ -29,7 +29,7 @@ static detail::UniqueGpuPtr<uint64_t> createGpuSemaphoreId() {
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
                                                            std::shared_ptr<Connection> connection)
-    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), detail::gpuCallocHostUnique<uint64_t>()),
+    : BaseSemaphore(createGpuSemaphoreId(), createGpuSemaphoreId(), std::make_unique<uint64_t>()),
       connection_(connection) {
   INFO(MSCCLPP_INIT, "Creating a Host2Device semaphore for %s transport from %d to %d",
        connection->getTransportName().c_str(), communicator.bootstrap()->getRank(),
