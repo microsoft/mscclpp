@@ -497,7 +497,10 @@ class Connection {
   /// @param newValue The new value to write.
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
-  ///
+  /// Atomically add an 8-byte value to a destination RegisteredMemory.
+  /// @param dst The destination RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
+  /// @param value The value to add.
   virtual void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value) = 0;
 
   /// Flush any pending writes to the remote process.
