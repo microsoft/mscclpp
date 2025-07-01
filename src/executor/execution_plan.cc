@@ -234,9 +234,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
-  if (!isMessageSizeValid(inputSize, outputSize)) {
-    throw Error("Input or output size is not valid", ErrorCode::ExecutorError);
-  }
 
   this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
@@ -248,6 +245,8 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->inputChunks = gpu["input_chunks"];
   this->outputChunks = gpu["output_chunks"];
   this->scratchChunks = gpu["scratch_chunks"];
+  checkMessageSize();
+
   this->setupChannels(gpus);
   this->setupRemoteBuffers(gpus);
   this->setupSemaphores(gpu);
@@ -256,9 +255,6 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
 
 void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                                  size_t constDstOffset) {
-  if (!isMessageSizeValid(inputSize, outputSize)) {
-    throw Error("Input or output size is not valid", ErrorCode::ExecutorError);
-  }
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   if (this->name != obj["name"]) {
@@ -280,18 +276,23 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
+
+  checkMessageSize();
   this->setupOperations(gpus, contsSrcOffset, constDstOffset);
 }
 
-bool ExecutionPlan::Impl::isMessageSizeValid(size_t inputSize, size_t outputSize) const {
+void ExecutionPlan::Impl::checkMessageSize() const {
   size_t size = inputSize;
+  if (inputSize % bufferAlignment != 0 || outputSize % bufferAlignment != 0 ||
+      (inputSize / bufferAlignment) % inputChunks != 0 || (outputSize / bufferAlignment) % outputChunks != 0) {
+    throw Error("Input or output size is not aligned with buffer alignment or chunks", ErrorCode::ExecutorError);
+  }
   if (this->collective == "allgather") {
     size = outputSize;
   }
   if (size < this->minMessageSize || size > this->maxMessageSize) {
-    return false;
+    throw Error("Input or output size is not within the valid range", ErrorCode::ExecutorError);
   }
-  return true;
 }
 
 void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
@@ -599,9 +600,6 @@ size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint3
     return chunkIndex * this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
   }
 
-  if (inputSize % this->bufferAlignment != 0) {
-    throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
-  }
   auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
   uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));

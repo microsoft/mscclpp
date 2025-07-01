@@ -138,8 +138,7 @@ struct ExecutionPlan::Impl {
                      std::vector<NvlsInfo>& nvlsInfos,
                      std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
   void parseRemoteBuffer(const nlohmann::json& gpus);
-
-  bool isMessageSizeValid(size_t inputSize, size_t outputSize) const;
+  void checkMessageSize() const;
 
   std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap_;
   std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap_;
