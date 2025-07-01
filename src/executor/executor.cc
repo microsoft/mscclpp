@@ -389,13 +389,15 @@ struct Executor::Impl {
         deviceExecutionPlan.channels.nvlsChannels[chanIndex++] = mscclpp::deviceHandle(context.nvlsChannels[index]);
       }
       int memIndex = 0;
-      for (const int index : plan.impl_->threadblockMemoryChannelBuffers.at(threadblock)) {
-        deviceExecutionPlan.remoteBuffers.remoteBuffersViaMemoryChannel[memIndex++] =
-            context.registeredMemoryAddresses[index];
+      for (const auto& pair : plan.impl_->threadblockMemoryChannelBuffers.at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.memoryChannelBufferPtrs[memIndex] =
+            context.registeredMemoryAddresses[pair.first];
+        deviceExecutionPlan.remoteBuffers.memoryChannelBufferTypes[memIndex++] = pair.second;
       }
       memIndex = 0;
-      for (const int index : plan.impl_->threadblockPortChannelBuffers.at(threadblock)) {
-        deviceExecutionPlan.remoteBuffers.remoteBuffersViaPortChannel[memIndex++] = context.registeredMemoryIds[index];
+      for (const auto& pair : plan.impl_->threadblockPortChannelBuffers.at(threadblock)) {
+        deviceExecutionPlan.remoteBuffers.portChannelBufferIds[memIndex] = context.registeredMemoryIds[pair.first];
+        deviceExecutionPlan.remoteBuffers.portChannelBufferTypes[memIndex++] = pair.second;
       }
 
       if (ops.size() > MAX_OPERATION) {

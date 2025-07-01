@@ -183,9 +183,10 @@ __device__ DeviceSemaphore* deviceSemaphores;
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
 __shared__ DeviceHandle<BasePortChannel>* portChannels_;
 __shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
-__shared__ void** remoteMemoriesViaMemoryChan_;
-__shared__ MemoryId* remoteMemoriesViaPortChan_;
-__shared__ BufferType* remoteBufferTypes_;
+__shared__ void** memoryChannelBufferPtrs_;
+__shared__ MemoryId* portChannelBufferIds_;
+__shared__ BufferType* memoryChannelBufferTypes_;
+__shared__ BufferType* portChannelBufferTypes_;
 __shared__ uint32_t flag_;
 __shared__ uint32_t scratchChunkSize_;
 
@@ -282,9 +283,10 @@ MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* out
   const uint32_t* dstOffsets = op.outputOffsets;
   for (int i = 0; i < count; i++) {
     uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset);
-    uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(remoteBufferTypes_[op.inputBufferRefs[i].id], offset);
+    uint32_t srcOffset =
+        srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
     uint32_t size = min(sizes[i] - offset, unitSize);
-    char* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.inputBufferRefs[i].id]);
+    char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[i].id]);
     mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
                   remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
   }
@@ -303,10 +305,10 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   if (chType == ChannelType::MEMORY) {
     for (int i = 0; i < count; i++) {
       uint32_t dstOffset =
-          dstOffsets[i] + getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[i].id], offset);
+          dstOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[i].id], offset);
       uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset);
       uint32_t size = min(outputSizes[i] - offset, unitSize);
-      char* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[i].id]);
+      char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[i].id]);
       mscclpp::copy(remoteMemory + dstOffset, src + srcOffset, size, threadIdx.x, blockDim.x);
     }
     return;
@@ -315,10 +317,10 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
     int tid = threadIdx.x;
     if (tid < count) {
       uint32_t size = min(outputSizes[tid] - offset, unitSize);
-      MemoryId dstMemoryId = remoteMemoriesViaPortChan_[op.outputBufferRefs[tid].id];
+      MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
       MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
       uint32_t dstOffset =
-          dstOffsets[tid] + getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[tid].id], offset);
+          dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
       uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
       if constexpr (PutWithSignal) {
         portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
@@ -352,19 +354,21 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
     for (int index = 0; index < nRemoteInputs; ++index) {
       int4 val;
       uint32_t srcOffset =
-          (srcOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+          (srcOffsets[index] +
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
           sizeof(int4);
-      void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.inputBufferRefs[index + 1].id]);
+      void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       val = mscclpp::read<int4>(remoteMemory, srcOffset + idx);
       tmp = add_vectors<T>(tmp, val);
     }
     output4[outputOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nRemoteOutputs; ++index) {
-        uint32_t dstOffset = (dstOffsets[index] +
-                              getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
-                             sizeof(int4);
-        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[index + 1].id]);
+        uint32_t dstOffset =
+            (dstOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            sizeof(int4);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
         mscclpp::write<int4>(remoteMemory, dstOffset + idx, tmp);
       }
     }
@@ -379,18 +383,20 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
     T tmp = static_cast<T*>(input)[idx];
     for (int index = 0; index < nRemoteInputs; ++index) {
       uint32_t srcOffset =
-          (srcOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+          (srcOffsets[index] +
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
           sizeof(T);
-      void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.inputBufferRefs[index + 1].id]);
+      void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       tmp = add_elements(tmp, mscclpp::read<T>(remoteMemory, srcOffset + idx));
     }
     static_cast<T*>(output)[idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nRemoteOutputs; ++index) {
-        uint32_t dstOffset = (dstOffsets[index] +
-                              getOffset<ReuseScratch>(remoteBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
-                             sizeof(T);
-        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[index + 1].id]);
+        uint32_t dstOffset =
+            (dstOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            sizeof(T);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
         mscclpp::write<T>(remoteMemory, dstOffset + idx, tmp);
       }
     }
@@ -410,7 +416,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, voi
     for (int index = 0; index < nDstChannels; ++index) {
       uint32_t size = sizes[index];
       mscclpp::copyToPackets<PacketType>(
-          (char*)remoteMemoriesViaMemoryChan_[op.outputBufferRefs[index].id] + dstOffsets[index] * 2,
+          (char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] + (dstOffsets[index] << 1),
           (char*)inputBuff + srcOffsets[index], size, threadIdx.x, blockDim.x, flag_);
     }
   }
@@ -425,7 +431,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, voi
     uint32_t dstOffset = (dstOffsets[tid] << 1);
     uint32_t srcOffset = (srcOffsets[tid] << 1);
     MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
-    MemoryId dstMemoryId = remoteMemoriesViaPortChan_[op.outputBufferRefs[tid].id];
+    MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
     portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size << 1);
   }
 }
@@ -446,7 +452,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratc
         PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
         PacketType pkt(data, flag_);
         size_t offset = (dstOffsets[idx] * 2) / sizeof(PacketType);
-        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[op.outputBufferRefs[idx].id]);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
       }
     }
@@ -468,8 +474,9 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratc
     }
     uint32_t dstOffset = dstOffsets[chIdx] << 1;
     uint32_t srcOffset = srcOffsets[chIdx] << 1;
-    MemoryId dstMemoryId = remoteMemoriesViaPortChan_[op.outputBufferRefs[chIdx].id];
-    portChannels_[channelIndexes[chIdx]].put(dstMemoryId, dstOffset, srcOffset, size << 1);
+    MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
+    portChannels_[channelIndexes[chIdx]].put(dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH),
+                                             srcOffset, size << 1);
   }
 }
 
@@ -506,7 +513,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
       PacketType pkt(data, flag_);
       for (uint32_t index = 0; index < nDstChannels; ++index) {
         uint32_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
-        void* remoteMemory = static_cast<char*>(remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id]);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[outputBufferRefs[index].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
       }
     }
@@ -570,10 +577,10 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
     dst4[dstOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nOutput; ++index) {
-        size_t outOffset =
-            (outputOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[outputBufferRefs[index].id], offset)) /
-            sizeof(int4);
-        void* remoteMemory = remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id];
+        size_t outOffset = (outputOffsets[index] +
+                            getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
+                           sizeof(int4);
+        void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
         mscclpp::write(remoteMemory, outOffset + idx, tmp);
       }
     }
@@ -595,10 +602,10 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
     dst[idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nOutput; ++index) {
-        uint32_t outOffset =
-            (outputOffsets[index] + getOffset<ReuseScratch>(remoteBufferTypes_[outputBufferRefs[index].id], offset)) /
-            sizeof(T);
-        void* remoteMemory = remoteMemoriesViaMemoryChan_[outputBufferRefs[index].id];
+        uint32_t outOffset = (outputOffsets[index] +
+                              getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
+                             sizeof(T);
+        void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
         mscclpp::write<T>(remoteMemory, outOffset + idx, tmp);
       }
     }
@@ -814,9 +821,10 @@ __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int 
   memoryChannels_ = localPlan->channels.memoryChannels;
   portChannels_ = localPlan->channels.portChannels;
   nvlsChannels_ = localPlan->channels.nvlsChannels;
-  remoteMemoriesViaMemoryChan_ = localPlan->remoteBuffers.remoteBuffersViaMemoryChannel;
-  remoteMemoriesViaPortChan_ = localPlan->remoteBuffers.remoteBuffersViaPortChannel;
-  remoteBufferTypes_ = localPlan->remoteBuffers.remoteBufferTypes;
+  memoryChannelBufferPtrs_ = localPlan->remoteBuffers.memoryChannelBufferPtrs;
+  portChannelBufferIds_ = localPlan->remoteBuffers.portChannelBufferIds;
+  memoryChannelBufferTypes_ = localPlan->remoteBuffers.memoryChannelBufferTypes;
+  portChannelBufferTypes_ = localPlan->remoteBuffers.portChannelBufferTypes;
   flag_ = flag;
   scratchChunkSize_ = scratchChunkSize;
 

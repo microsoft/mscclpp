@@ -104,9 +104,9 @@ struct ExecutionPlan::Impl {
   std::vector<std::vector<int>> threadblockMemoryChannels;
   std::vector<std::vector<int>> threadblockPortChannels;
   std::vector<std::vector<int>> threadblockNvlsChannels;
-  // threadblockBuffers[threadblock] = bufferIndexes
-  std::vector<std::vector<int>> threadblockMemoryChannelBuffers;
-  std::vector<std::vector<int>> threadblockPortChannelBuffers;
+  // threadblockBuffers[threadblock] = {bufferIndexes, bufferType}
+  std::vector<std::vector<std::pair<int, BufferType>>> threadblockMemoryChannelBuffers;
+  std::vector<std::vector<std::pair<int, BufferType>>> threadblockPortChannelBuffers;
 
   uint32_t inputChunks;
   uint32_t outputChunks;

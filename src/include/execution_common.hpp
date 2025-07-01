@@ -71,9 +71,13 @@ struct Channels {
 };
 
 struct RemoteBuffers {
-  BufferType remoteBufferTypes[MAX_CHANNEL];
-  void* remoteBuffersViaMemoryChannel[MAX_CHANNEL];
-  MemoryId remoteBuffersViaPortChannel[MAX_CHANNEL];
+  // For buffer accessed via memory channel
+  BufferType memoryChannelBufferTypes[MAX_CHANNEL];
+  void* memoryChannelBufferPtrs[MAX_CHANNEL];
+
+  // for buffer access via port channel
+  BufferType portChannelBufferTypes[MAX_CHANNEL];
+  MemoryId portChannelBufferIds[MAX_CHANNEL];
 };
 
 union BufferRef {

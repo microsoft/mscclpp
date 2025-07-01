@@ -413,13 +413,15 @@ void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
       ChannelType accessChanType = convertToChannelType(remoteBuffRef["access_channel_type"]);
       if (accessChanType == ChannelType::PORT) {
         for (const auto& bufferId : remoteBuffRef["remote_buffer_ids"]) {
+          BufferType type = this->remoteBufferInfos_[rank][bufferId].bufferType;
           this->threadblockPortChannelBuffers[threadblock["id"]].push_back(
-              this->bufferIndexMap_[rank][{bufferId, accessChanType}]);
+              {this->bufferIndexMap_[rank][{bufferId, accessChanType}], type});
         }
       } else if (accessChanType == ChannelType::MEMORY) {
         for (const auto& bufferId : remoteBuffRef["remote_buffer_ids"]) {
+          BufferType type = this->remoteBufferInfos_[rank][bufferId].bufferType;
           this->threadblockMemoryChannelBuffers[threadblock["id"]].push_back(
-              this->bufferIndexMap_[rank][{bufferId, accessChanType}]);
+              {this->bufferIndexMap_[rank][{bufferId, accessChanType}], type});
         }
       }
     }
@@ -474,15 +476,13 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
   };
 
   auto getRemoteBufferTypeWithId = [&](int bufferId, int threadBlockId, ChannelType channelType) -> BufferType {
-    int id = -1;
     if (channelType == ChannelType::MEMORY) {
-      id = this->threadblockMemoryChannelBuffers[threadBlockId][bufferId];
-    } else if (channelType == ChannelType::PORT) {
-      id = this->threadblockPortChannelBuffers[threadBlockId][bufferId];
-    } else {
-      throw Error("Invalid channel type", ErrorCode::ExecutorError);
+      return this->threadblockMemoryChannelBuffers[threadBlockId][bufferId].second;
     }
-    return this->remoteBufferInfos_[rank][id].bufferType;
+    if (channelType == ChannelType::PORT) {
+      return this->threadblockPortChannelBuffers[threadBlockId][bufferId].second;
+    }
+    throw Error("Invalid channel type", ErrorCode::ExecutorError);
   };
 
   operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
