@@ -102,7 +102,7 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
 MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
                                                                                       EndpointConfig localConfig) {
   auto localEndpoint = context()->createEndpoint(localConfig);
-  
+
   if (remoteRank == bootstrap()->getRank()) {
     // Connection to self
     auto remoteEndpoint = context()->createEndpoint(localConfig);
