@@ -1,4 +1,4 @@
-from mscclpp.language.internal.dsl_types import RemoteBuffer, SyncType, ReduceOperationType, Chunk, RankGroup
+from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType, Chunk, RankGroup
 from mscclpp.language.internal.globals import get_program
 from mscclpp.language.internal.operations import *
 from dataclasses import dataclass

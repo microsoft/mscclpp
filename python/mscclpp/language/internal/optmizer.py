@@ -1,5 +1,5 @@
 from mscclpp.language.internal.operations import *
-from mscclpp.language.internal.dsl_types import SyncType
+from mscclpp.language.internal.types import SyncType
 
 
 def fuse_instructions(operations):

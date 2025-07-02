@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from mscclpp.language.internal.dsl_types import BufferType
+from mscclpp.language.internal.types import BufferType
 from mscclpp.language.rank import BaseBuffer
 
 

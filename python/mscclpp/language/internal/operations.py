@@ -1,4 +1,4 @@
-from mscclpp.language.internal.dsl_types import (
+from mscclpp.language.internal.types import (
     ChannelType,
     Instruction,
     BufferType,

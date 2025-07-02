@@ -1,4 +1,4 @@
-from mscclpp.language.internal.dsl_types import RemoteBuffer, ChannelType, BufferType, RankGroup
+from mscclpp.language.internal.types import RemoteBuffer, ChannelType, BufferType, RankGroup
 from mscclpp.language.internal.threadblock import ThreadBlock
 from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field

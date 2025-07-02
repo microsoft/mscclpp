@@ -1,6 +1,6 @@
 from sortedcontainers import SortedDict
 from typing import List
-from mscclpp.language.internal.dsl_types import BufferType, DataAccessType
+from mscclpp.language.internal.types import BufferType, DataAccessType
 from mscclpp.language.internal.operations import *
 from enum import Enum
 
