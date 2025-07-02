@@ -755,6 +755,9 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (opType == OperationType::REDUCE_SEND) {
     return handleReduceSend<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
   }
+  if (opType == OperationType::REDUCE) {
+    return handleReduceSend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
+  }
   if (opType == OperationType::REDUCE_SEND_PACKET) {
     return handleReduceSendPacket<T, PacketType>(op, input, output, scratch);
   }
