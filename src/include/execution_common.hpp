@@ -131,13 +131,13 @@ struct Operation {
   };
 };
 
-// total size = 2000 + 10240 + 4 + 12(padding) = 12256 bytes
+// total size = 2016 + 10240 + 4 + 12(padding) = 12272 bytes
 struct __attribute__((aligned(16))) DeviceExecutionPlan {
   uint8_t nMemoryChannels;              // 1 bytes
   uint8_t nPortChannels;                // 1 bytes
   uint16_t nOperations;                 // 2 bytes
   Channels channels;                    // 1792 bytes
-  RemoteBuffers remoteBuffers;          // 208 bytes
+  RemoteBuffers remoteBuffers;          // 224 bytes
   Operation operations[MAX_OPERATION];  // 64 * 160 = 10240 bytes
 };
 
