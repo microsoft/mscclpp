@@ -419,18 +419,19 @@ struct Executor::Impl {
     DeviceExecutionPlanKey key = context.currentDevicePlan;
     int nthreadblocks = context.deviceExecutionPlans[key].size();
     void* scratchBuffer = context.scratchBuffer.get();
+    size_t scratchOffset = 0;
     if (context.doubleScratchBuff && (flag & 0x1) == 0) {
-      scratchBuffer = (char*)scratchBuffer + ((context.scratchBufferSize) >> 1);
+      scratchOffset = (context.scratchBufferSize) >> 1;
     }
     if (context.reuseResources) {
       ExecutionKernel::launchKernel<PacketType, true>(
-          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, context.scratchChunkSize,
-          dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
+          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
           (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
     } else {
       ExecutionKernel::launchKernel<PacketType, false>(
-          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, context.scratchChunkSize,
-          dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
+          rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
+          context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
           (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
     }
   }
