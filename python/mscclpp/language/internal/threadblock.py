@@ -1,6 +1,8 @@
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer, BufferType
 from mscclpp.language.internal.optmizer import *
+from mscclpp.language.internal.buffer_access import *
 from dataclasses import dataclass, field
+from collections import OrderedDict
 
 
 @dataclass
@@ -10,9 +12,9 @@ class ThreadBlock:
         self.id = id
         self.ops = []
 
-        self.__remote_buffers = {}
+        self.__remote_buffers = OrderedDict()
         self.__intra_remote_buffer_ids = {ChannelType.memory: {}, ChannelType.port: {}}
-        self.__channels = {}
+        self.__channels = OrderedDict()
         self.__intra_channel_ids = {ChannelType.memory: {}, ChannelType.port: {}, ChannelType.switch: {}}
 
     def add_channel(self, channel):
@@ -52,6 +54,10 @@ class ThreadBlock:
 
     def adding_data_sync(self):
         self.ops = adding_data_sync(self.ops)
+
+    def resolve_data_dependency(self):
+        interval_map = BuffersAccess()
+        self.ops = interval_map.process_operations(self.ops)
 
     def to_json(self) -> dict:
         return {

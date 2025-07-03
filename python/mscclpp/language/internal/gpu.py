@@ -2,6 +2,7 @@ from mscclpp.language.internal.types import RemoteBuffer, ChannelType, BufferTyp
 from mscclpp.language.internal.threadblock import ThreadBlock
 from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field
+from collections import *
 from typing import List
 
 
@@ -12,16 +13,16 @@ class Gpu:
     output_chunks: int = 0
     scratch_chunks: int = 0
     threadblocks: list = field(default_factory=list)
-    remote_buffers: dict = field(default_factory=dict)
+    remote_buffers: OrderedDict = field(default_factory=OrderedDict)
 
     __channels: dict = field(default_factory=dict, init=False)
-    __nvls_channels: dict = field(default_factory=dict, init=False)
+    __nvls_channels: list = field(default_factory=list, init=False)
 
     def add_channel(self, channel):
         if channel.channel_type == ChannelType.switch:
-            if channel.buffer_type not in self.__nvls_channels:
-                self.__nvls_channels[channel.buffer_type] = Gpu.NVLSChannel(buffer_type=channel.buffer_type)
-            self.__nvls_channels[channel.buffer_type].rank_groups.append(channel.rank_group)
+            self.__nvls_channels.append(
+                Gpu.NVLSChannel(buffer_type=channel.buffer_type, rank_groups=[channel.rank_group])
+            )
         else:
             if channel.channel_type not in self.__channels:
                 self.__channels[channel.channel_type] = Gpu.Channel(channel_type=channel.channel_type)
@@ -37,8 +38,9 @@ class Gpu:
         if remote_buffer not in self.remote_buffers:
             remote_buffer_id = len(self.remote_buffers)
         else:
-            remote_buffer_id = self.remote_buffers.pop(remote_buffer)
-        self.remote_buffers[remote_buffer] = remote_buffer_id
+            remote_buffer_id, existing_remote_buffer = self.remote_buffers[remote_buffer]
+            remote_buffer.channel_access |= existing_remote_buffer.channel_access
+        self.remote_buffers[remote_buffer] = (remote_buffer_id, remote_buffer)
 
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))
@@ -59,6 +61,10 @@ class Gpu:
         for tb in self.threadblocks:
             tb.adding_data_sync()
 
+    def resolve_data_dependency(self):
+        for tb in self.threadblocks:
+            tb.resolve_data_dependency()
+
     def to_json(self) -> dict:
         return {
             "id": self.id,
@@ -67,8 +73,8 @@ class Gpu:
             "scratch_chunks": self.scratch_chunks,
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
-            + [ch.to_json() for ch in self.__nvls_channels.values()],
-            "remote_buffers": [rb.to_json() for rb in self.remote_buffers.keys()],
+            + [ch.to_json() for ch in self.__nvls_channels],
+            "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
         }
 
     @dataclass

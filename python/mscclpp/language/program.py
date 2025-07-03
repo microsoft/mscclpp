@@ -72,6 +72,7 @@ class MSCCLPPProgram:
             if self.instr_fusion:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
+            gpu.resolve_data_dependency()
 
     def to_json(self):
         json_obj = {
