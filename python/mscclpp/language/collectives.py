@@ -87,7 +87,8 @@ class AllReduce(Collective):
             }
             rank_buffers.append(buffers)
         return rank_buffers
-    
+
+
 class ReduceScatter(Collective):
     def __init__(self, num_ranks, chunk_factor, inplace):
         Collective.__init__(self, num_ranks, chunk_factor, inplace)

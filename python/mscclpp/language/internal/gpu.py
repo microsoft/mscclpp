@@ -73,7 +73,7 @@ class Gpu:
             "scratch_chunks": self.scratch_chunks,
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
-             + [ch.to_json() for ch in self.__nvls_channels],
+            + [ch.to_json() for ch in self.__nvls_channels],
             "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
         }
 
