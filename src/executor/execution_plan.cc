@@ -597,7 +597,8 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSi
 size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
                                       BufferType bufferType) const {
   auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
-  uint32_t chunkSize = rankSizeAndChunks.first;
+  uint32_t nChunks = rankSizeAndChunks.second;
+  uint32_t chunkSize = (rankSizeAndChunks.first + nChunks - 1) / nChunks;
   uint32_t scratchChunkSize = this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
 
   // Reuse scratch buffer for large input/output chunks
@@ -605,9 +606,7 @@ size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint3
     return chunkIndex * this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
   }
 
-  uint32_t nChunks = rankSizeAndChunks.second;
   uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));
-
   uint32_t minNelems = nelems / nChunks;
   uint32_t remainder = nelems % nChunks;
   uint32_t offset = chunkIndex * minNelems + (chunkIndex % nelems < remainder ? chunkIndex % nelems : remainder);
