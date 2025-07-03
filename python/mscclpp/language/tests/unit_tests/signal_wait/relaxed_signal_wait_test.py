@@ -16,6 +16,7 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
         "relaxed_signal_wait_test",
         collective,
         gpus,
+        instances=1,
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
