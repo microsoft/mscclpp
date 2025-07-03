@@ -1,0 +1,350 @@
+{
+  "name": "allgather",
+  "collective": "allgather",
+  "protocol": "LL",
+  "inplace": true,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "tpkt",
+              "src_buff": [ {"type": "o", "index": 0, "size": 1} ],
+              "dst_buff": [ {"type": "s", "index": 0, "size": 1} ]
+            },
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 0, "size": 1} ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            { "channel_type": "port", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "port", "remote_buffer_ids": [1] }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 0, "size": 1} ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 1, "size": 1} ]
+            }
+          ],
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 2, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 3, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        { "channel_type": "memory", "connected_to": [1] },
+        { "channel_type": "port",   "connected_to": [2] }
+      ],
+      "remote_buffers": [
+        { "rank": 1, "type": "s", "access_channel_types": ["memory"] },
+        { "rank": 2, "type": "s", "access_channel_types": ["port"  ] }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 1, "size": 1} ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "tpkt",
+              "src_buff": [ {"type": "o", "index": 1, "size": 1} ],
+              "dst_buff": [ {"type": "s", "index": 1, "size": 1} ]
+            },
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 1, "size": 1} ],
+              "channel_type": "port"
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 2, "size": 1} ]
+            }
+          ],
+          "channels": [
+            { "channel_type": "port", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "port", "remote_buffer_ids": [1] }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 3, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 0, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        { "channel_type": "memory", "connected_to": [0] },
+        { "channel_type": "port",   "connected_to": [3] }
+      ],
+      "remote_buffers": [
+        { "rank": 0, "type": "s", "access_channel_types": ["memory"] },
+        { "rank": 3, "type": "s", "access_channel_types": ["port"  ] }
+      ]
+    },
+    {
+      "id": 2,
+      "input_chunks": 1,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 0, "size": 1} ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            { "channel_type": "port", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "port", "remote_buffer_ids": [1] }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 2, "size": 1} ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 3, "size": 1} ]
+            }
+          ],
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "tpkt",
+              "src_buff": [ {"type": "o", "index": 2, "size": 1} ],
+              "dst_buff": [ {"type": "s", "index": 2, "size": 1} ]
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 0, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 1, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        { "channel_type": "memory", "connected_to": [3] },
+        { "channel_type": "port",   "connected_to": [0] }
+      ],
+      "remote_buffers": [
+        { "rank": 3, "type": "s", "access_channel_types": ["memory"] },
+        { "rank": 0, "type": "s", "access_channel_types": ["port"  ] }
+      ]
+    },
+    {
+      "id": 3,
+      "input_chunks": 1,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 3, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 3, "size": 1} ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            { "channel_type": "memory", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "memory", "remote_buffer_ids": [0] }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"buffer_id": 0, "index": 1, "size": 1} ],
+              "channel_type": "port"
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 0, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 0, "size": 1} ]
+            }
+          ],
+          "channels": [
+            { "channel_type": "port", "channel_ids": [0] }
+          ],
+          "remote_buffer_refs": [
+            { "access_channel_type": "port", "remote_buffer_ids": [1] }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 1, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 1, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "tpkt",
+              "src_buff": [ {"type": "o", "index": 3, "size": 1} ],
+              "dst_buff": [ {"type": "s", "index": 3, "size": 1} ]
+            },
+            {
+              "name": "cpkt",
+              "src_buff": [ {"type": "s", "index": 2, "size": 1} ],
+              "dst_buff": [ {"type": "o", "index": 2, "size": 1} ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        { "channel_type": "memory", "connected_to": [2] },
+        { "channel_type": "port",   "connected_to": [1] }
+      ],
+      "remote_buffers": [
+        { "rank": 2, "type": "s", "access_channel_types": ["memory"] },
+        { "rank": 1, "type": "s", "access_channel_types": ["port"  ] }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": true,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}

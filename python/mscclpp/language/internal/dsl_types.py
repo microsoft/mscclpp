@@ -121,7 +121,7 @@ class Chunk:
 @dataclass
 class RemoteBuffer:
     def __init__(
-        self, local_rank: int, remote_rank: int, type: BufferType, channel_access: ChannelType, set_id: bool = False
+        self, local_rank: int, remote_rank: int, type: BufferType, channel_access: ChannelType
     ):
         self.local_rank: int = local_rank
         self.remote_rank: int = remote_rank

@@ -1,0 +1,4701 @@
+→ Running ./allreduce.py
+❌ ./allreduce.py failed with exit code 1
+→ Running ./allgather_pkt.py
+❌ ./allgather_pkt.py failed with exit code 1
+→ Running ./allreduce_naivy.py
+❌ ./allreduce_naivy.py failed with exit code 1
+→ Running ./allreduce_nvls_zero_copy.py
+❌ ./allreduce_nvls_zero_copy.py failed with exit code 1
+→ Running ./unit_tests/reduce/reduce_fuse_test.py
+{
+  "name": "reduce_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 3,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "re",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce/reduce_fuse_test.py succeeded
+→ Running ./unit_tests/reduce/reduce_test.py
+{
+  "name": "reduce_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "re",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce/reduce_test.py succeeded
+→ Running ./unit_tests/reduce_send_test.py
+{
+  "name": "reduce_send_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "res",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "res",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce_send_test.py succeeded
+→ Running ./unit_tests/group_store_test.py
+{
+  "name": "group_store_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "gstore",
+              "src_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
+              "buffer_type": "i",
+              "buffer_offset": 0,
+              "size": 1,
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "switch"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "switch",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 2,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/group_store_test.py succeeded
+→ Running ./unit_tests/transform_to_packet_test.py
+{
+  "name": "transform_to_packet_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "tpkt",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/transform_to_packet_test.py succeeded
+→ Running ./unit_tests/read_put_packet_test.py
+{
+  "name": "read_put_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rppkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/read_put_packet_test.py succeeded
+→ Running ./unit_tests/put_packet_test.py
+{
+  "name": "put_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 0,
+      "scratch_chunks": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 0,
+      "scratch_chunks": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "ppkt",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put_packet_test.py succeeded
+→ Running ./unit_tests/reduce_packet/reduce_packet_test.py
+{
+  "name": "reduce_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 3,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "repkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce_packet/reduce_packet_test.py succeeded
+→ Running ./unit_tests/reduce_packet/reduce_packet_fuse_test.py
+{
+  "name": "reduce_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "repkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce_packet/reduce_packet_fuse_test.py succeeded
+→ Running ./unit_tests/signal_wait/signal_wait_test.py
+{
+  "name": "signal_wait_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/signal_wait/signal_wait_test.py succeeded
+→ Running ./unit_tests/signal_wait/signal_wait_fuse_test.py
+{
+  "name": "signal_wait_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/signal_wait/signal_wait_fuse_test.py succeeded
+→ Running ./unit_tests/signal_wait/relaxed_signal_wait_test.py
+{
+  "name": "relaxed_signal_wait_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/signal_wait/relaxed_signal_wait_test.py succeeded
+→ Running ./unit_tests/signal_wait/relaxed_signal_wait_fuse_test.py
+{
+  "name": "signal_wait_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                2
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/signal_wait/relaxed_signal_wait_fuse_test.py succeeded
+→ Running ./unit_tests/put/put_fuse_test.py
+{
+  "name": "put_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put/put_fuse_test.py succeeded
+→ Running ./unit_tests/put/put_with_signal_test.py
+{
+  "name": "put_with_signal_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put/put_with_signal_test.py succeeded
+→ Running ./unit_tests/put/put_test.py
+{
+  "name": "put_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put/put_test.py succeeded
+→ Running ./unit_tests/put/put_with_signal_fuse_test.py
+{
+  "name": "put_with_signal_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put/put_with_signal_fuse_test.py succeeded
+→ Running ./unit_tests/put/put_with_signal_and_flush_test.py
+{
+  "name": "put_with_signal_and_flush_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pwsf",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pwsf",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/put/put_with_signal_and_flush_test.py succeeded
+→ Running ./unit_tests/copy_test.py
+{
+  "name": "copy_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/copy_test.py succeeded
+→ Running ./unit_tests/group_load_reduce_test.py
+{
+  "name": "group_load_reduce_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 2,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "glre",
+              "buffer_type": "i",
+              "buffer_offset": 0,
+              "size": 1,
+              "dst_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "switch",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "glre",
+              "buffer_type": "i",
+              "buffer_offset": 0,
+              "size": 1,
+              "dst_chunk": {
+                "rank": 0,
+                "type": "s",
+                "index": 0,
+                "size": 1
+              },
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "switch",
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "switch",
+              "channel_ids": [
+                0,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                2
+              ]
+            }
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 2,
+      "input_chunks": 1,
+      "output_chunks": 1,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [
+        {
+          "channel_type": "switch",
+          "buffer_type": "i",
+          "rank_groups": [
+            {
+              "size": 2,
+              "ranks": [
+                0,
+                2
+              ]
+            }
+          ]
+        }
+      ],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/group_load_reduce_test.py succeeded
+→ Running ./unit_tests/copy_packet_test.py
+{
+  "name": "copy_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 1,
+      "scratch_chunks": 1,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "cpkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/copy_packet_test.py succeeded
+→ Running ./unit_tests/read_reduce/read_reduce_fuse_test.py
+{
+  "name": "read_reduce_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/read_reduce/read_reduce_fuse_test.py succeeded
+→ Running ./unit_tests/read_reduce/read_reduce_test.py
+{
+  "name": "read_reduce_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/read_reduce/read_reduce_test.py succeeded
+→ Running ./unit_tests/barrier_test.py
+{
+  "name": "barrier_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "barrier",
+              "barrier_id": 0,
+              "num_threadblocks": 2
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "barrier",
+              "barrier_id": 0,
+              "num_threadblocks": 2
+            }
+          ],
+          "channels": [],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/barrier_test.py succeeded
+→ Running ./unit_tests/get/get_fuse_test.py
+{
+  "name": "get_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0,
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0,
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/get/get_fuse_test.py succeeded
+→ Running ./unit_tests/get/get_test.py
+{
+  "name": "get_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/get/get_test.py succeeded
+→ Running ./unit_tests/reduce_send_packet_test.py
+{
+  "name": "reduce_send_packet_test",
+  "collective": "test",
+  "protocol": "LL",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "respkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "respkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/reduce_send_packet_test.py succeeded
+→ Running ./unit_tests/flush/flush_test.py
+{
+  "name": "flush_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "flush",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/flush/flush_test.py succeeded
+→ Running ./unit_tests/flush/flush_fuse_test.py
+{
+  "name": "flush_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "nop"
+            },
+            {
+              "name": "flush",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                0,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": []
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [],
+      "remote_buffers": []
+    },
+    {
+      "id": 2,
+      "input_chunks": 0,
+      "output_chunks": 0,
+      "scratch_chunks": 0,
+      "threadblocks": [],
+      "channels": [],
+      "remote_buffers": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/flush/flush_fuse_test.py succeeded
+→ Running ./unit_tests/read_reduce_send_test.py
+{
+  "name": "put_test",
+  "collective": "test",
+  "protocol": "Simple",
+  "inplace": false,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 2,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./unit_tests/read_reduce_send_test.py succeeded
+→ Running ./allreduce_pkt.py
+❌ ./allreduce_pkt.py failed with exit code 1
+→ Running ./allgather.py
+{
+  "name": null,
+  "collective": "allgather",
+  "protocol": "Simple",
+  "inplace": true,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": 1,
+      "output_chunks": 2,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "o",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ]
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
+✅ ./allgather.py succeeded
