@@ -47,11 +47,11 @@ void CommunicatorTestBase::connectMesh(bool useIpc, bool useIb, bool useEthernet
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && useIpc) {
-        connectionFutures[i] = communicator->connect(i, 0, mscclpp::Transport::CudaIpc);
+        connectionFutures[i] = communicator->connect(mscclpp::Transport::CudaIpc, i);
       } else if (useIb) {
-        connectionFutures[i] = communicator->connect(i, 0, ibTransport);
+        connectionFutures[i] = communicator->connect(ibTransport, i);
       } else if (useEthernet) {
-        connectionFutures[i] = communicator->connect(i, 0, mscclpp::Transport::Ethernet);
+        connectionFutures[i] = communicator->connect(mscclpp::Transport::Ethernet, i);
       }
     }
   }
