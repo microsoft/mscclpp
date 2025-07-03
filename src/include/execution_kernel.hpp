@@ -14,12 +14,13 @@
 #include <mscclpp/port_channel.hpp>
 
 #include "execution_common.hpp"
-
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/nvls_device.hpp>
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace {
+#if defined(MSCCLPP_DEVICE_COMPILE)
 template <typename To, typename From>
 MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
   static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
@@ -167,16 +168,28 @@ struct VectorType<float> {
   using nvls_type = uint4;
   using nvls_type2 = uint1;
 };
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 }  // namespace
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace mscclpp {
 
-#define MAX_DEVICE_SYNCERS 16
-__device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
-
 #if defined(MSCCLPP_DEVICE_COMPILE)
+
+#define MAX_DEVICE_FUNCTIONS_IN_PIPELINE 16
+__device__ DeviceSyncer deviceSyncers[MAX_DEVICE_SYNCERS];
+__device__ DeviceSemaphore* deviceSemaphores;
+
+__shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
+__shared__ DeviceHandle<BasePortChannel>* portChannels_;
+__shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
+__shared__ void** memoryChannelBufferPtrs_;
+__shared__ MemoryId* portChannelBufferIds_;
+__shared__ BufferType* memoryChannelBufferTypes_;
+__shared__ BufferType* portChannelBufferTypes_;
+__shared__ uint32_t flag_;
+__shared__ uint32_t scratchChunkSize_;
+__shared__ uint32_t scratchOffset_;
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType bufferType) {
@@ -187,139 +200,225 @@ MSCCLPP_DEVICE_INLINE T* getBuffer(T* input, T* output, T* scratch, BufferType b
     return output;
   }
   if (bufferType == BufferType::SCRATCH) {
-    return scratch;
+    return reinterpret_cast<T*>((char*)scratch + scratchOffset_);
   }
   return nullptr;
 }
 
-MSCCLPP_DEVICE_INLINE void handleSignal(DeviceHandle<MemoryChannel>* memoryChannels,
-                                        DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndex, int nChannels,
-                                        ChannelType chType) {
-  int tid = threadIdx.x;
-  if (tid < nChannels && chType == ChannelType::MEMORY) {
-    memoryChannels[channelIndex[tid]].signal();
-    return;
-  }
-  if (tid < nChannels && chType == ChannelType::PORT) {
-    portChannels[channelIndex[threadIdx.x]].signal();
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset) {
+  if constexpr (!ReuseScratch) {
+    return offset;
+  } else if (bufferType != BufferType::SCRATCH) {
+    return offset;
+  } else {
+    return offset % scratchChunkSize_;
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleWait(DeviceHandle<MemoryChannel>* memoryChannels,
-                                      DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndexes, int nChannels,
-                                      ChannelType chType) {
+template <typename T, typename PacketType, bool ReuseScratch = false>
+MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
+                                                 uint8_t* nSteps = nullptr, uint32_t offset = 0,
+                                                 uint32_t unitSize = UINT32_MAX);
+
+MSCCLPP_DEVICE_INLINE void handleNop() { __syncthreads(); }
+
+MSCCLPP_DEVICE_INLINE void handleBarrier(const Operation& op) {
+  DeviceSyncer* syncer = &deviceSyncers[op.deviceSyncerIndex];
+  syncer->sync(op.nThreadBlocks);
+}
+
+template <bool Relaxed = false>
+MSCCLPP_DEVICE_INLINE void handleSignal(const Operation& op) {
+  int nChannels = op.nChannels;
+  ChannelType chType = op.channelType;
+  const uint8_t* channelIndex = op.channelIndexes;
   int tid = threadIdx.x;
   if (tid < nChannels && chType == ChannelType::MEMORY) {
-    memoryChannels[channelIndexes[tid]].wait();
+    if constexpr (Relaxed) {
+      memoryChannels_[channelIndex[tid]].relaxedSignal();
+    } else {
+      memoryChannels_[channelIndex[tid]].signal();
+    }
     return;
   }
   if (tid < nChannels && chType == ChannelType::PORT) {
-    portChannels[channelIndexes[tid]].wait();
+    portChannels_[channelIndex[tid]].signal();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleFlush(DeviceHandle<PortChannel>* portChannels, uint8_t* channelIndexes,
-                                       int nChannels) {
+template <bool Relaxed = false>
+MSCCLPP_DEVICE_INLINE void handleWait(const Operation& op) {
+  int nChannels = op.nChannels;
+  ChannelType chType = op.channelType;
+  const uint8_t* channelIndex = op.channelIndexes;
+  int tid = threadIdx.x;
+  if (tid < nChannels && chType == ChannelType::MEMORY) {
+    if constexpr (Relaxed) {
+      memoryChannels_[channelIndex[tid]].relaxedWait();
+    } else {
+      memoryChannels_[channelIndex[tid]].wait();
+    }
+    return;
+  }
+  if (tid < nChannels && chType == ChannelType::PORT) {
+    portChannels_[channelIndex[tid]].wait();
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void handleFlush(const Operation& op) {
+  int nChannels = op.nOutputs;
+  const uint8_t* channelIndexes = op.channelIndexes;
   int tid = threadIdx.x;
   if (tid < nChannels) {
-    portChannels[channelIndexes[tid]].flush();
+    portChannels_[channelIndexes[tid]].flush();
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleGet(DeviceHandle<MemoryChannel>* memoryChannel, uint8_t* srcChannelIndexes,
-                                     uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size) {
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                     uint32_t unitSize) {
+  const uint32_t count = op.nInputs;
+  const uint32_t* sizes = op.inputBufferSizes;
+  const uint32_t* srcOffsets = op.inputOffsets;
+  const uint32_t* dstOffsets = op.outputOffsets;
   for (int i = 0; i < count; i++) {
-    uint32_t dstOffset = dstOffsets[i];
-    uint32_t srcOffset = srcOffsets[i];
-    memoryChannel[srcChannelIndexes[i]].get(srcOffset, dstOffset, size, threadIdx.x, blockDim.x);
+    uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset);
+    uint32_t srcOffset =
+        srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
+    uint32_t size = min(sizes[i] - offset, unitSize);
+    char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[i].id]);
+    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
+                  remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
-template <bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
-MSCCLPP_DEVICE_INLINE void handlePut(DeviceHandle<MemoryChannel>* memoryChannel,
-                                     DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
-                                     uint32_t* dstOffsets, uint32_t* srcOffsets, int count, uint32_t size,
-                                     ChannelType chType) {
+template <bool ReuseScratch, bool PutWithSignal = false, bool PutWithSignalAndFlush = false>
+MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                     uint32_t unitSize) {
+  ChannelType chType = op.channelType;
+  uint32_t count = op.nOutputs;
+  const uint8_t* channelIndexes = op.channelIndexes;
+  const uint32_t* dstOffsets = op.outputOffsets;
+  const uint32_t* srcOffsets = op.inputOffsets;
+  const uint32_t* outputSizes = op.outputBufferSizes;
+  char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type));
   if (chType == ChannelType::MEMORY) {
     for (int i = 0; i < count; i++) {
-      uint32_t dstOffset = dstOffsets[i];
-      uint32_t srcOffset = srcOffsets[i];
-      memoryChannel[dstChannelIndexes[i]].put(dstOffset, srcOffset, size, threadIdx.x, blockDim.x);
+      uint32_t dstOffset =
+          dstOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[i].id], offset);
+      uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset);
+      uint32_t size = min(outputSizes[i] - offset, unitSize);
+      char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[i].id]);
+      mscclpp::copy(remoteMemory + dstOffset, src + srcOffset, size, threadIdx.x, blockDim.x);
     }
     return;
   }
   if (chType == ChannelType::PORT) {
     int tid = threadIdx.x;
     if (tid < count) {
+      uint32_t size = min(outputSizes[tid] - offset, unitSize);
+      MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
+      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
+      uint32_t dstOffset =
+          dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
+      uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
       if constexpr (PutWithSignal) {
-        portChannels[dstChannelIndexes[tid]].putWithSignal(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       } else if constexpr (PutWithSignalAndFlush) {
-        portChannels[dstChannelIndexes[tid]].putWithSignalAndFlush(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels_[channelIndexes[tid]].putWithSignalAndFlush(dstMemoryId, (uint64_t)dstOffset, srcMemoryId,
+                                                                 (uint64_t)srcOffsets, size);
       } else {
-        portChannels[dstChannelIndexes[tid]].put(dstOffsets[tid], srcOffsets[tid], size);
+        portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       }
     }
   }
 }
 
-template <typename T>
-MSCCLPP_DEVICE_INLINE void handleReadReduceCopySend(T* output, uint32_t outputOffsetByBytes, T* input,
-                                                    uint32_t inputOffsetByBytes,
-                                                    DeviceHandle<MemoryChannel>* memoryChannels,
-                                                    uint8_t* dstChannelIndexes, uint8_t* srcChannelIndexes,
-                                                    uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels,
-                                                    int nSrcChannels, uint32_t size, bool sendToRemote = true) {
-  const size_t nInt4 = size / sizeof(int4);
-  const size_t inputOffset4 = inputOffsetByBytes / sizeof(int4);
-  const size_t outputOffset4 = outputOffsetByBytes / sizeof(int4);
-  int4* input4 = (int4*)input;
-  int4* output4 = (int4*)output;
-  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+template <typename T, bool ReuseScratch, bool SendToRemote = true>
+MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input, void* output, void* scratch,
+                                                uint32_t offset, uint32_t unitSize) {
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint32_t nInt4 = size / sizeof(int4);
+  const uint32_t inputOffset4 =
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset)) / sizeof(int4);
+  const uint32_t outputOffset4 =
+      (op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset)) / sizeof(int4);
+  const uint8_t nRemoteInputs = op.nInputs - 1;
+  const uint8_t nRemoteOutputs = op.nOutputs - 1;
+  const uint32_t* srcOffsets = op.inputOffsets + 1;
+  const uint32_t* dstOffsets = op.outputOffsets + 1;
+  int4* input4 = static_cast<int4*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type));
+  int4* output4 = static_cast<int4*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type));
+  for (uint32_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
     int4 tmp = input4[inputOffset4 + idx];
-    for (int index = 0; index < nSrcChannels; ++index) {
+    for (int index = 0; index < nRemoteInputs; ++index) {
       int4 val;
-      size_t srcOffset = srcOffsets[index] / sizeof(int4);
-      val = memoryChannels[srcChannelIndexes[index]].read<int4>(srcOffset + idx);
+      uint32_t srcOffset =
+          (srcOffsets[index] +
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+          sizeof(int4);
+      void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
+      val = mscclpp::read<int4>(remoteMemory, srcOffset + idx);
       tmp = add_vectors<T>(tmp, val);
     }
     output4[outputOffset4 + idx] = tmp;
-    if (sendToRemote) {
-      for (int index = 0; index < nDstChannels; ++index) {
-        size_t dstOffset = dstOffsets[index] / sizeof(int4);
-        memoryChannels[dstChannelIndexes[index]].write<int4>(dstOffset + idx, tmp);
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nRemoteOutputs; ++index) {
+        uint32_t dstOffset =
+            (dstOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            sizeof(int4);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
+        mscclpp::write<int4>(remoteMemory, dstOffset + idx, tmp);
       }
     }
   }
   // handle rest of data
-  size_t processed = nInt4 * sizeof(int4);
-  const size_t startIdx = (inputOffsetByBytes + processed) / sizeof(T);
-  const size_t endIdx = (inputOffsetByBytes + size) / sizeof(T);
-  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    T tmp = input[idx];
-    for (int index = 0; index < nSrcChannels; ++index) {
-      size_t srcOffset = srcOffsets[index] / sizeof(T);
-      tmp = add_elements(tmp, memoryChannels[srcChannelIndexes[index]].read<T>(srcOffset + idx));
+  uint32_t processed = nInt4 * sizeof(int4);
+  const uint32_t startIdx =
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset) + processed) / sizeof(T);
+  const uint32_t endIdx =
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset) + size) / sizeof(T);
+  for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    T tmp = static_cast<T*>(input)[idx];
+    for (int index = 0; index < nRemoteInputs; ++index) {
+      uint32_t srcOffset =
+          (srcOffsets[index] +
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+          sizeof(T);
+      void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
+      tmp = add_elements(tmp, mscclpp::read<T>(remoteMemory, srcOffset + idx));
     }
-    output[idx] = tmp;
-    if (sendToRemote) {
-      for (int index = 0; index < nDstChannels; ++index) {
-        size_t dstOffset = dstOffsets[index] / sizeof(T);
-        memoryChannels[dstChannelIndexes[index]].write<T>(dstOffset + idx, tmp);
+    static_cast<T*>(output)[idx] = tmp;
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nRemoteOutputs; ++index) {
+        uint32_t dstOffset =
+            (dstOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            sizeof(T);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
+        mscclpp::write<T>(remoteMemory, dstOffset + idx, tmp);
       }
     }
   }
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<MemoryChannel>* memoryChannels,
-                                           DeviceHandle<PortChannel>* portChannels, uint8_t* dstChannelIndexes,
-                                           uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels, uint32_t size,
-                                           ChannelType chType, uint32_t flag) {
-  const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
+MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, void* output, void* scratch) {
+  ChannelType chType = op.channelType;
+  uint16_t nDstChannels = op.nOutputs;
+  const uint32_t* dstOffsets = op.outputOffsets;
+  const uint32_t* srcOffsets = op.inputOffsets;
+  const uint32_t* sizes = op.inputBufferSizes;
+  const uint8_t* channelIndexes = op.channelIndexes;
+  void* inputBuff = getBuffer(input, output, scratch, op.inputBufferRefs[0].type);
   if (chType == ChannelType::MEMORY) {
     for (int index = 0; index < nDstChannels; ++index) {
-      memoryChannels[dstChannelIndexes[index]].putPackets<PacketType>(
-          scratchBaseOffset + dstOffsets[index] * 2, srcOffsets[index], size, threadIdx.x, blockDim.x, flag);
+      uint32_t size = sizes[index];
+      mscclpp::copyToPackets<PacketType>(
+          (char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] + (dstOffsets[index] << 1) + scratchOffset_,
+          (char*)inputBuff + srcOffsets[index], size, threadIdx.x, blockDim.x, flag_);
     }
   }
   if (chType == ChannelType::PORT) {
@@ -329,195 +428,375 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(size_t scratchSize, DeviceHandle<Memo
     }
     // For port channel, we assume src and dst are in packet format
     // TODO: support non-packet format and remove packet format(packet format should be handle in handleReadPutPacket)
-    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchBaseOffset;
-    uint32_t srcOffset = (srcOffsets[tid] << 1) + scratchBaseOffset;
-    portChannels[dstChannelIndexes[tid]].put(dstOffset, srcOffset, size << 1);
+    uint32_t size = sizes[tid];
+    uint32_t constOffset = op.inputBufferRefs[tid].type == BufferType::SCRATCH ? scratchOffset_ : 0;
+    uint32_t dstOffset = (dstOffsets[tid] << 1) + scratchOffset_;
+    uint32_t srcOffset = (srcOffsets[tid] << 1) + constOffset;
+    MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
+    MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
+    portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size << 1);
   }
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleReadPutPacket(int rank, void* scratch, size_t scratchSize,
-                                               DeviceHandle<SmChannel>* smChannels,
-                                               DeviceHandle<ProxyChannel>* proxyChannels, uint8_t* dstChannelIndexes,
-                                               uint32_t* dstOffsets, uint32_t* srcOffsets, int nDstChannels,
-                                               uint32_t size, ChannelType chType, uint32_t flag) {
-  const size_t scratchBaseOffset = flag & 0x1 ? 0 : scratchSize >> 1;
+MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratch) {
+  uint32_t nOutput = op.nOutputs;
+  const uint32_t* dstOffsets = op.outputOffsets;
+  const uint32_t* srcOffsets = op.inputOffsets;
+  const uint8_t* channelIndexes = op.channelIndexes;
+  uint32_t size = op.inputBufferSizes[0];
+  ChannelType chType = op.channelType;
   if (chType == ChannelType::MEMORY) {
-    size_t nPackets = size * 2 / sizeof(PacketType);
-    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
-      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
-        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
-        PacketType pkt(data, flag);
-        size_t offset = (scratchBaseOffset + dstOffsets[ch_idx] * 2) / sizeof(PacketType);
-        smChannels[dstChannelIndexes[ch_idx]].write(offset + pkt_idx, pkt);
+    size_t nPackets = size / sizeof(PacketPayload<PacketType>);
+    for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
+      for (int idx = 0; idx < nOutput; ++idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
+        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
+        PacketType pkt(data, flag_);
+        size_t offset = (scratchOffset_ + (dstOffsets[idx] << 1)) / sizeof(PacketType);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
+        mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
       }
     }
   } else if (chType == ChannelType::PORT) {
     // Ensuring Data Is Ready
-    size_t nPackets = size * 2 / sizeof(PacketType);
-    for (size_t pkt_idx = threadIdx.x; pkt_idx < nPackets; pkt_idx += blockDim.x) {
-      for (int ch_idx = 0; ch_idx < nDstChannels; ++ch_idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchBaseOffset + srcOffsets[ch_idx] * 2);
-        PacketPayload<PacketType> data = pkts[pkt_idx].read(flag);
+    size_t nPackets = size / sizeof(PacketPayload<PacketType>);
+    for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
+      for (int idx = 0; idx < nOutput; ++idx) {
+        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
+        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
       }
     }
     __syncthreads();
 
     // Putting the data
-    int ch_idx = threadIdx.x;
-    if (ch_idx >= nDstChannels) {
+    int chIdx = threadIdx.x;
+    if (chIdx >= nOutput) {
       return;
     }
-    uint32_t dstOffset = scratchBaseOffset + dstOffsets[ch_idx] * 2;
-    uint32_t srcOffset = scratchBaseOffset + srcOffsets[ch_idx] * 2;
-    proxyChannels[dstChannelIndexes[ch_idx]].put(dstOffset, srcOffset, size * 2);
+    uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
+    uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
+    MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
+    portChannels_[channelIndexes[chIdx]].put(dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH),
+                                             srcOffset, size << 1);
   }
 }
 
 template <typename T, typename PacketType, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
-                                                  T* inputBuff, size_t inputBuffSize, uint32_t* inputOffsets, int nSrcs,
-                                                  DeviceHandle<MemoryChannel>* memoryChannels,
-                                                  uint8_t* outputChannelIndexes, uint32_t* outputOffsets,
-                                                  int nDstChannels, size_t size, uint32_t flag) {
-  size_t nPackets = size * 2 / sizeof(PacketType);
-  const size_t intputBaseOffset = flag & 0x1 ? 0 : inputBuffSize >> 1;
+MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* input, void* output, void* scratch) {
+  uint32_t size = op.inputBufferSizes[0];
+  const uint32_t nSrcs = op.nInputs - 1;
+  const uint32_t nDstChannels = op.nOutputs - 1;
+  const uint32_t srcOffsetByBytes = op.inputOffsets[0];
+  const uint32_t dstOffsetByBytes = op.outputOffsets[0];
+  const uint32_t* inputOffsets = op.inputOffsets + 1;
+  const uint32_t* outputOffsets = op.outputOffsets + 1;
+  const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
+
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
   const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
   const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);
-  PacketPayload<PacketType>* srcPacketPayload = (PacketPayload<PacketType>*)src + srcOffset;
-  PacketPayload<PacketType>* dstPacketPayload = (PacketPayload<PacketType>*)dst + dstOffset;
-  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+  PacketPayload<PacketType>* srcPacketPayload =
+      (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + srcOffset;
+  PacketPayload<PacketType>* dstPacketPayload =
+      (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type) + dstOffset;
+  for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
     for (int index = 0; index < nSrcs; ++index) {
-      PacketType* pkt = (PacketType*)((char*)inputBuff + intputBaseOffset + 2 * inputOffsets[index]);
-      PacketPayload<PacketType> val = pkt[idx].read(flag);
+      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
+      PacketPayload<PacketType> val = pkt[idx].read(flag_);
       data = add_vectors<T>(data, val);
     }
     data = add_vectors<T>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
-    if (SendToRemote) {
-      PacketType pkt(data, flag);
-      for (int index = 0; index < nDstChannels; ++index) {
-        size_t offset = (intputBaseOffset + outputOffsets[index] * 2) / sizeof(PacketType);
-        memoryChannels[outputChannelIndexes[index]].write(offset + idx, pkt);
+    if constexpr (SendToRemote) {
+      PacketType pkt(data, flag_);
+      for (uint32_t index = 0; index < nDstChannels; ++index) {
+        uint32_t offset = (scratchOffset_ + outputOffsets[index] * 2) / sizeof(PacketType);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[outputBufferRefs[index].id]);
+        mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
       }
     }
   }
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleCopyPacket(void* dst, void* src, size_t srcSize, uint32_t dstOffset,
-                                            uint32_t srcOffset, size_t size, uint32_t flag) {
-  const size_t inputScratchBaseOffset = flag & 0x1 ? 0 : srcSize >> 1;
-  PacketType* srcPackets = (PacketType*)((char*)src + inputScratchBaseOffset + 2 * srcOffset);
-  PacketPayload<PacketType>* result = (PacketPayload<PacketType>*)((char*)dst + dstOffset);
-  size_t nPackets = size * 2 / sizeof(PacketType);
-  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
-    PacketPayload<PacketType> data = srcPackets[idx].read(flag);
+MSCCLPP_DEVICE_INLINE void handleCopyPacket(const Operation& op, void* input, void* output, void* scratch) {
+  const uint32_t size = op.inputBufferSizes[0];
+  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t srcOffset = op.inputOffsets[0];
+  PacketType* srcPackets = (PacketType*)(static_cast<char*>(scratch) + scratchOffset_ + (srcOffset << 1));
+  PacketPayload<PacketType>* result =
+      (PacketPayload<PacketType>*)(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) +
+                                   dstOffset);
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
+  for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
     result[idx] = data;
   }
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleTransformToPacket(void* dst, void* src, size_t dstSize, uint32_t dstOffset,
-                                                   uint32_t srcOffset, size_t size, uint32_t flag) {
-  const size_t outputScratchBaseOffset = flag & 0x1 ? 0 : dstSize >> 1;
-  dstOffset = dstOffset * 2 + outputScratchBaseOffset;
-  mscclpp::copyToPackets<PacketType>((char*)dst + dstOffset, (char*)src + srcOffset, size, threadIdx.x, blockDim.x,
-                                     flag);
+MSCCLPP_DEVICE_INLINE void handleTransformToPacket(const Operation& op, void* input, void* output, void* scratch) {
+  uint32_t size = op.inputBufferSizes[0];
+  uint32_t dstOffset = op.outputOffsets[0];
+  uint32_t srcOffset = op.inputOffsets[0];
+  dstOffset = dstOffset << 1;
+  char* dst = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
+  char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+  mscclpp::copyToPackets<PacketType>(dst, src, size, threadIdx.x, blockDim.x, flag_);
 }
 
-template <typename T, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReduceSend(T* dst, uint32_t dstOffsetByBytes, T* src, uint32_t srcOffsetByBytes,
-                                            T* input, uint32_t* inputOffsets, int nSrcs,
-                                            DeviceHandle<MemoryChannel>* memoryChannels, uint8_t* outputChannelIndexes,
-                                            uint32_t* outputOffsets, int nOutChannels, uint32_t size) {
-  const size_t nInt4 = size / sizeof(int4);
-  const size_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
-  const size_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
-  int4* src4 = (int4*)src;
-  int4* dst4 = (int4*)dst;
-  int4* input4 = (int4*)input;
+template <typename T, bool ReuseScratch, bool SendToRemote = true>
+MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, void* output, void* scratch,
+                                            uint32_t offset, uint32_t unitSize) {
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint32_t nInt4 = size / sizeof(int4);
+  int nInput = op.nInputs - 1;
+  int nOutput = op.nOutputs - 1;
+  const uint32_t* inputOffsets = op.inputOffsets + 1;
+  const uint32_t* outputOffsets = op.outputOffsets + 1;
+  const BufferRef* inputBufferRefs = op.inputBufferRefs + 1;
+  const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
+  uint32_t srcOffsetByBytes = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  uint32_t dstOffsetByBytes = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
+
+  const uint32_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
+  const uint32_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
+  int4* src4 = (int4*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type);
+  int4* dst4 = (int4*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type);
   for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
     int4 tmp = src4[srcOffset4 + idx];
-    for (int index = 0; index < nSrcs; ++index) {
-      size_t offset = inputOffsets[index] / sizeof(int4);
-      int4 val = input4[offset + idx];
+    for (int index = 0; index < nInput; ++index) {
+      int4* buff4 = static_cast<int4*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
+      size_t buffOffset =
+          (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset)) / sizeof(int4);
+      int4 val = buff4[buffOffset + idx];
       tmp = add_vectors<T>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
-    if (SendToRemote) {
-      for (int index = 0; index < nOutChannels; ++index) {
-        size_t offset = outputOffsets[index] / sizeof(int4);
-        memoryChannels[outputChannelIndexes[index]].write<int4>(offset + idx, tmp);
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutput; ++index) {
+        size_t outOffset = (outputOffsets[index] +
+                            getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
+                           sizeof(int4);
+        void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
+        mscclpp::write(remoteMemory, outOffset + idx, tmp);
       }
     }
   }
   // handle rest of data
-  size_t processed = nInt4 * sizeof(int4);
-  const size_t startIdx = (srcOffsetByBytes + processed) / sizeof(T);
-  const size_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
-  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+  uint32_t processed = nInt4 * sizeof(int4);
+  const uint32_t startIdx = (srcOffsetByBytes + processed) / sizeof(T);
+  const uint32_t endIdx = (srcOffsetByBytes + size) / sizeof(T);
+  T* src = (T*)src4;
+  T* dst = (T*)dst4;
+  for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     T tmp = src[idx];
-    for (int index = 0; index < nSrcs; ++index) {
-      size_t offset = inputOffsets[index] / sizeof(T);
-      tmp = add_elements(tmp, input[offset + idx]);
+    for (int index = 0; index < nInput; ++index) {
+      T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
+      uint32_t buffOffset =
+          (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
+      tmp = add_elements(tmp, buff[buffOffset + idx]);
     }
     dst[idx] = tmp;
-    if (SendToRemote) {
-      for (int index = 0; index < nOutChannels; ++index) {
-        size_t offset = outputOffsets[index] / sizeof(T);
-        memoryChannels[outputChannelIndexes[index]].write<T>(offset + idx, tmp);
+    if constexpr (SendToRemote) {
+      for (int index = 0; index < nOutput; ++index) {
+        uint32_t outOffset = (outputOffsets[index] +
+                              getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
+                             sizeof(T);
+        void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
+        mscclpp::write<T>(remoteMemory, outOffset + idx, tmp);
       }
     }
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleCopy(void* dst, void* src, uint32_t dstOffset, uint32_t srcOffset, size_t size) {
-  char* srcData = (char*)src + srcOffset;
-  char* dstData = (char*)dst + dstOffset;
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
+                                      uint32_t unitSize) {
+  uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size <= 0) {
+    return;
+  }
+  uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
+  uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+  char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-template <typename T>
-MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* dst, T* src, uint32_t dstOffset, uint32_t srcOffset,
-                                                      size_t size) {
+template <typename T, bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
   using vectorType = typename VectorType<T>::type;
   using nvlsType = typename VectorType<T>::nvls_type;
   // nvls can only handle 4 bytes alignment
-  assert(size % sizeof(vectorType) == 0);
-  const size_t nInt4 = size / sizeof(nvlsType);
-  const size_t srcOffset4 = srcOffset / sizeof(nvlsType);
-  const size_t dstOffset4 = dstOffset / sizeof(nvlsType);
-  nvlsType* src4 = (nvlsType*)src;
-  nvlsType* dst4 = (nvlsType*)dst;
-  for (size_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size <= 0) {
+    return;
+  }
+
+  const uint32_t nInt4 = size / sizeof(nvlsType);
+  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
+  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+  assert(srcOffset % sizeof(vectorType) == 0 && dstOffset % sizeof(vectorType) == 0);
+
+  const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
+  const uint32_t dstOffset4 = dstOffset / sizeof(nvlsType);
+  nvlsType* src4 = (nvlsType*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
+  nvlsType* dst4 = (nvlsType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
+  for (uint32_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
     nvlsType val;
     DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
     DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
   }
   // handle rest of data
-  size_t processed = nInt4 * sizeof(nvlsType);
+  uint32_t processed = nInt4 * sizeof(nvlsType);
   using nvlsType2 = typename VectorType<T>::nvls_type2;
-  const size_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
-  const size_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
-  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+  const uint32_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
+  const uint32_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
+  for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     nvlsType2 val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)src + idx);
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)dst + idx);
+    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val,
+                                                           (vectorType*)nvlsChannels_[op.nvlsInputIndex].mcPtr + idx);
+    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + idx);
   }
 }
 #endif
 
-template <typename T, typename PacketType = LL16Packet>
-__global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output, T* scratch,
-                                size_t scratchSize, DeviceExecutionPlan* plan, uint32_t flag
+template <typename T, typename PacketType, bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* output, T* scratch) {
+  uint16_t nIterations = op.nIterations;
+  uint16_t nOperations = op.nOperations;
+  uint32_t unitSize = op.unitSize;
+  const Operation* operations = &op + 1;
+  for (uint16_t i = 0; i < nIterations; i++) {
+    uint32_t offset = i * unitSize;
+    for (uint8_t opId = 0; opId < nOperations; opId++) {
+      executeDeviceFunction<T, PacketType, ReuseScratch>(operations[opId], input, output, scratch, nullptr, offset,
+                                                         unitSize);
+    }
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
+  int tid = threadIdx.x;
+  if (tid < op.nDeviceSemaphores) {
+    DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
+    sem->release();
+  }
+}
+
+MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
+  int tid = threadIdx.x;
+  if (tid < op.nDeviceSemaphores) {
+    DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
+    sem->acquire();
+  }
+}
+
+template <typename T, typename PacketType, bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch, uint8_t* nSteps,
+                                                 uint32_t offset, uint32_t unitSize) {
+  if (nSteps != nullptr) {
+    *nSteps = 1;
+  }
+  OperationType opType = op.type;
+  if (opType == OperationType::NOP) {
+    return handleNop();
+  }
+  if (opType == OperationType::BARRIER) {
+    return handleBarrier(op);
+  }
+  if (opType == OperationType::SIGNAL) {
+    return handleSignal(op);
+  }
+  if (opType == OperationType::WAIT) {
+    return handleWait(op);
+  }
+  if (opType == OperationType::RELAXED_SIGNAL) {
+    return handleSignal<true>(op);
+  }
+  if (opType == OperationType::RELAXED_WAIT) {
+    return handleWait<true>(op);
+  }
+  if (opType == OperationType::FLUSH) {
+    return handleFlush(op);
+  }
+  if (opType == OperationType::PUT) {
+    return handlePut<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL) {
+    return handlePut<ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
+    return handlePut<ReuseScratch, true, true>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::PUT_PACKET) {
+    return handlePutPacket<PacketType>(op, input, output, scratch);
+  }
+  if (opType == OperationType::READ_PUT_PACKET) {
+    return handleReadPutPacket<PacketType>(op, scratch);
+  }
+  if (opType == OperationType::GET) {
+    return handleGet<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::READ_REDUCE_SEND) {
+    return handleReadReduceSend<T, ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::READ_REDUCE) {
+    return handleReadReduceSend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::COPY) {
+    return handleCopy<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::REDUCE_SEND) {
+    return handleReduceSend<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::REDUCE) {
+    return handleReduceSend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
+  }
+  if (opType == OperationType::REDUCE_SEND_PACKET) {
+    return handleReduceSendPacket<T, PacketType>(op, input, output, scratch);
+  }
+  if (opType == OperationType::REDUCE_PACKET) {
+    return handleReduceSendPacket<T, PacketType, false>(op, input, output, scratch);
+  }
+  if (opType == OperationType::COPY_PACKET) {
+    return handleCopyPacket<PacketType>(op, input, output, scratch);
+  }
+  if (opType == OperationType::TRANSFORM_TO_PACKET) {
+    return handleTransformToPacket<PacketType>(op, input, output, scratch);
+  }
+  if (opType == OperationType::SEM_ACQUIRE) {
+    return handleSemAquire(op);
+  }
+  if (opType == OperationType::SEM_RELEASE) {
+    return handleSemRelease(op);
+  }
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
+    return handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+  }
+#endif
+  if (opType == OperationType::PIPELINE) {
+    *nSteps = op.nOperations + 1;
+    return handlePipeline<T, PacketType, ReuseScratch>(op, input, output, scratch);
+  }
+  return;
+}
+
+template <typename T, typename PacketType = LL16Packet, bool ReuseScratch = false>
+__global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output,
+                                                           T* scratch, uint32_t scratchOffset,
+                                                           uint32_t scratchChunkSize, DeviceExecutionPlan* plan,
+                                                           DeviceSemaphore* semaphores, uint32_t flag
 #if defined(ENABLE_NPKIT)
-                                ,
-                                NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
+                                                           ,
+                                                           NpKitEventCollectContext* npKitEventCollectContexts,
+                                                           uint64_t* cpuTimestamp) {
 #else
 ) {
 #endif
@@ -539,13 +818,20 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
     sharedMem[i] = ((int4*)localPlan)[i];
   }
   __syncshm();
+  deviceSemaphores = semaphores;
   localPlan = (DeviceExecutionPlan*)sharedMem;
   int nOperations = localPlan->nOperations;
-  Operation* operations = localPlan->operations;
-  DeviceHandle<MemoryChannel>* memoryChannels = localPlan->channels.memoryChannels;
-  DeviceHandle<PortChannel>* portChannels = localPlan->channels.portChannels;
-  [[maybe_unused]] DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels =
-      localPlan->channels.nvlsChannels;
+  Operation* operations = (Operation*)localPlan->operations;
+  memoryChannels_ = localPlan->channels.memoryChannels;
+  portChannels_ = localPlan->channels.portChannels;
+  nvlsChannels_ = localPlan->channels.nvlsChannels;
+  memoryChannelBufferPtrs_ = localPlan->remoteBuffers.memoryChannelBufferPtrs;
+  portChannelBufferIds_ = localPlan->remoteBuffers.portChannelBufferIds;
+  memoryChannelBufferTypes_ = localPlan->remoteBuffers.memoryChannelBufferTypes;
+  portChannelBufferTypes_ = localPlan->remoteBuffers.portChannelBufferTypes;
+  flag_ = flag;
+  scratchChunkSize_ = scratchChunkSize;
+  scratchOffset_ = scratchOffset;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -569,100 +855,16 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
                             &event_buffer_head);
 #endif
 
-  for (int i = 0; i < nOperations; i++) {
+  for (int i = 0; i < nOperations;) {
     Operation& op = operations[i];
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY)
     NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
                               event_buffer, &event_buffer_head);
 #endif
-
-    if (op.type == OperationType::NOP) {
-      __syncthreads();
-    } else if (op.type == OperationType::BARRIER) {
-      int nThreadBlocks = op.nThreadBlocks;
-      int syncStateIndex = op.deviceSyncerIndex;
-      deviceSyncers[syncStateIndex].sync(nThreadBlocks);
-    } else if (op.type == OperationType::SIGNAL) {
-      handleSignal(memoryChannels, portChannels, op.outputChannelIndexes, op.nOutputs, op.channelType);
-    } else if (op.type == OperationType::WAIT) {
-      handleWait(memoryChannels, portChannels, op.inputChannelIndexes, op.nInputs, op.channelType);
-    } else if (op.type == OperationType::FLUSH) {
-      handleFlush(portChannels, op.outputChannelIndexes, op.nOutputs);
-    } else if (op.type == OperationType::PUT) {
-      handlePut(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs,
-                op.size, op.channelType);
-    } else if (op.type == OperationType::PUT_WITH_SIGNAL) {
-      handlePut<true>(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
-                      op.nOutputs, op.size, op.channelType);
-    } else if (op.type == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
-      handlePut<false, true>(memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets, op.inputOffsets,
-                             op.nOutputs, op.size, op.channelType);
-    } else if (op.type == OperationType::GET) {
-      handleGet(memoryChannels, op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nInputs, op.size);
-    } else if (op.type == OperationType::COPY) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleCopy(dst, src, op.dstOffset, op.srcOffset, op.size);
-    } else if (op.type == OperationType::READ_REDUCE_COPY_SEND) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, memoryChannels, op.outputChannelIndexes,
-                               op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
-                               op.size);
-    } else if (op.type == OperationType::READ_REDUCE_COPY) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-
-      handleReadReduceCopySend(dst, op.dstOffset, src, op.srcOffset, memoryChannels, op.outputChannelIndexes,
-                               op.inputChannelIndexes, op.outputOffsets, op.inputOffsets, op.nOutputs, op.nInputs,
-                               op.size, false);
-    } else if (op.type == OperationType::READ_PUT_PACKET) {
-      handleReadPutPacket<PacketType>(rank, scratch, scratchSize, memoryChannels, portChannels, op.outputChannelIndexes,
-                                      op.outputOffsets, op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
-    } else if (op.type == OperationType::PUT_PACKET) {
-      handlePutPacket<PacketType>(scratchSize, memoryChannels, portChannels, op.outputChannelIndexes, op.outputOffsets,
-                                  op.inputOffsets, op.nOutputs, op.size, op.channelType, flag);
-    } else if (op.type == OperationType::REDUCE_SEND_PACKET) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleReduceSendPacket<T, PacketType>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize, op.inputOffsets,
-                                            op.nInputs, memoryChannels, op.outputChannelIndexes, op.outputOffsets,
-                                            op.nOutputs, op.size, flag);
-    } else if (op.type == OperationType::REDUCE) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      handleReduceSend<T, false>(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, memoryChannels,
-                                 op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
-    } else if (op.type == OperationType::REDUCE_PACKET) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleReduceSendPacket<T, PacketType, false>(dst, op.dstOffset, src, op.srcOffset, scratch, scratchSize,
-                                                   op.inputOffsets, op.nInputs, memoryChannels, op.outputChannelIndexes,
-                                                   op.outputOffsets, op.nOutputs, op.size, flag);
-    } else if (op.type == OperationType::COPY_PACKET) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleCopyPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    } else if (op.type == OperationType::TRANSFORM_TO_PACKET) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      handleTransformToPacket<PacketType>(dst, src, scratchSize, op.dstOffset, op.srcOffset, op.size, flag);
-    } else if (op.type == OperationType::REDUCE_SEND) {
-      T* dst = getBuffer(input, output, scratch, op.dstBufferType);
-      T* src = getBuffer(input, output, scratch, op.srcBufferType);
-      T* tmp = getBuffer(input, output, scratch, op.inputBufferType);
-      handleReduceSend(dst, op.dstOffset, src, op.srcOffset, tmp, op.inputOffsets, op.nInputs, memoryChannels,
-                       op.outputChannelIndexes, op.outputOffsets, op.nOutputs, op.size);
-    }
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-    else if (op.type == OperationType::MULTI_LOAD_REDUCE_STORE) {
-      T* dst = (T*)(nvlsChannels[op.nvlsOutputIndex].mcPtr);
-      T* src = (T*)(nvlsChannels[op.nvlsInputIndex].mcPtr);
-      handleMultiLoadReduceStore(dst, src, op.dstOffset, op.srcOffset, op.size);
-    }
-#endif
+    uint8_t nSteps = 0;
+    executeDeviceFunction<T, PacketType, ReuseScratch>(op, input, output, scratch, &nSteps);
+    i += nSteps;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
     NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, op.size, 0, NPKIT_GET_GPU_TIMESTAMP(),
@@ -679,14 +881,15 @@ __global__ void executionKernel([[maybe_unused]] int rank /*for debug*/, T* inpu
 class ExecutionKernel {
  public:
 #if defined(MSCCLPP_DEVICE_HIP)
-  template <typename PacketType>
+  template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
+                           uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
                            cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
-        executionKernel<int32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchSize, plan, flag
+        executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -695,8 +898,8 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::UINT32:
-        executionKernel<uint32_t, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchSize, plan, flag
+        executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -705,8 +908,8 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT16:
-        executionKernel<half, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchSize, plan, flag
+        executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -715,8 +918,8 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT32:
-        executionKernel<float, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchSize, plan, flag
+        executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -725,8 +928,8 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::BFLOAT16:
-        executionKernel<__bfloat16, PacketType><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchSize, plan, flag
+        executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -737,9 +940,10 @@ class ExecutionKernel {
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
-  template <typename PacketType>
+  template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
-                           size_t scratchSize, DataType dataType, DeviceExecutionPlan* plan, size_t sharedMemSize,
+                           uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
                            cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
