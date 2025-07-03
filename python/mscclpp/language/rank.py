@@ -61,6 +61,8 @@ class Rank:
             raise RuntimeError(
                 f"Inconsistent chunk sizes: dst {dst_chunk.size}, src {src_chunk.size}. They must match."
             )
+        if len(other_chunks) == 0:
+            raise RuntimeError("Other chunk empty.")
         for chunk in other_chunks:
             if chunk.rank != self.rank:
                 raise RuntimeError(f"Other chunk rank {chunk.rank} does not match current rank {self.rank}.")

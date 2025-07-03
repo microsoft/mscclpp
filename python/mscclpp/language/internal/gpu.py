@@ -2,6 +2,7 @@ from mscclpp.language.internal.types import RemoteBuffer, ChannelType, BufferTyp
 from mscclpp.language.internal.threadblock import ThreadBlock
 from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field
+from collections import *
 from typing import List
 
 
@@ -12,7 +13,7 @@ class Gpu:
     output_chunks: int = 0
     scratch_chunks: int = 0
     threadblocks: list = field(default_factory=list)
-    remote_buffers: dict = field(default_factory=dict)
+    remote_buffers: OrderedDict = field(default_factory=OrderedDict)
 
     __channels: dict = field(default_factory=dict, init=False)
     __nvls_channels: list = field(default_factory=list, init=False)
@@ -37,9 +38,8 @@ class Gpu:
         if remote_buffer not in self.remote_buffers:
             remote_buffer_id = len(self.remote_buffers)
         else:
-            remote_buffer_key = self.remote_buffers.pop(remote_buffer)
-            remote_buffer.channel_access |= remote_buffer_key[1].channel_access
-            remote_buffer_id = remote_buffer_key[0]
+            remote_buffer_id, existing_remote_buffer = self.remote_buffers[remote_buffer]
+            remote_buffer.channel_access |= existing_remote_buffer.channel_access
         self.remote_buffers[remote_buffer] = (remote_buffer_id, remote_buffer)
 
         for i in range(len(self.threadblocks), tb + 1):
@@ -73,8 +73,8 @@ class Gpu:
             "scratch_chunks": self.scratch_chunks,
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
             "channels": [ch.to_json() for ch in self.__channels.values()]
-            + [ch.to_json() for ch in self.__nvls_channels],
-            "remote_buffers": [rb.to_json() for rb in self.remote_buffers.keys()],
+             + [ch.to_json() for ch in self.__nvls_channels],
+            "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
         }
 
     @dataclass
