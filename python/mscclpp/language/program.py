@@ -15,6 +15,7 @@ class MSCCLPPProgram:
         name: str,
         collective: Collective,
         num_ranks: int,
+        instances: int,
         protocol: str = "Simple",
         instr_fusion: bool = True,
         reuse_resources: bool = False,
@@ -27,6 +28,7 @@ class MSCCLPPProgram:
         self.name = name
         self.collective = collective
         self.num_ranks = num_ranks
+        self.instances = instances
         self.protocol = protocol
         self.instr_fusion = instr_fusion
         self.reuse_resources = reuse_resources
@@ -73,6 +75,7 @@ class MSCCLPPProgram:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
             gpu.resolve_data_dependency()
+            gpu.replicate_instances(self.instances)
 
     def to_json(self):
         json_obj = {
