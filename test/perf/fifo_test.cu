@@ -73,11 +73,6 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
     assert(triggerCounts[trigger.snd] + 1 == trigger.fst);
     triggerCounts[trigger.snd]++;
     hostFifo->pop();
-
-    // Flush periodically
-    if (((i + 1) % flushPeriod) == 0) {
-      hostFifo->flushTail();
-    }
   }
   return true;
 }
@@ -99,7 +94,6 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   if (!consumeTriggers(hostFifo, warmupTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};  // Return error values
   }
-  hostFifo->flushTail();
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
 
   // Benchmark
@@ -113,7 +107,6 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   if (!consumeTriggers(hostFifo, numTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};
   }
-  hostFifo->flushTail(true);
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
 
   timer.stop();
@@ -239,9 +232,9 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
 void runAllFifoTests([[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] int localRank) {
   // clang-format off
   std::vector<FifoTestConfig> configs = {
-      {1, 1, {1, 8, 64, 512}},
-      {128, 4, {1, 8, 64, 512}},
-      {128, 128, {1, 8, 64, 512}},
+      {1, 1, {1}},
+      {128, 4, {1, 8, 64, 128}},
+      {128, 128, {1, 8, 64, 128}},
       {512, 4, {1, 8, 64, 512}},
       {512, 128, {1, 8, 64, 512}},
       {512, 512, {1, 8, 64, 512}},

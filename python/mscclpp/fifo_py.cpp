@@ -14,7 +14,6 @@ void register_fifo(nb::module_& m) {
   nb::class_<FifoDeviceHandle>(m, "FifoDeviceHandle")
       .def_rw("triggers", &FifoDeviceHandle::triggers)
       .def_rw("tail", &FifoDeviceHandle::tail)
-      .def_rw("tail_cache", &FifoDeviceHandle::tailCache)
       .def_rw("head", &FifoDeviceHandle::head)
       .def_rw("size", &FifoDeviceHandle::size)
       .def_prop_ro("raw", [](const FifoDeviceHandle& self) -> nb::bytes {

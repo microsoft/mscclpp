@@ -47,22 +47,15 @@ struct FifoDeviceHandle {
     uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
     int triggerIdx = prevHead % size;
 
-    // Ensure that only one thread pushes into the same trigger slot at a time.
-    // Ensure that each trigger slot serves multiple threads in the order of entrance.
-    // Each trigger slot has its own ticket counter. Head stores the next ticket and tail stores the serving ticket.
-    uint64_t* ticketHead = &triggerTicketHeads[triggerIdx];
-    uint64_t* ticketTail = &triggerTicketTails[triggerIdx];
-    uint64_t ticket = atomicFetchAdd<uint64_t, scopeDevice>(ticketHead, 1, memoryOrderRelaxed);
-    POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeDevice>(ticketTail, memoryOrderRelaxed) != ticket), maxSpinCount);
-
     // Flip the last bit for safe polling; host will revert.
     constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
     trigger.snd ^= flipMask;
 
     // Wait until the trigger is freed by the host.
-    if (prevHead - atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed) >= size) {
-      POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[triggerIdx].fst)) != 0), maxSpinCount);
-      atomicStore<uint64_t, scopeDevice>(tailCache, prevHead + 1, memoryOrderRelaxed);
+    if (prevHead >= size + *tail) {
+      if (prevHead >= size + atomicLoad(tail, memoryOrderAcquire)) {
+        POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tail, memoryOrderRelaxed)), maxSpinCount);
+      }
     }
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
@@ -81,9 +74,6 @@ struct FifoDeviceHandle {
     atomicStore(&(triggerPtr->fst), trigger.fst, memoryOrderRelease);
 #endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
-    // Increment serving ticket counter.
-    atomicFetchAdd<uint64_t, scopeDevice>(ticketTail, 1, memoryOrderRelaxed);
-
     return prevHead;
   }
 
@@ -91,9 +81,11 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    if (fifoHead < atomicLoad<uint64_t, scopeDevice>(tailCache, memoryOrderRelaxed)) return;
-    POLL_MAYBE_JAILBREAK((hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
-    atomicStore<uint64_t, scopeDevice>(tailCache, fifoHead + 1, memoryOrderRelaxed);
+    if (fifoHead >= *tail) {
+      if (fifoHead >= atomicLoad(tail, memoryOrderAcquire)) {
+        POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tail, memoryOrderRelaxed)), maxSpinCount);
+      }
+    }
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -107,8 +99,6 @@ struct FifoDeviceHandle {
   uint64_t* head;
   /// FIFO tail on host.
   uint64_t* tail;
-  /// Cached tail value.
-  uint64_t* tailCache;
   /// Array of flags to lock each trigger slot.
   int* triggerLocks;
   /// FIFO size.
