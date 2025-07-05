@@ -35,7 +35,7 @@ struct alignas(16) ProxyTrigger {
   uint64_t fst, snd;
 };
 
-/// Concurrent FIFO for multiple device threads to push work elements and a single host proxy thread to consume them.
+/// Concurrent FIFO where multiple device threads (the number of threads should not exceed the FIFO size) to push
 /// Head pointer is on device, tail pointer is on host (readable by device).
 struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)

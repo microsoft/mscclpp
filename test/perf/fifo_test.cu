@@ -54,7 +54,7 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
 }
 
 // Helper function to consume triggers from FIFO
-static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTriggers, int parallel, int flushPeriod) {
+static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTriggers, int parallel) {
   int totalTriggers = numTriggers * parallel;
   std::unordered_map<int, int> triggerCounts;
   for (int i = 0; i < totalTriggers; ++i) {
@@ -80,7 +80,7 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
 // Helper function to run a single kernel variant and return performance metrics
 std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_t),
                                                             std::unique_ptr<mscclpp::Fifo>& hostFifo,
-                                                            cudaStream_t stream, int flushPeriod, int numParallel) {
+                                                            cudaStream_t stream, int numParallel) {
   // Calculate triggers based on FIFO size
   const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
   const int warmupTriggers =
@@ -91,7 +91,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   utils::CUDA_CHECK(cudaGetLastError());
 
   // Process warmup triggers (note: total triggers = warmupTriggers * numParallel)
-  if (!consumeTriggers(hostFifo, warmupTriggers, numParallel, flushPeriod)) {
+  if (!consumeTriggers(hostFifo, warmupTriggers, numParallel)) {
     return {0.0, 0.0, 0, 0};  // Return error values
   }
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -104,7 +104,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   utils::CUDA_CHECK(cudaGetLastError());
 
   // Process all triggers
-  if (!consumeTriggers(hostFifo, numTriggers, numParallel, flushPeriod)) {
+  if (!consumeTriggers(hostFifo, numTriggers, numParallel)) {
     return {0.0, 0.0, 0, 0};
   }
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
@@ -120,13 +120,13 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
 }
 
-void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel, int flushPeriod,
+void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
                         nlohmann::ordered_json& combinedMetrics) {
   auto [pushThroughput, pushDuration, numTriggers, warmupTriggers] =
-      runSingleKernelVariant(kernelFifoPush, hostFifo, stream, flushPeriod, numParallel);
+      runSingleKernelVariant(kernelFifoPush, hostFifo, stream, numParallel);
 
   auto [syncThroughput, syncDuration, syncNumTriggers, syncWarmupTriggers] =
-      runSingleKernelVariant(kernelFifoPushSync, hostFifo, stream, flushPeriod, numParallel);
+      runSingleKernelVariant(kernelFifoPushSync, hostFifo, stream, numParallel);
 
   auto formatThroughput = [](double thru) {
     return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
@@ -143,21 +143,17 @@ void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t s
 
 struct FifoTestConfig {
   int fifoSize;
-  int flushPeriod;
   std::vector<int> parallelismLevels;
 
   // Constructor with default parallelism levels
-  FifoTestConfig(int size, int flush, const std::vector<int>& parallel = {1, 2, 4, 8, 16})
-      : fifoSize(size), flushPeriod(flush), parallelismLevels(parallel) {}
+  FifoTestConfig(int size, const std::vector<int>& parallel = {1, 2, 4, 8, 16})
+      : fifoSize(size), parallelismLevels(parallel) {}
 };
 
 void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[maybe_unused]] int worldSize,
                  [[maybe_unused]] int localRank) {
-  if (config.fifoSize <= 0 || config.flushPeriod <= 0) {
-    throw std::invalid_argument("FIFO size and flush period must be positive");
-  }
-  if (config.flushPeriod > config.fifoSize) {
-    throw std::invalid_argument("Flush period cannot be larger than FIFO size");
+  if (config.fifoSize <= 0) {
+    throw std::invalid_argument("FIFO size must be positive");
   }
   if (config.parallelismLevels.empty()) {
     throw std::invalid_argument("At least one parallelism level must be specified");
@@ -175,8 +171,7 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
 
   // Create test name with parallelism range
-  std::string testName =
-      "FifoTest_Size" + std::to_string(config.fifoSize) + "_Flush" + std::to_string(config.flushPeriod) + "_Parallel";
+  std::string testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_Parallel";
 
   // Add parallelism range to test name (e.g., "P1-16" or "P1-4-16-64")
   if (!config.parallelismLevels.empty()) {
@@ -187,8 +182,7 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
       // If parallelism levels have non-standard steps, include more detail
       if (config.parallelismLevels.size() > 2 &&
           (config.parallelismLevels[1] != 2 * config.parallelismLevels[0] || config.parallelismLevels.size() > 3)) {
-        testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_Flush" + std::to_string(config.flushPeriod) +
-                   "_ParallelCustom";
+        testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_ParallelCustom";
       }
     }
   }
@@ -196,8 +190,7 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   // Print test configuration
   if (utils::isMainRank()) {
     std::stringstream ss;
-    ss << "Running FIFO test with size=" << config.fifoSize << ", flush_period=" << config.flushPeriod
-       << ", parallelism_levels=[";
+    ss << "Running FIFO test with size=" << config.fifoSize << ", parallelism_levels=[";
     for (size_t i = 0; i < config.parallelismLevels.size(); ++i) {
       if (i > 0) ss << ",";
       ss << config.parallelismLevels[i];
@@ -209,11 +202,10 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   nlohmann::ordered_json combinedMetrics;
 
   for (int numParallel : config.parallelismLevels) {
-    runFifoTestVariant(hostFifo, stream, numParallel, config.flushPeriod, combinedMetrics);
+    runFifoTestVariant(hostFifo, stream, numParallel, combinedMetrics);
   }
 
   std::map<std::string, std::string> testParams;
-  testParams["flush_period"] = std::to_string(config.flushPeriod);
   testParams["fifo_size"] = std::to_string(static_cast<int>(hostFifo->size()));
 
   // Add parallelism levels to test parameters
@@ -232,12 +224,9 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
 void runAllFifoTests([[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] int localRank) {
   // clang-format off
   std::vector<FifoTestConfig> configs = {
-      {1, 1, {1}},
-      {128, 4, {1, 8, 64, 128}},
-      {128, 128, {1, 8, 64, 128}},
-      {512, 4, {1, 8, 64, 512}},
-      {512, 128, {1, 8, 64, 512}},
-      {512, 512, {1, 8, 64, 512}},
+      {1, {1}},
+      {128,{1, 8, 64, 128}},
+      {512, {1, 8, 64, 256, 512}},
   };
   // clang-format on
 
