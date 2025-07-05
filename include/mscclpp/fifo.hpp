@@ -29,10 +29,6 @@ class Fifo {
   /// Remove the head trigger.
   void pop();
 
-  /// Flushes the tail of the FIFO.
-  /// @param sync If true, waits for the flush to complete before returning.
-  void flushTail(bool sync = false);
-
   /// Get FIFO size.
   /// @return Number of entries in the FIFO.
   int size() const;
@@ -40,6 +36,9 @@ class Fifo {
   /// Get device-side FIFO handle.
   /// @return FifoDeviceHandle for device access.
   FifoDeviceHandle deviceHandle() const;
+
+  [[deprecated("flushTail() is now no-op and no longer needed. This will be removed in a future release.")]] void
+  flushTail([[maybe_unused]] bool sync = false) {}
 
  private:
   struct Impl;
