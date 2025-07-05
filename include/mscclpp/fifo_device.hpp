@@ -65,7 +65,9 @@ struct FifoDeviceHandle {
     // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
     if (prevHead >= size + *tailReplica) {
-      POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderAcquire)), maxSpinCount);
+      if (prevHead >= size + atomicLoad(tailReplica, memoryOrderAcquire)) {
+        POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)), maxSpinCount);
+      }
     }
 
     ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
@@ -93,7 +95,11 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the first condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderAcquire)), maxSpinCount);
+    if (fifoHead >= *tailReplica) {
+      if (fifoHead >= atomicLoad(tailReplica, memoryOrderAcquire)) {
+        POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)), maxSpinCount);
+      }
+    }
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
