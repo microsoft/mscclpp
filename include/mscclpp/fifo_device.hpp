@@ -37,6 +37,8 @@ struct alignas(16) ProxyTrigger {
 
 /// Concurrent FIFO where multiple device threads (the number of threads should not exceed the FIFO size) to push
 /// Head pointer is on device, tail pointer is on host (readable by device).
+/// The FIFO’s capacity is limited only by MAX_UINT64—effectively infinite for practical use. Exceeding this limit will
+/// overflow the counter and lead to undefined behavior.
 struct FifoDeviceHandle {
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a trigger to the FIFO.
@@ -89,10 +91,6 @@ struct FifoDeviceHandle {
 
   /// FIFO buffer on host.
   ProxyTrigger* triggers;
-  /// Ticket counter head for each trigger slot. On device.
-  uint64_t* triggerTicketHeads;
-  /// Ticket counter tail for each trigger slot. On device.
-  uint64_t* triggerTicketTails;
   /// FIFO head on device.
   uint64_t* head;
   /// FIFO tail on host.
