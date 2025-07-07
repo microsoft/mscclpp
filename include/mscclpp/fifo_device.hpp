@@ -53,9 +53,7 @@ struct FifoDeviceHandle {
 
     // Wait until the trigger is freed by the host.
     if (prevHead >= size + *tail) {
-      if (prevHead >= size + atomicLoad(tail, memoryOrderAcquire)) {
-        POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tail, memoryOrderRelaxed)), maxSpinCount);
-      }
+      POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tail, memoryOrderAcquire)), maxSpinCount);
     }
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
