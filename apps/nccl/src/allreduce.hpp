@@ -483,7 +483,7 @@ template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, uint32_t srcOffset, uint32_t dstOffset,
                                                       size_t size, int tid, int nThreads) {
   // nvls can only handle 4 bytes alignment
-  mscclpp_assert_device(size % 4 == 0, "size must be 4 bytes aligned");
+  MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
   const size_t n16B = size / sizeof(mscclpp::f16x8);
   const size_t srcOffset4 = srcOffset / sizeof(mscclpp::f16x8);
   const size_t dstOffset4 = dstOffset / sizeof(mscclpp::f16x8);
@@ -645,7 +645,7 @@ template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce11([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicast,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* switchChannels,
                 [[maybe_unused]] size_t size, [[maybe_unused]] int rank) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
@@ -714,8 +714,8 @@ __global__ void __launch_bounds__(1024, 1)
     }
     if (bid >= nBlocksForCopy && bid < nBlocksForCopy + nBlocksForReduce) {
       int bidForReduce = bid - nBlocksForCopy;
-      mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer>* multicastPtr = multicast + bidForReduce;
-      T* mcBuff = (T*)multicastPtr->mcPtr;
+      auto switchChannel = switchChannels + bidForReduce;
+      T* mcBuff = (T*)switchChannel->mcPtr;
       for (int i = 0; i < copyReduceRatio; i++) {
         int oriBid = bidForReduce * copyReduceRatio + i;
         size_t offset = rank * scratchSizePerRank + scratchIt * unitSize + oriBid * scratchSizePerBlock;
