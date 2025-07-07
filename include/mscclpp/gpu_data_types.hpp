@@ -60,6 +60,10 @@ union alignas(sizeof(T) * N) VectorType {
 
   MSCCLPP_HOST_DEVICE_INLINE VectorType() {}
 
+  MSCCLPP_HOST_DEVICE_INLINE operator T*() { return data; }
+
+  MSCCLPP_HOST_DEVICE_INLINE operator const T*() const { return data; }
+
   MSCCLPP_HOST_DEVICE_INLINE T& operator[](int i) { return data[i]; }
 
   MSCCLPP_HOST_DEVICE_INLINE const T& operator[](int i) const { return data[i]; }
