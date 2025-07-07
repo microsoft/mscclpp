@@ -61,7 +61,6 @@ else()
         message(WARNING "Neither NVIDIA/CUDA nor AMD/ROCm is found, defaulting to NVIDIA/CUDA.")
         set(MSCCLPP_USE_CUDA ON)
         set(MSCCLPP_USE_ROCM OFF)
-        find_package(CUDAToolkit REQUIRED)
     endif()
 endif()
 
