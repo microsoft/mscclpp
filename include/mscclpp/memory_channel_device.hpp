@@ -15,7 +15,7 @@ namespace mscclpp {
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
-  MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle() = default;
+  MSCCLPP_INLINE BaseMemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BaseMemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore)
       : semaphore_(semaphore) {}
@@ -34,12 +34,6 @@ struct BaseMemoryChannelDeviceHandle {
   /// User requires to call proper fencing before using this function.
   ///
   MSCCLPP_DEVICE_INLINE void relaxedSignal() { semaphore_.relaxedSignal(); }
-
-  /// Increase the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
-
-  /// Read the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
   /// Check if the remote semaphore has signaled.
   /// @return true if the remote semaphore has signaled.
@@ -65,7 +59,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   void* src_;
   void* packetBuffer_;
 
-  MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle() = default;
+  MSCCLPP_INLINE MemoryChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE MemoryChannelDeviceHandle(MemoryDevice2DeviceSemaphoreDeviceHandle semaphore, void* dst,
                                                        void* src, void* packetBuffer)
@@ -148,7 +142,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param targetOffset The offset in bytes of the remote address.
   /// @param originOffset The offset in bytes of the local address.
   /// @param originBytes Bytes of the origin to be copied.
@@ -175,7 +169,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
 
   /// Retrieve data from a packet in the local packet buffer.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param index The index of the packet to be read. The offset in bytes is calculated as index * sizeof(PacketType).
   /// @param flag The flag to read.
   /// @param maxSpinCount The maximum number of spins before asserting. Never assert if negative.
@@ -183,7 +177,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   template <typename PacketType = LL16Packet>
   MSCCLPP_DEVICE_INLINE auto unpackPacket(uint64_t index, uint32_t flag, int64_t maxSpinCount = -1) {
-    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    MSCCLPP_ASSERT_DEVICE(packetBuffer_ != nullptr, "Packet buffer is null");
     return reinterpret_cast<PacketType*>(packetBuffer_)[index].read(flag, maxSpinCount);
   }
 
@@ -191,7 +185,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
   ///
   /// This function is intended to be collectively called by multiple threads. Each thread copies a part of data.
   ///
-  /// @tparam PacketType The packet type. It should be either @ref LL16Packet or @ref LL8Packet.
+  /// @tparam PacketType The packet type. It should be either LL16Packet or LL8Packet.
   /// @param targetOffset The offset in bytes of the local packet buffer.
   /// @param originOffset The offset in bytes of the local address.
   /// @param originBytes Bytes of the origin to be copied.
@@ -207,7 +201,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
                                            int64_t maxSpinCount = -1) {
     static_assert(std::is_same<PacketType, LL16Packet>::value || std::is_same<PacketType, LL8Packet>::value,
                   "Unsupported packet type");
-    mscclpp_assert_device(packetBuffer_ != nullptr, "Packet buffer is null");
+    MSCCLPP_ASSERT_DEVICE(packetBuffer_ != nullptr, "Packet buffer is null");
     copyFromPackets<PacketType>(reinterpret_cast<char*>(src_) + originOffset,
                                 reinterpret_cast<char*>(packetBuffer_) + targetOffset, originBytes, threadId,
                                 numThreads, flag, maxSpinCount);
@@ -229,7 +223,7 @@ struct MemoryChannelDeviceHandle : public BaseMemoryChannelDeviceHandle {
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };
 
-/// @deprecated Use @ref MemoryChannelDeviceHandle instead.
+/// @deprecated Use MemoryChannelDeviceHandle instead.
 [[deprecated("Use MemoryChannelDeviceHandle instead.")]] typedef MemoryChannelDeviceHandle SmChannelDeviceHandle;
 
 }  // namespace mscclpp

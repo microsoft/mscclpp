@@ -38,8 +38,8 @@ class NvlsConnection {
   void addDevice();
   void addDevice(int cudaDeviceId);
 
-  /// @brief bind the memory allocated via @ref mscclpp::GpuBuffer to the multicast handle. The behavior
-  /// is undefined if the devicePtr is not allocated by @ref mscclpp::GpuBuffer.
+  /// Bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
+  /// is undefined if the devicePtr is not allocated by mscclpp::GpuBuffer.
   /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
   /// @param size The bytes of the memory to bind to the multicast handle.
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize

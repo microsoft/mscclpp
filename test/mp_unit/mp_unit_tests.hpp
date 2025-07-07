@@ -14,6 +14,7 @@
 #include <mscclpp/utils.hpp>
 
 #include "ib.hpp"
+#include "utils_internal.hpp"
 
 class MultiProcessTestEnv : public ::testing::Environment {
  public:

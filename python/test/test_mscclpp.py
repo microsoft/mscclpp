@@ -28,6 +28,8 @@ from mscclpp import (
     is_nvls_supported,
     npkit,
     env,
+    Device,
+    DeviceType,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
@@ -280,7 +282,13 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, transport: Transport, 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores(mpi_group: MpiGroup):
-    group, connections = create_group_and_connection(mpi_group, "IB")
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
+    tran = group.my_ib_device(group.my_rank % 8)
+    endpoint = EndpointConfig(tran, Device(DeviceType.CPU))
+    remote_nghrs = list(range(group.nranks))
+    remote_nghrs.remove(group.my_rank)
+    connections = {rank: group.communicator.connect(endpoint, rank) for rank in remote_nghrs}
+    connections = {rank: conn.get() for rank, conn in connections.items()}
 
     semaphores = group.make_semaphore(connections, Host2HostSemaphore)
     for rank in connections:
@@ -293,7 +301,13 @@ def test_h2h_semaphores(mpi_group: MpiGroup):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
-    group, connections = create_group_and_connection(mpi_group, "IB")
+    group = mscclpp_comm.CommGroup(mpi_group.comm)
+    tran = group.my_ib_device(group.my_rank % 8)
+    endpoint = EndpointConfig(tran, Device(DeviceType.CPU))
+    remote_nghrs = list(range(group.nranks))
+    remote_nghrs.remove(group.my_rank)
+    connections = {rank: group.communicator.connect(endpoint, rank) for rank in remote_nghrs}
+    connections = {rank: conn.get() for rank, conn in connections.items()}
 
     semaphores = group.make_semaphore(connections, Host2HostSemaphore)
 
@@ -325,15 +339,17 @@ def test_nvls_connection(mpi_group: MpiGroup):
         pytest.skip("cannot use nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
     all_ranks = list(range(group.nranks))
-    endpoint = EndpointConfig(Transport.Nvls, 2**22)
-    nvls_connection = group.make_connection(all_ranks, endpoint)
-    mem_handle1 = nvls_connection.allocate_bind_memory(2**21)
-    mem_handle2 = nvls_connection.allocate_bind_memory(2**21)
+    nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
+    memory1 = GpuBuffer(2**29, cp.int8)
+    memory2 = GpuBuffer(2**29, cp.int8)
+    memory3 = GpuBuffer(2**29, cp.int8)
+    mem_handle1 = nvls_connection.bind_allocated_memory(memory1.data.ptr, memory1.data.mem.size)
+    mem_handle2 = nvls_connection.bind_allocated_memory(memory2.data.ptr, memory2.data.mem.size)
     with pytest.raises(Exception):
-        mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
+        mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
     # the memory is freed on the destructor of mem_handle2
     mem_handle2 = None
-    mem_handle3 = nvls_connection.allocate_bind_memory(2**21)
+    mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
 
 
 class MscclppKernel:
@@ -610,8 +626,9 @@ def test_port_channel(mpi_group: MpiGroup, nelem: int, transport: str, use_packe
 @pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls(mpi_group: MpiGroup):
     group, nvls_connection = create_group_and_connection(mpi_group, "NVLS")
+    memory = GpuBuffer(2**21, dtype=cp.int8)
     nbytes = 2**21
-    mem_handle = nvls_connection.allocate_bind_memory(nbytes)
+    mem_handle = nvls_connection.bind_allocated_memory(memory.data.ptr, memory.data.mem.size)
 
     nvlinks_connections = create_connection(group, "NVLink")
     semaphores = group.make_semaphore(nvlinks_connections, MemoryDevice2DeviceSemaphore)

@@ -273,8 +273,8 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
   for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
-    remoteRegMemoryFutures.push_back(comm->recvMemory(i, 0));
-    comm->sendMemory(memory, i, 0);
+    remoteRegMemoryFutures.push_back(comm->recvMemory(i));
+    comm->sendMemory(memory, i);
   }
   std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
                  [](const auto& future) { return future.get(); });
@@ -603,11 +603,10 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   }
 
   std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
-
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     mscclpp::Transport transport = getTransport(rank, i);
-    connectionFutures.push_back(mscclppComm->connect(i, 0, transport));
+    connectionFutures.push_back(mscclppComm->connect(transport, i));
   }
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),

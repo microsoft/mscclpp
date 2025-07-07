@@ -22,6 +22,8 @@
 #include <string>
 #include <type_traits>
 
+#include "utils_internal.hpp"
+
 int isMainProc = 0;
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -273,6 +275,7 @@ void BaseTestEngine::runTest() {
     if (args_.reportErrors) {
       this->coll_->setupCollTest(args_, size);
       this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
+      CUDATHROW(cudaDeviceSynchronize());
       this->barrier();
       this->coll_->runColl(args_, stream_);
       CUDATHROW(cudaDeviceSynchronize());
@@ -383,10 +386,10 @@ void BaseTestEngine::setupMeshConnectionsInternal(
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connectionFutures.push_back(comm_->connect(r, 0, transport));
+      connectionFutures.push_back(comm_->connect(transport, r));
     }
-    comm_->sendMemory(localRegMemory, r, 0);
-    auto remoteMemory = comm_->recvMemory(r, 0);
+    comm_->sendMemory(localRegMemory, r);
+    auto remoteMemory = comm_->recvMemory(r);
     remoteRegMemories.push_back(remoteMemory);
   }
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
