@@ -82,8 +82,7 @@ struct FifoDeviceHandle {
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     if (fifoHead >= *tail) {
-      if (fifoHead >= atomicLoad(tail, memoryOrderAcquire)) {
-        POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tail, memoryOrderRelaxed)), maxSpinCount);
+        POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tail, memoryOrderAcquire)), maxSpinCount);
       }
     }
   }
