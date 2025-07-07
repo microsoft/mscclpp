@@ -20,13 +20,23 @@ namespace mscclpp {
 template <class>
 constexpr bool dependentFalse = false;  // workaround before CWG2518/P2593R1
 
-/// Device-side handle for @ref SwitchChannel.
+/// Device-side handle for SwitchChannel.
 struct SwitchChannelDeviceHandle {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
+  template <typename T>
+  MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
+    return SwitchChannelDeviceHandle::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
+  }
+
+  template <typename T>
+  MSCCLPP_DEVICE_INLINE void broadcast(uint64_t index, const T& val) {
+    SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
+  }
+
   template <typename VectorType>
   MSCCLPP_DEVICE_INLINE static VectorType multimemLoadReduce(VectorType* ptr) {
     VectorType val;

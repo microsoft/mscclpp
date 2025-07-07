@@ -25,12 +25,13 @@ void SwitchChannelTest::TearDown() { CommunicatorTestBase::TearDown(); }
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
 
 __global__ void kernelSwitchReduce() {
-  auto mcPtr = reinterpret_cast<mscclpp::f32x1*>(gConstSwitchChan.mcPtr);
-  auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(mcPtr);
-  mscclpp::SwitchChannelDeviceHandle::multimemStore(val, mcPtr);
+#if (CUDA_NVLS_API_AVAILABLE)
+  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(0);
+  gConstSwitchChan.broadcast(0, val);
+#endif  // (CUDA_NVLS_API_AVAILABLE)
 }
 
-TEST_F(SwitchChannelTest, SimpleReduce) {
+TEST_F(SwitchChannelTest, SimpleAllReduce) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::vector<int> ranks;
@@ -43,8 +44,8 @@ TEST_F(SwitchChannelTest, SimpleReduce) {
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice));
 
   auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, 1024);
-  auto deviceMulticastPointer = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 1024);
-  auto deviceHandle = deviceMulticastPointer.deviceHandle();
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 1024);
+  auto deviceHandle = switchChannel.deviceHandle();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());

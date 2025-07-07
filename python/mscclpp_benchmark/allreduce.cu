@@ -798,10 +798,9 @@ __forceinline__ __device__ void barrier(mscclpp::MemoryDevice2DeviceSemaphoreDev
 // Assumes kVecSize is 1, 2, 4, or 8
 template <typename DataType, int kVecSize>
 MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-                                             mscclpp::SwitchChannelDeviceHandle nvlsPtrs, size_t my_rank,
+                                             mscclpp::SwitchChannelDeviceHandle switchChan, size_t my_rank,
                                              size_t num_ranks, size_t num_elements) {
   using VectorType = mscclpp::VectorType<DataType, kVecSize>;
-  VectorType* mc_ptr = reinterpret_cast<VectorType*>(nvlsPtrs.mcPtr);
   size_t tid = threadIdx.x;
   size_t bid = blockIdx.x;
   size_t num_threads_per_block = blockDim.x;
@@ -821,8 +820,8 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemapho
   size_t thread_step = num_threads_per_block * num_blocks;  // number of threads * vector size
 
   for (size_t idx = rank_start + thread_offset; idx < rank_end; idx += thread_step) {
-    VectorType val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(mc_ptr + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, mc_ptr + idx);
+    auto val = switchChan.reduce<VectorType>(idx);
+    switchChan.store(idx, val);
   }
 
   // end with a barrier to ensure all devices can now read their values
@@ -833,16 +832,16 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemapho
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce6(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-               mscclpp::SwitchChannelDeviceHandle nvlsPtrs, size_t my_rank, size_t num_ranks, size_t num_elements,
+               mscclpp::SwitchChannelDeviceHandle switchChan, size_t my_rank, size_t num_ranks, size_t num_elements,
                size_t vector_size) {
   if (vector_size == 8) {
-    allreduce6_helper<TYPE, 8>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 8>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else if (vector_size == 4) {
-    allreduce6_helper<TYPE, 4>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 4>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else if (vector_size == 2) {
-    allreduce6_helper<TYPE, 2>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 2>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else {
-    allreduce6_helper<TYPE, 1>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 1>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   }
 }
 #endif
