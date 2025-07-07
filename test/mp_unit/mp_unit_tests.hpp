@@ -164,12 +164,6 @@ class MemoryChannelOneToOneTest : public CommunicatorTestBase {
   std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
 };
 
-class SwitchChannelTest : public CommunicatorTestBase {
- protected:
-  void SetUp() override;
-  void TearDown() override;
-};
-
 class ExecutorTest : public MultiProcessTest {
  protected:
   void SetUp() override;
