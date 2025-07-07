@@ -46,7 +46,7 @@ static void localPortChannelTest(mscclpp::Transport transport) {
   bootstrap->initialize(mscclpp::TcpBootstrap::createUniqueId());
   auto communicator = std::make_shared<mscclpp::Communicator>(bootstrap);
 
-  auto connection = communicator->connect(/*remoteRank*/ 0, /*tag*/ 0, transport).get();
+  auto connection = communicator->connect(transport, /*remoteRank*/ 0).get();
 
   const size_t bytes = 4 * 1024 * 1024;
   auto srcBuff = mscclpp::GpuBuffer(bytes).memory();
