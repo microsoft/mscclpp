@@ -59,6 +59,15 @@ class ThreadBlock:
         interval_map = BuffersAccess()
         self.ops = interval_map.process_operations(self.ops)
 
+    def shift_channels(self, shift):
+        for channel in self.__channels.values():
+            for i in range(len(channel.channel_ids)):
+                channel.channel_ids[i] += shift[channel.channel_type]
+
+    def shift_buffers(self, instance, num_instances):
+        for op in self.ops:
+            op.shift_buffers(instance, num_instances)
+
     def to_json(self) -> dict:
         return {
             "id": self.id,

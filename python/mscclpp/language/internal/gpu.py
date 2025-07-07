@@ -4,6 +4,7 @@ from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field
 from collections import *
 from typing import List
+import copy
 
 
 @dataclass
@@ -64,6 +65,49 @@ class Gpu:
     def resolve_data_dependency(self):
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
+
+    def replicate_instances(self, instances):
+        threadblocks = []
+        channels_base_shift = {
+            ChannelType.memory: (
+                len(self.__channels[ChannelType.memory].connected_to) if ChannelType.memory in self.__channels else 0
+            ),
+            ChannelType.port: (
+                len(self.__channels[ChannelType.port].connected_to) if ChannelType.port in self.__channels else 0
+            ),
+            ChannelType.switch: len(self.__nvls_channels),
+        }
+
+        self.input_chunks *= instances
+        self.output_chunks *= instances
+        self.scratch_chunks *= instances
+
+        new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
+        for _ in range(instances):
+            if ChannelType.memory in self.__channels:
+                new_channels[ChannelType.memory].extend(self.__channels[ChannelType.memory].connected_to)
+            if ChannelType.port in self.__channels:
+                new_channels[ChannelType.port].extend(self.__channels[ChannelType.port].connected_to)
+            new_channels[ChannelType.switch].extend(self.__nvls_channels)
+
+        if ChannelType.memory in self.__channels:
+            self.__channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
+        if ChannelType.port in self.__channels:
+            self.__channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
+        self.__nvls_channels = new_channels[ChannelType.switch]
+
+        for threadblock in self.threadblocks:
+            for instance in range(instances):
+                tb = copy.deepcopy(threadblock)
+                tb.id = threadblock.id * instances + instance
+                channels_shift = {channel: shift * instance for channel, shift in channels_base_shift.items()}
+
+                tb.shift_channels(channels_shift)
+                tb.shift_buffers(instance, instances)
+
+                threadblocks.append(tb)
+
+        self.threadblocks = threadblocks
 
     def to_json(self) -> dict:
         return {
