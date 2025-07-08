@@ -8,6 +8,11 @@ parameters:
 - name: perfBaselineFile
   type: string
   default: 'test/deploy/perf_ndmv4.jsonl'
+- name: hostEntries
+  type: string
+  default: |
+    10.0.0.10 mscclit-000000
+    10.0.0.11 mscclit-000001
 
 
 steps:
@@ -47,6 +52,19 @@ steps:
     scriptLocation: inlineScript
     inlineScript: |
       az vmss start --name ${{ parameters.vmssName }} --resource-group mscclpp
+
+- task: Bash@3
+  displayName: Add hostEntry to /etc/hosts
+  inputs:
+    targetType: 'inline'
+    script: |
+      ENTRY="$(hostEntries)"
+      if ! grep -qxF "$ENTRY" /etc/hosts; then
+        echo "Adding to /etc/hosts"
+        echo "$ENTRY" | sudo tee -a /etc/hosts
+      else
+        echo "Entry already exists, nothing to do."
+      fi
 
 - task: Bash@3
   name: DeployTestEnv
