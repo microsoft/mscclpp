@@ -5,6 +5,14 @@ trigger:
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
 
+
+parameters:
+- name: hostEntries
+  type: string
+  default: |
+    10.0.0.10 mscclit-000000
+    10.0.0.11 mscclit-000001
+
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test
@@ -18,13 +26,6 @@ jobs:
     name: mscclpp-it
   container:
     image: $[ variables['containerImage'] ]
-
-  parameters:
-  - name: hostEntries
-    type: string
-    default: |
-      10.0.0.10 mscclit-000000
-      10.0.0.11 mscclit-000001
 
   steps:
   - task: Bash@3
