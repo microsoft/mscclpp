@@ -92,30 +92,42 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   const int warmupTriggers =
       std::max(MIN_WARMUP_TRIGGERS, static_cast<int>(hostFifo->size() * WARMUP_TRIGGERS_PER_FIFO_SIZE));
 
+  // Launch push kernel on GPU 0
+  cudaSetDevice(0);
+  cudaStream_t stream0;
+  cudaStreamCreate(&stream0);
   // Warmup
-  kernel<<<numParallel, 1, 0, stream>>>(warmupTriggers);
+  kernel<<<numParallel, 1, 0, stream0>>>(warmupTriggers);
   utils::CUDA_CHECK(cudaGetLastError());
 
+  // Launch pop kernel on GPU 1
+  cudaSetDevice(1);
   // Process warmup triggers (note: total triggers = warmupTriggers * numParallel)
   if (!consumeTriggers(hostFifo, warmupTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};  // Return error values
   }
   hostFifo->flushTail();
-  utils::CUDA_CHECK(cudaStreamSynchronize(stream));
+  utils::CUDA_CHECK(cudaStreamSynchronize(stream0));
 
   // Benchmark
   utils::Timer timer;
   timer.start();
 
-  kernel<<<numParallel, 1, 0, stream>>>(numTriggers);
+  // Launch push kernel on GPU 0
+  cudaSetDevice(0);
+  kernel<<<numParallel, 1, 0, stream0>>>(numTriggers);
   utils::CUDA_CHECK(cudaGetLastError());
 
+  // Launch pop kernel on GPU 1
+  cudaSetDevice(1);
   // Process all triggers
   if (!consumeTriggers(hostFifo, numTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};
   }
   hostFifo->flushTail(true);
-  utils::CUDA_CHECK(cudaStreamSynchronize(stream));
+
+  cudaSetDevice(0);
+  utils::CUDA_CHECK(cudaStreamSynchronize(stream0));
 
   timer.stop();
 
@@ -123,6 +135,11 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   double throughput = totalTriggers / timer.elapsedSeconds();
   double duration_us = timer.elapsedMicroseconds();
 
+  // utils::CUDA_CHECK(cudaDeviceSynchronize());
+  // Wait for both GPUs
+  cudaSetDevice(0);
+  utils::CUDA_CHECK(cudaDeviceSynchronize());
+  cudaSetDevice(1);
   utils::CUDA_CHECK(cudaDeviceSynchronize());
 
   return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
@@ -174,10 +191,18 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   int cudaDevice, numaNode;
   setupCuda(cudaDevice, numaNode);
 
+  // Allocate FIFO on device 0
+  cudaSetDevice(0);
   auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
 
   mscclpp::FifoDeviceHandle hostHandle = hostFifo->deviceHandle();
-  utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
+
+  // Copy device handle to symbol on both GPUs
+  for (int dev = 0; dev < 2; ++dev) {
+      cudaSetDevice(dev);
+      cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle));
+  }
+  // utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
 
   cudaStream_t stream;
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
