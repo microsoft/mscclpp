@@ -15,12 +15,14 @@ struct Fifo::Impl {
   detail::UniqueGpuHostPtr<ProxyTrigger> triggers;
   detail::UniqueGpuPtr<uint64_t> head;
   detail::UniqueGpuHostPtr<uint64_t> tail;
+  detail::UniqueGpuPtr<uint64_t> tailCache;
   const int size;
 
   Impl(int size)
       : triggers(detail::gpuCallocHostUnique<ProxyTrigger>(size)),
         head(detail::gpuCallocUnique<uint64_t>()),
         tail(detail::gpuCallocHostUnique<uint64_t>()),
+        tailCache(detail::gpuCallocUnique<uint64_t>()),
         size(size) {}
 };
 
@@ -58,6 +60,7 @@ MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {
   deviceHandle.triggers = pimpl_->triggers.get();
   deviceHandle.head = pimpl_->head.get();
   deviceHandle.tail = pimpl_->tail.get();
+  deviceHandle.tailCache = pimpl_->tailCache.get();
   deviceHandle.size = pimpl_->size;
   return deviceHandle;
 }
