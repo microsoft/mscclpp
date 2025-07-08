@@ -56,12 +56,11 @@ jobs:
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
   - task: Bash@3
-    displayName: Add hostEntry to /etc/hosts
+    displayName: Add HostEntry
     inputs:
       targetType: 'inline'
       script: |
         ENTRY="${{ parameters.hostEntries }}"
-        echo "entry to add: $ENTRY"
         if ! grep -qxF "$ENTRY" /etc/hosts; then
           echo "Adding to /etc/hosts"
           echo "$ENTRY" | sudo tee -a /etc/hosts
