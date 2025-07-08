@@ -81,9 +81,7 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    if (fifoHead >= *tailCache) {
-      POLL_MAYBE_JAILBREAK((fifoHead >= (*tailCache = atomicLoad(tail, memoryOrderAcquire))), maxSpinCount);
-    }
+    POLL_MAYBE_JAILBREAK(hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0, maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
