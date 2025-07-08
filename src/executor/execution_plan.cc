@@ -278,7 +278,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
   this->outputSize = outputSize;
 
   checkMessageSize();
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->setupOperations(gpu, contsSrcOffset, constDstOffset);
 }
 
 void ExecutionPlan::Impl::checkMessageSize() const {
