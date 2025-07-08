@@ -61,6 +61,7 @@ jobs:
       targetType: 'inline'
       script: |
         ENTRY="$(hostEntries)"
+        echo "entry to add: $ENTRY"
         if ! grep -qxF "$ENTRY" /etc/hosts; then
           echo "Adding to /etc/hosts"
           echo "$ENTRY" | sudo tee -a /etc/hosts
