@@ -712,9 +712,9 @@ class GroupLoadReduceStore(BaseOperation):
 
     def shift_buffers(self, instance, num_instances):
         for i in range(len(self.src_index)):
-            self.src_index[i] += self.src_index[i] * num_instances + instance
+            self.src_index[i] = self.src_index[i] * num_instances + instance
         for i in range(len(self.dst_index)):
-            self.dst_index[i] += self.dst_index[i] * num_instances + instance
+            self.dst_index[i] = self.dst_index[i] * num_instances + instance
 
     def __add__(self, other):
         return None
