@@ -60,7 +60,7 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        ENTRY="$(hostEntries)"
+        ENTRY="${{ parameters.hostEntries }}"
         echo "entry to add: $ENTRY"
         if ! grep -qxF "$ENTRY" /etc/hosts; then
           echo "Adding to /etc/hosts"
