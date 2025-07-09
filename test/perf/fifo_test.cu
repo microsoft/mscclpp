@@ -100,8 +100,14 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   kernel<<<numParallel, 1, 0, stream0>>>(warmupTriggers);
   utils::CUDA_CHECK(cudaGetLastError());
 
-  // Launch pop kernel on GPU 1
+  // Launch push kernel on GPU 1
   cudaSetDevice(1);
+  cudaStream_t stream1;
+  cudaStreamCreate(&stream1);
+  // Warmup
+  kernel<<<numParallel, 1, 0, stream1>>>(warmupTriggers);
+  utils::CUDA_CHECK(cudaGetLastError());
+
   // Process warmup triggers (note: total triggers = warmupTriggers * numParallel)
   if (!consumeTriggers(hostFifo, warmupTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};  // Return error values
@@ -118,8 +124,11 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   kernel<<<numParallel, 1, 0, stream0>>>(numTriggers);
   utils::CUDA_CHECK(cudaGetLastError());
 
-  // Launch pop kernel on GPU 1
+  // Launch push kernel on GPU 1
   cudaSetDevice(1);
+  kernel<<<numParallel, 1, 0, stream1>>>(warmupTriggers);
+  utils::CUDA_CHECK(cudaGetLastError());
+
   // Process all triggers
   if (!consumeTriggers(hostFifo, numTriggers, numParallel, flushPeriod)) {
     return {0.0, 0.0, 0, 0};
@@ -128,6 +137,9 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
 
   cudaSetDevice(0);
   utils::CUDA_CHECK(cudaStreamSynchronize(stream0));
+
+  cudaSetDevice(1);
+  utils::CUDA_CHECK(cudaStreamSynchronize(stream1));
 
   timer.stop();
 
