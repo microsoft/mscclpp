@@ -65,8 +65,15 @@ struct FifoDeviceHandle {
     // As atomic access is slow, we first check using the bare pointer and then use the atomic load if the
     // condition is not met.
     if (prevHead >= size + *tailReplica) {
-      OR_POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)),
-                              (hostLoadRelaxed(&(triggers[prevHead % size].fst)) != 0), maxSpinCount);
+      // OR_POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)),
+      //                         (hostLoadRelaxed(&(triggers[prevHead % size].fst)) != 0), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tailReplica, memoryOrderRelaxed)), maxSpinCount);
+      // while (true) {
+      //   if (prevHead < size + atomicLoad(tailReplica, memoryOrderAcquire)) {
+      //     break;
+      //   }
+      //   // printf("push: prevHead %lu, tailReplica %lu\n", prevHead, atomicLoad(tailReplica, memoryOrderRelaxed));
+      // }
     }
 
     ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
@@ -94,8 +101,15 @@ struct FifoDeviceHandle {
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     // Same as push but in this case checking the first condition is probably faster since for tail to be pushed we need
     // to wait for cudaMemcpy to be done.
-    OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)),
-                            (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
+    // OR_POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)),
+    //                         (hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0), maxSpinCount);
+    // while (true) {
+    //   if (fifoHead < atomicLoad(tailReplica, memoryOrderRelaxed)) {
+    //     break;
+    //   }
+    //   printf("sync: fifoHead %lu, tailReplica %lu\n", fifoHead, atomicLoad(tailReplica, memoryOrderRelaxed));
+    // }
+    POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tailReplica, memoryOrderRelaxed)), maxSpinCount);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 

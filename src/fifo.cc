@@ -51,13 +51,18 @@ MSCCLPP_API_CPP ProxyTrigger Fifo::poll() {
   // we are loading fst first. if fst is non-zero then snd is also valid
   trigger.fst = atomicLoad(&(ptr->fst), memoryOrderAcquire);
   trigger.snd = ptr->snd;
+  // printf("poll: tailHost %lu, trigger.fst %lu, trigger.snd %lu\n", *(pimpl_->tailHost), trigger.fst, trigger.snd);
   return trigger;
 }
 
 MSCCLPP_API_CPP void Fifo::pop() {
   uint64_t curTail = *(pimpl_->tailHost);
-  pimpl_->triggers.get()[curTail % pimpl_->size].fst = 0;
+  // pimpl_->triggers.get()[curTail % pimpl_->size].fst = 0;
+  cudaMemsetAsync(&(pimpl_->triggers.get()[curTail % pimpl_->size].fst), 0, sizeof(uint64_t), pimpl_->stream);
   *(pimpl_->tailHost) = curTail + 1;
+  // printf("set to tailHost %lu\n", *(pimpl_->tailHost));
+  // MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl_->tailReplica.get(), pimpl_->tailHost.get(), sizeof(uint64_t),
+  //                                   cudaMemcpyHostToDevice, pimpl_->stream));
 }
 
 MSCCLPP_API_CPP void Fifo::flushTail([[maybe_unused]] bool sync) {
@@ -67,6 +72,7 @@ MSCCLPP_API_CPP void Fifo::flushTail([[maybe_unused]] bool sync) {
   }
   // Flush the tail to device memory. This is either triggered every ProxyFlushPeriod to make sure that the fifo can
   // make progress even if there is no request mscclppSync. However, mscclppSync type is for flush request.
+  // printf("flushTail: tailHost %lu\n", *(pimpl_->tailHost));
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(pimpl_->tailReplica.get(), pimpl_->tailHost.get(), sizeof(uint64_t),
                                     cudaMemcpyHostToDevice, pimpl_->stream));
   if (sync) {
