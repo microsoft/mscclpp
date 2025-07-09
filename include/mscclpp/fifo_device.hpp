@@ -55,7 +55,8 @@ struct FifoDeviceHandle {
 
     // Wait until the trigger is freed by the host.
     if (prevHead >= size + *tailCache) {
-      POLL_MAYBE_JAILBREAK((prevHead >= size + (*tailCache = atomicLoad(tail, memoryOrderAcquire))), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((prevHead >= size + atomicLoad(tail, memoryOrderAcquire)), maxSpinCount);
+      *tailCache = *tail;
     }
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
@@ -81,7 +82,8 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    POLL_MAYBE_JAILBREAK(hostLoadRelaxed(&(triggers[fifoHead % size].fst)) != 0, maxSpinCount);
+    POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tail, memoryOrderAcquire)), maxSpinCount);
+    *tailCache = *tail;
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
@@ -93,8 +95,6 @@ struct FifoDeviceHandle {
   uint64_t* tail;
   /// Cached tail value.
   uint64_t* tailCache;
-  /// Array of flags to lock each trigger slot.
-  int* triggerLocks;
   /// FIFO size.
   int size;
 };
