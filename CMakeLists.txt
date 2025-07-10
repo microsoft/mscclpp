@@ -65,36 +65,22 @@ else()
 endif()
 
 if(MSCCLPP_GPU_ARCHS)
-    # Remove any leading/trailing whitespace
     string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
-
-    # Split the string into a list
     string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
     string(REPLACE "," ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
-
-    # Check if the list is empty
     if(NOT MSCCLPP_GPU_ARCHS)
-        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is given empty. Please specify GPU architectures or do not set MSCCLPP_GPU_ARCHS.")
+        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is empty. Specify GPU architectures or leave unset.")
     endif()
 elseif(MSCCLPP_USE_CUDA)
-    # CUDA 11 or higher is required
-    if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
+    if(CUDAToolkit_VERSION VERSION_LESS "11.8")
+        message(FATAL_ERROR "CUDA 11.8 or higher required, found ${CUDAToolkit_VERSION}")
     endif()
-
-    # Ampere architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
-        set(MSCCLPP_GPU_ARCHS 80)
+    set(MSCCLPP_GPU_ARCHS 80)
+    if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.0")
+        list(APPEND MSCCLPP_GPU_ARCHS 90)
     endif()
-
-    # Hopper architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 90)
-    endif()
-
-    # Blackwell architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12 AND CUDAToolkit_VERSION_MINOR GREATER_EQUAL 8)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 100)
+    if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+        list(APPEND MSCCLPP_GPU_ARCHS 100)
     endif()
 elseif(MSCCLPP_USE_ROCM)
     set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)

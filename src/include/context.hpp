@@ -13,15 +13,32 @@
 
 namespace mscclpp {
 
+class CudaIpcStream {
+ private:
+  std::shared_ptr<CudaStreamWithFlags> stream_;
+  bool dirty_;
+
+  void setStreamIfNeeded();
+
+ public:
+  CudaIpcStream();
+
+  void memcpyD2D(void *dst, const void *src, size_t nbytes);
+
+  void memcpyH2D(void *dst, const void *src, size_t nbytes);
+
+  void sync();
+
+  operator cudaStream_t() const { return *stream_; }
+};
+
 struct Context::Impl {
-  std::vector<std::shared_ptr<Connection>> connections_;
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
-  std::vector<std::shared_ptr<CudaStreamWithFlags>> ipcStreams_;
-  CUmemGenericAllocationHandle mcHandle_;
+  std::vector<std::shared_ptr<CudaIpcStream>> ipcStreams_;
 
   Impl();
 
-  IbCtx* getIbContext(Transport ibTransport);
+  IbCtx *getIbContext(Transport ibTransport);
 };
 
 }  // namespace mscclpp
