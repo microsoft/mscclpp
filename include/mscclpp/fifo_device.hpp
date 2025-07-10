@@ -15,19 +15,6 @@
 
 namespace mscclpp {
 
-#if defined(MSCCLPP_DEVICE_COMPILE)
-MSCCLPP_DEVICE_INLINE uint64_t hostLoadRelaxed(uint64_t* ptr) {
-  uint64_t val;
-#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
-  // This is faster for A100.
-  asm volatile("ld.volatile.global.u64 %0, [%1];" : "=l"(val) : "l"(ptr));
-#else   // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
-  val = atomicLoad(ptr, memoryOrderRelaxed);
-#endif  // !defined(MSCCLPP_DEVICE_CUDA) || (__CUDA_ARCH__ != 800)
-  return val;
-}
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
-
 /// Pair of 64-bit unsigned integers used as a trigger for the proxy.
 /// Used as a work element in the concurrent FIFO.
 /// Most significant bit of snd is reserved.

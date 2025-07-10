@@ -225,7 +225,7 @@ void runAllFifoTests([[maybe_unused]] int rank, [[maybe_unused]] int worldSize, 
   // clang-format off
   std::vector<FifoTestConfig> configs = {
       {1, {1}},
-      {128,{1, 8, 64, 128}},
+      {128, {1, 8, 64, 128}},
       {512, {1, 8, 64, 256, 512}},
   };
   // clang-format on
