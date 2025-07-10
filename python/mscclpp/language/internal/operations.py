@@ -21,6 +21,9 @@ class BaseOperation:
     def local_data_access(self, sync_purpose=True):
         return []
 
+    def __add__(self, other):
+        return None
+
 
 @dataclass
 class LocalChunk:
@@ -49,6 +52,14 @@ class SyncOperation(BaseOperation):
         fused_operation = None
         if isinstance(other, SyncOperation):
             fused_operation = SyncOperation()
+        elif (
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
+        ):
+            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
 
@@ -107,6 +118,74 @@ class CopyOperation(BaseOperation):
 
 
 @dataclass
+class SemaphoreAcquireOperation(BaseOperation):
+    def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
+        super().__init__(Instruction.sem_acquire)
+        self.semaphore_ids = semaphore_ids
+        self.data_sync = data_sync
+
+    def __add__(self, other):
+        fused_operation = None
+        if isinstance(other, SemaphoreAcquireOperation):
+            fused_operation = SemaphoreAcquireOperation(
+                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                data_sync=self.data_sync | other.data_sync,
+            )
+        elif (
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
+        ):
+            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
+                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
+        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+
+        return fused_operation
+
+    def to_json(self):
+        result = {"name": self.name.value}
+        result["semaphore_ids"] = list(self.semaphore_ids)
+        return result
+
+
+@dataclass
+class SemaphoreReleaseOperation(BaseOperation):
+    def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
+        super().__init__(Instruction.sem_release)
+        self.semaphore_ids = semaphore_ids
+        self.data_sync = data_sync
+
+    def __add__(self, other):
+        fused_operation = None
+        if isinstance(other, SemaphoreReleaseOperation):
+            fused_operation = SemaphoreReleaseOperation(
+                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                data_sync=self.data_sync | other.data_sync,
+            )
+        elif (
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
+        ):
+            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
+                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
+        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+
+        return fused_operation
+
+    def to_json(self):
+        result = {"name": self.name.value}
+        result["semaphore_ids"] = list(self.semaphore_ids)
+        return result
+
+
+@dataclass
 class SignalOperation(BaseOperation):
     def __init__(
         self,
@@ -138,7 +217,11 @@ class SignalOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
@@ -186,7 +269,11 @@ class WaitOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
@@ -222,7 +309,13 @@ class BarrierOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation):
+        if (
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
+        ):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
@@ -262,7 +355,11 @@ class FlushOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SemaphoreAcquireOperation)
+            or isinstance(other, SemaphoreReleaseOperation)
+            or isinstance(other, SignalOperation)
+            or isinstance(other, WaitOperation)
+            or isinstance(other, FlushOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))

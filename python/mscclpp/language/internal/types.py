@@ -70,6 +70,8 @@ class Instruction(Enum):
     transform_to_packet = "tpkt"
     reduce = "re"
     reduce_packet = "repkt"
+    sem_acquire = "sem_acquire"
+    sem_release = "sem_release"
     signal = "signal"
     wait = "wait"
     relaxed_signal = "rlxsignal"

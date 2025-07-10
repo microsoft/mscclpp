@@ -2,6 +2,7 @@ from mscclpp.language.internal.types import BufferType, Chunk
 from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
+from collections import defaultdict
 
 
 @dataclass
@@ -119,3 +120,27 @@ class Buffer(BaseBuffer):
         self.offset = get_program().gpus[rank].scratch_chunks
         self.size = self.offset + size
         get_program().gpus[rank].scratch_chunks += size
+
+
+class Semaphore:
+    __semaphore_counts = defaultdict(int)
+
+    def __init__(self, rank: int, initial_value: int):
+        num_ranks = get_program().num_ranks
+        if rank >= num_ranks:
+            raise RuntimeError(f"Source rank {rank} is out of bounds. Number of ranks: {num_ranks}")
+        self.id = Semaphore.__semaphore_counts[rank]
+        Semaphore.__semaphore_counts[rank] += 1
+
+        self.rank = rank
+        self.initial_value = initial_value
+
+        get_program().add_semaphore(self)
+
+    def acquire(self, tb: int, data_sync: SyncType = SyncType.none):
+        op = SemaphoreAcquireOperation([self.id], data_sync)
+        get_program().add_operation(self.rank, tb, op)
+
+    def release(self, tb: int, data_sync: SyncType = SyncType.none):
+        op = SemaphoreReleaseOperation([self.id], data_sync)
+        get_program().add_operation(self.rank, tb, op)

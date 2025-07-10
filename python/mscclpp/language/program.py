@@ -64,6 +64,9 @@ class MSCCLPPProgram:
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
+    def add_semaphore(self, semaphore):
+        self.gpus[semaphore.rank].add_semaphore(semaphore)
+
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
 
