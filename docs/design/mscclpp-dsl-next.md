@@ -1,29 +1,36 @@
+# Introduction
+
+The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collective. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
+
+Here is the highlights of the MSCCL++ DSL:
+- **Fine-grained Python-native API**: MSCCL++ DSL provides a Pythonic, fine-grained API for defining and executing GPU-based communication collectives. Users can construct complex data movement and synchronization workflows without writing low-level CUDA code, while still achieving performance comparable to hand-tuned CUDA implementations.
+
+- **Automatic performance optimization**: The MSCCL++ DSL analyzes data dependencies and synchronization patterns to automatically fuse operations, minimizing data movement and synchronization overhead. This delivers high-performance collectives, allowing users to focus on their application logic.
+
+- **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration. This flexibility allows users to use different algorithms and optimizations without changing their application code.
+
+
 # MSCCL++ DSL Concepts
-### Chunk/Tensor
-Chunk is a data structure that holds the data to be sent or received. For some local operations, such as copy/reduce we provide some functions to manipulate the chunk.
+
+### Buffer/Chunk
+Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. User can allocate scratch buffer for intermediate data movement. Chunk is a slice of the buffer.
 
 ```python
 rank = Rank(rank_id)
 input_buffer = rank.get_input_buffer()
 dst_chunk = input_buffer[0:1]
-scr_chunk = intput_buffer[1:2]
+src_chunk = input_buffer[1:2]
 rank.copy(dst_chunk, src_chunk, tb=0)
-rank.reduce(dst_chunk, src_chunk, op="sum", tb=0)
+rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
 ```
 
 ### Channel
-All cross ranks related op is done through channels. A channel is a communication medium between ranks. It can be a network socket, shared memory, or any other form of IPC. The channel is responsible for sending and receiving messages between ranks.
+User need to use channel to communicate between ranks. Now we have three types of channels: memoryChannel, portChannel and switchChannel.
+- **MemoryChannel**: Uses shared memory for communication between ranks.
+- **PortChannel**: Uses network sockets for communication between ranks.
+- **SwitchChannel**: Uses NVLS for communication between ranks.
 
 **Note:** Each time call channel will created a new one. If user want to reuse the channel, please keep the channel object.
-
-
-Examples:
-```python
-channel = Channel(dst_rank, src_rank, channel_type)
-channel.put(dst_chunk, src_chunk, tb=0)
-channel.signal(tb=0, sync="before")
-channel.wait(tb=0, sync="after")
-```
 
 Here is the example for two ranks synchonization with each others.
 ```python
@@ -31,56 +38,24 @@ nranks = 2
 for i in range(nranks):
     src_rank = i
     dst_rank = (i + 1) % nranks
-    channel = Channel(dst_rank, src_rank, channel_type=Channel.memory)
-    channel.relaxedSignal(tb=0, sync=None)
-    channel.relaxedWait(tb=0, sync="after")
+    channel = MemoryChannel(dst_rank, src_rank)
+    channel.relaxedSignal(tb=0, data_sync=SyncType.none)
+    channel.relaxedWait(tb=0, data_sync=SyncType.after)
 ```
 
-#### For nvls based channel
-NVLS channel need to bind with a group of buffers from a set of ranks. Each operation on the channel will be performed on the buffers in the group.
+#### For switch channel
+Switch channel associates a group of buffers from a specified set of ranks. All operations invoked on the channel will be applied to those buffers.
 
+Example for two ranks allreduce via switch channel.
 ```python
-nvls_chan = SwitchChannel(rank_list=[], buffer=Buffer.input)
-nvls_chan.group_load_reduce(offset1, size1, op="sum", tb=0)
-nvls_chan.group_store(offset, size, tb=0)
-```
-
-Example for two ranks allreduce.
-```python
-# allreduce for 2 ranks.
-# 1. copy data from input buffer to scratch buffer
-# 2. allreduce the data in scratch buffer
-# 3. copy data from scratch buffer to output buffer
-nvls_chan = SwitchChannel(rank_list=[0, 1], buffer=Buffer.scratch)
-nranks = 2
-for i in range(nranks):
-    src_rank = i
-    dst_rank = (i + 1) % nranks
-    chan = Channel(dst_rank, src_rank, channel_type=Channel.memory)
-    rank = Rank(i)
+# Creating Channels
+switch_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
+for gpu in range(gpu_size):
+    buffer_offset = gpu
+    rank = Rank(gpu)
     input_buffer = rank.get_input_buffer()
-    output_buffer = rank.get_output_buffer()
-    scratch_buffer = rank.Buffer(nranks)
-    for offset in range(nranks):
-        # copy data to scratch buffer
-        dst_chunk = scratch_buffer[offset:offset+1]
-        src_chunk = input_buffer[offset:offset+1]
-        rank.copy(dst_chunk, src_chunk, tb=0)
-    chan.signal(tb=0, sync="before")
-    chan.wait(tb=0, sync="after")
-
-    # do allreduce in scratch buffer
-    buffer_offset = src_rank
-    nvls_chan.group_load_reduce(buffer_offset, 1, op="sum", tb=0)
-    nvls_chan.group_store(buffer_offset, 1, tb=0)
-
-    # copy data back to output buffer
-    chan.signal(tb=0, sync="before")
-    chan.wait(tb=0, sync="after")
-    for offset in range(nranks):
-        dst_buffer = output_buffer[offset:offset+1]
-        src_buffer = scratch_buffer[offset:offset+1]
-        rank.copy(dst_buffer, src_buffer, tb=0)
+    switch_chan.at_rank(gpu).group_load_reduce(buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
+    switch_chan.at_rank(gpu).group_store(input_buffer[gpu : gpu + 1], buffer_offset, size=1, tb=0)
 ```
 
 ### Synchronization
