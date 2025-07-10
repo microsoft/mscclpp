@@ -62,37 +62,29 @@ for gpu in range(gpu_size):
 We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize a set of thread blocks in the rank, while the semaphore allows asynchronous signaling and waiting between thread blocks.
 
 ```python
-rank.barrier(tb_list=[])
-sem = Rank.Semaphore(rank=0, size=1)
-sem.acquire(tb=0, sync="after")
-sem.release(tb=0, sync="before")
+rank = Rank(0)
+rank.barrier([0, 1])
+sem = Semaphore(rank=0, initial_value=1)
+sem.acquire(tb=0, data_sync=SyncType.after)
+sem.release(tb=0, data_sync=SyncType.before)
 ```
 
 The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
 
 But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
 
-We could use atomic operation to implement the semaphore machanism.
 
-## For kernel fusion
-We only fuse the kernel that in the same thread-block. We still need to construct the DAG for each thread-block. Track the chunk usage and see if we can fuse the kernel.
+## Kernel fusion
+MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.  
 
 
-## For Pipeline Loop
-For some cases, we need to pipeline the kernel to overlap some operations. For example, the first stage is copy data from input buffer to scratch buffer, the second stage is transfer data from scratch buffer to other peers. We could use `Rank.semphore` to synchronize the two stages. 
+## Pipeline Loop (TBD)
+Pipeline enables overlapping operations across thread blocks. Using Rank.semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
+
+This example demonstrates a pipelined loop that copies data from an input buffer to a scratch buffer, then transfers it to other peers. The `Rank.semaphore` is used to synchronize the two stages. `unit` specifies the size of each chunk, and `num_chunks` indicates how many chunks will be processed in the loop.
+
 ```python
-sem = Rank.Semaphore(rank=0, size=1)
-rank = Rank(0)
-rank.copy(dst_chunk, src_chunk, tb=0)
-sem.release(tb=0)
-channel = Channel(dst_rank, src_rank, channel_type)
-sem.acquire(tb=1)
-channel.put(other_peer_chunk, dst_chunk, tb=1)
-```
-
-Also we could provide some gramar sugar to make the pipeline more readable. For example, we could use `Loop` to construct the pipeline. 
-```python
-sem = Rank.Semaphore(rank=rank, size=1)
+sem = Rank.Semaphore(rank=rank, initial_value=1)
 rank = Rank(src_rank)
 with Loop.iteration(unit=2**20, num_chunks=1) as iter:
     # The dst_chunk and src_chunk sizes should match the num_chunks parameter in the loop context.
