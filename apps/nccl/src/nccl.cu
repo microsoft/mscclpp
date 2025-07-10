@@ -28,10 +28,6 @@
 #include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
-#define NCCL_COMPATIBLE_MAJOR 2
-#define NCCL_COMPATIBLE_MINOR 10
-#define NCCL_COMPATIBLE_PATCH 0
-#define NCCL_COMPATIBLE_VERION (NCCL_COMPATIBLE_MAJOR * 10000 + NCCL_COMPATIBLE_MINOR * 100 + NCCL_COMPATIBLE_PATCH)
 
 #define CUDACHECK(cmd)                                                                      \
   do {                                                                                      \
@@ -660,7 +656,7 @@ NCCL_API ncclResult_t ncclGetVersion(int* version) {
     WARN("version is nullptr");
     return ncclInvalidArgument;
   }
-  *version = NCCL_COMPATIBLE_VERION;
+  *version = MSCCLPP_VERSION;
   return ncclSuccess;
 }
 
