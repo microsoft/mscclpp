@@ -1,4 +1,5 @@
-# Introduction
+# MSCCL++ DSL
+## Introduction
 
 The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collective. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
 
@@ -10,7 +11,7 @@ Here is the highlights of the MSCCL++ DSL:
 - **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration. This flexibility allows users to use different algorithms and optimizations without changing their application code.
 
 
-# MSCCL++ DSL Concepts
+## MSCCL++ DSL Concepts
 
 ### Buffer/Chunk
 Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. User can allocate scratch buffer for intermediate data movement. Chunk is a slice of the buffer.
