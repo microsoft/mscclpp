@@ -27,7 +27,8 @@ class BaseProxyService {
 class ProxyService : public BaseProxyService {
  public:
   /// Constructor.
-  ProxyService(size_t fifoSize = DEFAULT_FIFO_SIZE);
+  /// @param fifoSize Size of the FIFO used by the proxy service (default: DEFAULT_FIFO_SIZE).
+  ProxyService(int fifoSize = DEFAULT_FIFO_SIZE);
 
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
@@ -71,10 +72,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
-  int deviceNumaNode;
-  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests;
-
-  void bindThread();
+  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
@@ -98,7 +96,7 @@ struct BasePortChannel {
 
   BasePortChannel& operator=(BasePortChannel& other) = default;
 
-  /// Device-side handle for @ref BasePortChannel.
+  /// Device-side handle for BasePortChannel.
   using DeviceHandle = BasePortChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -133,7 +131,7 @@ struct PortChannel : public BasePortChannel {
   /// Assignment operator.
   PortChannel& operator=(PortChannel& other) = default;
 
-  /// Device-side handle for @ref PortChannel.
+  /// Device-side handle for PortChannel.
   using DeviceHandle = PortChannelDeviceHandle;
 
   /// Returns the device-side handle.
@@ -143,10 +141,10 @@ struct PortChannel : public BasePortChannel {
   DeviceHandle deviceHandle() const;
 };
 
-/// @deprecated Use @ref BasePortChannel instead.
+/// @deprecated Use BasePortChannel instead.
 [[deprecated("Use BasePortChannel instead.")]] typedef BasePortChannel BaseProxyChannel;
 
-/// @deprecated Use @ref PortChannel instead.
+/// @deprecated Use PortChannel instead.
 [[deprecated("Use PortChannel instead.")]] typedef PortChannel ProxyChannel;
 
 }  // namespace mscclpp

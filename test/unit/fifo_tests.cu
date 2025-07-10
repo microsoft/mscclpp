@@ -8,6 +8,8 @@
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "utils_internal.hpp"
+
 #define ITER 10000  // should be larger than the FIFO size for proper testing
 
 __constant__ mscclpp::FifoDeviceHandle gFifoTestFifoDeviceHandle;

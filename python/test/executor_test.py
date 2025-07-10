@@ -184,7 +184,7 @@ def main(
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan(execution_plan_path)
+    execution_plan = ExecutionPlan(execution_plan_path, mscclpp_group.my_rank)
     collective = execution_plan.collective()
 
     dtype = parse_dtype(dtype_str)

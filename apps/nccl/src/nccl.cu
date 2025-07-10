@@ -324,8 +324,8 @@ static std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> setupNvlsCha
   return channels;
 }
 
-static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std::string& filename) {
-  std::shared_ptr<mscclpp::ExecutionPlan> plan = std::make_shared<mscclpp::ExecutionPlan>(filename);
+static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std::string& filename, int rank) {
+  std::shared_ptr<mscclpp::ExecutionPlan> plan = std::make_shared<mscclpp::ExecutionPlan>(filename, rank);
   std::string collective = plan->collective();
   planKey key{plan->minMessageSize(), plan->maxMessageSize(), plan->isInPlace()};
   return std::make_pair(collective, executionPlanInstance{key, plan});
@@ -601,8 +601,13 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  // workaround for current nvls connection setup failure
+  if (mscclpp::isNvlsSupported()) {
+    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
+  }
 
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
   for (int i = 0; i < mscclppComm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     mscclpp::Transport transport = getTransport(rank, i);
@@ -623,10 +628,6 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   }
 
   commPtr->connections = std::move(connections);
-  if (mscclpp::isNvlsSupported()) {
-    commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-    commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
-  }
   commPtr->memorySemaphores = std::move(memorySemaphores);
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
@@ -705,7 +706,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
     for (const auto& entry : std::filesystem::directory_iterator(collectiveDir)) {
       if (entry.is_regular_file()) {
-        auto plan = loadExecutionPlan(entry.path());
+        auto plan = loadExecutionPlan(entry.path(), rank);
         commPtr->executionPlans[plan.first].push_back(plan.second);
       }
     }
