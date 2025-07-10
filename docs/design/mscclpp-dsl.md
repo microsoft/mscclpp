@@ -40,8 +40,8 @@ for i in range(nranks):
     src_rank = i
     dst_rank = (i + 1) % nranks
     channel = MemoryChannel(dst_rank, src_rank)
-    channel.relaxedSignal(tb=0, data_sync=SyncType.none)
-    channel.relaxedWait(tb=0, data_sync=SyncType.after)
+    channel.signal(tb=0, data_sync=SyncType.none)
+    channel.wait(tb=0, data_sync=SyncType.after)
 ```
 
 #### For switch channel
