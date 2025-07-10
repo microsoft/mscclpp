@@ -27,13 +27,13 @@ rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
 
 ### Channel
 User need to use channel to communicate between ranks. Now we have three types of channels: memoryChannel, portChannel and switchChannel.
-- **MemoryChannel**: Uses shared memory for communication between ranks.
-- **PortChannel**: Uses network sockets for communication between ranks.
-- **SwitchChannel**: Uses NVLS for communication between ranks.
+- **MemoryChannel**: Uses peer-to-peer memory access to communicate between GPUs.
+- **PortChannel**: Uses interconnection ports to communicate between GPUs.
+- **SwitchChannel**: Uses interconnection-switch-enabled multimem memory access to communicate between GPUs.
 
 **Note:** Each time call channel will created a new one. If user want to reuse the channel, please keep the channel object.
 
-Here is the example for two ranks synchonization with each others.
+Here is the example for two ranks synchronization with each others.
 ```python
 nranks = 2
 for i in range(nranks):
