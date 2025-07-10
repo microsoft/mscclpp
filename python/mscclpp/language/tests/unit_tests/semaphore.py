@@ -10,7 +10,7 @@ from mscclpp.language.collectives import *
 
 
 def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 1
+    gpus = 2
     collective = TestCollective(gpus, 0, 0)
     with MSCCLPPProgram(
         "semaphore_test",
@@ -22,6 +22,7 @@ def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        sm = Semaphore(0, 1)
         sm.acquire(tb=0, data_sync=SyncType.after)
         sm.release(tb=0, data_sync=SyncType.before)
 
