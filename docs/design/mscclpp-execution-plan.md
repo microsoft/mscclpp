@@ -1,5 +1,5 @@
-# MSCCL++ DSL Json File
-The MSCCL++ DSL is used to define a JSON file that describes the structure and behavior of a collective communication algorithm. It contains a detailed specification of the operations involved and must be distributed to all participating machines. Once distributed, the MSCCL++ executor can be triggered to use this JSON file to generate an execution plan and run the algorithm.
+# MSCCL++ DSL Execution plan
+The MSCCL++ DSL is used to generate a JSON file that describes the structure and behavior of a collective communication algorithm. It contains a detailed specification of the operations involved and must be distributed to all participating machines. Once distributed, the MSCCL++ executor can be triggered to use this JSON file to generate an execution plan and run the algorithm.
 
 ![alt text](../figs/mscclpp_dsl_json_schema.png)
 

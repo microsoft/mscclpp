@@ -139,5 +139,10 @@ for i in range(nranks):
             rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
 ```
 
+## Generate execution plan
+The MSCCL++ DSL generates an execution plan in JSON format, which describes the operations to be executed on each rank. The execution plan includes information about the buffers, channels, and synchronization points. This plan is then used by the MSCCL++ runtime to execute the operations on the GPU.
+
+For the details of the execution plan, please refer to the [MSCCL++ Execution Plan](./mscclpp-execution-plan.md).
+
 ## All2All support
 For now, DSL only support static all2all algorithm. For all2allv support, we need to get the send/recv size at the runtime. It may require some placeholder at the Json execution plan and relace to the real size at the runtime. If we could make chunk size be variable, we could use the same way to support all2allv.
