@@ -12,7 +12,7 @@
 #include "api.h"
 #include "context.hpp"
 #include "debug.h"
-#include "serialize.hpp"
+#include "serialization.hpp"
 #include "utils_internal.hpp"
 
 #define MSCCLPP_CULOG_WARN(cmd)                             \

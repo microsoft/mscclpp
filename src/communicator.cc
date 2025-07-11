@@ -139,8 +139,9 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
   return connect(localConfig, remoteRank, tag);
 }
 
-MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const SemaphoreStub& localStub,
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::shared_ptr<Connection> connection,
                                                                            int remoteRank, int tag) {
+  SemaphoreStub localStub(connection);
   bootstrap()->send(localStub.serialize(), remoteRank, tag);
 
   auto future =

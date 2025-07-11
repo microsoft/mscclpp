@@ -861,11 +861,11 @@ class Communicator {
   }
 
   /// Build a semaphore for cross-process synchronization.
-  /// @param localStub The local SemaphoreStub to use for the semaphore.
+  /// @param connection The connection associated with this semaphore.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the operation.
   /// @return A future of the built semaphore.
-  std::shared_future<Semaphore> buildSemaphore(const SemaphoreStub& localStub, int remoteRank, int tag = 0);
+  std::shared_future<Semaphore> buildSemaphore(std::shared_ptr<Connection> connection, int remoteRank, int tag = 0);
 
   /// Get the remote rank a connection is connected to.
   ///

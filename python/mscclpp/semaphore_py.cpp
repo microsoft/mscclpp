@@ -19,8 +19,8 @@ void register_semaphore(nb::module_& m) {
 
   nb::class_<Host2DeviceSemaphore::DeviceHandle>(host2DeviceSemaphore, "DeviceHandle")
       .def(nb::init<>())
-      .def_rw("inbound_id", &Host2DeviceSemaphore::DeviceHandle::inboundId)
-      .def_rw("expected_inbound_id", &Host2DeviceSemaphore::DeviceHandle::expectedInboundId)
+      .def_rw("inbound_token", &Host2DeviceSemaphore::DeviceHandle::inboundToken)
+      .def_rw("expected_inbound_token", &Host2DeviceSemaphore::DeviceHandle::expectedInboundToken)
       .def_prop_ro("raw", [](const Host2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
@@ -42,10 +42,10 @@ void register_semaphore(nb::module_& m) {
 
   nb::class_<MemoryDevice2DeviceSemaphore::DeviceHandle>(memoryDevice2DeviceSemaphore, "DeviceHandle")
       .def(nb::init<>())
-      .def_rw("inbound_id", &MemoryDevice2DeviceSemaphore::DeviceHandle::inboundId)
-      .def_rw("outbound_id", &MemoryDevice2DeviceSemaphore::DeviceHandle::outboundId)
-      .def_rw("remote_inbound_id", &MemoryDevice2DeviceSemaphore::DeviceHandle::remoteInboundId)
-      .def_rw("expected_inbound_id", &MemoryDevice2DeviceSemaphore::DeviceHandle::expectedInboundId)
+      .def_rw("inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::inboundToken)
+      .def_rw("outbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::outboundToken)
+      .def_rw("remote_inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::remoteInboundToken)
+      .def_rw("expected_inbound_token", &MemoryDevice2DeviceSemaphore::DeviceHandle::expectedInboundToken)
       .def_prop_ro("raw", [](const MemoryDevice2DeviceSemaphore::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });

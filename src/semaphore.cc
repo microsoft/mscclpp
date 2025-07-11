@@ -8,7 +8,7 @@
 #include "context.hpp"
 #include "debug.h"
 #include "registered_memory.hpp"
-#include "serialize.hpp"
+#include "serialization.hpp"
 
 namespace mscclpp {
 
@@ -20,12 +20,12 @@ struct SemaphoreStub::Impl {
   Impl(const std::vector<char>& data);
 
   std::shared_ptr<Connection> connection_;
-  std::shared_ptr<uint64_t> id_;
+  std::shared_ptr<uint64_t> token_;
   RegisteredMemory idMemory_;
   Device device_;
 };
 
-static std::shared_ptr<uint64_t> gpuCallocSemaphoreId() {
+static std::shared_ptr<uint64_t> gpuCallocToken() {
 #if defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocUncachedShared<uint64_t>();
 #else   // !defined(MSCCLPP_DEVICE_HIP)
@@ -37,17 +37,18 @@ SemaphoreStub::Impl::Impl(std::shared_ptr<Connection> connection) : connection_(
   // Allocate a semaphore ID on the local device
   const Device& localDevice = connection_->localDevice();
   if (localDevice.type == DeviceType::CPU) {
-    id_ = std::make_shared<uint64_t>(0);
+    token_ = std::make_shared<uint64_t>(0);
   } else if (localDevice.type == DeviceType::GPU) {
     if (localDevice.id < 0) {
       throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
     }
     MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
-    id_ = gpuCallocSemaphoreId();
+    token_ = gpuCallocToken();
   } else {
     throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
   }
-  idMemory_ = std::move(connection->context()->registerMemory(id_.get(), sizeof(uint64_t), connection_->transport()));
+  idMemory_ =
+      std::move(connection->context()->registerMemory(token_.get(), sizeof(uint64_t), connection_->transport()));
 }
 
 SemaphoreStub::Impl::Impl(const RegisteredMemory& idMemory, const Device& device)
@@ -104,8 +105,8 @@ static Semaphore buildSemaphoreFromConnection(Communicator& communicator, std::s
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundId_(detail::gpuCallocUnique<uint64_t>()),
-      outboundId_(std::make_unique<uint64_t>()) {
+      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
+      outboundToken_(std::make_unique<uint64_t>()) {
   if (connection()->localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
@@ -118,20 +119,20 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communi
 MSCCLPP_API_CPP std::shared_ptr<Connection> Host2DeviceSemaphore::connection() const { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2DeviceSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundId_.get(), *outboundId_ + 1);
+  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceHandle() const {
   Host2DeviceSemaphore::DeviceHandle device;
-  device.inboundId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
-  device.expectedInboundId = expectedInboundId_.get();
+  device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.expectedInboundToken = expectedInboundToken_.get();
   return device;
 }
 
 MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundId_(std::make_unique<uint64_t>()),
-      outboundId_(std::make_unique<uint64_t>()) {
+      expectedInboundToken_(std::make_unique<uint64_t>()),
+      outboundToken_(std::make_unique<uint64_t>()) {
   if (connection()->transport() == Transport::CudaIpc) {
     throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }
@@ -147,21 +148,21 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicato
 MSCCLPP_API_CPP std::shared_ptr<Connection> Host2HostSemaphore::connection() const { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundId_.get(), *outboundId_ + 1);
+  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
   bool signaled = (atomicLoad(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), memoryOrderAcquire) >
-                   (*expectedInboundId_));
-  if (signaled) (*expectedInboundId_) += 1;
+                   (*expectedInboundToken_));
+  if (signaled) (*expectedInboundToken_) += 1;
   return signaled;
 }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
-  (*expectedInboundId_) += 1;
+  (*expectedInboundToken_) += 1;
   int64_t spinCount = 0;
   while (atomicLoad(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), memoryOrderAcquire) <
-         (*expectedInboundId_)) {
+         (*expectedInboundToken_)) {
     if (maxSpinCount >= 0 && spinCount++ == maxSpinCount) {
       throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
     }
@@ -170,8 +171,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundId_(detail::gpuCallocUnique<uint64_t>()),
-      outboundId_(detail::gpuCallocUnique<uint64_t>()) {
+      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
+      outboundToken_(detail::gpuCallocUnique<uint64_t>()) {
   if (connection()->localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
@@ -187,10 +188,10 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> MemoryDevice2DeviceSemaphore::connec
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
   MemoryDevice2DeviceSemaphore::DeviceHandle device;
-  device.remoteInboundId = reinterpret_cast<uint64_t*>(semaphore_.remoteMemory().data());
-  device.inboundId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
-  device.expectedInboundId = expectedInboundId_.get();
-  device.outboundId = outboundId_.get();
+  device.remoteInboundToken = reinterpret_cast<uint64_t*>(semaphore_.remoteMemory().data());
+  device.inboundToken = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.expectedInboundToken = expectedInboundToken_.get();
+  device.outboundToken = outboundToken_.get();
   return device;
 };
 
