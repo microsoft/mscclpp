@@ -42,7 +42,7 @@ struct FifoDeviceHandle {
 
     // Wait until the trigger is freed by the host.
     if (prevHead >= size + *tailCache) {
-      POLL_MAYBE_JAILBREAK((prevHead >= size + (*tailCache = atomicLoad(tail, memoryOrderAcquire))), maxSpinCount);
+      sync(prevHead - size, maxSpinCount);
     }
 
     ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
@@ -68,8 +68,12 @@ struct FifoDeviceHandle {
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void sync(uint64_t fifoHead, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
-    POLL_MAYBE_JAILBREAK((fifoHead >= atomicLoad(tail, memoryOrderAcquire)), maxSpinCount);
-    *tailCache = *tail;
+    uint64_t val;
+    POLL_MAYBE_JAILBREAK((fifoHead >= (val = atomicLoad(tail, memoryOrderAcquire))), maxSpinCount);
+    // If multiple threads sync in parallel, this may write a stale value to tailCache.
+    // This is fine, as the tailCache is for avoiding unnecessary syncs from the push(),
+    // which can work as long as the tailCache is not stale by the length of the FIFO.
+    *tailCache = val;
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
