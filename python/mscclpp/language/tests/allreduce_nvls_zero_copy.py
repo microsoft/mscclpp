@@ -31,7 +31,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                 if peer != gpu:
                     channels[(peer, gpu)] = MemoryChannel(peer, gpu)
 
-        # Ensuring all the gpus are ready
+        # Synchronization to Ensure all the Gpus are Ready
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
@@ -48,10 +48,10 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             buffer_offset = gpu
             rank = Rank(gpu)
             input_buffer = rank.get_input_buffer()
-            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset, 1, input_buffer[gpu : gpu + 1], 0)
-            nvls_chan.at_rank(gpu).group_store(input_buffer[gpu : gpu + 1], buffer_offset, 1, tb=0)
+            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset=buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
+            nvls_chan.at_rank(gpu).group_store(src_chunk=input_buffer[gpu : gpu + 1], buffer_offset=buffer_offset, size=1, tb=0)
 
-        # Ensuring all the gpus finished the operation
+        # Synchronization to Ensure the Gpus finished
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
