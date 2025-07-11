@@ -220,7 +220,7 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
     MSCCLPP_CUTHROW(cuDeviceGet(&device, deviceId));
     MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, devBuffSize));
     MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, devBuffSize));
-    // Refer NCCL, Unbind can trigger RM error if buffer is freed already by users.
+    // Refer to NCCL, Unbind can trigger RM error if buffer is freed already by users.
     // Ignore error here, unbind will succeed anyway.
     cuMulticastUnbind(mcHandle_, device, offset, devBuffSize);
     self->freeBuffer(offset, devBuffSize);
