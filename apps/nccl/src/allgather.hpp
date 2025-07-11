@@ -130,7 +130,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t restNInt4 = nInt4 % nInt4PerChunk;
   const size_t scratchChunkRankOffset = nInt4PerChunk * rank;
 
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nPeer) {
     channels[lid] = memoryChans[lid];
@@ -147,7 +147,7 @@ __global__ void __launch_bounds__(1024, 1)
     // Starts allgather
     for (size_t idx = tid; idx < nInt4PerChunk; idx += blockDim.x * gridDim.x) {
       int4 val = buff4[itr * nInt4PerChunk + idx];
-      for (int i = 0; i < NPEERS; i++) {
+      for (int i = 0; i < nPeer; i++) {
         const int peerIdx = (i + rank) % nPeer;
         channels[peerIdx].write(idx + scratchChunkRankOffset, val);
       }
@@ -162,7 +162,7 @@ __global__ void __launch_bounds__(1024, 1)
       channels[threadIdx.x].wait();
     }
     __syncthreads();
-    for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
       const int resultOffset = nInt4 * remoteRank + itr * nInt4PerChunk;
       for (size_t idx = tid; idx < nInt4PerChunk; idx += blockDim.x * gridDim.x) {
@@ -180,7 +180,7 @@ __global__ void __launch_bounds__(1024, 1)
     __syncthreads();
     for (size_t idx = tid; idx < restNInt4; idx += blockDim.x * gridDim.x) {
       int4 val = buff4[nItrs * nInt4PerChunk + idx];
-      for (int i = 0; i < NPEERS; i++) {
+      for (int i = 0; i < nPeer; i++) {
         const int peerIdx = (i + rank) % nPeer;
         channels[peerIdx].write(idx + scratchChunkRankOffset, val);
       }
@@ -195,7 +195,7 @@ __global__ void __launch_bounds__(1024, 1)
       channels[threadIdx.x].wait();
     }
     __syncthreads();
-    for (int peerIdx = 0; peerIdx < NPEERS; peerIdx++) {
+    for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
       const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
       const int resultOffset = nInt4 * remoteRank + nItrs * nInt4PerChunk;
       for (size_t idx = tid; idx < restNInt4; idx += blockDim.x * gridDim.x) {
