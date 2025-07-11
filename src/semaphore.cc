@@ -7,28 +7,94 @@
 #include "atomic.hpp"
 #include "context.hpp"
 #include "debug.h"
-#include "flag.hpp"
+#include "registered_memory.hpp"
+#include "serialize.hpp"
 
 namespace mscclpp {
 
-struct Semaphore::Impl {
-  Impl(const Flag& localFlag, const RegisteredMemory& remoteFlagMemory)
-      : localFlag_(localFlag), remoteFlagMemory_(remoteFlagMemory) {}
+struct SemaphoreStub::Impl {
+  Impl(std::shared_ptr<Connection> connection);
 
-  Flag localFlag_;
-  RegisteredMemory remoteFlagMemory_;
+  Impl(const RegisteredMemory& idMemory, const Device& device);
+
+  Impl(const std::vector<char>& data);
+
+  std::shared_ptr<Connection> connection_;
+  std::shared_ptr<uint64_t> id_;
+  RegisteredMemory idMemory_;
+  Device device_;
 };
 
-Semaphore::Semaphore(const Flag& localFlag, const Flag& remoteFlag)
-    : pimpl_(std::make_unique<Impl>(localFlag, remoteFlag.memory())) {}
-
-MSCCLPP_API_CPP std::shared_ptr<Connection> Semaphore::connection() const {
-  return pimpl_->localFlag_.pimpl_->connection_;
+static std::shared_ptr<uint64_t> gpuCallocSemaphoreId() {
+#if defined(MSCCLPP_DEVICE_HIP)
+  return detail::gpuCallocUncachedShared<uint64_t>();
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+  return detail::gpuCallocShared<uint64_t>();
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localFlag_.memory(); }
+SemaphoreStub::Impl::Impl(std::shared_ptr<Connection> connection) : connection_(connection) {
+  // Allocate a semaphore ID on the local device
+  const Device& localDevice = connection_->localDevice();
+  if (localDevice.type == DeviceType::CPU) {
+    id_ = std::make_shared<uint64_t>(0);
+  } else if (localDevice.type == DeviceType::GPU) {
+    if (localDevice.id < 0) {
+      throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
+    }
+    MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
+    id_ = gpuCallocSemaphoreId();
+  } else {
+    throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
+  }
+  idMemory_ = std::move(connection->context()->registerMemory(id_.get(), sizeof(uint64_t), connection_->transport()));
+}
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteFlagMemory_; }
+SemaphoreStub::Impl::Impl(const RegisteredMemory& idMemory, const Device& device)
+    : idMemory_(idMemory), device_(device) {}
+
+SemaphoreStub::SemaphoreStub(std::shared_ptr<Impl> pimpl) : pimpl_(std::move(pimpl)) {}
+
+MSCCLPP_API_CPP SemaphoreStub::SemaphoreStub(std::shared_ptr<Connection> connection)
+    : pimpl_(std::make_shared<Impl>(connection)) {}
+
+MSCCLPP_API_CPP std::vector<char> SemaphoreStub::serialize() const {
+  auto data = pimpl_->idMemory_.serialize();
+  detail::serialize(data, pimpl_->device_);
+  return data;
+}
+
+MSCCLPP_API_CPP SemaphoreStub SemaphoreStub::deserialize(const std::vector<char>& data) {
+  Device device;
+  auto memEnd = data.end() - sizeof(device);
+  RegisteredMemory idMemory(std::make_shared<RegisteredMemory::Impl>(data.begin(), memEnd));
+  auto it = detail::deserialize(memEnd, device);
+  if (it != data.end()) {
+    throw Error("SemaphoreStub deserialize failed", ErrorCode::InvalidUsage);
+  }
+  return SemaphoreStub(std::make_shared<Impl>(std::move(idMemory), device));
+}
+
+MSCCLPP_API_CPP const RegisteredMemory& SemaphoreStub::memory() const { return pimpl_->idMemory_; }
+
+struct Semaphore::Impl {
+  Impl(const SemaphoreStub& localStub, const RegisteredMemory& remoteStubMemory)
+      : localStub_(localStub), remoteStubMemory_(remoteStubMemory) {}
+
+  SemaphoreStub localStub_;
+  RegisteredMemory remoteStubMemory_;
+};
+
+Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub)
+    : pimpl_(std::make_unique<Impl>(localStub, remoteStub.memory())) {}
+
+MSCCLPP_API_CPP std::shared_ptr<Connection> Semaphore::connection() const {
+  return pimpl_->localStub_.pimpl_->connection_;
+}
+
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localStub_.memory(); }
+
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteStubMemory_; }
 
 static Semaphore buildSemaphoreFromConnection(Communicator& communicator, std::shared_ptr<Connection> connection) {
   auto semaphoreFuture =
@@ -38,8 +104,8 @@ static Semaphore buildSemaphoreFromConnection(Communicator& communicator, std::s
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundFlagId_(detail::gpuCallocUnique<uint64_t>()),
-      outboundFlagId_(std::make_unique<uint64_t>()) {
+      expectedInboundId_(detail::gpuCallocUnique<uint64_t>()),
+      outboundId_(std::make_unique<uint64_t>()) {
   if (connection()->localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
@@ -52,20 +118,20 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communi
 MSCCLPP_API_CPP std::shared_ptr<Connection> Host2DeviceSemaphore::connection() const { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2DeviceSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundFlagId_.get(), *outboundFlagId_ + 1);
+  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundId_.get(), *outboundId_ + 1);
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceHandle() const {
   Host2DeviceSemaphore::DeviceHandle device;
-  device.inboundSemaphoreId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
-  device.expectedInboundSemaphoreId = expectedInboundFlagId_.get();
+  device.inboundId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.expectedInboundId = expectedInboundId_.get();
   return device;
 }
 
 MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundFlagId_(std::make_unique<uint64_t>()),
-      outboundFlagId_(std::make_unique<uint64_t>()) {
+      expectedInboundId_(std::make_unique<uint64_t>()),
+      outboundId_(std::make_unique<uint64_t>()) {
   if (connection()->transport() == Transport::CudaIpc) {
     throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }
@@ -81,21 +147,21 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicato
 MSCCLPP_API_CPP std::shared_ptr<Connection> Host2HostSemaphore::connection() const { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundFlagId_.get(), *outboundFlagId_ + 1);
+  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundId_.get(), *outboundId_ + 1);
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
   bool signaled = (atomicLoad(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), memoryOrderAcquire) >
-                   (*expectedInboundFlagId_));
-  if (signaled) (*expectedInboundFlagId_) += 1;
+                   (*expectedInboundId_));
+  if (signaled) (*expectedInboundId_) += 1;
   return signaled;
 }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
-  (*expectedInboundFlagId_) += 1;
+  (*expectedInboundId_) += 1;
   int64_t spinCount = 0;
   while (atomicLoad(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), memoryOrderAcquire) <
-         (*expectedInboundFlagId_)) {
+         (*expectedInboundId_)) {
     if (maxSpinCount >= 0 && spinCount++ == maxSpinCount) {
       throw Error("Host2HostSemaphore::wait timed out", ErrorCode::Timeout);
     }
@@ -104,8 +170,8 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const Semaphore& semaphore)
     : semaphore_(semaphore),
-      expectedInboundFlagId_(detail::gpuCallocUnique<uint64_t>()),
-      outboundFlagId_(detail::gpuCallocUnique<uint64_t>()) {
+      expectedInboundId_(detail::gpuCallocUnique<uint64_t>()),
+      outboundId_(detail::gpuCallocUnique<uint64_t>()) {
   if (connection()->localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
@@ -121,10 +187,10 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> MemoryDevice2DeviceSemaphore::connec
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
   MemoryDevice2DeviceSemaphore::DeviceHandle device;
-  device.remoteInboundSemaphoreId = reinterpret_cast<uint64_t*>(semaphore_.remoteMemory().data());
-  device.inboundSemaphoreId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
-  device.expectedInboundSemaphoreId = expectedInboundFlagId_.get();
-  device.outboundSemaphoreId = outboundFlagId_.get();
+  device.remoteInboundId = reinterpret_cast<uint64_t*>(semaphore_.remoteMemory().data());
+  device.inboundId = reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.expectedInboundId = expectedInboundId_.get();
+  device.outboundId = outboundId_.get();
   return device;
 };
 

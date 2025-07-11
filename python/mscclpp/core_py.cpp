@@ -183,15 +183,15 @@ void register_core(nb::module_& m) {
       .def("create_endpoint", &Context::createEndpoint, nb::arg("config"))
       .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
 
-  nb::class_<Flag>(m, "Flag")
+  nb::class_<SemaphoreStub>(m, "SemaphoreStub")
       .def(nb::init<std::shared_ptr<Connection>>(), nb::arg("connection"))
-      .def("memory", &Flag::memory)
-      .def("serialize", &Flag::serialize)
-      .def_static("deserialize", &Flag::deserialize, nb::arg("data"));
+      .def("memory", &SemaphoreStub::memory)
+      .def("serialize", &SemaphoreStub::serialize)
+      .def_static("deserialize", &SemaphoreStub::deserialize, nb::arg("data"));
 
   nb::class_<Semaphore>(m, "Semaphore")
       .def(nb::init<>())
-      .def(nb::init<const Flag&, const Flag&>(), nb::arg("localFlag"), nb::arg("remoteFlag"))
+      .def(nb::init<const SemaphoreStub&, const SemaphoreStub&>(), nb::arg("localStub"), nb::arg("remoteStub"))
       .def("connection", &Semaphore::connection)
       .def("local_memory", &Semaphore::localMemory)
       .def("remote_memory", &Semaphore::remoteMemory);
