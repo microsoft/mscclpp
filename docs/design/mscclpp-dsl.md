@@ -6,9 +6,9 @@ The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defi
 Here is the highlights of the MSCCL++ DSL:
 - **Fine-grained Python-native API**: MSCCL++ DSL provides a Pythonic, fine-grained API for defining and executing GPU-based communication collectives. Users can construct complex data movement and synchronization workflows without writing low-level CUDA code, while still achieving performance comparable to hand-tuned CUDA implementations.
 
-- **Automatic performance optimization**: The MSCCL++ DSL analyzes data dependencies and synchronization patterns to automatically fuse operations, minimizing data movement and synchronization overhead. This delivers high-performance collectives, allowing users to focus on their application logic.
+- **Effortless performance tuning**:  The MSCCL++ DSL analyzes data dependencies and synchronization patterns to automatically fuse operations to eliminate data movement overhead, while instance counts can be manually configured to boost performance.
 
-- **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration. This flexibility allows users to use different algorithms and optimizations without changing their application code.
+- **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration.
 
 
 ## MSCCL++ DSL Concepts
