@@ -34,7 +34,6 @@ struct FifoDeviceHandle {
   /// @return Previous head of the FIFO where the trigger was pushed.
   MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
     uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
-    int triggerIdx = prevHead % size;
 
     // Flip the last bit for safe polling; host will revert.
     constexpr uint64_t flipMask = uint64_t{1} << uint64_t{63};
@@ -45,7 +44,7 @@ struct FifoDeviceHandle {
       sync(prevHead - size, maxSpinCount);
     }
 
-    ProxyTrigger* triggerPtr = &(triggers[triggerIdx]);
+    ProxyTrigger* triggerPtr = &(triggers[prevHead % size]);
 
 #if defined(MSCCLPP_DEVICE_CUDA)
 #if __CUDA_ARCH__ == 800
