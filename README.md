@@ -67,9 +67,12 @@ MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, 
 ```cpp
 // Only one thread is needed for this function.
 __device__ void barrier() {
-  // Inform the peer GPU that I have arrived at this point.
+  // Inform the peer GPU that I have arrived at this point and
+  // all previous memory operations are done.
   channel.signal();
-  // Flush the previous signal() call, which will wait for completion of signaling.
+  // One may call flush() to make sure all previous channel operations
+  // are complete from the local device's perspective.
+  // flush() is unnecessary in this example.
   channel.flush();
   // Wait for the peer GPU to call signal().
   channel.wait();

@@ -5,6 +5,14 @@ trigger:
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
 
+
+parameters:
+- name: hostEntries
+  type: string
+  default: |
+    10.0.0.10 mscclit-000000
+    10.0.0.11 mscclit-000001
+
 jobs:
 - job: MultiNodesTest
   displayName: Multi nodes test
@@ -46,6 +54,19 @@ jobs:
         sudo apt-get update -y
         sudo apt-get install pssh -y
         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+  - task: Bash@3
+    displayName: Add HostEntry
+    inputs:
+      targetType: 'inline'
+      script: |
+        ENTRY="${{ parameters.hostEntries }}"
+        if ! grep -qxF "$ENTRY" /etc/hosts; then
+          echo "Adding to /etc/hosts"
+          echo "$ENTRY" | sudo tee -a /etc/hosts
+        else
+          echo "Entry already exists, nothing to do."
+        fi
 
   - task: AzureCLI@2
     name: StartVMSS
