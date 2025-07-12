@@ -8,7 +8,7 @@
 namespace mscclpp {
 
 __global__ void connectionAtomicAddKernel(uint64_t* dst, uint64_t value) {
-  atomicFetchAdd(dst, value, memoryOrderRelease);
+  atomicFetchAdd(dst, value, memoryOrderRelaxed);
 }
 
 const void* connectionAtomicAddKernelFunc() {
