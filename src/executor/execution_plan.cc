@@ -185,7 +185,7 @@ size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, siz
   else if (this->outputChunks.at(rank) != 0)
     sizePerRank = outputSize / this->outputChunks.at(rank);
   else
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
 
   if (this->isUsingPacket) {
     return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
@@ -203,7 +203,7 @@ size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
   else if (this->outputChunks.at(rank) != 0)
     sizePerChunk = maxMessageSize / this->outputChunks.at(rank);
   else
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
 
   return this->getScratchBufferSize(rank, sizePerChunk * this->inputChunks.at(rank),
                                     sizePerChunk * this->outputChunks.at(rank));
@@ -414,12 +414,12 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
       for (const auto& op : threadblock["ops"]) {
         Operation operation = {};
         std::vector<uint32_t> chunkIndexes;
-        operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
+        operation.type = static_cast<OperationType>(getOpType(op["name"]));
         if (op.contains("ctype")) {
           operation.channelType = convertToChannelType(op["ctype"]);
         }
         if (op.contains("i_cids")) {
-          if (operation.channelType == mscclpp::ChannelType::NVLS) {
+          if (operation.channelType == ChannelType::NVLS) {
             BufferType srcBufferType = convertToBufferType(op["srcbuff"]);
             operation.nvlsInputIndex =
                 channelIndexes[{srcBufferType, srcBufferType, ChannelType::NVLS}][op["i_cids"][0]["id"]];
@@ -453,7 +453,7 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
         if (op.contains("o_cids")) {
           operation.nOutputs = op["o_cids"].size();
           for (int i = 0; i < operation.nOutputs; i++) {
-            if (operation.channelType == mscclpp::ChannelType::NVLS) {
+            if (operation.channelType == ChannelType::NVLS) {
               BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
               operation.nvlsOutputIndex =
                   channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["o_cids"][0]["id"]];
@@ -516,14 +516,13 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int ran
                                                                          size_t outputSize) const {
   std::pair<size_t, uint32_t> sizePerRank;
   if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
-    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
   } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
     if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
-      throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
-                               std::to_string(this->inputChunks.at(rank)) + " outputSize " +
-                               std::to_string(outputSize) + " outputChunks " +
-                               std::to_string(this->outputChunks.at(rank)),
-                           mscclpp::ErrorCode::ExecutorError);
+      throw Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
+                      std::to_string(this->inputChunks.at(rank)) + " outputSize " + std::to_string(outputSize) +
+                      " outputChunks " + std::to_string(this->outputChunks.at(rank)),
+                  ErrorCode::ExecutorError);
     else
       sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
   } else if (this->inputChunks.at(rank) != 0) {

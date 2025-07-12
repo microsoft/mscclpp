@@ -11,12 +11,10 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_memory_channel(nb::module_& m) {
-  nb::class_<BaseMemoryChannel> baseMemoryChannel(m, "BaseMemoryChannel");
-  baseMemoryChannel
-      .def("__init__",
-           [](BaseMemoryChannel* baseMemoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore) {
-             new (baseMemoryChannel) BaseMemoryChannel(semaphore);
-           })
+  nb::class_<BaseMemoryChannel>(m, "BaseMemoryChannel")
+      .def(nb::init<>())
+      .def(nb::init<std::shared_ptr<MemoryDevice2DeviceSemaphore>>(), nb::arg("semaphore"))
+      .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def("device_handle", &BaseMemoryChannel::deviceHandle);
 
   nb::class_<BaseMemoryChannel::DeviceHandle>(m, "BaseMemoryChannelDeviceHandle")
@@ -26,8 +24,8 @@ void register_memory_channel(nb::module_& m) {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-  nb::class_<MemoryChannel> memoryChannel(m, "MemoryChannel");
-  memoryChannel
+  nb::class_<MemoryChannel>(m, "MemoryChannel")
+      .def(nb::init<>())
       .def("__init__",
            [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
               RegisteredMemory dst,

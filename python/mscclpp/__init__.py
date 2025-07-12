@@ -14,6 +14,8 @@ from ._mscclpp import (
     CudaError,
     CuError,
     IbError,
+    Device,
+    DeviceType,
     Communicator,
     Connection,
     connect_nvls_collective,
@@ -43,6 +45,8 @@ from ._mscclpp import (
 
 
 __all__ = [
+    "Device",
+    "DeviceType",
     "Communicator",
     "Connection",
     "connect_nvls_collective",
