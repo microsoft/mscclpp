@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_SERIALIZE_HPP_
-#define MSCCLPP_SERIALIZE_HPP_
+#ifndef MSCCLPP_SERIALIZATION_HPP_
+#define MSCCLPP_SERIALIZATION_HPP_
 
 #include <algorithm>
 #include <vector>
@@ -23,4 +23,4 @@ std::vector<char>::const_iterator deserialize(const std::vector<char>::const_ite
 
 }  // namespace mscclpp::detail
 
-#endif  // MSCCLPP_SERIALIZE_HPP_
+#endif  // MSCCLPP_SERIALIZATION_HPP_
