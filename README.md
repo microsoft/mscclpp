@@ -170,6 +170,7 @@ MSCCL++ is being used in many amazing projects to power their communication need
 - ROCm Communication Collectives Library (RCCL) [![GitHub stars](https://img.shields.io/github/stars/ROCm/rccl?style=social)]( https://github.com/ROCm/rccl)
 - Splitwise: Efficient generative LLM inference using phase splitting [[Paper link](https://arxiv.org/abs/2311.18677)], Accepted at ISCA 2024, Best Paper Nominee
 - TVM: Open deep learning compiler stack for cpu, gpu and specialized accelerators [![GitHub stars](https://img.shields.io/github/stars/apache/tvm?style=social)](https://github.com/apache/tvm)
+- SGLang: A fast serving framework for large language models and vision language models. [![GitHub stars](https://img.shields.io/github/stars/sgl-project/sglang?style=social)](https://github.com/sgl-project/sglang)
 
 ## Contributing
 
