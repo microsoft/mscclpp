@@ -48,8 +48,12 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             buffer_offset = gpu
             rank = Rank(gpu)
             input_buffer = rank.get_input_buffer()
-            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset=buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
-            nvls_chan.at_rank(gpu).group_store(src_chunk=input_buffer[gpu : gpu + 1], buffer_offset=buffer_offset, size=1, tb=0)
+            nvls_chan.at_rank(gpu).group_load_reduce(
+                buffer_offset=buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0
+            )
+            nvls_chan.at_rank(gpu).group_store(
+                src_chunk=input_buffer[gpu : gpu + 1], buffer_offset=buffer_offset, size=1, tb=0
+            )
 
         # Synchronization to Ensure the Gpus finished
         for gpu in range(gpu_size):
