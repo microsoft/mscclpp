@@ -64,9 +64,9 @@ class ThreadBlock:
             for i in range(len(channel.channel_ids)):
                 channel.channel_ids[i] += shift[channel.channel_type]
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for op in self.ops:
-            op.shift_buffers(instance, num_instances)
+            op.shift_buffers(instance, num_instances, replication_function)
 
     def to_json(self) -> dict:
         return {

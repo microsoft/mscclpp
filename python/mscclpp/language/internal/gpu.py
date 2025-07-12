@@ -66,7 +66,7 @@ class Gpu:
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
 
-    def replicate_instances(self, instances):
+    def replicate_instances(self, instances, replication_function):
         threadblocks = []
         channels_base_shift = {
             ChannelType.memory: (
@@ -103,7 +103,7 @@ class Gpu:
                 channels_shift = {channel: shift * instance for channel, shift in channels_base_shift.items()}
 
                 tb.shift_channels(channels_shift)
-                tb.shift_buffers(instance, instances)
+                tb.shift_buffers(instance, instances, replication_function)
 
                 threadblocks.append(tb)
 

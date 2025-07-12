@@ -21,7 +21,7 @@ class BaseOperation:
     def local_data_access(self, sync_purpose=True):
         return []
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         return
 
 
@@ -95,11 +95,11 @@ class CopyOperation(BaseOperation):
                 )
         return data_access
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.dst_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         return None
@@ -310,11 +310,11 @@ class GetOperation(BaseOperation):
             )
         return data_access
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.dst_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -392,11 +392,11 @@ class PutOperation(BaseOperation):
                 )
         return data_access
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.dst_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -493,15 +493,15 @@ class ReduceOperation(BaseOperation):
             )
         return data_access
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.local_src_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.local_dst_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.remote_src_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
         for chunk in self.remote_dst_buff:
-            chunk.index = chunk.index * num_instances + instance
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -614,9 +614,9 @@ class GroupLoadReduce(BaseOperation):
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
 
-    def shift_buffers(self, instance, num_instances):
-        self.buffer_offset = self.buffer_offset * num_instances + instance
-        self.dst_chunk.index = self.dst_chunk.index * num_instances + instance
+    def shift_buffers(self, instance, num_instances, replication_function):
+        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
+        self.dst_chunk.index = replication_function(self.dst_chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -671,9 +671,9 @@ class GroupStore(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
-    def shift_buffers(self, instance, num_instances):
-        self.buffer_offset = self.buffer_offset * num_instances + instance
-        self.src_chunk.index = self.src_chunk.index * num_instances + instance
+    def shift_buffers(self, instance, num_instances, replication_function):
+        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
+        self.src_chunk.index = replication_function(self.src_chunk.index, num_instances, instance)
 
     def __add__(self, other):
         return None
@@ -710,11 +710,11 @@ class GroupLoadReduceStore(BaseOperation):
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
 
-    def shift_buffers(self, instance, num_instances):
+    def shift_buffers(self, instance, num_instances, replication_function):
         for i in range(len(self.src_index)):
-            self.src_index[i] = self.src_index[i] * num_instances + instance
+            self.src_index[i] = replication_function(self.src_index[i], num_instances, instance)
         for i in range(len(self.dst_index)):
-            self.dst_index[i] = self.dst_index[i] * num_instances + instance
+            self.dst_index[i] = replication_function(self.dst_index[i], num_instances, instance)
 
     def __add__(self, other):
         return None

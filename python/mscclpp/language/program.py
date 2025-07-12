@@ -3,7 +3,7 @@
 
 from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
-from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
+from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
 from mscclpp.language.internal.gpu import Gpu
 from typing import List
 import json
@@ -15,9 +15,10 @@ class MSCCLPPProgram:
         name: str,
         collective: Collective,
         num_ranks: int,
-        instances: int,
+        instances: int = 1,
         protocol: str = "Simple",
         instr_fusion: bool = True,
+        replication_policy: ReplicationPolicy = ReplicationPolicy.interleaved,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
@@ -31,6 +32,7 @@ class MSCCLPPProgram:
         self.instances = instances
         self.protocol = protocol
         self.instr_fusion = instr_fusion
+        self.replication_policy = replication_policy
         self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
@@ -75,7 +77,13 @@ class MSCCLPPProgram:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
             gpu.resolve_data_dependency()
-            gpu.replicate_instances(self.instances)
+            gpu.replicate_instances(self.instances, self.get_replication_policy_function())
+
+    def get_replication_policy_function(self):
+        if self.replication_policy == ReplicationPolicy.interleaved:
+            return lambda value, num_instances, instance: value * num_instances + instance
+        else:
+            return lambda value, num_instances, instance: value
 
     def to_json(self):
         json_obj = {
