@@ -25,10 +25,10 @@ void SwitchChannelTest::TearDown() { CommunicatorTestBase::TearDown(); }
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
 
 __global__ void kernelSwitchReduce() {
-#if (CUDA_NVLS_API_AVAILABLE)
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
   auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(0);
   gConstSwitchChan.broadcast(0, val);
-#endif  // (CUDA_NVLS_API_AVAILABLE)
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
 TEST_F(SwitchChannelTest, SimpleAllReduce) {
