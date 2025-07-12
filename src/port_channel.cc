@@ -82,7 +82,6 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
 
-  auto result = ProxyHandlerResult::Continue;
   int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();
   auto& numRequests = inflightRequests_[semaphore->connection()];
 
@@ -102,11 +101,10 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
   if (((trigger->fields.type & TriggerSync) && numRequests > 0) ||
       (maxWriteQueueSize != -1 && numRequests > maxWriteQueueSize)) {
     semaphore->connection()->flush();
-    result = ProxyHandlerResult::FlushFifoTailAndContinue;
     numRequests = 0;
   }
 
-  return result;
+  return ProxyHandlerResult::Continue;
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {

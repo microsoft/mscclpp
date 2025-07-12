@@ -205,6 +205,8 @@ struct ncclComm {
   uint32_t numScratchBuff;
   uint32_t buffFlag;
 
+  int nRanksPerNode;
+
   std::shared_ptr<uint32_t> deviceFlag7;
   std::shared_ptr<uint32_t> deviceFlag28;
   std::shared_ptr<uint32_t> deviceFlag56;
@@ -507,7 +509,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   }
   CUDACHECK(allreduceFunc(sendbuff, comm->scratchBuff.get(), recvbuff, memoryChannels, memoryOutChannels, nvlsChannels,
                           nvlsOutChannels, offsetIn, offsetOut, offsetScratch, comm->comm->bootstrap()->getRank(),
-                          NRANKS_PER_NODE, comm->comm->bootstrap()->getNranks(), count, stream,
+                          comm->nRanksPerNode, comm->comm->bootstrap()->getNranks(), count, stream,
                           (uint32_t*)comm->deviceFlag7.get(), (uint32_t*)comm->deviceFlag28.get(),
                           (uint32_t*)comm->deviceFlag56.get(), comm->numScratchBuff));
   return ncclSuccess;
@@ -586,10 +588,10 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
   if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
     CUDACHECK(allgather<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                               rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+                               rank, comm->nRanksPerNode, nRank, bytes / sizeof(int), stream));
   } else {
     CUDACHECK(allgather<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                              rank, NRANKS_PER_NODE, nRank, bytes / sizeof(int), stream));
+                              rank, comm->nRanksPerNode, nRank, bytes / sizeof(int), stream));
   }
 
   return ncclSuccess;
@@ -688,6 +690,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
+  commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
 
   // FallBack for single node
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
@@ -948,10 +951,10 @@ NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff
   memoryChannels = it->second.memoryChannelDeviceHandles.get();
   if ((char*)sendbuff == (char*)recvbuff) {
     CUDACHECK(broadcast<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                               rank, NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+                               rank, comm->nRanksPerNode, root, nRank, bytes / sizeof(int), stream));
   } else {
     CUDACHECK(broadcast<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                              rank, NRANKS_PER_NODE, root, nRank, bytes / sizeof(int), stream));
+                              rank, comm->nRanksPerNode, root, nRank, bytes / sizeof(int), stream));
   }
 
   return ncclSuccess;

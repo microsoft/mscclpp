@@ -16,8 +16,8 @@ namespace mscclpp {
 class Host2DeviceSemaphore {
  private:
   Semaphore semaphore_;
-  detail::UniqueGpuPtr<uint64_t> expectedInboundFlagId_;
-  std::unique_ptr<uint64_t> outboundFlagId_;
+  detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
+  std::unique_ptr<uint64_t> outboundToken_;
 
  public:
   /// Constructor.
@@ -47,8 +47,8 @@ class Host2DeviceSemaphore {
 class Host2HostSemaphore {
  private:
   Semaphore semaphore_;
-  std::unique_ptr<uint64_t> expectedInboundFlagId_;
-  std::unique_ptr<uint64_t> outboundFlagId_;
+  std::unique_ptr<uint64_t> expectedInboundToken_;
+  std::unique_ptr<uint64_t> outboundToken_;
 
  public:
   /// Constructor.
@@ -81,8 +81,8 @@ class Host2HostSemaphore {
 class MemoryDevice2DeviceSemaphore {
  private:
   Semaphore semaphore_;
-  detail::UniqueGpuPtr<uint64_t> expectedInboundFlagId_;
-  detail::UniqueGpuPtr<uint64_t> outboundFlagId_;
+  detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
+  detail::UniqueGpuPtr<uint64_t> outboundToken_;
 
  public:
   /// Constructor.

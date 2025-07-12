@@ -424,7 +424,7 @@ class RegisteredMemory {
 
   friend class Context;
   friend class Connection;
-  friend class Flag;
+  friend class SemaphoreStub;
 };
 
 /// One end of a connection.
@@ -619,29 +619,29 @@ class Context : public std::enable_shared_from_this<Context> {
   friend class Endpoint;
 };
 
-/// Flag object only used for constructing Semaphore, not for direct use by the user.
-class Flag {
+/// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
+class SemaphoreStub {
  public:
   /// Constructor.
-  /// @param connection A shared pointer to the connection associated with this flag.
-  Flag(std::shared_ptr<Connection> connection);
+  /// @param connection A shared pointer to the connection associated with this semaphore.
+  SemaphoreStub(std::shared_ptr<Connection> connection);
 
-  /// Get the memory associated with this flag.
-  /// @return A reference to the registered memory for this flag.
+  /// Get the memory associated with this semaphore.
+  /// @return A reference to the registered memory for this semaphore.
   const RegisteredMemory& memory() const;
 
   /// Serialize into a vector of characters.
-  /// @return A vector of characters representing the serialized Flag object.
+  /// @return A vector of characters representing the serialized SemaphoreStub object.
   std::vector<char> serialize() const;
 
-  /// Deserialize a Flag object from a vector of characters.
-  /// @param data A vector of characters representing a serialized Flag object.
-  /// @return A deserialized Flag object.
-  static Flag deserialize(const std::vector<char>& data);
+  /// Deserialize a SemaphoreStub object from a vector of characters.
+  /// @param data A vector of characters representing a serialized SemaphoreStub object.
+  /// @return A deserialized SemaphoreStub object.
+  static SemaphoreStub deserialize(const std::vector<char>& data);
 
  protected:
   struct Impl;
-  Flag(std::shared_ptr<Impl> pimpl);
+  SemaphoreStub(std::shared_ptr<Impl> pimpl);
   std::shared_ptr<Impl> pimpl_;
 
   friend class Semaphore;
@@ -654,9 +654,9 @@ class Semaphore {
   Semaphore() = default;
 
   /// Constructor.
-  /// @param localFlag Flag allocated on the local process.
-  /// @param remoteFlag Flag allocated on the remote process.
-  Semaphore(const Flag& localFlag, const Flag& remoteFlag);
+  /// @param localStub SemaphoreStub allocated on the local process.
+  /// @param remoteStub SemaphoreStub allocated on the remote process.
+  Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub);
 
   /// Get the connection associated with this semaphore.
   /// @return A shared pointer to the connection.
@@ -861,11 +861,11 @@ class Communicator {
   }
 
   /// Build a semaphore for cross-process synchronization.
-  /// @param localFlag The local flag to use for the semaphore.
+  /// @param connection The connection associated with this semaphore.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the operation.
   /// @return A future of the built semaphore.
-  std::shared_future<Semaphore> buildSemaphore(const Flag& localFlag, int remoteRank, int tag = 0);
+  std::shared_future<Semaphore> buildSemaphore(std::shared_ptr<Connection> connection, int remoteRank, int tag = 0);
 
   /// Get the remote rank a connection is connected to.
   ///
