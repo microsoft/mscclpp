@@ -13,10 +13,14 @@
 
 namespace mscclpp {
 
-CudaIpcStream::CudaIpcStream() : stream_(std::make_shared<CudaStreamWithFlags>()), dirty_(false) {}
+CudaIpcStream::CudaIpcStream(int deviceId)
+    : stream_(std::make_shared<CudaStreamWithFlags>()), deviceId_(deviceId), dirty_(false) {}
 
 void CudaIpcStream::setStreamIfNeeded() {
-  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) stream_->set(cudaStreamNonBlocking);
+  if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
+    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+    stream_->set(cudaStreamNonBlocking);
+  }
 }
 
 void CudaIpcStream::memcpyD2D(void *dst, const void *src, size_t nbytes) {
@@ -68,29 +72,40 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
   std::shared_ptr<Connection> conn;
   if (localEndpoint.transport() == Transport::CudaIpc) {
     if (remoteEndpoint.transport() != Transport::CudaIpc) {
-      throw mscclpp::Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
+      throw Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
+    }
+    int deviceId;
+    if (localEndpoint.device().type == DeviceType::GPU) {
+      deviceId = localEndpoint.device().id;
+    } else if (remoteEndpoint.device().type == DeviceType::GPU) {
+      deviceId = remoteEndpoint.device().id;
+    } else {
+      throw Error("CudaIpc transport requires at least one GPU device", ErrorCode::InvalidUsage);
+    }
+    if (deviceId < 0) {
+      throw Error("No GPU device ID provided", ErrorCode::InvalidUsage);
     }
 #if defined(MSCCLPP_DEVICE_HIP)
-    pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>());
+    pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>(deviceId));
 #else   // !defined(MSCCLPP_DEVICE_HIP)
     if (pimpl_->ipcStreams_.empty()) {
-      pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>());
+      pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>(deviceId));
     }
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint,
                                                pimpl_->ipcStreams_.back());
   } else if (AllIBTransports.has(localEndpoint.transport())) {
     if (!AllIBTransports.has(remoteEndpoint.transport())) {
-      throw mscclpp::Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
+      throw Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
     }
     conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (localEndpoint.transport() == Transport::Ethernet) {
     if (remoteEndpoint.transport() != Transport::Ethernet) {
-      throw mscclpp::Error("Local transport is Ethernet but remote is not", ErrorCode::InvalidUsage);
+      throw Error("Local transport is Ethernet but remote is not", ErrorCode::InvalidUsage);
     }
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {
-    throw mscclpp::Error("Unsupported transport", ErrorCode::InternalError);
+    throw Error("Unsupported transport", ErrorCode::InternalError);
   }
   return conn;
 }

@@ -225,16 +225,17 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
       transport = ibTransport;
     }
     // Connect with all other ranks
-    connections[r] = comm.connect(r, 0, transport);
+    connections[r] = comm.connect(transport, r);
     auto memory = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
     localMemories.push_back(memory);
-    comm.sendMemory(memory, r, 0);
-    remoteMemories.push_back(comm.recvMemory(r, 0));
+    comm.sendMemory(memory, r);
+    remoteMemories.push_back(comm.recvMemory(r));
   }
 
   for (int r = 0; r < world_size; ++r) {
     if (r == rank) continue;
-    semaphoreIds.push_back(proxyService.buildAndAddSemaphore(comm, connections[r].get()));
+    auto sema = comm.buildSemaphore(connections[r].get(), r).get();
+    semaphoreIds.push_back(proxyService.addSemaphore(sema));
   }
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
