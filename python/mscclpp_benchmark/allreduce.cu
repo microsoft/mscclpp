@@ -9,8 +9,8 @@
 
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSyncer allGatherDeviceSyncer;
@@ -795,16 +795,16 @@ __forceinline__ __device__ void barrier(mscclpp::MemoryDevice2DeviceSemaphoreDev
   deviceSyncer.sync(num_blocks);
 }
 
-// Assumes \p kVecSize is 1, 2, 4, or 8 (default 8)
-template <typename DataType = float, int kVecSize = 8>
+// Assumes kVecSize is 1, 2, 4, or 8
+template <typename DataType, int kVecSize>
 MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-                                             mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank,
-                                             int num_ranks, size_t num_elements) {
-  DataType* mc_ptr = (DataType*)nvlsPtrs.mcPtr;
-  int tid = threadIdx.x;
-  int bid = blockIdx.x;
-  int num_threads_per_block = blockDim.x;
-  int num_blocks = gridDim.x;
+                                             mscclpp::SwitchChannelDeviceHandle switchChan, size_t my_rank,
+                                             size_t num_ranks, size_t num_elements) {
+  using VectorType = mscclpp::VectorType<DataType, kVecSize>;
+  size_t tid = threadIdx.x;
+  size_t bid = blockIdx.x;
+  size_t num_threads_per_block = blockDim.x;
+  size_t num_blocks = gridDim.x;
 
   // start with a barrier to ensure all devices have written their values
   // to their own memory (that is part of the multicast memory)
@@ -812,41 +812,16 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemapho
   barrier(semaphores, tid, bid, num_blocks, num_ranks);
 
   // every device loads, reduces, and stores a partition of the multicast memory
-  int rank_start = ((int64_t)num_elements * (int64_t)my_rank) / (int64_t)num_ranks;
-  int rank_end = ((int64_t)num_elements * (int64_t)(my_rank + 1)) / (int64_t)num_ranks;
+  size_t num_vectors = num_elements / VectorType::Size;
+  size_t rank_start = (num_vectors * my_rank) / num_ranks;
+  size_t rank_end = (num_vectors * (my_rank + 1)) / num_ranks;
 
-  int thread_offset = (bid * num_threads_per_block + tid) * kVecSize;
-  int thread_step = (num_threads_per_block * num_blocks) * kVecSize;  // number of threads * vector size
+  size_t thread_offset = bid * num_threads_per_block + tid;
+  size_t thread_step = num_threads_per_block * num_blocks;  // number of threads * vector size
 
-  for (int idx = rank_start + thread_offset; idx < rank_end; idx += thread_step) {
-    if constexpr (std::is_same_v<DataType, float> && (kVecSize == 4)) {
-      uint4 val;  // fits 4 float elements
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
-    } else if constexpr (std::is_same_v<DataType, float> && (kVecSize == 2)) {
-      uint2 val;  // fits 2 float elements
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
-    } else if constexpr (std::is_same_v<DataType, float> && (kVecSize == 1)) {
-      uint1 val;  // fits 1 float element
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (float*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (float*)(mc_ptr + idx));
-    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 8)) {
-      uint4 val;  // fits 8 cutlass::half_t elements; i.e., 4 half2 elements
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
-    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 4)) {
-      uint2 val;  // fits 4 cutlass::half_t elements; i.e., 2 half2 elements
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
-    } else if constexpr (std::is_same_v<DataType, __half> && (kVecSize == 2)) {
-      uint1 val;  // fits 2 cutlass::half_t elements; i.e., 1 half2 element
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (half2*)(mc_ptr + idx));
-      mscclpp::DeviceMulticastPointerDeviceHandle::multimemStore(val, (half2*)(mc_ptr + idx));
-    } else {
-      // not supported: cannot use static_assert because of the way TYPE is handled in this file
-      assert(false);  // Unsupported data type and vector size combination
-    }
+  for (size_t idx = rank_start + thread_offset; idx < rank_end; idx += thread_step) {
+    auto val = switchChan.reduce<VectorType>(idx);
+    switchChan.store(idx, val);
   }
 
   // end with a barrier to ensure all devices can now read their values
@@ -857,16 +832,16 @@ MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemapho
 
 extern "C" __global__ void __launch_bounds__(1024, 1)
     allreduce6(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-               mscclpp::DeviceMulticastPointerDeviceHandle nvlsPtrs, int my_rank, int num_ranks, size_t num_elements,
+               mscclpp::SwitchChannelDeviceHandle switchChan, size_t my_rank, size_t num_ranks, size_t num_elements,
                size_t vector_size) {
   if (vector_size == 8) {
-    allreduce6_helper<TYPE, 8>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 8>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else if (vector_size == 4) {
-    allreduce6_helper<TYPE, 4>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 4>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else if (vector_size == 2) {
-    allreduce6_helper<TYPE, 2>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 2>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   } else {
-    allreduce6_helper<TYPE, 1>(semaphores, nvlsPtrs, my_rank, num_ranks, num_elements);
+    allreduce6_helper<TYPE, 1>(semaphores, switchChan, my_rank, num_ranks, num_elements);
   }
 }
 #endif
