@@ -16,6 +16,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         name,
         collective,
         gpu_size,
+        instances=8,
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
@@ -30,6 +31,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                 if peer != gpu:
                     channels[(peer, gpu)] = MemoryChannel(peer, gpu)
 
+        # Synchronization to Ensure all the Gpus are Ready
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
@@ -41,23 +43,29 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     dst_rank = peer
                     channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True, data_sync=SyncType.after)
 
+        # Reducing and Storing the data
         for gpu in range(gpu_size):
             buffer_offset = gpu
             rank = Rank(gpu)
             input_buffer = rank.get_input_buffer()
-            nvls_chan.at_rank(gpu).group_load_reduce(buffer_offset, 1, input_buffer[gpu : gpu + 1], 0)
-            nvls_chan.at_rank(gpu).group_store(input_buffer[gpu : gpu + 1], buffer_offset, 1, tb=0)
+            nvls_chan.at_rank(gpu).group_load_reduce(
+                buffer_offset=buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0
+            )
+            nvls_chan.at_rank(gpu).group_store(
+                src_chunk=input_buffer[gpu : gpu + 1], buffer_offset=buffer_offset, size=1, tb=0
+            )
 
+        # Synchronization to Ensure the Gpus finished
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer
-                    channels[(dst_rank, src_rank)].signal(tb=0, data_sync=SyncType.before)
+                    channels[(dst_rank, src_rank)].signal(tb=0, relaxed=True, data_sync=SyncType.before)
             for peer in range(gpu_size):
                 if peer != src_rank:
                     dst_rank = peer
-                    channels[(dst_rank, src_rank)].wait(tb=0)
+                    channels[(dst_rank, src_rank)].wait(tb=0, relaxed=True)
 
         print(JSON())
 
