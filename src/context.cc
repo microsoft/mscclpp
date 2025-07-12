@@ -9,7 +9,6 @@
 #include "connection.hpp"
 #include "debug.h"
 #include "endpoint.hpp"
-#include "flag.hpp"
 #include "registered_memory.hpp"
 
 namespace mscclpp {
