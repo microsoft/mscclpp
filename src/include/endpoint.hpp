@@ -19,6 +19,7 @@ struct Endpoint::Impl {
   Impl(const std::vector<char>& serialization);
 
   Transport transport_;
+  Device device_;
   uint64_t hostHash_;
   int maxWriteQueueSize_;
 

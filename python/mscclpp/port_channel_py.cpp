@@ -20,13 +20,19 @@ void register_port_channel(nb::module_& m) {
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
-      .def("add_semaphore", &ProxyService::addSemaphore, nb::arg("semaphore"))
+      .def("add_semaphore", static_cast<SemaphoreId (ProxyService::*)(const Semaphore&)>(&ProxyService::addSemaphore),
+           nb::arg("semaphore"))
+      .def("add_semaphore",
+           static_cast<SemaphoreId (ProxyService::*)(std::shared_ptr<Host2DeviceSemaphore>)>(
+               &ProxyService::addSemaphore),
+           nb::arg("semaphore"))
       .def("add_memory", &ProxyService::addMemory, nb::arg("memory"))
       .def("semaphore", &ProxyService::semaphore, nb::arg("id"))
       .def("base_port_channel", &ProxyService::basePortChannel, nb::arg("id"))
       .def("port_channel", &ProxyService::portChannel, nb::arg("id"), nb::arg("dst"), nb::arg("src"));
 
   nb::class_<BasePortChannel>(m, "BasePortChannel")
+      .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
            nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"))
       .def("device_handle", &BasePortChannel::deviceHandle);
@@ -41,6 +47,7 @@ void register_port_channel(nb::module_& m) {
       });
 
   nb::class_<PortChannel>(m, "PortChannel")
+      .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId, MemoryId>(),
            nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
       .def("device_handle", &PortChannel::deviceHandle);

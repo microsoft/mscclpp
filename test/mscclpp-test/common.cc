@@ -386,10 +386,10 @@ void BaseTestEngine::setupMeshConnectionsInternal(
         transport = ibTransport;
       }
       // Connect with all other ranks
-      connectionFutures.push_back(comm_->connect(r, 0, transport));
+      connectionFutures.push_back(comm_->connect(transport, r));
     }
-    comm_->sendMemory(localRegMemory, r, 0);
-    auto remoteMemory = comm_->recvMemory(r, 0);
+    comm_->sendMemory(localRegMemory, r);
+    auto remoteMemory = comm_->recvMemory(r);
     remoteRegMemories.push_back(remoteMemory);
   }
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
