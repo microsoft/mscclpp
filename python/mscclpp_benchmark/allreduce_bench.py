@@ -20,7 +20,7 @@ from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
 
-data_type = cp.float32
+data_type = cp.float16
 
 if data_type == cp.float16:
     dtype_str = "fp16"
