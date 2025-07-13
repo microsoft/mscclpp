@@ -798,8 +798,8 @@ __forceinline__ __device__ void barrier(mscclpp::MemoryDevice2DeviceSemaphoreDev
 // Assumes kVecSize is 1, 2, 4, or 8
 template <typename DataType, int kVecSize>
 MSCCLPP_DEVICE_INLINE void allreduce6_helper(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle* semaphores,
-                                             mscclpp::SwitchChannelDeviceHandle switchChan, int my_rank,
-                                             int num_ranks, size_t num_elements) {
+                                             mscclpp::SwitchChannelDeviceHandle switchChan, int my_rank, int num_ranks,
+                                             size_t num_elements) {
   using VectorType = mscclpp::VectorType<DataType, kVecSize>;
   int tid = threadIdx.x;
   int bid = blockIdx.x;
