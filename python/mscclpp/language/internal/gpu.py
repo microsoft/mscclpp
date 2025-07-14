@@ -91,7 +91,7 @@ class Gpu:
             for instance in range(instances):
                 tb = copy.deepcopy(threadblock)
                 tb.id = threadblock.id * instances + instance
-                
+
                 tb.shift_channels(instance, instances, channel_replication_function)
                 tb.shift_buffers(instance, instances, buffer_replication_function)
 

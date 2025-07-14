@@ -77,7 +77,11 @@ class MSCCLPPProgram:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
             gpu.resolve_data_dependency()
-            gpu.replicate_instances(self.instances, self.get_channel_replication_policy_function(), self.get_buffer_replication_policy_function())
+            gpu.replicate_instances(
+                self.instances,
+                self.get_channel_replication_policy_function(),
+                self.get_buffer_replication_policy_function(),
+            )
 
     def get_channel_replication_policy_function(self):
         return lambda value, num_instances, instance: value * num_instances + instance
@@ -87,7 +91,7 @@ class MSCCLPPProgram:
             return lambda value, num_instances, instance: value * num_instances + instance
         else:
             return lambda value, num_instances, instance: value
-        
+
     def to_json(self):
         json_obj = {
             "name": self.name,
