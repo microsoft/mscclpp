@@ -16,7 +16,6 @@ def put_with_signal_and_flush_test(num_threads_per_block, min_message_size, max_
         "put_with_signal_and_flush_test",
         collective,
         gpus,
-        instances=1,
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,

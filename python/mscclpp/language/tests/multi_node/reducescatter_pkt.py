@@ -18,7 +18,6 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
         name,
         collective,
         gpu_size,
-        instances=1,
         protocol="LL",
         instr_fusion=True,
         num_threads_per_block=num_threads_per_block,

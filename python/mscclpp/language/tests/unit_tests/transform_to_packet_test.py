@@ -16,7 +16,6 @@ def transform_to_packet_test(num_threads_per_block, min_message_size, max_messag
         "transform_to_packet_test",
         collective,
         gpus,
-        instances=1,
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
