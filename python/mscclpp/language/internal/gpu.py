@@ -66,17 +66,8 @@ class Gpu:
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
 
-    def replicate_instances(self, instances, replication_function):
+    def replicate_instances(self, instances, channel_replication_function, buffer_replication_function):
         threadblocks = []
-        channels_base_shift = {
-            ChannelType.memory: (
-                len(self.__channels[ChannelType.memory].connected_to) if ChannelType.memory in self.__channels else 0
-            ),
-            ChannelType.port: (
-                len(self.__channels[ChannelType.port].connected_to) if ChannelType.port in self.__channels else 0
-            ),
-            ChannelType.switch: len(self.__nvls_channels),
-        }
 
         self.input_chunks *= instances
         self.output_chunks *= instances
@@ -100,10 +91,9 @@ class Gpu:
             for instance in range(instances):
                 tb = copy.deepcopy(threadblock)
                 tb.id = threadblock.id * instances + instance
-                channels_shift = {channel: shift * instance for channel, shift in channels_base_shift.items()}
-
-                tb.shift_channels(channels_shift)
-                tb.shift_buffers(instance, instances, replication_function)
+                
+                tb.shift_channels(instance, instances, channel_replication_function)
+                tb.shift_buffers(instance, instances, buffer_replication_function)
 
                 threadblocks.append(tb)
 

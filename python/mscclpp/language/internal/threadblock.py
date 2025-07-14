@@ -59,10 +59,10 @@ class ThreadBlock:
         interval_map = BuffersAccess()
         self.ops = interval_map.process_operations(self.ops)
 
-    def shift_channels(self, shift):
+    def shift_channels(self, instance, num_instances, replication_function):
         for channel in self.__channels.values():
             for i in range(len(channel.channel_ids)):
-                channel.channel_ids[i] += shift[channel.channel_type]
+                channel.channel_ids[i] = replication_function(channel.channel_ids[i], num_instances, instance)
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for op in self.ops:
