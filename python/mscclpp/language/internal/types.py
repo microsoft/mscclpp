@@ -197,3 +197,11 @@ class DataAccess:
             and self.operation_id != other.operation_id
             and (self.data_access_type != DataAccessType.read or other.data_access_type != DataAccessType.read)
         )
+
+
+class ReplicationPolicy(Enum):
+    interleaved = "interleaved"
+    none = "none"
+
+    def __str__(self):
+        return self.value

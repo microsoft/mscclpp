@@ -23,6 +23,9 @@ class BaseOperation:
 
     def __add__(self, other):
         return None
+    
+    def shift_buffers(self, instance, num_instances, replication_function):
+        return
 
 
 @dataclass
@@ -102,6 +105,12 @@ class CopyOperation(BaseOperation):
                     DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
                 )
         return data_access
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for chunk in self.src_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.dst_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         return None
@@ -398,6 +407,12 @@ class GetOperation(BaseOperation):
             )
         return data_access
 
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for chunk in self.src_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.dst_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+
     def __add__(self, other):
         fused_operation = None
         if (
@@ -473,6 +488,12 @@ class PutOperation(BaseOperation):
                     DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
                 )
         return data_access
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for chunk in self.src_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.dst_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -568,6 +589,16 @@ class ReduceOperation(BaseOperation):
                 DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
             )
         return data_access
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for chunk in self.local_src_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.local_dst_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.remote_src_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
+        for chunk in self.remote_dst_buff:
+            chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
@@ -680,6 +711,10 @@ class GroupLoadReduce(BaseOperation):
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
 
+    def shift_buffers(self, instance, num_instances, replication_function):
+        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
+        self.dst_chunk.index = replication_function(self.dst_chunk.index, num_instances, instance)
+
     def __add__(self, other):
         fused_operation = None
         if (
@@ -733,6 +768,10 @@ class GroupStore(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
 
+    def shift_buffers(self, instance, num_instances, replication_function):
+        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
+        self.src_chunk.index = replication_function(self.src_chunk.index, num_instances, instance)
+
     def __add__(self, other):
         return None
 
@@ -767,6 +806,12 @@ class GroupLoadReduceStore(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for i in range(len(self.src_index)):
+            self.src_index[i] = replication_function(self.src_index[i], num_instances, instance)
+        for i in range(len(self.dst_index)):
+            self.dst_index[i] = replication_function(self.dst_index[i], num_instances, instance)
 
     def __add__(self, other):
         return None
