@@ -70,7 +70,9 @@ class Gpu:
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
 
-    def replicate_instances(self, instances, channel_replication_function, buffer_replication_function):
+    def replicate_instances(
+        self, instances, channel_replication_function, buffer_replication_function, semaphore_replication_function
+    ):
         threadblocks = []
 
         self.input_chunks *= instances
@@ -78,6 +80,7 @@ class Gpu:
         self.scratch_chunks *= instances
 
         new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
+        new_semaphores = []
         for _ in range(instances):
             if ChannelType.memory in self.__channels:
                 new_channels[ChannelType.memory].extend(self.__channels[ChannelType.memory].connected_to)
@@ -85,11 +88,15 @@ class Gpu:
                 new_channels[ChannelType.port].extend(self.__channels[ChannelType.port].connected_to)
             new_channels[ChannelType.switch].extend(self.__nvls_channels)
 
+            new_semaphores.extend(self.semaphores)
+
         if ChannelType.memory in self.__channels:
             self.__channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
         if ChannelType.port in self.__channels:
             self.__channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
         self.__nvls_channels = new_channels[ChannelType.switch]
+
+        self.semaphores = new_semaphores
 
         for threadblock in self.threadblocks:
             for instance in range(instances):
@@ -98,6 +105,7 @@ class Gpu:
 
                 tb.shift_channels(instance, instances, channel_replication_function)
                 tb.shift_buffers(instance, instances, buffer_replication_function)
+                tb.shift_semaphores(instance, instances, semaphore_replication_function)
 
                 threadblocks.append(tb)
 

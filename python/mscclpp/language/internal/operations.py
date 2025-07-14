@@ -23,8 +23,11 @@ class BaseOperation:
 
     def __add__(self, other):
         return None
-    
+
     def shift_buffers(self, instance, num_instances, replication_function):
+        return
+
+    def shift_semaphores(self, instance, num_instances, replication_function):
         return
 
 
@@ -133,6 +136,10 @@ class SemaphoreAcquireOperation(BaseOperation):
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
+    def shift_semaphores(self, instance, num_instances, replication_function):
+        for i in range(len(self.semaphore_ids)):
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
+
     def __add__(self, other):
         fused_operation = None
         if isinstance(other, SemaphoreAcquireOperation):
@@ -166,6 +173,10 @@ class SemaphoreReleaseOperation(BaseOperation):
         super().__init__(Instruction.sem_release)
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
+
+    def shift_semaphores(self, instance, num_instances, replication_function):
+        for i in range(len(self.semaphore_ids)):
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
