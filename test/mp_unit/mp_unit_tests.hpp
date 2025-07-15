@@ -151,6 +151,27 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
 
+class FifoMultiGPUTest : public CommunicatorTestBase {
+ protected:
+  struct FifoTestParams {
+    bool useIPC;
+    bool useIB;
+    bool useEthernet;
+    bool waitWithPoll;
+  };
+
+  void SetUp() override;
+  void TearDown() override;
+
+  void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+  void testFifo(FifoTestParams params);
+
+  std::shared_ptr<mscclpp::ProxyService> proxyService;
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures;
+};
+
 class MemoryChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   void SetUp() override;

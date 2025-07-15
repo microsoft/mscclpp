@@ -5,6 +5,7 @@
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
@@ -43,9 +44,6 @@ void FifoMultiGPUTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& p
   if (useIb) transport |= ibTransport;
   if (useEthernet) transport |= mscclpp::Transport::Ethernet;
 
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
-  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
-
   mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuff, sendBuffBytes, transport);
   mscclpp::RegisteredMemory recvBufRegMem;
   if (!isInPlace) {
@@ -57,11 +55,11 @@ void FifoMultiGPUTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& p
       continue;
     }
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
+      this->connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::CudaIpc);
     } else if (useIb) {
-      connectionFutures[r] = communicator->connect(r, 0, ibTransport);
+      this->connectionFutures[r] = communicator->connect(r, 0, ibTransport);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::Ethernet);
+      this->connectionFutures[r] = communicator->connect(r, 0, mscclpp::Transport::Ethernet);
     }
 
     if (isInPlace) {
@@ -76,9 +74,9 @@ void FifoMultiGPUTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& p
     if (r == rank) {
       continue;
     }
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[r].get());
+    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, this->connectionFutures[r].get());
 
-    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(this->remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));
   }
 }
@@ -87,7 +85,7 @@ __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
 __constant__ mscclpp::FifoDeviceHandle gFifoDeviceHandle;
 
-__global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHandle, size_t numTriggers, mscclpp::SemaphoreId semaphoreId, uint64_t* remoteFlag, int rank, int worldSize) {
+__global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHandle, size_t numTriggers, mscclpp::SemaphoreId semaphoreId) {
   mscclpp::FifoDeviceHandle& fifo = gFifoDeviceHandle;
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   mscclpp::ProxyTrigger trigger;
@@ -116,6 +114,12 @@ __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle, 
             *result = 1; // Error
         }
     }
+}
+
+static void setupCuda(int& cudaDevice, int& numaNode) {
+  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  numaNode = mscclpp::getDeviceNumaNode(cudaDevice);
+  mscclpp::numaBind(numaNode);
 }
 
 // Helper function to consume triggers from FIFO
@@ -194,26 +198,27 @@ void FifoMultiGPUTest::testFifo(FifoTestParams params) {
 
   proxyService->startProxy();
 
-  // Launch on GPU0
-  cudaSetDevice(0);
-  kernelFifoPushAndSignal<<<1, 32>>>(gFifoDeviceHandle, gPortChannel, numTriggers, semaphoreId, gpu1_semaphore_flag);
-
-  // Launch on GPU1
-  cudaSetDevice(1);
-  kernelWaitAndCheck<<<1, 32>>>(gPortChannel, gpu1_semaphore_flag, d_result);
-
   int cudaDevice, numaNode;
   setupCuda(cudaDevice, numaNode);
 
   // Allocate FIFO on device 0
   cudaSetDevice(0);
-  auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
+  int fifoSize = 1024 * 1024; // 1M elements
+  auto hostFifo = std::make_unique<mscclpp::Fifo>(fifoSize);
 
   // On host, after reading trigger from FIFO
   // Calculate triggers based on FIFO size
   const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
   const int warmupTriggers =
       std::max(MIN_WARMUP_TRIGGERS, static_cast<int>(hostFifo->size() * WARMUP_TRIGGERS_PER_FIFO_SIZE));
+
+  // Launch on GPU0
+  cudaSetDevice(0);
+  kernelFifoPushAndSignal<<<1, 32>>>(gPortChannel, numTriggers, semaphoreId);
+
+  // Launch on GPU1
+  cudaSetDevice(1);
+  kernelWaitAndCheck<<<1, 32>>>(gPortChannel, gpu1_semaphore_flag, d_result);
 
   int numParallel = 8;
   int flushPeriod = 64;
