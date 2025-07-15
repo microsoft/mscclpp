@@ -68,6 +68,9 @@ class MSCCLPPProgram:
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
+    def add_semaphore(self, semaphore):
+        self.gpus[semaphore.rank].add_semaphore(semaphore)
+
     def add_operation(self, rank, tb, operation):
         self.gpus[rank].add_operation(tb, operation)
 
@@ -81,6 +84,7 @@ class MSCCLPPProgram:
                 self.instances,
                 self.get_channel_replication_policy_function(),
                 self.get_buffer_replication_policy_function(),
+                self.get_semaphore_replication_policy_function(),
             )
 
     def get_channel_replication_policy_function(self):
@@ -91,6 +95,9 @@ class MSCCLPPProgram:
             return lambda value, num_instances, instance: value * num_instances + instance
         else:
             return lambda value, num_instances, instance: value
+
+    def get_semaphore_replication_policy_function(self):
+        return lambda value, num_instances, instance: value * num_instances + instance
 
     def to_json(self):
         json_obj = {
