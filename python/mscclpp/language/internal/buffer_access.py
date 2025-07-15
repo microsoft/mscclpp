@@ -16,7 +16,12 @@ class BuffersAccess:
     def process_operations(self, operations):
         result_operations = []
         for operation in operations:
-            if operation.name == Instruction.nop or operation.name == Instruction.barrier:
+            if operation.name == Instruction.pipeline:
+                pipeline_result_operations = self.process_pipeline_operations(operation.operations)
+                if pipeline_result_operations[1]:
+                    result_operations.append(SyncOperation())
+                operation.operations = pipeline_result_operations[0]
+            elif operation.name == Instruction.nop or operation.name == Instruction.barrier:
                 self.clear_data_access()
             else:
                 data_access = operation.local_data_access()
@@ -29,6 +34,33 @@ class BuffersAccess:
             result_operations.append(operation)
 
         return result_operations
+
+    def process_pipeline_operations(self, operations):
+        result_operations = []
+        need_prev_sync = False
+        for i in range(len(operations)):
+            operation = operations[i]
+            if operation.name == Instruction.pipeline:
+                pipeline_result_operations = self.process_pipeline_operations(operation.operations)
+                if pipeline_result_operations[1]:
+                    result_operations.append(SyncOperation())
+                operation.operations = pipeline_result_operations[0]
+            elif operation.name == Instruction.nop or operation.name == Instruction.barrier:
+                self.clear_data_access()
+            else:
+                data_access = operation.local_data_access()
+                sync_added = False
+                for data_access_element in data_access:
+                    if self.compute_data_access(data_access_element) and not sync_added:
+                        if i == 0:
+                            need_prev_sync = True
+                        else:
+                            result_operations.append(SyncOperation())
+                        sync_added = True
+
+            result_operations.append(operation)
+
+        return (result_operations, need_prev_sync)
 
     def compute_data_access(self, data_access: DataAccess) -> bool:
         keys = self.intervals[data_access.buffer_type].keys()

@@ -89,6 +89,7 @@ class Instruction(Enum):
     group_store = "gstore"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
+    pipeline = "pipeline"
 
     def __str__(self):
         return self.value

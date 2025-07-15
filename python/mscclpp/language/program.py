@@ -47,6 +47,8 @@ class MSCCLPPProgram:
                 Gpu(rank, self.buffers[rank][BufferType.input].size, self.buffers[rank][BufferType.output].size, 0)
             )
 
+        self.loop_context = None
+
     def __enter__(self):
         set_program(self)
 
@@ -69,7 +71,10 @@ class MSCCLPPProgram:
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
     def add_operation(self, rank, tb, operation):
-        self.gpus[rank].add_operation(tb, operation)
+        if self.loop_context != None:
+            self.loop_context.add_operation(rank, tb, operation)
+        else:
+            self.gpus[rank].add_operation(tb, operation)
 
     def post_process_operations(self):
         for gpu in self.gpus:
@@ -91,6 +96,9 @@ class MSCCLPPProgram:
             return lambda value, num_instances, instance: value * num_instances + instance
         else:
             return lambda value, num_instances, instance: value
+
+    def set_loop_context(self, loop_context):
+        self.loop_context = loop_context
 
     def to_json(self):
         json_obj = {

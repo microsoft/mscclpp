@@ -24,6 +24,9 @@ class BaseOperation:
     def shift_buffers(self, instance, num_instances, replication_function):
         return
 
+    def __add__(self, other):
+        return None
+
 
 @dataclass
 class LocalChunk:
@@ -147,7 +150,7 @@ class SignalOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation) or isinstance(other, PipelineOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
@@ -195,7 +198,7 @@ class WaitOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation) or isinstance(other, PipelineOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
@@ -271,7 +274,7 @@ class FlushOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation)
+            isinstance(other, SignalOperation) or isinstance(other, WaitOperation) or isinstance(other, FlushOperation) or isinstance(other, PipelineOperation)
         ):
             if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
                 self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
@@ -733,4 +736,52 @@ class GroupLoadReduceStore(BaseOperation):
             )
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
+        return result
+
+
+@dataclass
+class PipelineOperation(BaseOperation):
+    def __init__(self, unit_size: int, num_chunks: int):
+        super().__init__(Instruction.pipeline)
+        self.unit_size = unit_size
+        self.num_chunks = num_chunks
+        self.operations = []
+        self.data_sync = SyncType.none
+
+    def add_operation(self, operation):
+        if operation == isinstance(operation, SyncOperation) or operation == isinstance(operation, BarrierOperation):
+            if len(self.operations) == 0:
+                self.data_sync |= SyncType.before
+            self.data_sync |= SyncType.after
+        elif (
+            operation == isinstance(operation, SignalOperation)
+            or operation == isinstance(operation, WaitOperation)
+            or operation == isinstance(operation, FlushOperation)
+        ):
+            if len(self.operations) == 0:
+                self.data_sync |= SyncType.before & self.data_sync
+            self.data_sync |= SyncType.after & self.data_sync
+        else:
+            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        self.operations.append(operation)
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for operation in self.operations:
+            operation.shift_buffers(instance, num_instances, replication_function)
+
+    def __add__(self, other):
+        if self.data_sync & SyncType.after and (
+            other == isinstance(other, SignalOperation)
+            or other == isinstance(other, WaitOperation)
+            or other == isinstance(other, FlushOperation)
+        ):
+            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        return None
+
+    def to_json(self):
+        result = {"name": self.name.value}
+        result["iter_context"] = {"unit_size": self.unit_size, "num_chunks": self.num_chunks}
+        result["ops"] = []
+        for operation in self.operations:
+            result["ops"].append(operation.to_json())
         return result
