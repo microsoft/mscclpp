@@ -31,6 +31,8 @@ def fuse_instructions(operations):
 def adding_data_sync(operations):
     result_operations = []
     data_sync_operations = {
+        Instruction.sem_acquire,
+        Instruction.sem_release,
         Instruction.signal,
         Instruction.wait,
         Instruction.relaxed_signal,
