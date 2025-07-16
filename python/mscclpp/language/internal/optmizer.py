@@ -9,7 +9,6 @@ def fuse_instructions(operations):
         next_operation_index = operation_index + 1
         current_operation = operations[operation_index]
         fused_operation = current_operation
-        fusion_status = FusionStatus.none
 
         if current_operation.name == Instruction.pipeline:
             pipeline_fused_operations = fuse_instructions(current_operation.operations)
@@ -17,14 +16,13 @@ def fuse_instructions(operations):
 
         while next_operation_index < len(operations):
             next_operation = operations[next_operation_index]
-            fused_operation, fusion_status = current_operation + next_operation
-            if fusion_status != FusionStatus.fused:
+            fused_operation = current_operation + next_operation
+            if fused_operation != None:
                 break
             current_operation = fused_operation
             next_operation_index += 1
 
-        if fusion_status != FusionStatus.vanished:
-            fused_operations.append(current_operation)
+        fused_operations.append(current_operation)
         operation_index = next_operation_index
 
     return fused_operations

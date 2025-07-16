@@ -18,6 +18,7 @@ def barrier_test(num_threads_per_block, min_message_size, max_message_size):
         collective,
         gpus,
         protocol="Simple",
+        instances=2,
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
@@ -25,11 +26,16 @@ def barrier_test(num_threads_per_block, min_message_size, max_message_size):
     ):
 
         rank = Rank(0)
+        rank1 = Rank(1)
         buffer = rank.get_input_buffer()
-        rank.copy(buffer[0:1], buffer[1:2], 0)
+        peer_buffer = rank1.get_input_buffer()
+        ch = MemoryChannel(1, 0)
+        rank.barrier([0, 1])
         with LoopIterationContext(unit=2**20, num_chunks=1):
-            rank.copy(buffer[1:2], buffer[0:1], 0)
-        rank.copy(buffer[0:1], buffer[1:2], 0)
+            ch.reduce(buffer[0:1], [peer_buffer[0:1]], tb=0, local_dst_chunk=buffer[0:1])
+            ch.reduce(buffer[0:1], [peer_buffer[1:2]], tb=0, local_dst_chunk=buffer[0:1])
+        rank.barrier([0, 1])
+        # ch.signal(0, data_sync=SyncType.both)
 
         print(JSON())
 

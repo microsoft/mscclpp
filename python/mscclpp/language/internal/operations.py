@@ -29,7 +29,7 @@ class BaseOperation:
         return
 
     def __add__(self, other):
-        return (None, FusionStatus.none)
+        return None
 
 
 @dataclass
@@ -56,15 +56,15 @@ class SyncOperation(BaseOperation):
         super().__init__(Instruction.nop)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if isinstance(other, SyncOperation):
-            fused_operation = (SyncOperation(), FusionStatus.fused)
+            fused_operation = SyncOperation()
         elif isinstance(other, BarrierOperation):
-            fused_operation = (None, FusionStatus.vanished)
+            fused_operation = other
         elif isinstance(other, PipelineOperation) and (
             (other.get_data_sync() & SyncType.before) or other.check_initial_barrier()
         ):
-            fused_operation = (None, FusionStatus.vanished)
+            fused_operation = other
         elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
@@ -139,14 +139,11 @@ class SemaphoreAcquireOperation(BaseOperation):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if isinstance(other, SemaphoreAcquireOperation):
-            fused_operation = (
-                SemaphoreAcquireOperation(
-                    semaphore_ids=self.semaphore_ids + other.semaphore_ids,
-                    data_sync=self.data_sync | other.data_sync,
-                ),
-                FusionStatus.fused,
+            fused_operation = SemaphoreAcquireOperation(
+                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                data_sync=self.data_sync | other.data_sync,
             )
         elif (
             (check_data_sync_op(other) and (other.data_sync & SyncType.before))
@@ -176,14 +173,11 @@ class SemaphoreReleaseOperation(BaseOperation):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if isinstance(other, SemaphoreReleaseOperation):
-            fused_operation = (
-                SemaphoreReleaseOperation(
-                    semaphore_ids=self.semaphore_ids + other.semaphore_ids,
-                    data_sync=self.data_sync | other.data_sync,
-                ),
-                FusionStatus.fused,
+            fused_operation = SemaphoreReleaseOperation(
+                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                data_sync=self.data_sync | other.data_sync,
             )
         elif (
             (check_data_sync_op(other) and (other.data_sync & SyncType.before))
@@ -219,21 +213,18 @@ class SignalOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, SignalOperation)
             and self.channel_type == other.channel_type
             and self.name == other.name
             and not self.channel_ids & other.channel_ids
         ):
-            fused_operation = (
-                SignalOperation(
-                    channels_ids=self.channel_ids | other.channel_ids,
-                    channel_type=self.channel_type,
-                    data_sync=self.data_sync | other.data_sync,
-                    relaxed=(self.name == Instruction.relaxed_signal),
-                ),
-                FusionStatus.fused,
+            fused_operation = SignalOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
+                relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
             (check_data_sync_op(other) and (other.data_sync & SyncType.before))
@@ -270,21 +261,18 @@ class WaitOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, WaitOperation)
             and self.name == other.name
             and not self.channel_ids & other.channel_ids
             and self.channel_type == other.channel_type
         ):
-            fused_operation = (
-                WaitOperation(
-                    channels_ids=self.channel_ids | other.channel_ids,
-                    channel_type=self.channel_type,
-                    data_sync=self.data_sync | other.data_sync,
-                    relaxed=(self.name == Instruction.relaxed_wait),
-                ),
-                FusionStatus.fused,
+            fused_operation = WaitOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
+                relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
             (check_data_sync_op(other) and (other.data_sync & SyncType.before))
@@ -322,13 +310,9 @@ class BarrierOperation(BaseOperation):
         self.barrier_info = barrier_info
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
-        if isinstance(other, BarrierOperation) and self.barrier_id == other.barrier_id:
-            return (self, FusionStatus.fused)
-        elif check_data_sync_op(other):
+        fused_operation = None
+        if check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        if isinstance(other, PipelineOperation) and other.check_initial_barrier():
-            return (None, FusionStatus.vanished)
 
         return fused_operation
 
@@ -359,15 +343,12 @@ class FlushOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
-            fused_operation = (
-                FlushOperation(
-                    channels_ids=self.channel_ids | other.channel_ids,
-                    channel_type=self.channel_type,
-                    data_sync=self.data_sync | other.data_sync,
-                ),
-                FusionStatus.fused,
+            fused_operation = FlushOperation(
+                channels_ids=self.channel_ids | other.channel_ids,
+                channel_type=self.channel_type,
+                data_sync=self.data_sync | other.data_sync,
             )
         elif (
             (check_data_sync_op(other) and (other.data_sync & SyncType.before))
@@ -416,20 +397,17 @@ class GetOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, GetOperation)
             and self.src_buff[0].size == other.src_buff[0].size
             and self.channel_type == other.channel_type
         ):
-            fused_operation = (
-                GetOperation(
-                    src_buff=self.src_buff + other.src_buff,
-                    dst_buff=self.dst_buff + other.dst_buff,
-                    channel_ids=self.channel_ids + other.channel_ids,
-                    channel_type=self.channel_type,
-                ),
-                FusionStatus.fused,
+            fused_operation = GetOperation(
+                src_buff=self.src_buff + other.src_buff,
+                dst_buff=self.dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
             )
 
         return fused_operation
@@ -501,7 +479,7 @@ class PutOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, PutOperation)
             and (
@@ -514,17 +492,14 @@ class PutOperation(BaseOperation):
             and self.src_buff[0].size == other.src_buff[0].size
             and self.channel_type == other.channel_type
         ):
-            fused_operation = (
-                PutOperation(
-                    src_buff=self.src_buff + other.src_buff,
-                    dst_buff=self.dst_buff + other.dst_buff,
-                    channel_ids=self.channel_ids + other.channel_ids,
-                    channel_type=self.channel_type,
-                    to_packet=self.to_packet,
-                    with_signal=self.with_signal,
-                    with_signal_and_flush=self.with_signal_and_flush,
-                ),
-                FusionStatus.fused,
+            fused_operation = PutOperation(
+                src_buff=self.src_buff + other.src_buff,
+                dst_buff=self.dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                to_packet=self.to_packet,
+                with_signal=self.with_signal,
+                with_signal_and_flush=self.with_signal_and_flush,
             )
 
         return fused_operation
@@ -609,7 +584,7 @@ class ReduceOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, ReduceOperation)
             and (
@@ -623,17 +598,14 @@ class ReduceOperation(BaseOperation):
             and self.channel_type == other.channel_type
             and self.reduce_operation == other.reduce_operation
         ):
-            fused_operation = (
-                ReduceOperation(
-                    self.local_src_buff + other.local_src_buff[1:],
-                    self.local_dst_buff,
-                    remote_src_buff=self.remote_src_buff + other.remote_src_buff,
-                    channel_ids=self.channel_ids + other.channel_ids,
-                    channel_type=self.channel_type,
-                    reduce_operation=self.reduce_operation,
-                    packet=self.packet,
-                ),
-                FusionStatus.fused,
+            fused_operation = ReduceOperation(
+                self.local_src_buff + other.local_src_buff[1:],
+                self.local_dst_buff,
+                remote_src_buff=self.remote_src_buff + other.remote_src_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=self.reduce_operation,
+                packet=self.packet,
             )
         if (
             isinstance(other, PutOperation)
@@ -647,19 +619,16 @@ class ReduceOperation(BaseOperation):
             and self.local_dst_buff[0] == other.src_buff[0]
             and other.channel_type == ChannelType.memory
         ):
-            fused_operation = (
-                ReduceOperation(
-                    self.local_src_buff,
-                    self.local_dst_buff,
-                    remote_src_buff=self.remote_src_buff,
-                    remote_dst_buff=self.remote_dst_buff + other.dst_buff,
-                    channel_ids=self.channel_ids,
-                    put_channel_ids=self.put_channel_ids + other.channel_ids,
-                    channel_type=self.channel_type,
-                    reduce_operation=self.reduce_operation,
-                    packet=self.packet,
-                ),
-                FusionStatus.fused,
+            fused_operation = ReduceOperation(
+                self.local_src_buff,
+                self.local_dst_buff,
+                remote_src_buff=self.remote_src_buff,
+                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids,
+                put_channel_ids=self.put_channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=self.reduce_operation,
+                packet=self.packet,
             )
         if (
             isinstance(other, PutOperation)
@@ -668,19 +637,16 @@ class ReduceOperation(BaseOperation):
             and self.local_dst_buff[0] == other.src_buff[0]
             and other.channel_type == ChannelType.memory
         ):
-            fused_operation = (
-                ReduceOperation(
-                    self.local_src_buff,
-                    self.local_dst_buff,
-                    remote_src_buff=self.remote_src_buff,
-                    remote_dst_buff=self.remote_dst_buff + other.dst_buff,
-                    channel_ids=self.channel_ids,
-                    put_channel_ids=self.put_channel_ids + other.channel_ids,
-                    channel_type=other.channel_type,
-                    reduce_operation=self.reduce_operation,
-                    packet=self.packet,
-                ),
-                FusionStatus.fused,
+            fused_operation = ReduceOperation(
+                self.local_src_buff,
+                self.local_dst_buff,
+                remote_src_buff=self.remote_src_buff,
+                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids,
+                put_channel_ids=self.put_channel_ids + other.channel_ids,
+                channel_type=other.channel_type,
+                reduce_operation=self.reduce_operation,
+                packet=self.packet,
             )
 
         return fused_operation
@@ -733,7 +699,7 @@ class GroupLoadReduce(BaseOperation):
         self.dst_chunk.index = replication_function(self.dst_chunk.index, num_instances, instance)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (
             isinstance(other, GroupStore)
             and self.buffer_type == other.buffer_type
@@ -742,17 +708,14 @@ class GroupLoadReduce(BaseOperation):
             and self.channel_ids == other.channel_ids
             and self.channel_type == other.channel_type
         ):
-            fused_operation = (
-                GroupLoadReduceStore(
-                    buffer_type=self.buffer_type,
-                    size=self.size,
-                    src_index=[self.buffer_offset],
-                    dst_index=[other.buffer_offset],
-                    channel_ids=self.channel_ids,
-                    channel_type=self.channel_type,
-                    reduce_operation=self.reduce_operation,
-                ),
-                FusionStatus.fused,
+            fused_operation = GroupLoadReduceStore(
+                buffer_type=self.buffer_type,
+                size=self.size,
+                src_index=[self.buffer_offset],
+                dst_index=[other.buffer_offset],
+                channel_ids=self.channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=self.reduce_operation,
             )
 
         return fused_operation
@@ -886,15 +849,13 @@ class PipelineOperation(BaseOperation):
             operation.shift_buffers(instance, num_instances, replication_function)
 
     def __add__(self, other):
-        fused_operation = (None, FusionStatus.none)
+        fused_operation = None
         if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
         elif isinstance(other, SyncOperation) and (
             (self.get_data_sync() & SyncType.after) or self.check_final_barrier()
         ):
-            fused_operation = (self, FusionStatus.fused)
-        elif isinstance(other, BarrierOperation) and self.check_final_barrier():
-            fused_operation = (self, FusionStatus.fused)
+            fused_operation = self
 
         return fused_operation
 
