@@ -59,17 +59,13 @@ class SyncOperation(BaseOperation):
         fused_operation = (None, FusionStatus.none)
         if isinstance(other, SyncOperation):
             fused_operation = (SyncOperation(), FusionStatus.fused)
-        elif isinstance(other, BarrierOperation) or (
-            isinstance(other, PipelineOperation) and other.data_sync & SyncType.before
+        elif isinstance(other, BarrierOperation):
+            fused_operation = (None, FusionStatus.vanished)
+        elif isinstance(other, PipelineOperation) and (
+            (other.get_data_sync() & SyncType.before) or other.check_initial_barrier()
         ):
             fused_operation = (None, FusionStatus.vanished)
-        elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-        ):
+        elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
@@ -153,16 +149,11 @@ class SemaphoreAcquireOperation(BaseOperation):
                 FusionStatus.fused,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-            or isinstance(other, PipelineOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -195,16 +186,11 @@ class SemaphoreReleaseOperation(BaseOperation):
                 FusionStatus.fused,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-            or isinstance(other, PipelineOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -250,16 +236,11 @@ class SignalOperation(BaseOperation):
                 FusionStatus.fused,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-            or isinstance(other, PipelineOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -306,16 +287,11 @@ class WaitOperation(BaseOperation):
                 FusionStatus.fused,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-            or isinstance(other, PipelineOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -347,14 +323,12 @@ class BarrierOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = (None, FusionStatus.none)
-        if (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-        ):
+        if isinstance(other, BarrierOperation) and self.barrier_id == other.barrier_id:
+            return (self, FusionStatus.fused)
+        elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        if isinstance(other, PipelineOperation) and other.check_initial_barrier():
+            return (None, FusionStatus.vanished)
 
         return fused_operation
 
@@ -396,16 +370,11 @@ class FlushOperation(BaseOperation):
                 FusionStatus.fused,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-            or isinstance(other, PipelineOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -880,31 +849,37 @@ class GroupLoadReduceStore(BaseOperation):
 
 @dataclass
 class PipelineOperation(BaseOperation):
-    def __init__(self, unit_size: int, num_chunks: int):
+    def __init__(self, unit_size: int, num_chunks: int, operations=[]):
         super().__init__(Instruction.pipeline)
         self.unit_size = unit_size
         self.num_chunks = num_chunks
-        self.operations = []
-        self.data_sync = SyncType.none
+        self.operations = operations
+
+    def _check_sync(self, operation, data_sync):
+        result = SyncType.none
+        if isinstance(operation, SyncOperation) or isinstance(operation, BarrierOperation):
+            result |= SyncType.before
+        if check_data_sync_op(operation):
+            result |= data_sync & operation.data_sync
+
+        return result
 
     def add_operation(self, operation):
-        if isinstance(operation, SyncOperation) or isinstance(operation, BarrierOperation):
-            if len(self.operations) == 0:
-                self.data_sync |= SyncType.before
-            self.data_sync |= SyncType.after
-        elif (
-            isinstance(operation, SemaphoreAcquireOperation)
-            or isinstance(operation, SemaphoreReleaseOperation)
-            or isinstance(operation, SignalOperation)
-            or isinstance(operation, WaitOperation)
-            or isinstance(operation, FlushOperation)
-        ):
-            if len(self.operations) == 0:
-                self.data_sync |= SyncType.before
-            self.data_sync |= SyncType.after
-        else:
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
         self.operations.append(operation)
+
+    def check_initial_barrier(self):
+        return len(self.operations) > 0 and isinstance(self.operations[0], BarrierOperation)
+
+    def check_final_barrier(self):
+        return len(self.operations) > 0 and isinstance(self.operations[-1], BarrierOperation)
+
+    def get_data_sync(self):
+        data_sync = SyncType.none
+        if len(self.operations) > 0:
+            data_sync |= self._check_sync(self.operations[0], SyncType.before)
+            data_sync |= self._check_sync(self.operations[-1], SyncType.after)
+
+        return data_sync
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for operation in self.operations:
@@ -912,15 +887,13 @@ class PipelineOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = (None, FusionStatus.none)
-        if self.data_sync & SyncType.after and (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-        ):
+        if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation) and self.data_sync & SyncType.after:
+        elif isinstance(other, SyncOperation) and (
+            (self.get_data_sync() & SyncType.after) or self.check_final_barrier()
+        ):
+            fused_operation = (self, FusionStatus.fused)
+        elif isinstance(other, BarrierOperation) and self.check_final_barrier():
             fused_operation = (self, FusionStatus.fused)
 
         return fused_operation
@@ -932,3 +905,13 @@ class PipelineOperation(BaseOperation):
         for operation in self.operations:
             result["ops"].append(operation.to_json())
         return result
+
+
+def check_data_sync_op(operation):
+    return (
+        isinstance(operation, SemaphoreAcquireOperation)
+        or isinstance(operation, SemaphoreReleaseOperation)
+        or isinstance(operation, SignalOperation)
+        or isinstance(operation, WaitOperation)
+        or isinstance(operation, FlushOperation)
+    )
