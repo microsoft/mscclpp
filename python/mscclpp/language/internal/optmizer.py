@@ -1,5 +1,5 @@
 from mscclpp.language.internal.operations import *
-from mscclpp.language.internal.types import SyncType
+from mscclpp.language.internal.types import SyncType, FusionStatus
 
 
 def fuse_instructions(operations):
@@ -9,6 +9,7 @@ def fuse_instructions(operations):
         next_operation_index = operation_index + 1
         current_operation = operations[operation_index]
         fused_operation = current_operation
+        fusion_status = FusionStatus.none
 
         if current_operation.name == Instruction.pipeline:
             pipeline_fused_operations = fuse_instructions(current_operation.operations)
@@ -16,13 +17,14 @@ def fuse_instructions(operations):
 
         while next_operation_index < len(operations):
             next_operation = operations[next_operation_index]
-            fused_operation = current_operation + next_operation
-            if fused_operation is None:
+            fused_operation, fusion_status = current_operation + next_operation
+            if fusion_status != FusionStatus.fused:
                 break
             current_operation = fused_operation
             next_operation_index += 1
 
-        fused_operations.append(current_operation)
+        if fusion_status != FusionStatus.vanished:
+            fused_operations.append(current_operation)
         operation_index = next_operation_index
 
     return fused_operations

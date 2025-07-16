@@ -19,7 +19,7 @@ class LoopIterationContext:
             key = (rank, tb)
             if key not in pipeline_operation:
                 pipeline_operation[key] = PipelineOperation(self.unit, self.num_chunks)
-            pipeline_operation[key].operations.append(operation)
+            pipeline_operation[key].add_operation(operation)
 
         for (rank, tb), pipeline in pipeline_operation.items():
             get_program().add_operation(rank, tb, pipeline)
