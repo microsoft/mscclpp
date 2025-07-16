@@ -105,6 +105,8 @@ class MSCCLPPProgram:
         return lambda value, num_instances, instance: value * num_instances + instance
 
     def set_loop_context(self, loop_context):
+        if self.loop_context is not None and loop_context is not None:
+            raise RuntimeError("Nested Pipelines are not Supported.")
         self.loop_context = loop_context
 
     def to_json(self):
