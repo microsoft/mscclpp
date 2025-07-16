@@ -421,4 +421,29 @@ void EthernetConnection::recvMessages() {
   }
 }
 
+void VortexScheduler::caller(const std::vector<IOTask>& tasks) {
+  if (tasks.empty()) {
+    return;
+  }
+  // transfer data forwarded by another endpoint in pipeline style
+  cudaMemcpyAsync(buf_ptr_->next_put().data(), tasks.front().src.data(), size_, cudaMemcpyDefault, *streams_[0]);
+  cudaStreamSynchronize(*streams_[0]);
+  buf_ptr_->produce();
+
+  for (size_t i = 1; i < tasks.size(); ++i) {
+    cudaMemcpyAsync(tasks[i - 1].dst.data(), buf_ptr_->next_get().data(), size_, cudaMemcpyDefault, *streams_[1]);
+    cudaMemcpyAsync(buf_ptr_->next_put().data(), tasks[i].src.data(), size_, cudaMemcpyDefault, *streams_[0]);
+
+    cudaStreamSynchronize(*streams_[0]);
+    cudaStreamSynchronize(*streams_[1]);
+
+    buf_ptr_->consume();
+    buf_ptr_->produce();
+  }
+
+  cudaMemcpyAsync(tasks.back().dst.data(), buf_ptr_->next_get().data(), size_, cudaMemcpyDefault, *streams_[1]);
+  cudaStreamSynchronize(*streams_[1]);
+  buf_ptr_->consume();
+}
+
 }  // namespace mscclpp

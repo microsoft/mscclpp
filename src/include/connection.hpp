@@ -88,6 +88,66 @@ class EthernetConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 };
 
+class BufferResource {
+ public:
+  virtual ~BufferResource() = default;
+  virtual RegisteredMemory next_get() = 0;
+  virtual RegisteredMemory next_put() = 0;
+  virtual void produce() = 0;
+  virtual void consume() = 0;
+};
+
+class DoubleBuffer : public BufferResource {
+  std::array<RegisteredMemory, 2> bufs_;
+  int cur_{0};
+
+ public:
+  DoubleBuffer(RegisteredMemory buf1, RegisteredMemory buf2) : bufs_({buf1, buf2}) {}
+  RegisteredMemory next_get() override { return bufs_[cur_]; }
+  RegisteredMemory next_put() override { return bufs_[cur_ ^ 1]; }
+  void produce() override { cur_ ^= 1; }
+  void consume() override {}
+};
+
+class IOTask {
+ public:
+  RegisteredMemory dst, src;
+  IOTask(RegisteredMemory dst_, RegisteredMemory src_) : dst(dst_), src(src_) {}
+};
+
+class Scheduler {
+ public:
+  virtual void launch(const std::vector<IOTask>& tasks) = 0;
+  virtual void sync() = 0;
+};
+
+class VortexScheduler : public Scheduler {
+  std::shared_ptr<DoubleBuffer> buf_ptr_;
+  std::thread t_;
+  int size_;
+  std::array<std::shared_ptr<CudaStreamWithFlags>, 2> streams_;
+
+ public:
+  VortexScheduler(std::shared_ptr<DoubleBuffer> buf_ptr, int size)
+      : buf_ptr_(buf_ptr),
+        size_(size),
+        streams_({std::make_shared<CudaStreamWithFlags>(0), std::make_shared<CudaStreamWithFlags>(0)}) {}
+  void launch(const std::vector<IOTask>& tasks) override { t_ = std::thread(&VortexScheduler::caller, this, tasks); }
+  void caller(const std::vector<IOTask>& tasks);
+  void sync() override { t_.join(); }
+};
+
+class IndirectConnection {
+  std::shared_ptr<BufferResource> buf_ptr_;
+  std::shared_ptr<Scheduler> scheduler_ptr_;
+
+ public:
+  IndirectConnection(std::shared_ptr<BufferResource> buf_ptr, std::shared_ptr<Scheduler> scheduler_ptr)
+      : buf_ptr_(buf_ptr), scheduler_ptr_(scheduler_ptr) {}
+  void launch(const std::vector<IOTask>& tasks) { scheduler_ptr_->launch(tasks); }
+  void sync() { scheduler_ptr_->sync(); }
+};
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_CONNECTION_HPP_
