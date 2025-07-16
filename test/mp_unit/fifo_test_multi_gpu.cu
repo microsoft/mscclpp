@@ -22,9 +22,9 @@ constexpr int WARMUP_TRIGGERS_PER_FIFO_SIZE = 2;
 
 void FifoMultiGPUTest::SetUp() {
   // Need at least two ranks within a node
-  if (gEnv->nRanksPerNode < 2) {
-    GTEST_SKIP();
-  }
+  // if (gEnv->nRanksPerNode < 2) {
+  //   GTEST_SKIP();
+  // }
   // Use only two ranks
   setNumRanksToUse(2);
   CommunicatorTestBase::SetUp();
@@ -171,24 +171,20 @@ void FifoMultiGPUTest::testFifo(FifoTestParams params) {
 
   ASSERT_EQ(portChannels.size(), 1);
 
-  // Allocate semaphore flags on both GPUs
-  cudaSetDevice(0);
-  uint64_t* gpu0_semaphore_flag;
-  cudaMalloc(&gpu0_semaphore_flag, sizeof(uint64_t));
-  cudaMemset(gpu0_semaphore_flag, 0, sizeof(uint64_t));
+  // Set the device for this process
+  cudaSetDevice(gEnv->rank);
+  uint64_t* local_semaphore_flag;
+  cudaMalloc(&local_semaphore_flag, sizeof(uint64_t));
+  cudaMemset(local_semaphore_flag, 0, sizeof(uint64_t));
 
-  cudaSetDevice(1);
-  uint64_t* gpu1_semaphore_flag;
-  cudaMalloc(&gpu1_semaphore_flag, sizeof(uint64_t));
-  cudaMemset(gpu1_semaphore_flag, 0, sizeof(uint64_t));
-
-  // Register semaphore flags as remote memory
-  auto gpu0_flag_regmem = communicator->registerMemory(gpu0_semaphore_flag, sizeof(uint64_t), ibTransport);
-  auto gpu1_flag_regmem = communicator->registerMemory(gpu1_semaphore_flag, sizeof(uint64_t), ibTransport);
+  // Register semaphore flag
+  auto local_flag_regmem = communicator->registerMemory(local_semaphore_flag, sizeof(uint64_t), ibTransport);
 
   // On host, after connections are established
-  auto semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[1].get());
-  auto portChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(gpu1_flag_regmem), proxyService->addMemory(gpu0_flag_regmem));
+  // Build semaphore and port channel for this rank
+  int peerRank = (gEnv->rank == 0) ? 1 : 0;
+  auto semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connectionFutures[peerRank].get());
+  auto portChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(remoteMemFutures[peerRank].get()), proxyService->addMemory(local_flag_regmem));
   auto portChannelHandle = portChannel.deviceHandle();
   cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
 
@@ -212,13 +208,13 @@ void FifoMultiGPUTest::testFifo(FifoTestParams params) {
   const int warmupTriggers =
       std::max(MIN_WARMUP_TRIGGERS, static_cast<int>(hostFifo->size() * WARMUP_TRIGGERS_PER_FIFO_SIZE));
 
-  // Launch on GPU0
-  cudaSetDevice(0);
-  kernelFifoPushAndSignal<<<1, 32>>>(gPortChannel, numTriggers, semaphoreId);
-
-  // Launch on GPU1
-  cudaSetDevice(1);
-  kernelWaitAndCheck<<<1, 32>>>(gPortChannel, gpu1_semaphore_flag, d_result);
+  if (gEnv->rank == 0) {
+    // Launch on GPU0
+    kernelFifoPushAndSignal<<<1, 32>>>(gPortChannel, numTriggers, semaphoreId);
+  } else if (gEnv->rank == 1) {
+    // Launch on GPU1
+    kernelWaitAndCheck<<<1, 32>>>(gPortChannel, local_semaphore_flag, d_result);
+  }
 
   int numParallel = 8;
   int flushPeriod = 64;
@@ -230,17 +226,16 @@ void FifoMultiGPUTest::testFifo(FifoTestParams params) {
   }
   hostFifo->flushTail(true);
 
-  proxyService->stopProxy();
-
   // Synchronize and check
-  cudaSetDevice(0);
-  cudaDeviceSynchronize();
-  cudaSetDevice(1);
   cudaDeviceSynchronize();
 
-  int h_result = 0;
-  cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost);
-  ASSERT_EQ(h_result, 0);
+  if (gEnv->rank == 1) {
+    int h_result = 0;
+    cudaMemcpy(&h_result, d_result, sizeof(int), cudaMemcpyDeviceToHost);
+    ASSERT_EQ(h_result, 0);
+  }
+
+  proxyService->stopProxy();
 }
 
 TEST_F(FifoMultiGPUTest, Fifo) {
