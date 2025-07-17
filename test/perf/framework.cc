@@ -159,6 +159,26 @@ int runMultipleTests(
     int size = getMPISize();
     int local_rank = rank;  // For simplicity, assume local_rank = rank
 
+    std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, size);
+    mscclpp::UniqueId id;
+    if (isMainProcess()) {
+      id = mscclpp::TcpBootstrap::createUniqueId();
+    }
+    MPI_Bcast((void*)&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+    bootstrap->initialize(id);
+
+    std::vector<mscclpp::Transport> trans {mscclpp::Transport::IB0, mscclpp::Transport::IB1};
+    cudaSetDevice(rank);
+    std::vector<std::shared_ptr<mscclpp::Connection>> conns;
+    std::shared_ptr<mscclpp::Communicator> comm = std::make_shared<mscclpp::Communicator>(bootstrap);
+    for (int i = 0; i < size; i++) {
+      if (i == rank) {
+        continue;
+      }
+      conns.push_back(comm->connect(trans[rank], i).get());
+    }
+    bootstrap->barrier();
+
     for (const auto& test : tests) {
       const std::string& testName = std::get<0>(test);
       const std::string& testDescription = std::get<1>(test);

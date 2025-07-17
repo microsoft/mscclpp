@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
