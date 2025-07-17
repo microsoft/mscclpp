@@ -7,7 +7,6 @@ from mscclpp.language.internal.types import (
     SyncType,
     DataAccess,
     DataAccessType,
-    FusionStatus,
 )
 from dataclasses import dataclass, field
 from typing import List
@@ -50,7 +49,6 @@ class RemoteChunk(LocalChunk):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
-@dataclass
 class SyncOperation(BaseOperation):
     def __init__(self):
         super().__init__(Instruction.nop)
@@ -75,7 +73,6 @@ class SyncOperation(BaseOperation):
         return result
 
 
-@dataclass
 class CopyOperation(BaseOperation):
     def __init__(
         self,
@@ -127,7 +124,6 @@ class CopyOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SemaphoreAcquireOperation(BaseOperation):
     def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.sem_acquire)
@@ -161,7 +157,6 @@ class SemaphoreAcquireOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SemaphoreReleaseOperation(BaseOperation):
     def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.sem_release)
@@ -195,7 +190,6 @@ class SemaphoreReleaseOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SignalOperation(BaseOperation):
     def __init__(
         self,
@@ -243,7 +237,6 @@ class SignalOperation(BaseOperation):
         return result
 
 
-@dataclass
 class WaitOperation(BaseOperation):
     def __init__(
         self,
@@ -291,7 +284,6 @@ class WaitOperation(BaseOperation):
         return result
 
 
-@dataclass
 class BarrierOperation(BaseOperation):
     __current_barriers = []
 
@@ -334,7 +326,6 @@ class BarrierOperation(BaseOperation):
             return hash(tuple(self.tb_list))
 
 
-@dataclass
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.flush)
@@ -367,7 +358,6 @@ class FlushOperation(BaseOperation):
         return result
 
 
-@dataclass
 class GetOperation(BaseOperation):
     def __init__(
         self,
@@ -425,7 +415,6 @@ class GetOperation(BaseOperation):
         return result
 
 
-@dataclass
 class PutOperation(BaseOperation):
     def __init__(
         self,
@@ -524,14 +513,19 @@ class ReduceOperation(BaseOperation):
         self,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
-        remote_src_buff: List[RemoteChunk] = [],
-        remote_dst_buff: List[RemoteChunk] = [],
-        channel_ids: List[int] = [],
-        put_channel_ids: List[int] = [],
+        remote_src_buff: List[RemoteChunk] = None,
+        remote_dst_buff: List[RemoteChunk] = None,
+        channel_ids: List[int] = None,
+        put_channel_ids: List[int] = None,
         channel_type: ChannelType = ChannelType.none,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
     ):
+        remote_src_buff = remote_src_buff if remote_src_buff is not None else []
+        remote_dst_buff = remote_dst_buff if remote_dst_buff is not None else []
+        channel_ids = channel_ids if channel_ids is not None else []
+        put_channel_ids = put_channel_ids if put_channel_ids is not None else []
+
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
                 super().__init__(Instruction.reduce_packet)
@@ -681,7 +675,7 @@ class GroupLoadReduce(BaseOperation):
         buffer_offset: int,
         size: int,
         dst_chunk: Chunk,
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
@@ -740,7 +734,7 @@ class GroupStore(BaseOperation):
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
     ):
         super().__init__(Instruction.group_store)
@@ -774,7 +768,7 @@ class GroupLoadReduceStore(BaseOperation):
         size: int,
         src_index: List[int],
         dst_index: List[int],
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
@@ -812,11 +806,11 @@ class GroupLoadReduceStore(BaseOperation):
 
 @dataclass
 class PipelineOperation(BaseOperation):
-    def __init__(self, unit_size: int, num_chunks: int, operations=[]):
+    def __init__(self, unit_size: int, num_chunks: int, operations=None):
         super().__init__(Instruction.pipeline)
         self.unit_size = unit_size
         self.num_chunks = num_chunks
-        self.operations = operations
+        self.operations = operations if operations is not None else []
 
     def _check_sync(self, operation, data_sync):
         result = SyncType.none
@@ -843,6 +837,15 @@ class PipelineOperation(BaseOperation):
             data_sync |= self._check_sync(self.operations[-1], SyncType.after)
 
         return data_sync
+
+    def local_data_access(self, sync_purpose=True):
+        data_access = []
+        for operation in self.operations:
+            for operation_data_access in operation.local_data_access(sync_purpose):
+                operation_data_access.operation_id = self.id
+                data_access.append(operation_data_access)
+
+        return data_access
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for operation in self.operations:

@@ -16,14 +16,13 @@ class BuffersAccess:
     def process_operations(self, operations):
         result_operations = []
         for operation in operations:
-            if operation.name == Instruction.pipeline:
-                pipeline_result_operations = self.process_pipeline_operations(operation.operations)
-                if pipeline_result_operations[1]:
-                    result_operations.append(SyncOperation())
-                operation.operations = pipeline_result_operations[0]
-            elif operation.name == Instruction.nop or operation.name == Instruction.barrier:
+            if operation.name == Instruction.nop or operation.name == Instruction.barrier:
                 self.clear_data_access()
             else:
+                if operation.name == Instruction.pipeline:
+                    pipeline_buffer_access = BuffersAccess()
+                    pipeline_result_operations = pipeline_buffer_access.process_operations(operation.operations)
+                    operation.operations = pipeline_result_operations
                 data_access = operation.local_data_access()
                 sync_added = False
                 for data_access_element in data_access:
@@ -35,46 +34,19 @@ class BuffersAccess:
 
         return result_operations
 
-    def process_pipeline_operations(self, operations):
-        result_operations = []
-        need_prev_sync = False
-        for i in range(len(operations)):
-            operation = operations[i]
-            if operation.name == Instruction.pipeline:
-                pipeline_result_operations = self.process_pipeline_operations(operation.operations)
-                if pipeline_result_operations[1]:
-                    result_operations.append(SyncOperation())
-                operation.operations = pipeline_result_operations[0]
-            elif operation.name == Instruction.nop or operation.name == Instruction.barrier:
-                self.clear_data_access()
-            else:
-                data_access = operation.local_data_access()
-                sync_added = False
-                for data_access_element in data_access:
-                    if self.compute_data_access(data_access_element) and not sync_added:
-                        if i == 0:
-                            need_prev_sync = True
-                        else:
-                            result_operations.append(SyncOperation())
-                        sync_added = True
-
-            result_operations.append(operation)
-
-        return (result_operations, need_prev_sync)
-
     def compute_data_access(self, data_access: DataAccess) -> bool:
         keys = self.intervals[data_access.buffer_type].keys()
         idx = self.lower_bound(0, len(keys) - 1, keys, data_access)
         conflict = False
 
-        while len(keys) > 0 and data_access.overlaps(keys[idx]):
+        while len(keys) > 0 and idx < len(keys) and data_access.overlaps(keys[idx]):
             conflict_data_access = keys[idx]
-            conflict_operation_type = self.intervals[data_access.buffer_type][conflict_data_access]
             if data_access.check_conflict(conflict_data_access):
                 self.clear_data_access()
                 conflict = True
                 break
 
+            conflict_operation_type = self.intervals[data_access.buffer_type][conflict_data_access]
             self.intervals[data_access.buffer_type].pop(conflict_data_access)
             if conflict_data_access.end > data_access.end:
                 self.intervals[data_access.buffer_type][

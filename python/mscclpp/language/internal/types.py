@@ -206,9 +206,3 @@ class ReplicationPolicy(Enum):
 
     def __str__(self):
         return self.value
-
-
-class FusionStatus(Enum):
-    fused = "fused"
-    vanished = "vanished"
-    none = "none"
