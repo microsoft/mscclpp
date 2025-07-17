@@ -68,9 +68,9 @@ class ThreadBlock:
         for op in self.ops:
             op.shift_buffers(instance, num_instances, replication_function)
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for op in self.ops:
-            op.shift_semaphores(instance, num_instances, replication_function)
+            op.shift_ids(instance, num_instances, replication_function)
 
     def to_json(self) -> dict:
         return {

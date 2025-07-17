@@ -27,7 +27,7 @@ class BaseOperation:
     def shift_buffers(self, instance, num_instances, replication_function):
         return
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         return
 
 
@@ -136,7 +136,7 @@ class SemaphoreAcquireOperation(BaseOperation):
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
 
@@ -174,7 +174,7 @@ class SemaphoreReleaseOperation(BaseOperation):
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
 
@@ -326,6 +326,9 @@ class BarrierOperation(BaseOperation):
 
         super().__init__(Instruction.barrier)
         self.barrier_info = barrier_info
+
+    def shift_ids(self, instance, num_instances, replication_function):
+        self.barrier_id = replication_function(self.barrier_id, num_instances, instance)
 
     def __add__(self, other):
         fused_operation = None
