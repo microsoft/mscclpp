@@ -159,26 +159,6 @@ int runMultipleTests(
     int size = getMPISize();
     int local_rank = rank;  // For simplicity, assume local_rank = rank
 
-    std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, size);
-    mscclpp::UniqueId id;
-    if (isMainProcess()) {
-      id = mscclpp::TcpBootstrap::createUniqueId();
-    }
-    MPI_Bcast((void*)&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
-    bootstrap->initialize(id);
-
-    std::vector<mscclpp::Transport> trans {mscclpp::Transport::IB0, mscclpp::Transport::IB1};
-    cudaSetDevice(rank);
-    std::vector<std::shared_ptr<mscclpp::Connection>> conns;
-    std::shared_ptr<mscclpp::Communicator> comm = std::make_shared<mscclpp::Communicator>(bootstrap);
-    for (int i = 0; i < size; i++) {
-      if (i == rank) {
-        continue;
-      }
-      conns.push_back(comm->connect(trans[rank], i).get());
-    }
-    bootstrap->barrier();
-
     for (const auto& test : tests) {
       const std::string& testName = std::get<0>(test);
       const std::string& testDescription = std::get<1>(test);
@@ -211,6 +191,86 @@ int runMultipleTests(
 
     // Don't cleanup MPI here - let the caller handle it
     // finalizeMPI();
+
+  } catch (const std::exception& e) {
+    if (g_mpi_rank == 0) {
+      std::cerr << "Error: " << e.what() << std::endl;
+    }
+    finalizeMPI();
+    return 1;
+  }
+
+  return totalResult;
+}
+
+int runMultipleTests(
+    int argc, char* argv[],
+    const std::vector<std::tuple<std::string, std::string, std::function<void(const TestContext&)>>>& tests) {
+  int totalResult = 0;
+
+  // Initialize MPI once for all tests
+  initializeMPI(argc, argv);
+
+  try {
+    // Get MPI information
+    int rank = getMPIRank();
+    int size = getMPISize();
+    int local_rank = rank;  // For simplicity, assume local_rank = rank
+
+    std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, size);
+    mscclpp::UniqueId id;
+    if (isMainProcess()) {
+      id = mscclpp::TcpBootstrap::createUniqueId();
+    }
+    MPI_Bcast((void*)&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
+    bootstrap->initialize(id);
+
+    std::vector<mscclpp::Transport> trans {mscclpp::Transport::IB0, mscclpp::Transport::IB1};
+    cudaSetDevice(rank);
+    std::vector<std::shared_ptr<mscclpp::Connection>> conns;
+    std::shared_ptr<mscclpp::Communicator> comm = std::make_shared<mscclpp::Communicator>(bootstrap);
+    for (int i = 0; i < size; i++) {
+      if (i == rank) {
+        continue;
+      }
+      conns.push_back(comm->connect(trans[rank], i).get());
+    }
+    bootstrap->barrier();
+
+    // Create test context
+    TestContext context;
+    context.rank = rank;
+    context.size = size;
+    context.local_rank = local_rank;
+    context.communicator = comm;
+    context.connections = conns;
+
+    for (const auto& test : tests) {
+      const std::string& testName = std::get<0>(test);
+      const std::string& testDescription = std::get<1>(test);
+      const std::function<void(const TestContext&)>& testFunction = std::get<2>(test);
+
+      if (rank == 0) {
+        std::cout << "Running test: " << testName << std::endl;
+        if (!testDescription.empty()) {
+          std::cout << "  " << testDescription << std::endl;
+        }
+      }
+
+      try {
+        // Run the individual test function with test context
+        testFunction(context);
+
+        // Synchronize before moving to next test
+        MPI_Barrier(MPI_COMM_WORLD);
+
+      } catch (const std::exception& e) {
+        if (rank == 0) {
+          std::cerr << "Error in test " << testName << ": " << e.what() << std::endl;
+        }
+        totalResult = 1;
+      }
+    }
 
   } catch (const std::exception& e) {
     if (g_mpi_rank == 0) {

@@ -20,6 +20,19 @@
 namespace mscclpp {
 namespace test {
 
+// Forward declarations
+class Communicator;
+class Connection;
+
+// Test context structure containing MPI and MSCCLPP objects
+struct TestContext {
+  int rank;
+  int size;
+  int local_rank;
+  std::shared_ptr<mscclpp::Communicator> communicator;
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+};
+
 // Test result structure
 struct TestResult {
   std::string test_name;
@@ -38,6 +51,10 @@ namespace utils {
 int runMultipleTests(
     int argc, char* argv[],
     const std::vector<std::tuple<std::string, std::string, std::function<void(int, int, int)>>>& tests);
+
+int runMultipleTests(
+    int argc, char* argv[],
+    const std::vector<std::tuple<std::string, std::string, std::function<void(const TestContext&)>>>& tests);
 
 // MPI management
 void initializeMPI(int argc, char* argv[]);
