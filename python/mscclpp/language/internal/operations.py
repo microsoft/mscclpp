@@ -59,9 +59,7 @@ class SyncOperation(BaseOperation):
             fused_operation = SyncOperation()
         elif isinstance(other, BarrierOperation):
             fused_operation = other
-        elif isinstance(other, PipelineOperation) and (
-            (other.get_data_sync() & SyncType.before) or other.check_initial_barrier()
-        ):
+        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before):
             fused_operation = other
         elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
@@ -824,12 +822,6 @@ class PipelineOperation(BaseOperation):
     def add_operation(self, operation):
         self.operations.append(operation)
 
-    def check_initial_barrier(self):
-        return len(self.operations) > 0 and isinstance(self.operations[0], BarrierOperation)
-
-    def check_final_barrier(self):
-        return len(self.operations) > 0 and isinstance(self.operations[-1], BarrierOperation)
-
     def get_data_sync(self):
         data_sync = SyncType.none
         if len(self.operations) > 0:
@@ -855,9 +847,7 @@ class PipelineOperation(BaseOperation):
         fused_operation = None
         if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation) and (
-            (self.get_data_sync() & SyncType.after) or self.check_final_barrier()
-        ):
+        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after):
             fused_operation = self
 
         return fused_operation
