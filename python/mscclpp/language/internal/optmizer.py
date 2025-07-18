@@ -10,6 +10,10 @@ def fuse_instructions(operations):
         current_operation = operations[operation_index]
         fused_operation = current_operation
 
+        if current_operation.name == Instruction.pipeline:
+            pipeline_fused_operations = fuse_instructions(current_operation.operations)
+            current_operation.operations = pipeline_fused_operations
+
         while next_operation_index < len(operations):
             next_operation = operations[next_operation_index]
             fused_operation = current_operation + next_operation
@@ -37,6 +41,10 @@ def adding_data_sync(operations):
     }
 
     for operation in operations:
+        if operation.name == Instruction.pipeline:
+            pipeline_result_operations = adding_data_sync(operation.operations)
+            operation.operations = pipeline_result_operations
+
         if operation.name in data_sync_operations and (
             operation.data_sync == SyncType.before or operation.data_sync == SyncType.both
         ):
