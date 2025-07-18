@@ -11,4 +11,5 @@ target_sources(unit_tests PRIVATE
     utils_tests.cc
     utils_internal_tests.cc
     compile_tests.cu
+    local_channel_tests.cu
 )

@@ -67,9 +67,12 @@ MSCCL++ also provides efficient synchronization methods, `signal()`, `flush()`, 
 ```cpp
 // Only one thread is needed for this function.
 __device__ void barrier() {
-  // Inform the peer GPU that I have arrived at this point.
+  // Inform the peer GPU that I have arrived at this point and
+  // all previous memory operations are done.
   channel.signal();
-  // Flush the previous signal() call, which will wait for completion of signaling.
+  // One may call flush() to make sure all previous channel operations
+  // are complete from the local device's perspective.
+  // flush() is unnecessary in this example.
   channel.flush();
   // Wait for the peer GPU to call signal().
   channel.wait();
@@ -167,6 +170,7 @@ MSCCL++ is being used in many amazing projects to power their communication need
 - ROCm Communication Collectives Library (RCCL) [![GitHub stars](https://img.shields.io/github/stars/ROCm/rccl?style=social)]( https://github.com/ROCm/rccl)
 - Splitwise: Efficient generative LLM inference using phase splitting [[Paper link](https://arxiv.org/abs/2311.18677)], Accepted at ISCA 2024, Best Paper Nominee
 - TVM: Open deep learning compiler stack for cpu, gpu and specialized accelerators [![GitHub stars](https://img.shields.io/github/stars/apache/tvm?style=social)](https://github.com/apache/tvm)
+- SGLang: A fast serving framework for large language models and vision language models. [![GitHub stars](https://img.shields.io/github/stars/sgl-project/sglang?style=social)](https://github.com/sgl-project/sglang)
 
 ## Contributing
 

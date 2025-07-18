@@ -9,15 +9,13 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel_device.hpp>
 
 #include "execution_common.hpp"
-#if defined(MSCCLPP_DEVICE_COMPILE)
-#include <mscclpp/gpu_data_types.hpp>
-#include <mscclpp/nvls_device.hpp>
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 namespace {
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -141,34 +139,7 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
-template <typename T>
-struct VectorType {
-  using type = T;
-  using nvls_type = T;
-  using nvls_type2 = T;
-};
-
-template <>
-struct VectorType<__half> {
-  using type = __half2;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-
-template <>
-struct VectorType<__bfloat16> {
-  using type = __bfloat162;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-
-template <>
-struct VectorType<float> {
-  using type = float;
-  using nvls_type = uint4;
-  using nvls_type2 = uint1;
-};
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+#endif  // MSCCLPP_DEVICE_COMPILE
 
 }  // namespace
 
@@ -182,7 +153,7 @@ __device__ DeviceSemaphore* deviceSemaphores;
 
 __shared__ DeviceHandle<BaseMemoryChannel>* memoryChannels_;
 __shared__ DeviceHandle<BasePortChannel>* portChannels_;
-__shared__ DeviceHandle<NvlsConnection::DeviceMulticastPointer>* nvlsChannels_;
+__shared__ DeviceHandle<SwitchChannel>* nvlsChannels_;
 __shared__ void** memoryChannelBufferPtrs_;
 __shared__ MemoryId* portChannelBufferIds_;
 __shared__ BufferType* memoryChannelBufferTypes_;
@@ -630,38 +601,52 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
-  using vectorType = typename VectorType<T>::type;
-  using nvlsType = typename VectorType<T>::nvls_type;
-  // nvls can only handle 4 bytes alignment
+  static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
   if (size <= 0) {
     return;
   }
-
-  const uint32_t nInt4 = size / sizeof(nvlsType);
   const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
   const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
-  assert(srcOffset % sizeof(vectorType) == 0 && dstOffset % sizeof(vectorType) == 0);
+  assert(size % sizeof(T) == 0);
+  assert(srcOffset % sizeof(T) == 0);
+  assert(dstOffset % sizeof(T) == 0);
 
-  const uint32_t srcOffset4 = srcOffset / sizeof(nvlsType);
-  const uint32_t dstOffset4 = dstOffset / sizeof(nvlsType);
-  nvlsType* src4 = (nvlsType*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
-  nvlsType* dst4 = (nvlsType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
-  for (uint32_t idx = threadIdx.x; idx < nInt4; idx += blockDim.x) {
-    nvlsType val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val, (vectorType*)(src4 + srcOffset4 + idx));
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)(dst4 + dstOffset4 + idx));
-  }
-  // handle rest of data
-  uint32_t processed = nInt4 * sizeof(nvlsType);
-  using nvlsType2 = typename VectorType<T>::nvls_type2;
-  const uint32_t startIdx = (srcOffset + processed) / sizeof(nvlsType2);
-  const uint32_t endIdx = (dstOffset + size) / sizeof(nvlsType2);
-  for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
-    nvlsType2 val;
-    DeviceMulticastPointerDeviceHandle::multimemLoadReduce(val,
-                                                           (vectorType*)nvlsChannels_[op.nvlsInputIndex].mcPtr + idx);
-    DeviceMulticastPointerDeviceHandle::multimemStore(val, (vectorType*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + idx);
+  T* src = (T*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
+  T* dst = (T*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
+  if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
+    const size_t nElem = size / sizeof(T);
+    const size_t srcOffsetElem = srcOffset / sizeof(T);
+    const size_t dstOffsetElem = dstOffset / sizeof(T);
+    VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
+    VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
+    for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
+      auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
+    }
+  } else {
+    // handle data in 16-byte unit
+    using Type16 = typename mscclpp::VectorType<T, 16 / sizeof(T)>;
+    const size_t nType16 = size / sizeof(Type16);
+    const size_t srcOffset16 = srcOffset / sizeof(Type16);
+    const size_t dstOffset16 = dstOffset / sizeof(Type16);
+    Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
+    Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
+    for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
+      Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+    }
+    // handle rest of data
+    constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
+    using TypeRest = typename mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+    const size_t processed = nType16 * sizeof(Type16);
+    const size_t nRest = (size - processed) / sizeof(TypeRest);
+    TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
+    TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
+    for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
+      TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
+      SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+    }
   }
 }
 #endif
