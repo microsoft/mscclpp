@@ -150,6 +150,15 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   if (rank == 0) {
     // Launch on GPU0
     kernelFifoPushAndSignal<<<numParallel, 1, 0, stream>>>(portChannelHandle, numTriggers, semaphoreId);
+
+    printf("Launching kernel with %d triggers on rank %d\n", numTriggers, rank);
+    utils::CUDA_CHECK(cudaGetLastError());
+
+    // Process all triggers
+    if (!consumeTriggers(hostFifo, numTriggers, numParallel, connection, remoteFlagRegMem)) {
+      return {0.0, 0.0, 0, 0};
+    }
+    printf("Finished consuming %d triggers on rank %d\n", numTriggers * numParallel, rank);
   } else if (rank == 1) {
     // Allocate result variable for this function
     int* dResult;
@@ -158,16 +167,13 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
     
     // Launch on GPU1
     kernelWaitAndCheck<<<numParallel, 1, 0, stream>>>(portChannelHandle, localSemaphoreFlag, dResult);
+    printf("Launching kernel with %d triggers on rank %d\n", numTriggers, rank);
+    utils::CUDA_CHECK(cudaGetLastError());
     
     // Clean up
     cudaFree(dResult);
   }
-  utils::CUDA_CHECK(cudaGetLastError());
 
-  // Process all triggers
-  if (!consumeTriggers(hostFifo, numTriggers, numParallel, connection, remoteFlagRegMem)) {
-    return {0.0, 0.0, 0, 0};
-  }
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
 
   timer.stop();
@@ -190,8 +196,8 @@ void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t s
   auto [pushThroughput, pushDuration, numTriggers, warmupTriggers] =
       runSingleKernelVariant(kernelFifoPush, hostFifo, stream, numParallel, rank, gPortChannel, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
 
-  auto [syncThroughput, syncDuration, syncNumTriggers, syncWarmupTriggers] =
-      runSingleKernelVariant(kernelFifoPushSync, hostFifo, stream, numParallel, rank, gPortChannel, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
+  // auto [syncThroughput, syncDuration, syncNumTriggers, syncWarmupTriggers] =
+  //     runSingleKernelVariant(kernelFifoPushSync, hostFifo, stream, numParallel, rank, gPortChannel, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
 
   auto formatThroughput = [](double thru) {
     return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
@@ -199,9 +205,9 @@ void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t s
 
   std::string prefix = "p" + std::to_string(numParallel) + "_";
   combinedMetrics[prefix + "push_throughput"] = formatThroughput(pushThroughput);
-  combinedMetrics[prefix + "push_sync_throughput"] = formatThroughput(syncThroughput);
+  // combinedMetrics[prefix + "push_sync_throughput"] = formatThroughput(syncThroughput);
   combinedMetrics[prefix + "push_duration_us"] = pushDuration;
-  combinedMetrics[prefix + "push_sync_duration_us"] = syncDuration;
+  // combinedMetrics[prefix + "push_sync_duration_us"] = syncDuration;
   combinedMetrics[prefix + "num_triggers"] = numTriggers;
   combinedMetrics[prefix + "warmup_triggers"] = warmupTriggers;
 }
@@ -263,19 +269,20 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     remoteMemFutures[r] = communicator->recvMemory(r, 0);
   }
 
-  // Setup port channels
-  std::vector<mscclpp::PortChannel> portChannels;
-  for (int r = 0; r < worldSize; r++) {
-    if (r == rank) {
-      continue;
-    }
-    mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connections[r < rank ? r : r-1]);
-    portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
-                                                        proxyService->addMemory(sendBufRegMem)));
-  }
+  // // Setup port channels
+  // std::vector<mscclpp::PortChannel> portChannels;
+  // for (int r = 0; r < worldSize; r++) {
+  //   if (r == rank) {
+  //     continue;
+  //   }
+  //   mscclpp::SemaphoreId cid = proxyService->buildAndAddSemaphore(*communicator, connections[r < rank ? r : r-1]);
+  //   portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
+  //                                                       proxyService->addMemory(sendBufRegMem)));
+  // }
+  // printf("Finished port channel setup for rank %d\n", rank);
 
-  std::vector<mscclpp::PortChannelDeviceHandle> portChannelHandles;
-  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+  // std::vector<mscclpp::PortChannelDeviceHandle> portChannelHandles;
+  // for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
 
   // Allocate and setup local semaphore flag
   uint64_t* localSemaphoreFlag;
@@ -284,15 +291,6 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
 
   // Register semaphore flag
   auto localFlagRegmem = communicator->registerMemory(localSemaphoreFlag, sizeof(uint64_t), transport);
-
-  // Setup port channel for peer communication (for 2-GPU test)
-  if (worldSize >= 2) {
-    int peerRank = (rank == 0) ? 1 : 0;
-    auto semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connections[peerRank < rank ? peerRank : peerRank-1]);
-    auto portChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(remoteMemFutures[peerRank].get()), proxyService->addMemory(localFlagRegmem));
-    auto portChannelHandle = portChannel.deviceHandle();
-    cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
-  }
 
   int* dResult;
   cudaMalloc(&dResult, sizeof(int));
@@ -357,10 +355,19 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
       cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
     }
   }
+  printf("Finished gPortChannel setup for rank %d\n", rank);
 
   for (int numParallel : config.parallelismLevels) {
+    // Add synchronization before each test iteration
+    MPI_Barrier(MPI_COMM_WORLD);
+
     runFifoTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
+
+    // Add synchronization after each test iteration
+    MPI_Barrier(MPI_COMM_WORLD);
   }
+
+  printf("Finished runFifoTestVariant for rank %d\n", rank);
 
   std::map<std::string, std::string> testParams;
   testParams["fifo_size"] = std::to_string(static_cast<int>(hostFifo->size()));
@@ -374,6 +381,7 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   testParams["parallelism_levels"] = parallelismStream.str();
 
   utils::recordResult(testName, "fifo", combinedMetrics, testParams);
+  printf("Finished recording results for rank %d\n", rank);
 
   // Cleanup
   utils::CUDA_CHECK(cudaStreamDestroy(stream));
@@ -381,6 +389,7 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   cudaFree(dResult);
   
   proxyService->stopProxy();
+  printf("Finished stopping proxy for rank %d\n", rank);
 }
 
 void runAllFifoTests(const mscclpp::test::TestContext& context) {
