@@ -79,21 +79,21 @@ But for multi-thread-blocks synchronization and cross ranks synchronization, we 
 MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.  
 
 
-## Pipeline Loop (TBD)
-Pipeline enables overlapping operations across thread blocks. Using Rank.semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
+## Pipeline Loop
+Pipeline enables overlapping operations across thread blocks. Using Semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
 
-This example demonstrates a pipelined loop that copies data from an input buffer to a scratch buffer, then transfers it to other peers. The `Rank.semaphore` is used to synchronize the two stages. `unit` specifies the size of each chunk, and `num_chunks` indicates how many chunks will be processed in the loop.
+This example demonstrates a pipelined loop that copies data from an input buffer to a scratch buffer, then transfers it to other peers. The `Semaphore` is used to synchronize the two stages. `unit` specifies the size of each chunk, and `num_chunks` indicates how many chunks will be processed in the loop.
 
 ```python
-sem = Rank.Semaphore(rank=rank, initial_value=1)
-rank = Rank(src_rank)
-with Loop.iteration(unit=2**20, num_chunks=1) as iter:
+sem = Semaphore(rank=rank, initial_value=1)
+rank = Rank(rank)
+channel = MemoryChannel(dst_rank, src_rank)
+with LoopIterationContext(unit=2**20, num_chunks=1):
     # The dst_chunk and src_chunk sizes should match the num_chunks parameter in the loop context.
-    rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
+    rank.copy(dst_chunk, src_chunk, tb=0)
     sem.release(tb=0)
-    channel = Channel(dst_rank, src_rank, channel_type)
     sem.acquire(tb=1)
-    channel.put(other_peer_chunk, dst_chunk, tb=1, iter_context=iter)
+    channel.put(other_peer_chunk, dst_chunk, tb=1)
 ``` 
 
 
@@ -105,38 +105,38 @@ nranks = 2
 for i in range(nranks):
     src_rank = i
     dst_rank = (i + 1) % nranks
-    chan = Channel(dst_rank, src_rank, channel_type=Channel.memory)
-    chan1 = Channel(dst_rank, src_rank, channel_type=Channel.memory)
+    chan = MemoryChannel(dst_rank, src_rank)
+    chan1 = MemoryChannel(dst_rank, src_rank)
     rank = Rank(i)
-    sem0 = Rank.Semaphore(rank=i, size=1)
-    sem1 = Rank.Semaphore(rank=i, size=1)
+    sem0 = Semaphore(rank=i, initial_value=1)
+    sem1 = Semaphore(rank=i, initial_value=1)
     input_buffer = rank.get_input_buffer()
     output_buffer = rank.get_output_buffer()
     scratch_buffer = Buffer(i, scratch_buffer_size)
-    with Loop.iteration(unit=2**20, num_chunks=1) as iter:
+    with Loop.iteration(unit=2**20, num_chunks=1):
         # copy data to scratch buffer
         for offset in range(nranks):
             dst_chunk = scratch_buffer[offset:offset+1]
             src_chunk = input_buffer[offset:offset+1]
-            rank.copy(dst_chunk, src_chunk, tb=0, iter_context=iter)
-        chan.signal(tb=0, sync="before")
-        chan.wait(tb=0, sync="after")
+            rank.copy(dst_chunk, src_chunk, tb=0)
+        chan.signal(tb=0, SyncType.before)
+        chan.wait(tb=0, SyncType.after)
         sem0.release(tb=0)
 
         # do allreduce in scratch buffer
-        sem0.acquire(tb=1, sync="after")
-        nvls_chan.group_load_reduce(offset, size=1, op="sum", tb=1, iter_context=iter)
-        nvls_chan.group_store(offset, size=1, tb=1, iter_context=iter)
-        chan1.signal(tb=1, sync="before")
+        sem0.acquire(tb=1, SyncType.after)
+        nvls_chan.group_load_reduce(buffer_offset=i, size=1, dst_chunk=scratch_buffer[i:i+1], tb=1)
+        nvls_chan.group_store(src_chunk=input_buffer[i:i+1], buffer_offset=i, size=1, tb=1)
+        chan1.signal(tb=1, SyncType.before)
         sem1.release(tb=1)
 
         # copy data back to output buffer
         sem1.acquire(tb=2)
-        chan1.wait(tb=2, sync="after")
+        chan1.wait(tb=2, SyncType.after)
         for index in range(nranks):
             dst_chunk = output_buffer[index:index+1]
             src_chunk = scratch_buffer[index:index+1]
-            rank.copy(dst_chunk, src_chunk, tb=2, iter_context=iter)
+            rank.copy(dst_chunk, src_chunk, tb=2)
 ```
 
 ## Generate execution plan
