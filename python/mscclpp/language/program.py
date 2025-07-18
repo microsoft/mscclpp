@@ -87,13 +87,13 @@ class MSCCLPPProgram:
             )
 
     def get_id_replication_policy_function(self):
-        return lambda value, num_instances, instance: value * num_instances + instance
+        return lambda value, instance, num_instances: value * num_instances + instance
 
     def get_buffer_replication_policy_function(self):
         if self.replication_policy == ReplicationPolicy.interleaved:
-            return lambda value, num_instances, instance: value * num_instances + instance
+            return lambda value, instance, num_instances: value * num_instances + instance
         else:
-            return lambda value, num_instances, instance: value
+            return lambda value, instance, num_instances: value
 
     def to_json(self):
         json_obj = {

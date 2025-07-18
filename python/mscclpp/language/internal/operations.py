@@ -111,9 +111,9 @@ class CopyOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         return None
@@ -138,7 +138,7 @@ class SemaphoreAcquireOperation(BaseOperation):
 
     def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
-            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -176,7 +176,7 @@ class SemaphoreReleaseOperation(BaseOperation):
 
     def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
-            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -328,7 +328,7 @@ class BarrierOperation(BaseOperation):
         self.barrier_info = barrier_info
 
     def shift_ids(self, instance, num_instances, replication_function):
-        self.barrier_id = replication_function(self.barrier_id, num_instances, instance)
+        self.barrier_id = replication_function(self.barrier_id, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -423,9 +423,9 @@ class GetOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -505,9 +505,9 @@ class PutOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -606,13 +606,13 @@ class ReduceOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.local_src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.local_dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.remote_src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.remote_dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -726,8 +726,8 @@ class GroupLoadReduce(BaseOperation):
         self.reduce_operation = reduce_operation
 
     def shift_buffers(self, instance, num_instances, replication_function):
-        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
-        self.dst_chunk.index = replication_function(self.dst_chunk.index, num_instances, instance)
+        self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
+        self.dst_chunk.index = replication_function(self.dst_chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -783,8 +783,8 @@ class GroupStore(BaseOperation):
         self.channel_type = channel_type
 
     def shift_buffers(self, instance, num_instances, replication_function):
-        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
-        self.src_chunk.index = replication_function(self.src_chunk.index, num_instances, instance)
+        self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
+        self.src_chunk.index = replication_function(self.src_chunk.index, instance, num_instances)
 
     def __add__(self, other):
         return None
@@ -823,9 +823,9 @@ class GroupLoadReduceStore(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for i in range(len(self.src_index)):
-            self.src_index[i] = replication_function(self.src_index[i], num_instances, instance)
+            self.src_index[i] = replication_function(self.src_index[i], instance, num_instances)
         for i in range(len(self.dst_index)):
-            self.dst_index[i] = replication_function(self.dst_index[i], num_instances, instance)
+            self.dst_index[i] = replication_function(self.dst_index[i], instance, num_instances)
 
     def __add__(self, other):
         return None
