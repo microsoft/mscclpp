@@ -26,7 +26,6 @@ Design
 - :doc:`Design <design/design>` doc for those who want to understand the internals of MSCCL++.
 - :doc:`NCCL over MSCCL++ <design/nccl-over-mscclpp>` doc for those who want to understand how to use NCCL over MSCCL++.
 - :doc:`MSCCL++ DSL <design/mscclpp-dsl>` doc for those who want to understand the MSCCL++ DSL.
-- :doc:`MSCCL++ DSL <design/mscclpp-dsl-next>` doc for those who want to understand the MSCCL++ DSL Next version.
 
 .. toctree::
    :maxdepth: 1
@@ -36,7 +35,6 @@ Design
    design/design
    design/nccl-over-mscclpp
    design/mscclpp-dsl
-   design/mscclpp-dsl-next
 
 Performance
 ---------------
