@@ -145,4 +145,4 @@ The MSCCL++ DSL generates an execution plan in JSON format, which describes the 
 For the details of the execution plan, please refer to the [MSCCL++ Execution Plan](./mscclpp-execution-plan.md).
 
 ## All2All support
-For now, DSL only support static all2all algorithm. For all2allv support, we need to get the send/recv size at the runtime. It may require some placeholder at the Json execution plan and relace to the real size at the runtime. If we could make chunk size be variable, we could use the same way to support all2allv.
+Currently, the DSL only supports the static all2all algorithm. To support all2allv, we need to obtain the send/receive sizes at runtime. This may require using placeholders in the JSON execution plan, which would be replaced with the actual sizes during execution. If we can make the chunk size variable, the same approach could be used to support all2allv.
