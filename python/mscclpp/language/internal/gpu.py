@@ -4,6 +4,7 @@ from mscclpp.language.internal.operations import BaseOperation
 from dataclasses import dataclass, field
 from collections import *
 from typing import List
+import copy
 
 
 @dataclass
@@ -14,6 +15,7 @@ class Gpu:
     scratch_chunks: int = 0
     threadblocks: list = field(default_factory=list)
     remote_buffers: OrderedDict = field(default_factory=OrderedDict)
+    semaphores: list = field(default_factory=list)
 
     __channels: dict = field(default_factory=dict, init=False)
     __nvls_channels: list = field(default_factory=list, init=False)
@@ -47,6 +49,9 @@ class Gpu:
 
         return self.threadblocks[tb].add_remote_buffer(remote_buffer_id, channel_access)
 
+    def add_semaphore(self, semaphore):
+        self.semaphores.append(Gpu.Semaphore(semaphore.initial_value))
+
     def add_operation(self, tb: int, operation: BaseOperation):
         for i in range(len(self.threadblocks), tb + 1):
             self.threadblocks.append(ThreadBlock(self.id, i))
@@ -65,6 +70,47 @@ class Gpu:
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
 
+    def replicate_instances(
+        self, instances, channel_replication_function, buffer_replication_function, semaphore_replication_function
+    ):
+        threadblocks = []
+
+        self.input_chunks *= instances
+        self.output_chunks *= instances
+        self.scratch_chunks *= instances
+
+        new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
+        new_semaphores = []
+        for _ in range(instances):
+            if ChannelType.memory in self.__channels:
+                new_channels[ChannelType.memory].extend(self.__channels[ChannelType.memory].connected_to)
+            if ChannelType.port in self.__channels:
+                new_channels[ChannelType.port].extend(self.__channels[ChannelType.port].connected_to)
+            new_channels[ChannelType.switch].extend(self.__nvls_channels)
+
+            new_semaphores.extend(self.semaphores)
+
+        if ChannelType.memory in self.__channels:
+            self.__channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
+        if ChannelType.port in self.__channels:
+            self.__channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
+        self.__nvls_channels = new_channels[ChannelType.switch]
+
+        self.semaphores = new_semaphores
+
+        for threadblock in self.threadblocks:
+            for instance in range(instances):
+                tb = copy.deepcopy(threadblock)
+                tb.id = threadblock.id * instances + instance
+
+                tb.shift_channels(instance, instances, channel_replication_function)
+                tb.shift_buffers(instance, instances, buffer_replication_function)
+                tb.shift_semaphores(instance, instances, semaphore_replication_function)
+
+                threadblocks.append(tb)
+
+        self.threadblocks = threadblocks
+
     def to_json(self) -> dict:
         return {
             "id": self.id,
@@ -75,6 +121,7 @@ class Gpu:
             "channels": [ch.to_json() for ch in self.__channels.values()]
             + [ch.to_json() for ch in self.__nvls_channels],
             "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
+            "semaphores": [sm.to_json() for sm in self.semaphores],
         }
 
     @dataclass
@@ -97,3 +144,10 @@ class Gpu:
                 "buffer_type": self.buffer_type.value,
                 "rank_groups": [rg.to_json() for rg in self.rank_groups],
             }
+
+    @dataclass
+    class Semaphore:
+        init_value: int
+
+        def to_json(self):
+            return {"init_value": self.init_value}

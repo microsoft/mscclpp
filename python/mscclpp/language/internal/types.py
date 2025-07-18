@@ -70,6 +70,8 @@ class Instruction(Enum):
     transform_to_packet = "tpkt"
     reduce = "re"
     reduce_packet = "repkt"
+    sem_acquire = "sem_acquire"
+    sem_release = "sem_release"
     signal = "signal"
     wait = "wait"
     relaxed_signal = "rlxsignal"
@@ -89,6 +91,7 @@ class Instruction(Enum):
     group_store = "gstore"
     group_load_reduce = "glre"
     group_load_reduce_store = "glres"
+    pipeline = "pipeline"
 
     def __str__(self):
         return self.value
@@ -195,3 +198,11 @@ class DataAccess:
             and self.operation_id != other.operation_id
             and (self.data_access_type != DataAccessType.read or other.data_access_type != DataAccessType.read)
         )
+
+
+class ReplicationPolicy(Enum):
+    interleaved = "interleaved"
+    none = "none"
+
+    def __str__(self):
+        return self.value

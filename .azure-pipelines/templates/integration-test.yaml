@@ -205,6 +205,30 @@ steps:
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+- task: Bash@3
+  name: FifoPerfBenchmark
+  displayName: FIFO Performance Benchmark
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      : > azureuser@10.0.0.4
+      tail -f azureuser@10.0.0.4 &
+      CHILD_PID=$!
+      parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"\
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+        set -e;                                                   \
+        export PATH=/usr/local/mpi/bin:\$PATH;                    \
+        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
+        cd /root/mscclpp;                                         \
+        ./build/test/perf/fifo_test"'
+      kill $CHILD_PID
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+
 - task: AzureCLI@2
   name: StopVMSS
   displayName: Deallocate VMSS

@@ -15,8 +15,6 @@ namespace mscclpp {
 enum class ProxyHandlerResult {
   /// Move to next trigger in FIFO.
   Continue,
-  /// Flush the FIFO and move to next trigger.
-  FlushFifoTailAndContinue,
   /// Stop and exit proxy.
   Stop,
 };

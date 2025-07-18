@@ -3,7 +3,7 @@
 
 from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
-from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
+from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
 from mscclpp.language.internal.gpu import Gpu
 from typing import List
 import json
@@ -15,8 +15,10 @@ class MSCCLPPProgram:
         name: str,
         collective: Collective,
         num_ranks: int,
+        instances: int = 1,
         protocol: str = "Simple",
         instr_fusion: bool = True,
+        replication_policy: ReplicationPolicy = ReplicationPolicy.interleaved,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
         use_double_scratch_buffer: bool = False,
@@ -27,8 +29,10 @@ class MSCCLPPProgram:
         self.name = name
         self.collective = collective
         self.num_ranks = num_ranks
+        self.instances = instances
         self.protocol = protocol
         self.instr_fusion = instr_fusion
+        self.replication_policy = replication_policy
         self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
         self.use_double_scratch_buffer = use_double_scratch_buffer
@@ -42,6 +46,8 @@ class MSCCLPPProgram:
             self.gpus.append(
                 Gpu(rank, self.buffers[rank][BufferType.input].size, self.buffers[rank][BufferType.output].size, 0)
             )
+
+        self.loop_context = None
 
     def __enter__(self):
         set_program(self)
@@ -64,8 +70,14 @@ class MSCCLPPProgram:
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
+    def add_semaphore(self, semaphore):
+        self.gpus[semaphore.rank].add_semaphore(semaphore)
+
     def add_operation(self, rank, tb, operation):
-        self.gpus[rank].add_operation(tb, operation)
+        if self.loop_context != None:
+            self.loop_context.add_operation(rank, tb, operation)
+        else:
+            self.gpus[rank].add_operation(tb, operation)
 
     def post_process_operations(self):
         for gpu in self.gpus:
@@ -73,6 +85,29 @@ class MSCCLPPProgram:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
             gpu.resolve_data_dependency()
+            gpu.replicate_instances(
+                self.instances,
+                self.get_channel_replication_policy_function(),
+                self.get_buffer_replication_policy_function(),
+                self.get_semaphore_replication_policy_function(),
+            )
+
+    def get_channel_replication_policy_function(self):
+        return lambda value, num_instances, instance: value * num_instances + instance
+
+    def get_buffer_replication_policy_function(self):
+        if self.replication_policy == ReplicationPolicy.interleaved:
+            return lambda value, num_instances, instance: value * num_instances + instance
+        else:
+            return lambda value, num_instances, instance: value
+
+    def get_semaphore_replication_policy_function(self):
+        return lambda value, num_instances, instance: value * num_instances + instance
+
+    def set_loop_context(self, loop_context):
+        if self.loop_context is not None and loop_context is not None:
+            raise RuntimeError("Nested Pipelines are not Supported.")
+        self.loop_context = loop_context
 
     def to_json(self):
         json_obj = {

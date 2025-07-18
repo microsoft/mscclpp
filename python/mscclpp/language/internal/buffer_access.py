@@ -19,6 +19,10 @@ class BuffersAccess:
             if operation.name == Instruction.nop or operation.name == Instruction.barrier:
                 self.clear_data_access()
             else:
+                if operation.name == Instruction.pipeline:
+                    pipeline_buffer_access = BuffersAccess()
+                    pipeline_result_operations = pipeline_buffer_access.process_operations(operation.operations)
+                    operation.operations = pipeline_result_operations
                 data_access = operation.local_data_access()
                 sync_added = False
                 for data_access_element in data_access:

@@ -33,28 +33,28 @@ struct Host2DeviceSemaphoreDeviceHandle {
   /// Thread-safe read of expected inbound value.
   /// @return The expected inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadExpectedInbound() {
-    return atomicLoad<uint64_t, scopeDevice>(expectedInboundSemaphoreId, memoryOrderRelaxed);
+    return atomicLoad<uint64_t, scopeDevice>(expectedInboundToken, memoryOrderRelaxed);
   }
 
   /// Thread-safe increment of expected inbound value.
   /// @return The incremented expected inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t incExpectedInbound() {
-    return atomicFetchAdd<uint64_t, scopeDevice>(expectedInboundSemaphoreId, 1, memoryOrderRelaxed) + 1;
+    return atomicFetchAdd<uint64_t, scopeDevice>(expectedInboundToken, 1, memoryOrderRelaxed) + 1;
   }
 
   /// Thread-safe read of inbound value.
   /// @return The inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadInbound() {
-    return atomicLoad<uint64_t, scopeSystem>(inboundSemaphoreId, memoryOrderAcquire);
+    return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderAcquire);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   /// A local memory space where a host thread (on behalf of the remote device) will write its semaphore value
   /// and the local device will read it.
-  uint64_t* inboundSemaphoreId;
+  uint64_t* inboundToken;
 
-  /// A local memory space where the local device stores the expected value of the inboundSemaphoreId to wait for.
-  uint64_t* expectedInboundSemaphoreId;
+  /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
+  uint64_t* expectedInboundToken;
 };
 
 /// Device-side handle for MemoryDevice2DeviceSemaphore.
@@ -85,61 +85,61 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     auto outbound = incOutbound();
 #if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
     // Using memoryOrderSeqCst is faster for A100.
-    atomicStore(remoteInboundSemaphoreId, outbound, memoryOrderSeqCst);
+    atomicStore(remoteInboundToken, outbound, memoryOrderSeqCst);
 #else
-    atomicStore(remoteInboundSemaphoreId, outbound, memoryOrderRelease);
+    atomicStore(remoteInboundToken, outbound, memoryOrderRelease);
 #endif
   }
 
   /// Relaxed signal; no memory completion guarantee. Use it only for synchronizing execution, not data.
   MSCCLPP_DEVICE_INLINE void relaxedSignal() {
     auto outbound = incOutbound();
-    atomicStore(remoteInboundSemaphoreId, outbound, memoryOrderRelaxed);
+    atomicStore(remoteInboundToken, outbound, memoryOrderRelaxed);
   }
 
   /// Thread-safe read of expected inbound value.
   /// @return The expected inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadExpectedInbound() {
-    return atomicLoad<uint64_t, scopeDevice>(expectedInboundSemaphoreId, memoryOrderRelaxed);
+    return atomicLoad<uint64_t, scopeDevice>(expectedInboundToken, memoryOrderRelaxed);
   }
 
   /// Thread-safe increment of expected inbound value.
   /// @return The incremented expected inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t incExpectedInbound() {
-    return atomicFetchAdd<uint64_t, scopeDevice>(expectedInboundSemaphoreId, 1, memoryOrderRelaxed) + 1;
+    return atomicFetchAdd<uint64_t, scopeDevice>(expectedInboundToken, 1, memoryOrderRelaxed) + 1;
   }
 
   /// Thread-safe read of inbound value.
   /// @return The inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadInbound() {
-    return atomicLoad<uint64_t, scopeSystem>(inboundSemaphoreId, memoryOrderAcquire);
+    return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderAcquire);
   }
 
   /// Thread-safe read of outbound value.
   /// @return The outbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadOutbound() {
-    return atomicLoad<uint64_t, scopeDevice>(outboundSemaphoreId, memoryOrderRelaxed);
+    return atomicLoad<uint64_t, scopeDevice>(outboundToken, memoryOrderRelaxed);
   }
 
   /// Thread-safe increment of outbound value.
   /// @return The incremented outbound value.
   MSCCLPP_DEVICE_INLINE uint64_t incOutbound() {
-    return atomicFetchAdd<uint64_t, scopeDevice>(outboundSemaphoreId, 1, memoryOrderRelaxed) + 1;
+    return atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, 1, memoryOrderRelaxed) + 1;
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   /// A local memory space where the remote device will write its semaphore value and the local device will read it.
-  uint64_t* inboundSemaphoreId;
+  uint64_t* inboundToken;
 
   /// A local memory space where the local device stores the semaphore value to be written to the remote device.
-  uint64_t* outboundSemaphoreId;
+  uint64_t* outboundToken;
 
-  /// A remote memory space where the local device writes its outboundSemaphoreId on. This is inboundSemaphoreId of the
+  /// A remote memory space where the local device writes its outboundToken on. This is inboundToken of the
   /// remote device.
-  uint64_t* remoteInboundSemaphoreId;
+  uint64_t* remoteInboundToken;
 
-  /// A local memory space where the local device stores the expected value of the inboundSemaphoreId to wait for.
-  uint64_t* expectedInboundSemaphoreId;
+  /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
+  uint64_t* expectedInboundToken;
 };
 
 /// @deprecated Use MemoryDevice2DeviceSemaphoreDeviceHandle instead.

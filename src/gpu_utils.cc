@@ -242,8 +242,8 @@ bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
     return false;
   }
   MSCCLPP_CUTHROW(cuMemRelease(handle));
-  if (!mscclpp::isNvlsSupported()) {
-    throw mscclpp::Error("cuMemMap is used in env without NVLS support", mscclpp::ErrorCode::InvalidUsage);
+  if (!isNvlsSupported()) {
+    throw Error("cuMemMap is used in env without NVLS support", ErrorCode::InvalidUsage);
   }
   return true;
 #endif

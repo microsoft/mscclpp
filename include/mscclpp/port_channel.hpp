@@ -38,6 +38,11 @@ class ProxyService : public BaseProxyService {
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
   /// @return The ID of the semaphore.
+  SemaphoreId addSemaphore(const Semaphore& semaphore);
+
+  /// Add a semaphore to the proxy service.
+  /// @param semaphore The semaphore to be added
+  /// @return The ID of the semaphore.
   SemaphoreId addSemaphore(std::shared_ptr<Host2DeviceSemaphore> semaphore);
 
   /// Register a memory region with the proxy service.
@@ -87,22 +92,36 @@ struct BasePortChannel {
   std::shared_ptr<Proxy> proxy_;
 
  public:
+  /// Constructor.
   BasePortChannel() = default;
 
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param proxy The proxy used for communication.
   BasePortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore,
                   std::shared_ptr<Proxy> proxy);
 
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param proxy The proxy used for communication.
+  BasePortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy);
+
+  /// Copy constructor.
+  /// @param other The other BasePortChannel to copy from.
   BasePortChannel(const BasePortChannel& other) = default;
 
+  /// Assignment operator.
+  /// @param other The other BasePortChannel to assign from.
   BasePortChannel& operator=(BasePortChannel& other) = default;
 
   /// Device-side handle for BasePortChannel.
   using DeviceHandle = BasePortChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the BasePortChannel is not released when using the returned handle.
-  ///
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };
 
@@ -113,7 +132,7 @@ struct PortChannel : public BasePortChannel {
   MemoryId src_;
 
  public:
-  /// Default constructor.
+  /// Constructor.
   PortChannel() = default;
 
   /// Constructor.
@@ -125,19 +144,29 @@ struct PortChannel : public BasePortChannel {
   PortChannel(SemaphoreId semaphoreId, std::shared_ptr<Host2DeviceSemaphore> semaphore, std::shared_ptr<Proxy> proxy,
               MemoryId dst, MemoryId src);
 
+  /// Constructor.
+  /// @param semaphoreId The ID of the semaphore.
+  /// @param semaphore The semaphore.
+  /// @param proxy The proxy.
+  /// @param dst The destination memory region.
+  /// @param src The source memory region.
+  PortChannel(SemaphoreId semaphoreId, const Semaphore& semaphore, std::shared_ptr<Proxy> proxy, MemoryId dst,
+              MemoryId src);
+
   /// Copy constructor.
+  /// @param other The other PortChannel to copy from.
   PortChannel(const PortChannel& other) = default;
 
   /// Assignment operator.
+  /// @param other The other PortChannel to assign from.
   PortChannel& operator=(PortChannel& other) = default;
 
   /// Device-side handle for PortChannel.
   using DeviceHandle = PortChannelDeviceHandle;
 
   /// Returns the device-side handle.
-  ///
   /// User should make sure the PortChannel is not released when using the returned handle.
-  ///
+  /// @return The device-side handle.
   DeviceHandle deviceHandle() const;
 };
 

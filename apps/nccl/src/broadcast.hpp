@@ -21,7 +21,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
 
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> memChans[NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> memChans[MAX_NRANKS_PER_NODE - 1];
   if (threadIdx.x < nPeer) {
     memChans[threadIdx.x] = memoryChannels[chanOffset + threadIdx.x];
     memChans[threadIdx.x].relaxedSignal();

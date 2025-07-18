@@ -126,7 +126,7 @@ struct ExecutionContext {
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
   std::vector<mscclpp::BasePortChannel> portChannels;
-  std::vector<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels;
+  std::vector<mscclpp::SwitchChannel> nvlsChannels;
   std::unordered_map<DeviceExecutionPlanKey, std::vector<DeviceExecutionPlan>> deviceExecutionPlans;
   std::unordered_map<DeviceExecutionPlanKey, std::shared_ptr<char>> deviceExecutionPlansBuffers;
   std::shared_ptr<char> scratchBuffer;
@@ -246,7 +246,7 @@ struct Executor::Impl {
     for (int peer : connectedPeers) {
       Transport transport =
           inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
-      connectionFutures.push_back(this->comm->connect(peer, 0, transport));
+      connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
       context.connections[connectedPeers[i]] = connectionFutures[i].get();
@@ -282,10 +282,10 @@ struct Executor::Impl {
                                       sendBufferSize, recvBufferSize, context.scratchBufferSize);
       RegisteredMemory memory =
           this->comm->registerMemory(bufferInfo.first, bufferInfo.second, getTransportFlags(buffer, rank));
-      comm->sendMemory(memory, buffer.accessRank, 0);
+      comm->sendMemory(memory, buffer.accessRank);
     }
     for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos()) {
-      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.rank, 0);
+      std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.rank);
       context.registeredMemories.emplace_back(std::move(remoteRegMemoryFuture.get()));
       for (ChannelType chanType : bufferInfo.accessChannelTypes) {
         if (chanType == ChannelType::MEMORY) {
@@ -350,9 +350,9 @@ struct Executor::Impl {
       NvlsInfo info = nvlsInfos[i];
       auto bufferInfo = getBufferInfo(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBuffSize,
                                       recvBuffSize, scratchBuffSize);
-      NvlsConnection::DeviceMulticastPointer deviceMulticastPointer =
+      SwitchChannel switchChannel =
           nvlsConnection->bindAllocatedMemory((CUdeviceptr)bufferInfo.first, bufferInfo.second);
-      context.nvlsChannels.push_back(deviceMulticastPointer);
+      context.nvlsChannels.push_back(switchChannel);
     }
   }
 
