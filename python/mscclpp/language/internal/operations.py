@@ -59,7 +59,7 @@ class SyncOperation(BaseOperation):
             fused_operation = SyncOperation()
         elif isinstance(other, BarrierOperation):
             fused_operation = other
-        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before):
+        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before:
             fused_operation = other
         elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
@@ -140,8 +140,8 @@ class SemaphoreAcquireOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -173,8 +173,8 @@ class SemaphoreReleaseOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -219,8 +219,8 @@ class SignalOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -266,8 +266,8 @@ class WaitOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -306,6 +306,8 @@ class BarrierOperation(BaseOperation):
         fused_operation = None
         if check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        elif isinstance(other, SyncOperation):
+            fused_operation = self
 
         return fused_operation
 
@@ -343,8 +345,8 @@ class FlushOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -848,9 +850,9 @@ class PipelineOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
+        if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after):
+        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after) == SyncType.after:
             fused_operation = self
 
         return fused_operation
