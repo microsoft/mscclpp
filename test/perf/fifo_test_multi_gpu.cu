@@ -147,13 +147,15 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
   */
 
+  int threadBlocks = std::min(8, numParallel);
+
   // Benchmark
   utils::Timer timer;
   timer.start();
 
   if (rank == 0) {
     // Launch on GPU0
-    kernelFifoPushAndSignal<<<numParallel, 1, 0, stream>>>(portChannelHandle, numTriggers, semaphoreId);
+    kernelFifoPushAndSignal<<<threadBlocks, numParallel / threadBlocks, 0, stream>>>(portChannelHandle, numTriggers, semaphoreId);
 
     printf("Launching kernel with %d triggers on rank %d\n", numTriggers, rank);
     utils::CUDA_CHECK(cudaGetLastError());
@@ -170,7 +172,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
     cudaMemset(dResult, 0, sizeof(int));
     
     // Launch on GPU1
-    kernelWaitAndCheck<<<numParallel, 1, 0, stream>>>(portChannelHandle, localSemaphoreFlag, dResult);
+    kernelWaitAndCheck<<<threadBlocks, numParallel / threadBlocks, 0, stream>>>(portChannelHandle, localSemaphoreFlag, dResult);
     printf("Launching kernel with %d triggers on rank %d\n", numTriggers, rank);
     utils::CUDA_CHECK(cudaGetLastError());
     
