@@ -71,15 +71,12 @@ __global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHan
 __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle, uint64_t* localFlag, int* result) {
     int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-    // Wait for signal from GPU0
-    portHandle.wait();
-    __syncthreads();
-
     // Check if flag was updated
     if (tid == 0) {
-        if (*localFlag != 1ULL) {
-            *result = 1; // Error
-        }
+      portHandle.wait();
+      if (*localFlag != 1ULL) {
+          *result = 1; // Error
+      }
     }
 }
 
@@ -90,20 +87,24 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
 }
 
 // Helper function to consume triggers from FIFO
+// static bool consumeTriggers(std::shared_ptr<mscclpp::ProxyService> proxyService, int numTriggers, int parallel,
 static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTriggers, int parallel,
     std::shared_ptr<mscclpp::Connection> connection,
     mscclpp::RegisteredMemory remoteFlagRegMem) {
   int totalTriggers = numTriggers * parallel;
   std::unordered_map<int, int> triggerCounts;
+  printf("Consume trigger from proxy service\n");
   for (int i = 0; i < totalTriggers; ++i) {
     mscclpp::ProxyTrigger trigger;
     uint64_t spin = 0;
     do {
       trigger = hostFifo->poll();
+      // trigger = proxyService->fifo().poll();
       if (spin++ > TIMEOUT_SPINS) {
         return false;
       }
-    } while (trigger.fst == 0 || trigger.snd == 0);
+    } while (trigger.fst == 0 && trigger.snd == 0);
+    printf("i: %d, finish hostFifo->poll()\n", i);
 
     // Process trigger (see src/proxy.cc)
     trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
@@ -111,7 +112,10 @@ static bool consumeTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int numTri
     assert(triggerCounts[trigger.snd] + 1 == trigger.fst);
     triggerCounts[trigger.snd]++;
     hostFifo->pop();
+    // Pop from proxy service FIFO
+    // proxyService->fifo().pop();
 
+    printf("i: %d, totalTriggers: %d, Consumed trigger: %d, count: %d\n", i, totalTriggers, trigger.snd, triggerCounts[trigger.snd]);
     // Host-side atomicAdd for each trigger
     //connection->atomicAdd(remoteFlagRegMem, 0, 1);
   }
@@ -187,12 +191,14 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
 }
 
+// void runFifoTestVariant(std::shared_ptr<mscclpp::ProxyService> proxyService, int fifoSize,
 void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
                         nlohmann::ordered_json& combinedMetrics, int rank,
                         mscclpp::PortChannelDeviceHandle gPortChannel,
                         mscclpp::SemaphoreId semaphoreId, uint64_t* localSemaphoreFlag,
                         std::shared_ptr<mscclpp::Connection> connection,
                         mscclpp::RegisteredMemory remoteFlagRegMem) {
+      // runSingleKernelVariant(kernelFifoPush, proxyService, fifoSize, stream, numParallel, rank, gPortChannel, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
   auto [pushThroughput, pushDuration, numTriggers, warmupTriggers] =
       runSingleKernelVariant(kernelFifoPush, hostFifo, stream, numParallel, rank, gPortChannel, semaphoreId, localSemaphoreFlag, connection, remoteFlagRegMem);
 
@@ -249,8 +255,8 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     transport |= mscclpp::Transport::IB0;
   }
 
-  // Create and start proxy service
-  auto proxyService = std::make_shared<mscclpp::ProxyService>();
+  // Create and start proxy service with specified FIFO size
+  auto proxyService = std::make_shared<mscclpp::ProxyService>(config.fifoSize);
   proxyService->startProxy();
 
   // Register send buffer memory
@@ -302,7 +308,9 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
 
   mscclpp::FifoDeviceHandle hostHandle = hostFifo->deviceHandle();
+  // mscclpp::FifoDeviceHandle proxyFifoHandle = proxyService->fifo().deviceHandle();
   utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
+  // utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &proxyFifoHandle, sizeof(mscclpp::FifoDeviceHandle)));
 
   cudaStream_t stream;
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
@@ -350,6 +358,7 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     if (connIndex < connections.size()) {
       connection = connections[connIndex];
       semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connection);
+      printf("Semaphore ID for rank %d: %d\n", rank, semaphoreId);
       auto portChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(remoteMemFutures[peerRank].get()), proxyService->addMemory(localFlagRegmem));
       portChannelHandle = portChannel.deviceHandle();
       cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
@@ -371,6 +380,7 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
 
   std::map<std::string, std::string> testParams;
   testParams["fifo_size"] = std::to_string(static_cast<int>(hostFifo->size()));
+  // testParams["fifo_size"] = std::to_string(static_cast<int>(config.fifoSize));
 
   // Add parallelism levels to test parameters
   std::stringstream parallelismStream;
