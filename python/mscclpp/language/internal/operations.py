@@ -21,14 +21,14 @@ class BaseOperation:
     def local_data_access(self, sync_purpose=True):
         return []
 
-    def __add__(self, other):
-        return None
-
     def shift_buffers(self, instance, num_instances, replication_function):
         return
 
     def shift_ids(self, instance, num_instances, replication_function):
         return
+
+    def __add__(self, other):
+        return None
 
 
 @dataclass
@@ -49,7 +49,6 @@ class RemoteChunk(LocalChunk):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
-@dataclass
 class SyncOperation(BaseOperation):
     def __init__(self):
         super().__init__(Instruction.nop)
@@ -58,13 +57,11 @@ class SyncOperation(BaseOperation):
         fused_operation = None
         if isinstance(other, SyncOperation):
             fused_operation = SyncOperation()
-        elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-        ):
+        elif isinstance(other, BarrierOperation):
+            fused_operation = other
+        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before):
+            fused_operation = other
+        elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
@@ -74,7 +71,6 @@ class SyncOperation(BaseOperation):
         return result
 
 
-@dataclass
 class CopyOperation(BaseOperation):
     def __init__(
         self,
@@ -115,9 +111,6 @@ class CopyOperation(BaseOperation):
         for chunk in self.dst_buff:
             chunk.index = replication_function(chunk.index, instance, num_instances)
 
-    def __add__(self, other):
-        return None
-
     def to_json(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
@@ -129,7 +122,6 @@ class CopyOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SemaphoreAcquireOperation(BaseOperation):
     def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.sem_acquire)
@@ -148,15 +140,11 @@ class SemaphoreAcquireOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -167,7 +155,6 @@ class SemaphoreAcquireOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SemaphoreReleaseOperation(BaseOperation):
     def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.sem_release)
@@ -186,15 +173,11 @@ class SemaphoreReleaseOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -205,7 +188,6 @@ class SemaphoreReleaseOperation(BaseOperation):
         return result
 
 
-@dataclass
 class SignalOperation(BaseOperation):
     def __init__(
         self,
@@ -237,15 +219,11 @@ class SignalOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -257,7 +235,6 @@ class SignalOperation(BaseOperation):
         return result
 
 
-@dataclass
 class WaitOperation(BaseOperation):
     def __init__(
         self,
@@ -289,15 +266,11 @@ class WaitOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -309,7 +282,6 @@ class WaitOperation(BaseOperation):
         return result
 
 
-@dataclass
 class BarrierOperation(BaseOperation):
     __current_barriers = []
 
@@ -332,13 +304,7 @@ class BarrierOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
-        ):
+        if check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
@@ -361,7 +327,6 @@ class BarrierOperation(BaseOperation):
             return hash(tuple(self.tb_list))
 
 
-@dataclass
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.flush)
@@ -378,15 +343,11 @@ class FlushOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            isinstance(other, SemaphoreAcquireOperation)
-            or isinstance(other, SemaphoreReleaseOperation)
-            or isinstance(other, SignalOperation)
-            or isinstance(other, WaitOperation)
-            or isinstance(other, FlushOperation)
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            or isinstance(other, SyncOperation)
+            or isinstance(other, BarrierOperation)
         ):
-            if other.data_sync == SyncType.before or other.data_sync == SyncType.both:
-                self.data_sync = self.data_sync ^ ((SyncType.after & self.data_sync))
-        elif isinstance(other, SyncOperation) or isinstance(other, BarrierOperation):
             self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
@@ -398,7 +359,6 @@ class FlushOperation(BaseOperation):
         return result
 
 
-@dataclass
 class GetOperation(BaseOperation):
     def __init__(
         self,
@@ -456,7 +416,6 @@ class GetOperation(BaseOperation):
         return result
 
 
-@dataclass
 class PutOperation(BaseOperation):
     def __init__(
         self,
@@ -555,14 +514,19 @@ class ReduceOperation(BaseOperation):
         self,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
-        remote_src_buff: List[RemoteChunk] = [],
-        remote_dst_buff: List[RemoteChunk] = [],
-        channel_ids: List[int] = [],
-        put_channel_ids: List[int] = [],
+        remote_src_buff: List[RemoteChunk] = None,
+        remote_dst_buff: List[RemoteChunk] = None,
+        channel_ids: List[int] = None,
+        put_channel_ids: List[int] = None,
         channel_type: ChannelType = ChannelType.none,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
     ):
+        remote_src_buff = remote_src_buff if remote_src_buff is not None else []
+        remote_dst_buff = remote_dst_buff if remote_dst_buff is not None else []
+        channel_ids = channel_ids if channel_ids is not None else []
+        put_channel_ids = put_channel_ids if put_channel_ids is not None else []
+
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
                 super().__init__(Instruction.reduce_packet)
@@ -712,7 +676,7 @@ class GroupLoadReduce(BaseOperation):
         buffer_offset: int,
         size: int,
         dst_chunk: Chunk,
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
@@ -771,7 +735,7 @@ class GroupStore(BaseOperation):
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
     ):
         super().__init__(Instruction.group_store)
@@ -785,9 +749,6 @@ class GroupStore(BaseOperation):
     def shift_buffers(self, instance, num_instances, replication_function):
         self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
         self.src_chunk.index = replication_function(self.src_chunk.index, instance, num_instances)
-
-    def __add__(self, other):
-        return None
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -808,7 +769,7 @@ class GroupLoadReduceStore(BaseOperation):
         size: int,
         src_index: List[int],
         dst_index: List[int],
-        channel_ids: List[int] = [],
+        channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
@@ -827,9 +788,6 @@ class GroupLoadReduceStore(BaseOperation):
         for i in range(len(self.dst_index)):
             self.dst_index[i] = replication_function(self.dst_index[i], instance, num_instances)
 
-    def __add__(self, other):
-        return None
-
     def to_json(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
@@ -845,3 +803,72 @@ class GroupLoadReduceStore(BaseOperation):
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
         return result
+
+
+@dataclass
+class PipelineOperation(BaseOperation):
+    def __init__(self, unit_size: int, num_chunks: int, operations=None):
+        super().__init__(Instruction.pipeline)
+        self.unit_size = unit_size
+        self.num_chunks = num_chunks
+        self.operations = operations if operations is not None else []
+
+    def _check_sync(self, operation, data_sync):
+        result = SyncType.none
+        if isinstance(operation, SyncOperation) or isinstance(operation, BarrierOperation):
+            result |= SyncType.before
+        if check_data_sync_op(operation):
+            result |= data_sync & operation.data_sync
+
+        return result
+
+    def add_operation(self, operation):
+        self.operations.append(operation)
+
+    def get_data_sync(self):
+        data_sync = SyncType.none
+        if len(self.operations) > 0:
+            data_sync |= self._check_sync(self.operations[0], SyncType.before)
+            data_sync |= self._check_sync(self.operations[-1], SyncType.after)
+
+        return data_sync
+
+    def local_data_access(self, sync_purpose=True):
+        data_access = []
+        for operation in self.operations:
+            for operation_data_access in operation.local_data_access(sync_purpose):
+                operation_data_access.operation_id = self.id
+                data_access.append(operation_data_access)
+
+        return data_access
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        for operation in self.operations:
+            operation.shift_buffers(instance, num_instances, replication_function)
+
+    def __add__(self, other):
+        fused_operation = None
+        if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
+            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after):
+            fused_operation = self
+
+        return fused_operation
+
+    def to_json(self):
+        result = {"name": self.name.value}
+        result["iter_context"] = {"unit_size": self.unit_size, "num_chunks": self.num_chunks}
+        result["ops"] = []
+        for operation in self.operations:
+            result["ops"].append(operation.to_json())
+        return result
+
+
+def check_data_sync_op(operation):
+    return (
+        isinstance(operation, SemaphoreAcquireOperation)
+        or isinstance(operation, SemaphoreReleaseOperation)
+        or isinstance(operation, SignalOperation)
+        or isinstance(operation, WaitOperation)
+        or isinstance(operation, FlushOperation)
+    )

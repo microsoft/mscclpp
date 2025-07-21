@@ -67,7 +67,7 @@ enum class OperationType : uint8_t {
 struct Channels {
   mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> memoryChannels[MAX_CHANNEL];
   mscclpp::DeviceHandle<mscclpp::BasePortChannel> portChannels[MAX_CHANNEL];
-  mscclpp::DeviceHandle<mscclpp::NvlsConnection::DeviceMulticastPointer> nvlsChannels[MAX_CHANNEL];
+  mscclpp::DeviceHandle<mscclpp::SwitchChannel> nvlsChannels[MAX_CHANNEL];
 };
 
 struct RemoteBuffers {

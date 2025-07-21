@@ -5,7 +5,7 @@
 #define MSCCLPP_CORE_HPP_
 
 #define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 6
+#define MSCCLPP_MINOR 7
 #define MSCCLPP_PATCH 0
 #define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
 
@@ -21,11 +21,11 @@ namespace mscclpp {
 
 #define MSCCLPP_UNIQUE_ID_BYTES 128
 
-/// Unique ID for a process. This is a MSCCLPP_UNIQUE_ID_BYTES byte array that uniquely identifies a process.
+/// Unique ID for initializing the TcpBootstrap.
 using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
 
 /// Return a version string.
-/// @return A string representing the version of MSCCL++ in the format "major.minor.patch".
+/// @return The MSCCL++ version string in "major.minor.patch" format.
 std::string version();
 
 /// Base class for bootstraps.
@@ -220,9 +220,6 @@ enum class Transport {
   NumTransports,  // The number of transports.
 };
 
-const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
-                                      "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
-
 namespace detail {
 const size_t TransportFlagsSize = 12;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
@@ -234,119 +231,99 @@ using TransportFlagsBase = std::bitset<TransportFlagsSize>;
 /// Stores transport flags.
 class TransportFlags : private detail::TransportFlagsBase {
  public:
-  /// Default constructor for TransportFlags.
+  /// Constructor.
   TransportFlags() = default;
 
-  /// Constructor for TransportFlags that takes a Transport enum value.
-  ///
+  /// Constructor.
   /// @param transport The transport to set the flag for.
   TransportFlags(Transport transport);
 
   /// Check if a specific transport flag is set.
-  ///
   /// @param transport The transport to check the flag for.
   /// @return True if the flag is set, false otherwise.
   bool has(Transport transport) const;
 
   /// Check if no transport flags are set.
-  ///
   /// @return True if no flags are set, false otherwise.
   bool none() const;
 
   /// Check if any transport flags are set.
-  ///
   /// @return True if any flags are set, false otherwise.
   bool any() const;
 
   /// Check if all transport flags are set.
-  ///
   /// @return True if all flags are set, false otherwise.
   bool all() const;
 
   /// Get the number of transport flags that are set.
-  ///
   /// @return The number of flags that are set.
   size_t count() const;
 
   /// Bitwise OR assignment operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the OR operation with.
   /// @return A reference to the modified TransportFlags.
   TransportFlags& operator|=(TransportFlags other);
 
   /// Bitwise OR operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the OR operation with.
   /// @return A new TransportFlags object with the result of the OR operation.
   TransportFlags operator|(TransportFlags other) const;
 
   /// Bitwise OR operator for TransportFlags and Transport.
-  ///
   /// @param transport The Transport to perform the OR operation with.
   /// @return A new TransportFlags object with the result of the OR operation.
   TransportFlags operator|(Transport transport) const;
 
   /// Bitwise AND assignment operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the AND operation with.
   /// @return A reference to the modified TransportFlags.
   TransportFlags& operator&=(TransportFlags other);
 
   /// Bitwise AND operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the AND operation with.
   /// @return A new TransportFlags object with the result of the AND operation.
   TransportFlags operator&(TransportFlags other) const;
 
   /// Bitwise AND operator for TransportFlags and Transport.
-  ///
   /// @param transport The Transport to perform the AND operation with.
   /// @return A new TransportFlags object with the result of the AND operation.
   TransportFlags operator&(Transport transport) const;
 
   /// Bitwise XOR assignment operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the XOR operation with.
   /// @return A reference to the modified TransportFlags.
   TransportFlags& operator^=(TransportFlags other);
 
   /// Bitwise XOR operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to perform the XOR operation with.
   /// @return A new TransportFlags object with the result of the XOR operation.
   TransportFlags operator^(TransportFlags other) const;
 
   /// Bitwise XOR operator for TransportFlags and Transport.
-  ///
   /// @param transport The Transport to perform the XOR operation with.
   /// @return A new TransportFlags object with the result of the XOR operation.
   TransportFlags operator^(Transport transport) const;
 
   /// Bitwise NOT operator for TransportFlags.
-  ///
   /// @return A new TransportFlags object with the result of the NOT operation.
   TransportFlags operator~() const;
 
   /// Equality comparison operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to compare with.
   /// @return True if the two TransportFlags objects are equal, false otherwise.
   bool operator==(TransportFlags other) const;
 
   /// Inequality comparison operator for TransportFlags.
-  ///
   /// @param other The other TransportFlags to compare with.
   /// @return True if the two TransportFlags objects are not equal, false otherwise.
   bool operator!=(TransportFlags other) const;
 
   /// Convert the TransportFlags object to a bitset representation.
-  ///
   /// @return A detail::TransportFlagsBase object representing the TransportFlags object.
   detail::TransportFlagsBase toBitset() const;
 
  private:
   /// Private constructor for TransportFlags that takes a bitset representation.
-  ///
   /// @param bitset The bitset representation of the TransportFlags object.
   TransportFlags(detail::TransportFlagsBase bitset);
 };
@@ -378,47 +355,64 @@ inline TransportFlags operator^(Transport transport1, Transport transport2) {
   return TransportFlags(transport1) ^ transport2;
 }
 
+/// Available device types.
+enum class DeviceType {
+  Unknown,  // Unknown device type.
+  CPU,      // CPU device type.
+  GPU,      // GPU device type.
+};
+
+struct Device {
+  /// Constructor.
+  Device() = default;
+
+  /// Constructor.
+  /// @param type Device type.
+  /// @param id Device ID. Default is -1 (no specific ID).
+  Device(DeviceType type, int id = -1) : type(type), id(id) {}
+
+  /// Device Type.
+  DeviceType type;
+
+  /// Device ID.
+  int id;
+};
+
 class Context;
 class Connection;
 
-/// Represents a block of memory that has been registered to a Context.
+/// Block of memory that has been registered to a Context.
 /// RegisteredMemory does not own the memory it points to, but it provides a way to transfer metadata about the memory
 /// to other processes, hence allowing their access to the memory block.
 class RegisteredMemory {
  public:
-  /// Default constructor.
+  /// Constructor.
   RegisteredMemory() = default;
 
   /// Destructor.
   ~RegisteredMemory();
 
   /// Get a pointer to the memory block.
-  ///
   /// @return A pointer to the memory block.
   void* data() const;
 
   /// Get a pointer to the original memory block.
-  ///
   /// @return A pointer to the original memory block.
   void* originalDataPtr() const;
 
   /// Get the size of the memory block.
-  ///
   /// @return The size of the memory block.
   size_t size() const;
 
   /// Get the transport flags associated with the memory block.
-  ///
   /// @return The transport flags associated with the memory block.
   TransportFlags transports() const;
 
   /// Serialize the RegisteredMemory object to a vector of characters.
-  ///
   /// @return A vector of characters representing the serialized RegisteredMemory object.
   std::vector<char> serialize() const;
 
   /// Deserialize a RegisteredMemory object from a vector of characters.
-  ///
   /// @param data A vector of characters representing a serialized RegisteredMemory object.
   /// @return A deserialized RegisteredMemory object.
   static RegisteredMemory deserialize(const std::vector<char>& data);
@@ -430,31 +424,32 @@ class RegisteredMemory {
 
   friend class Context;
   friend class Connection;
+  friend class SemaphoreStub;
 };
 
-/// Represents one end of a connection.
+/// One end of a connection.
 class Endpoint {
  public:
-  /// Default constructor.
+  /// Constructor.
   Endpoint() = default;
 
   /// Get the transport used.
-  ///
   /// @return The transport used.
-  Transport transport();
+  Transport transport() const;
+
+  /// Get the device used.
+  /// @return The device used.
+  const Device& device() const;
 
   /// Get the maximum write queue size.
-  ///
   /// @return The maximum number of write requests that can be queued.
-  int maxWriteQueueSize();
+  int maxWriteQueueSize() const;
 
   /// Serialize the Endpoint object to a vector of characters.
-  ///
   /// @return A vector of characters representing the serialized Endpoint object.
-  std::vector<char> serialize();
+  std::vector<char> serialize() const;
 
   /// Deserialize an Endpoint object from a vector of characters.
-  ///
   /// @param data A vector of characters representing a serialized Endpoint object.
   /// @return A deserialized Endpoint object.
   static Endpoint deserialize(const std::vector<char>& data);
@@ -468,13 +463,13 @@ class Endpoint {
   friend class Connection;
 };
 
-/// Represents a connection between two processes.
+/// Connection between two processes.
 class Connection {
  public:
   /// Constructor.
-  /// @param maxWriteQueueSize The maximum number of write requests that can be queued.
-  Connection(std::shared_ptr<Context> context, int maxWriteQueueSize)
-      : context_(context), maxWriteQueueSize_(maxWriteQueueSize){};
+  /// @param localEndpoint The local endpoint of the connection.
+  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
+      : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
 
   /// Destructor.
   virtual ~Connection() = default;
@@ -498,34 +493,35 @@ class Connection {
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
   /// Flush any pending writes to the remote process.
-  virtual void flush(int64_t timeoutUsec = 3e7) = 0;
+  /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
+  virtual void flush(int64_t timeoutUsec = -1) = 0;
 
   /// Get the transport used by the local process.
-  ///
   /// @return The transport used by the local process.
   virtual Transport transport() const = 0;
 
   /// Get the transport used by the remote process.
-  ///
   /// @return The transport used by the remote process.
   virtual Transport remoteTransport() const = 0;
 
-  /// Get the name of the transport used for this connection
-  ///
-  /// @return A string formatted as "localTransportName -> remoteTransportName".
-  std::string getTransportName() const;
+  /// Get the context associated with this connection.
+  /// @return A shared pointer to the context associated with this connection.
+  std::shared_ptr<Context> context() const { return context_; }
 
-  /// Get the maximum write queue size
-  ///
+  /// Get the device used by the local endpoint.
+  /// @return The device used by the local endpoint.
+  const Device& localDevice() const;
+
+  /// Get the maximum write queue size.
   /// @return The maximum number of write requests that can be queued.
   int getMaxWriteQueueSize() const;
 
  protected:
-  // Internal methods for getting implementation pointers.
   static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
   static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
 
   std::shared_ptr<Context> context_;
+  Endpoint localEndpoint_;
   int maxWriteQueueSize_;
 };
 
@@ -537,6 +533,7 @@ struct EndpointConfig {
   static const int DefaultMaxWrPerSend = 64;
 
   Transport transport;
+  Device device;
   int ibMaxCqSize;
   int ibMaxCqPollNum;
   int ibMaxSendWr;
@@ -546,15 +543,18 @@ struct EndpointConfig {
   /// Constructor that takes a transport and sets the other fields to their default values.
   ///
   /// @param transport The transport to use.
+  /// @param device The device to use.
   /// @param ibMaxCqSize The maximum completion queue size.
   /// @param ibMaxCqPollNum The maximum completion queue poll number.
   /// @param ibMaxSendWr The maximum send work requests.
   /// @param ibMaxWrPerSend The maximum work requests per send.
   /// @param maxWriteQueueSize The maximum write queue size.
-  EndpointConfig(Transport transport = Transport::Unknown, int ibMaxCqSize = DefaultMaxCqSize,
-                 int ibMaxCqPollNum = DefaultMaxCqPollNum, int ibMaxSendWr = DefaultMaxSendWr,
-                 int ibMaxWrPerSend = DefaultMaxWrPerSend, int maxWriteQueueSize = -1)
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
+                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
+                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
+                 int maxWriteQueueSize = -1)
       : transport(transport),
+        device(device),
         ibMaxCqSize(ibMaxCqSize),
         ibMaxCqPollNum(ibMaxCqPollNum),
         ibMaxSendWr(ibMaxSendWr),
@@ -562,7 +562,7 @@ struct EndpointConfig {
         maxWriteQueueSize(maxWriteQueueSize) {}
 };
 
-/// Represents a context for communication. This provides a low-level interface for forming connections in use-cases
+/// Context for communication. This provides a low-level interface for forming connections in use-cases
 /// where the process group abstraction offered by Communicator is not suitable, e.g., ephemeral client-server
 /// connections. Correct use of this class requires external synchronization when finalizing connections with the
 /// connect() method.
@@ -619,6 +619,62 @@ class Context : public std::enable_shared_from_this<Context> {
   friend class Endpoint;
 };
 
+/// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
+class SemaphoreStub {
+ public:
+  /// Constructor.
+  /// @param connection A shared pointer to the connection associated with this semaphore.
+  SemaphoreStub(std::shared_ptr<Connection> connection);
+
+  /// Get the memory associated with this semaphore.
+  /// @return A reference to the registered memory for this semaphore.
+  const RegisteredMemory& memory() const;
+
+  /// Serialize into a vector of characters.
+  /// @return A vector of characters representing the serialized SemaphoreStub object.
+  std::vector<char> serialize() const;
+
+  /// Deserialize a SemaphoreStub object from a vector of characters.
+  /// @param data A vector of characters representing a serialized SemaphoreStub object.
+  /// @return A deserialized SemaphoreStub object.
+  static SemaphoreStub deserialize(const std::vector<char>& data);
+
+ protected:
+  struct Impl;
+  SemaphoreStub(std::shared_ptr<Impl> pimpl);
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Semaphore;
+};
+
+/// Semaphore used by channels for synchronization.
+class Semaphore {
+ public:
+  /// Constructor.
+  Semaphore() = default;
+
+  /// Constructor.
+  /// @param localStub SemaphoreStub allocated on the local process.
+  /// @param remoteStub SemaphoreStub allocated on the remote process.
+  Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub);
+
+  /// Get the connection associated with this semaphore.
+  /// @return A shared pointer to the connection.
+  std::shared_ptr<Connection> connection() const;
+
+  /// Get the local memory associated with this semaphore.
+  /// @return A reference to the local registered memory.
+  const RegisteredMemory& localMemory() const;
+
+  /// Get the remote memory associated with this semaphore.
+  /// @return A reference to the remote registered memory.
+  const RegisteredMemory& remoteMemory() const;
+
+ protected:
+  struct Impl;
+  std::shared_ptr<Impl> pimpl_;
+};
+
 template <typename T>
 using NonblockingFuture [[deprecated("Use std::shared_future instead. This will be removed in a future release.")]] =
     std::shared_future<T>;
@@ -630,20 +686,26 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 ///   2. Call registerMemory() to register memory regions that will be used for communication.
 ///   3. Call sendMemory() or recvMemory() to send/receive registered memory regions to/from
 ///      other processes.
-///   4. Call get() on all futures returned by connect() and recvMemory().
-///   5. All done; use connections and registered memories to build channels.
+///   4. Call get() on futures returned by connect(). Use the returned connections to create flags.
+///   5. Call buildSemaphore() to create a Semaphore out of the flags.
+///   6. Call get() on all futures returned by buildSemaphore() and recvMemory().
+///   7. All done; use semaphores and registered memories to build channels.
+///
+/// CAUTION: The order of method calls matters when the same remote rank and tags are used. That is, the i-th
+/// "sending" method call (sendMemory(), connect(), and buildSemaphore()) on the local rank must be matched
+/// by the i-th "receiving" method call (recvMemory(), connect(), and buildSemaphore()) on the remote rank.
 ///
 /// Correct Example 1:
 /// ```cpp
 /// // Rank 0
 /// communicator.sendMemory(memory1, 1, tag);
 /// communicator.sendMemory(memory2, 1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// connection.get(); // This will return the connection.
 /// // Rank 1
 /// auto mem1 = communicator.recvMemory(0, tag);
 /// auto mem2 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag);
 /// mem2.get();       // This will return memory2.
 /// connection.get(); // This will return the connection.
 /// mem1.get();       // This will return memory1.
@@ -654,13 +716,13 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// // Rank 0
 /// communicator.sendMemory(memory0, 1, tag);
 /// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// connection.get(); // This will return the connection.
 /// mem1.get();       // This will return memory1.
 /// // Rank 1
 /// auto mem0 = communicator.recvMemory(0, tag);
 /// communicator.sendMemory(memory1, 0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag);
 /// mem0.get();       // This will return memory0.
 /// connection.get(); // This will return the connection.
 /// ```
@@ -670,10 +732,10 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// // Rank 0
 /// communicator.sendMemory(memory0, 1, tag);
 /// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
+/// auto connection = communicator.connect(Transport::CudaIpc, 1, tag);
 /// // Rank 1
 /// auto mem0 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc); // undefined behavior
+/// auto connection = communicator.connect(Transport::CudaIpc, 0, tag); // undefined behavior
 /// communicator.sendMemory(memory1, 0, tag);
 /// ```
 /// In the wrong example, the connection information from rank 1 will be sent to the `mem1` object on rank 0,
@@ -691,12 +753,10 @@ class Communicator {
   ~Communicator();
 
   /// Returns the bootstrap held by this communicator.
-  ///
   /// @return The bootstrap held by this communicator.
   std::shared_ptr<Bootstrap> bootstrap();
 
   /// Returns the context held by this communicator.
-  ///
   /// @return The context held by this communicator.
   std::shared_ptr<Context> context();
 
@@ -723,7 +783,7 @@ class Communicator {
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send.
   ///
-  void sendMemory(RegisteredMemory memory, int remoteRank, int tag);
+  void sendMemory(RegisteredMemory memory, int remoteRank, int tag = 0);
 
   [[deprecated("Use sendMemory() instead. This will be removed in a future release.")]] void sendMemoryOnSetup(
       RegisteredMemory memory, int remoteRank, int tag) {
@@ -752,7 +812,7 @@ class Communicator {
   /// @param tag The tag to use for identifying the receive.
   /// @return A future of registered memory.
   ///
-  std::shared_future<RegisteredMemory> recvMemory(int remoteRank, int tag);
+  std::shared_future<RegisteredMemory> recvMemory(int remoteRank, int tag = 0);
 
   [[deprecated(
       "Use recvMemory() instead. This will be removed in a future release.")]] NonblockingFuture<RegisteredMemory>
@@ -762,7 +822,7 @@ class Communicator {
 
   /// Connect to a remote rank.
   ///
-  /// This function will start (but not be waiting for) sending metadata about the local endpoint to the remote rank,
+  /// This function will start (but not wait for) sending metadata about the local endpoint to the remote rank,
   /// and return a future connection without waiting for the remote rank to respond.
   /// The connection will be established when the remote rank responds with its own endpoint and the local rank calls
   /// the first get() on the future.
@@ -783,18 +843,29 @@ class Communicator {
   /// on the last future, it will start receiving the five RegisteredMemory or Connection objects in order,
   /// back to back.
   ///
+  /// @param localConfig The configuration for the local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
-  /// @param localConfig The configuration for the local endpoint.
   /// @return A future of shared pointer to the connection.
   ///
-  std::shared_future<std::shared_ptr<Connection>> connect(int remoteRank, int tag, EndpointConfig localConfig);
+  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0);
+
+  [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
+      shared_future<std::shared_ptr<Connection>>
+      connect(int remoteRank, int tag, EndpointConfig localConfig);
 
   [[deprecated("Use connect() instead. This will be removed in a future release.")]] NonblockingFuture<
       std::shared_ptr<Connection>>
   connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig) {
-    return connect(remoteRank, tag, localConfig);
+    return connect(localConfig, remoteRank, tag);
   }
+
+  /// Build a semaphore for cross-process synchronization.
+  /// @param connection The connection associated with this semaphore.
+  /// @param remoteRank The rank of the remote process.
+  /// @param tag The tag to use for identifying the operation.
+  /// @return A future of the built semaphore.
+  std::shared_future<Semaphore> buildSemaphore(std::shared_ptr<Connection> connection, int remoteRank, int tag = 0);
 
   /// Get the remote rank a connection is connected to.
   ///
@@ -841,6 +912,10 @@ using PacketPayload = typename T::Payload;
 }  // namespace mscclpp
 
 namespace std {
+
+std::string to_string(const mscclpp::Transport& transport);
+
+std::string to_string(const mscclpp::Device& device);
 
 /// Specialization of the std::hash template for mscclpp::TransportFlags.
 template <>

@@ -11,7 +11,7 @@
 
 namespace mscclpp {
 
-/// Device-side handle of a MemoryChannel.
+/// Device-side handle of a MemoryChannel without specific source and destination.
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
