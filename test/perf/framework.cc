@@ -225,7 +225,7 @@ int runMultipleTests(
     MPI_Bcast((void*)&id, sizeof(id), MPI_BYTE, 0, MPI_COMM_WORLD);
     bootstrap->initialize(id);
 
-    std::vector<mscclpp::Transport> trans {mscclpp::Transport::IB0, mscclpp::Transport::IB1};
+    std::vector<mscclpp::Transport> trans{mscclpp::Transport::IB0, mscclpp::Transport::IB1};
     cudaSetDevice(rank);
     std::vector<std::shared_ptr<mscclpp::Connection>> conns;
     std::shared_ptr<mscclpp::Communicator> comm = std::make_shared<mscclpp::Communicator>(bootstrap);
