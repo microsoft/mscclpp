@@ -51,9 +51,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
 
                 # do allreduce in scratch buffer
                 sem0.acquire(tb=1, data_sync=SyncType.after)
-                nvls_chan.at_rank(src_rank).reduce(
-                    buffer_offset=i, size=1, dst_chunk=scratch_buffer[i : i + 1], tb=1
-                )
+                nvls_chan.at_rank(src_rank).reduce(buffer_offset=i, size=1, dst_chunk=scratch_buffer[i : i + 1], tb=1)
                 nvls_chan.at_rank(src_rank).broadcast(
                     src_chunk=scratch_buffer[i : i + 1], buffer_offset=i, size=1, tb=1
                 )
