@@ -247,11 +247,11 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::unordered_map<int, std::shared_ptr<mscclpp::Host2HostSemaphore>> semaphores;
+  // Iterate over cpuConnections, which is guaranteed by design to only contain CPU connections.
   for (auto entry : cpuConnections) {
     auto& conn = entry.second;
     // Host2HostSemaphore cannot be used with CudaIpc transport
     if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
-    if (conn->localDevice().type != mscclpp::DeviceType::CPU) continue;
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2HostSemaphore>(*communicator.get(), conn)});
   }
   communicator->bootstrap()->barrier();
