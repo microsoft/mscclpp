@@ -53,15 +53,7 @@ __global__ void kernelFifoPushSync(size_t numTriggers) {
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
 __global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHandle, size_t numTriggers, mscclpp::SemaphoreId semaphoreId) {
-  mscclpp::FifoDeviceHandle& fifo = gFifoDeviceHandle;
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  mscclpp::ProxyTrigger trigger;
-  for (size_t i = 1; i <= numTriggers; ++i) {
-    trigger.fst = semaphoreId;
-    trigger.snd = tid ^ i;
-    fifo.push(trigger);
-  }
-  __syncthreads();
+  int tid = threadIdx.x;
 
   if (tid == 0) {
       portHandle.signal();
@@ -69,7 +61,7 @@ __global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHan
 }
 
 __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle, uint64_t* localFlag, int* result) {
-    int tid = threadIdx.x + blockIdx.x * blockDim.x;
+    int tid = threadIdx.x;
 
     // Check if flag was updated
     if (tid == 0) {
@@ -159,12 +151,6 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
 
     printf("Launching kernel with %d triggers on rank %d\n", numTriggers, rank);
     utils::CUDA_CHECK(cudaGetLastError());
-
-    // Process all triggers
-    if (!consumeTriggers(hostFifo, numTriggers, numParallel, connection, remoteFlagRegMem)) {
-      return {0.0, 0.0, 0, 0};
-    }
-    printf("Finished consuming %d triggers on rank %d\n", numTriggers * numParallel, rank);
   } else if (rank == 1) {
     // Allocate result variable for this function
     int* dResult;
