@@ -7,7 +7,7 @@ from collections import defaultdict
 
 @dataclass
 class MemoryChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, dst_rank: int, src_rank: int):
         num_ranks = get_program().num_ranks
@@ -16,8 +16,8 @@ class MemoryChannel:
         if dst_rank >= num_ranks:
             raise RuntimeError(f"Destination rank {dst_rank} is out of bounds. Number of ranks: {num_ranks}")
 
-        self.channel_id = MemoryChannel.__channel_counts[src_rank]
-        MemoryChannel.__channel_counts[src_rank] += 1
+        self.channel_id = MemoryChannel._channel_counts[src_rank]
+        MemoryChannel._channel_counts[src_rank] += 1
 
         self.dst_rank = dst_rank
         self.src_rank = src_rank
@@ -181,7 +181,7 @@ class MemoryChannel:
 
 @dataclass
 class PortChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, dst_rank: int, src_rank: int):
         num_ranks = get_program().num_ranks
@@ -190,8 +190,8 @@ class PortChannel:
         if dst_rank >= num_ranks:
             raise RuntimeError(f"Destination rank {dst_rank} is out of bounds. Number of ranks: {num_ranks}")
 
-        self.channel_id = PortChannel.__channel_counts[src_rank]
-        PortChannel.__channel_counts[src_rank] += 1
+        self.channel_id = PortChannel._channel_counts[src_rank]
+        PortChannel._channel_counts[src_rank] += 1
 
         self.dst_rank = dst_rank
         self.src_rank = src_rank
@@ -336,7 +336,7 @@ class PortChannel:
 
 @dataclass
 class SwitchChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, rank_list: List[int], buffer_type: BufferType):
         num_ranks = get_program().num_ranks
@@ -347,8 +347,8 @@ class SwitchChannel:
         for rank in rank_list:
             if rank >= num_ranks:
                 raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {num_ranks}")
-            self.channel_ids[rank] = SwitchChannel.__channel_counts[rank]
-            SwitchChannel.__channel_counts[rank] += 1
+            self.channel_ids[rank] = SwitchChannel._channel_counts[rank]
+            SwitchChannel._channel_counts[rank] += 1
 
         self.channel_type = ChannelType.switch
         self.buffer_type = buffer_type
@@ -361,7 +361,7 @@ class SwitchChannel:
             raise RuntimeError(f"Rank {rank} is not part of this SwitchChannel's rank group.")
         return SwitchChannel.SwitchChannelRankView(self, rank)
 
-    def group_load_reduce(self, rank, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+    def reduce(self, rank, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
         self.src_rank = rank
         if dst_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
@@ -394,7 +394,7 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
-    def group_store(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
+    def broadcast(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
         self.src_rank = rank
         if src_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
@@ -424,8 +424,8 @@ class SwitchChannel:
             self._channel: SwitchChannel = channel
             self._rank: int = rank
 
-        def group_load_reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
-            return self._channel.group_load_reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
+        def reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+            return self._channel.reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
 
-        def group_store(self, src_chunk: Chunk, buffer_offset, size, tb):
-            return self._channel.group_store(self._rank, src_chunk, buffer_offset, size, tb)
+        def broadcast(self, src_chunk: Chunk, buffer_offset, size, tb):
+            return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)

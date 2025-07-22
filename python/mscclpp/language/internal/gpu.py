@@ -17,18 +17,18 @@ class Gpu:
     remote_buffers: OrderedDict = field(default_factory=OrderedDict)
     semaphores: list = field(default_factory=list)
 
-    __channels: dict = field(default_factory=dict, init=False)
-    __nvls_channels: list = field(default_factory=list, init=False)
+    _channels: dict = field(default_factory=dict, init=False)
+    _nvls_channels: list = field(default_factory=list, init=False)
 
     def add_channel(self, channel):
         if channel.channel_type == ChannelType.switch:
-            self.__nvls_channels.append(
+            self._nvls_channels.append(
                 Gpu.NVLSChannel(buffer_type=channel.buffer_type, rank_groups=[channel.rank_group])
             )
         else:
-            if channel.channel_type not in self.__channels:
-                self.__channels[channel.channel_type] = Gpu.Channel(channel_type=channel.channel_type)
-            self.__channels[channel.channel_type].connected_to.append(channel.dst_rank)
+            if channel.channel_type not in self._channels:
+                self._channels[channel.channel_type] = Gpu.Channel(channel_type=channel.channel_type)
+            self._channels[channel.channel_type].connected_to.append(channel.dst_rank)
 
     def setup_channel(self, tb: int, channel) -> int:
         for i in range(len(self.threadblocks), tb + 1):
@@ -82,19 +82,19 @@ class Gpu:
         new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
         new_semaphores = []
         for _ in range(instances):
-            if ChannelType.memory in self.__channels:
-                new_channels[ChannelType.memory].extend(self.__channels[ChannelType.memory].connected_to)
-            if ChannelType.port in self.__channels:
-                new_channels[ChannelType.port].extend(self.__channels[ChannelType.port].connected_to)
-            new_channels[ChannelType.switch].extend(self.__nvls_channels)
+            if ChannelType.memory in self._channels:
+                new_channels[ChannelType.memory].extend(self._channels[ChannelType.memory].connected_to)
+            if ChannelType.port in self._channels:
+                new_channels[ChannelType.port].extend(self._channels[ChannelType.port].connected_to)
+            new_channels[ChannelType.switch].extend(self._nvls_channels)
 
             new_semaphores.extend(self.semaphores)
 
-        if ChannelType.memory in self.__channels:
-            self.__channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
-        if ChannelType.port in self.__channels:
-            self.__channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
-        self.__nvls_channels = new_channels[ChannelType.switch]
+        if ChannelType.memory in self._channels:
+            self._channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
+        if ChannelType.port in self._channels:
+            self._channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
+        self._nvls_channels = new_channels[ChannelType.switch]
 
         self.semaphores = new_semaphores
 
@@ -118,8 +118,8 @@ class Gpu:
             "output_chunks": self.output_chunks,
             "scratch_chunks": self.scratch_chunks,
             "threadblocks": [tb.to_json() for tb in self.threadblocks],
-            "channels": [ch.to_json() for ch in self.__channels.values()]
-            + [ch.to_json() for ch in self.__nvls_channels],
+            "channels": [ch.to_json() for ch in self._channels.values()]
+            + [ch.to_json() for ch in self._nvls_channels],
             "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
             "semaphores": [sm.to_json() for sm in self.semaphores],
         }
