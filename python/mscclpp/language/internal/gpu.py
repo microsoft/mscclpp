@@ -70,9 +70,7 @@ class Gpu:
         for tb in self.threadblocks:
             tb.resolve_data_dependency()
 
-    def replicate_instances(
-        self, instances, channel_replication_function, buffer_replication_function, semaphore_replication_function
-    ):
+    def replicate_instances(self, instances, default_replication_function, buffer_replication_function):
         threadblocks = []
 
         self.input_chunks *= instances
@@ -101,11 +99,11 @@ class Gpu:
         for threadblock in self.threadblocks:
             for instance in range(instances):
                 tb = copy.deepcopy(threadblock)
-                tb.id = threadblock.id * instances + instance
+                tb.id = default_replication_function(threadblock.id, instance, instances)
 
-                tb.shift_channels(instance, instances, channel_replication_function)
+                tb.shift_channels(instance, instances, default_replication_function)
                 tb.shift_buffers(instance, instances, buffer_replication_function)
-                tb.shift_semaphores(instance, instances, semaphore_replication_function)
+                tb.shift_ids(instance, instances, default_replication_function)
 
                 threadblocks.append(tb)
 

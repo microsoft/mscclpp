@@ -62,15 +62,15 @@ class ThreadBlock:
     def shift_channels(self, instance, num_instances, replication_function):
         for channel in self._channels.values():
             for i in range(len(channel.channel_ids)):
-                channel.channel_ids[i] = replication_function(channel.channel_ids[i], num_instances, instance)
+                channel.channel_ids[i] = replication_function(channel.channel_ids[i], instance, num_instances)
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for op in self.ops:
             op.shift_buffers(instance, num_instances, replication_function)
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for op in self.ops:
-            op.shift_semaphores(instance, num_instances, replication_function)
+            op.shift_ids(instance, num_instances, replication_function)
 
     def to_json(self) -> dict:
         return {

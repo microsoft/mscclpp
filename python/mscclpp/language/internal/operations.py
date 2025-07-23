@@ -24,7 +24,7 @@ class BaseOperation:
     def shift_buffers(self, instance, num_instances, replication_function):
         return
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         return
 
     def __add__(self, other):
@@ -59,7 +59,7 @@ class SyncOperation(BaseOperation):
             fused_operation = SyncOperation()
         elif isinstance(other, BarrierOperation):
             fused_operation = other
-        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before):
+        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before:
             fused_operation = other
         elif check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
@@ -107,9 +107,9 @@ class CopyOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -128,9 +128,9 @@ class SemaphoreAcquireOperation(BaseOperation):
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
-            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -140,8 +140,8 @@ class SemaphoreAcquireOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -161,9 +161,9 @@ class SemaphoreReleaseOperation(BaseOperation):
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
-    def shift_semaphores(self, instance, num_instances, replication_function):
+    def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
-            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], num_instances, instance)
+            self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -173,8 +173,8 @@ class SemaphoreReleaseOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -219,8 +219,8 @@ class SignalOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_signal),
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -266,8 +266,8 @@ class WaitOperation(BaseOperation):
                 relaxed=(self.name == Instruction.relaxed_wait),
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -299,10 +299,15 @@ class BarrierOperation(BaseOperation):
         super().__init__(Instruction.barrier)
         self.barrier_info = barrier_info
 
+    def shift_ids(self, instance, num_instances, replication_function):
+        self.barrier_id = replication_function(self.barrier_id, instance, num_instances)
+
     def __add__(self, other):
         fused_operation = None
         if check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        elif isinstance(other, SyncOperation):
+            fused_operation = self
 
         return fused_operation
 
@@ -340,8 +345,8 @@ class FlushOperation(BaseOperation):
                 data_sync=self.data_sync | other.data_sync,
             )
         elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before))
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before))
+            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
             or isinstance(other, SyncOperation)
             or isinstance(other, BarrierOperation)
         ):
@@ -380,9 +385,9 @@ class GetOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -461,9 +466,9 @@ class PutOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -567,13 +572,13 @@ class ReduceOperation(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for chunk in self.local_src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.local_dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.remote_src_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
         for chunk in self.remote_dst_buff:
-            chunk.index = replication_function(chunk.index, num_instances, instance)
+            chunk.index = replication_function(chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -687,8 +692,8 @@ class GroupLoadReduce(BaseOperation):
         self.reduce_operation = reduce_operation
 
     def shift_buffers(self, instance, num_instances, replication_function):
-        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
-        self.dst_chunk.index = replication_function(self.dst_chunk.index, num_instances, instance)
+        self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
+        self.dst_chunk.index = replication_function(self.dst_chunk.index, instance, num_instances)
 
     def __add__(self, other):
         fused_operation = None
@@ -744,8 +749,8 @@ class GroupStore(BaseOperation):
         self.channel_type = channel_type
 
     def shift_buffers(self, instance, num_instances, replication_function):
-        self.buffer_offset = replication_function(self.buffer_offset, num_instances, instance)
-        self.src_chunk.index = replication_function(self.src_chunk.index, num_instances, instance)
+        self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
+        self.src_chunk.index = replication_function(self.src_chunk.index, instance, num_instances)
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -781,9 +786,9 @@ class GroupLoadReduceStore(BaseOperation):
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for i in range(len(self.src_index)):
-            self.src_index[i] = replication_function(self.src_index[i], num_instances, instance)
+            self.src_index[i] = replication_function(self.src_index[i], instance, num_instances)
         for i in range(len(self.dst_index)):
-            self.dst_index[i] = replication_function(self.dst_index[i], num_instances, instance)
+            self.dst_index[i] = replication_function(self.dst_index[i], instance, num_instances)
 
     def to_json(self):
         result = {"name": self.name.value}
@@ -845,9 +850,9 @@ class PipelineOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (self.get_data_sync() & SyncType.after) and check_data_sync_op(other):
+        if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after):
+        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after) == SyncType.after:
             fused_operation = self
 
         return fused_operation
