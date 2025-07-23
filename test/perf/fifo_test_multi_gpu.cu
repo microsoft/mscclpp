@@ -55,7 +55,8 @@ __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle 
   for (int i = warpId; i < numElements; i += totalWarps) {
     if (laneId == 0) {
       // Use port channel to put data to remote GPU
-      portHandle.put(sendBuffer[i], i);
+      // Transfer one integer from local send buffer to remote receive buffer
+      portHandle.put(i * sizeof(int), i * sizeof(int), sizeof(int));
     }
     __syncwarp();
   }
@@ -70,15 +71,44 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int totalThreads = blockDim.x * gridDim.x;
   
-  // Wait for signal from sender
-  if (tid == 0) {
+  // Wait for signal from sender - only thread 0 in block 0 should wait
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
     portHandle.wait();
   }
+
+  __threadfence_system();
   __syncthreads();
-  
-  // All threads read data from remote GPU
+
+  __shared__ int errorCount;
+  if (threadIdx.x == 0) {
+    errorCount = 0;
+  }
+  __syncthreads();
+
+  // int errorCount = 0;
+  int expectedValue = 1; // GPU0 sends value 1 (rank + 1 where rank = 0)
+  int localErrors = 0;
+
+    // Each thread validates a portion of the received data
   for (int i = tid; i < numElements; i += totalThreads) {
-    recvBuffer[i] = portHandle.get(i);
+    if (recvBuffer[i] != expectedValue) {
+      localErrors++;
+    }
+  }
+
+  // Accumulate errors from all threads
+  if (localErrors > 0) {
+    atomicAdd(&errorCount, localErrors);
+  }
+
+  // Report validation results from thread 0
+  __syncthreads();
+  if (tid == 0) {
+    assert(errorCount == 0);
+    if (errorCount > 0) {
+      printf("GPU1: Data validation FAILED - %d errors found out of %d elements\n",
+             errorCount, numElements);
+    }
   }
 }
 
@@ -145,13 +175,16 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
     // GPU0: Put data to GPU1's receive buffer
     kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements);
     utils::CUDA_CHECK(cudaGetLastError());
+    printf("Finish kernelPutData on GPU0\n");
   } else if (rank == 1) {
     // GPU1: Get data from GPU0's send buffer to local receive buffer
     kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements);
     utils::CUDA_CHECK(cudaGetLastError());
+    printf("Finish kernelGetData on GPU1\n");
   }
 
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
+  printf("Finish cudaStreamSynchronize on rank %d\n", rank);
 
   timer.stop();
 
@@ -160,6 +193,7 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
   double duration_us = timer.elapsedMicroseconds();
 
   utils::CUDA_CHECK(cudaDeviceSynchronize());
+  printf("Finish cudaDeviceSynchronize on rank %d\n", rank);
 
   return {throughput, duration_us, totalElements};
 }
@@ -234,7 +268,10 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   int* recvBuffer = buff.get() + halfElements;
 
   // Initialize send buffer with test data
-  cudaMemset(sendBuffer, rank + 1, halfElements * sizeof(int)); // GPU0 uses 1, GPU1 uses 2
+  int initValue = rank + 1; // GPU0 uses 1, GPU1 uses 2
+  for (int i = 0; i < halfElements; i++) {
+    cudaMemcpy(sendBuffer + i, &initValue, sizeof(int), cudaMemcpyHostToDevice);
+  }
   cudaMemset(recvBuffer, 0, halfElements * sizeof(int));
 
   // Setup transport
