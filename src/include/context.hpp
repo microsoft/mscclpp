@@ -38,10 +38,13 @@ class CudaIpcStream {
 struct Context::Impl {
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
   std::vector<std::shared_ptr<CudaIpcStream>> ipcStreams_;
+  std::unordered_map<std::string, std::shared_ptr<void>> customerContext;
 
   Impl();
 
   IbCtx *getIbContext(Transport ibTransport);
+  void setContext(std::string, std::shared_ptr<void> ctx);
+  std::shared_ptr<void> getContext(std::string ctxName);
 };
 
 }  // namespace mscclpp

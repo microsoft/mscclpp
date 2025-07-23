@@ -600,6 +600,13 @@ class Context : public std::enable_shared_from_this<Context> {
   /// @return The newly created endpoint.
   Endpoint createEndpoint(EndpointConfig config);
 
+  void setContext(std::string name, std::shared_ptr<void> context);
+
+  std::shared_ptr<void> getContext(std::string name);
+
+ private:
+  Context();
+
   /// Establish a connection between two endpoints. While this method immediately returns a connection object, the
   /// connection is only safe to use after the corresponding connection on the remote endpoint has been established.
   /// This method must be called on both endpoints to establish a connection.
@@ -609,14 +616,12 @@ class Context : public std::enable_shared_from_this<Context> {
   /// @return A shared pointer to the connection.
   std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
 
- private:
-  Context();
-
   struct Impl;
   std::unique_ptr<Impl> pimpl_;
 
   friend class RegisteredMemory;
   friend class Endpoint;
+  friend class Communicator;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
@@ -848,7 +853,8 @@ class Communicator {
   /// @param tag The tag to use for identifying the send and receive.
   /// @return A future of shared pointer to the connection.
   ///
-  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0);
+  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0,
+                                                          std::string connName = "core");
 
   [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
       shared_future<std::shared_ptr<Connection>>
