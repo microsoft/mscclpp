@@ -221,9 +221,8 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     if (connIndex < connections.size()) {
       connection = connections[connIndex];
       semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connection);
-      auto portChannel =
-          proxyService->portChannel(semaphoreId, proxyService->addMemory(localFlagRegmem),
-                                    proxyService->addMemory(localFlagRegmem));
+      auto portChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(localFlagRegmem),
+                                                   proxyService->addMemory(localFlagRegmem));
       portChannelHandle = portChannel.deviceHandle();
       cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
     }
