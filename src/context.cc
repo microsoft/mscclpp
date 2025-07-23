@@ -120,9 +120,4 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
   return conn;
 }
 
-MSCCLPP_API_CPP void Context::setContext(std::string name, std::shared_ptr<void> context) {
-  pimpl_->setContext(name, context);
-}
-
-MSCCLPP_API_CPP std::shared_ptr<void> Context::getContext(std::string name) { return pimpl_->getContext(name); }
 }  // namespace mscclpp
