@@ -87,11 +87,11 @@ class MSCCLPPProgram:
             gpu.resolve_data_dependency()
             gpu.replicate_instances(
                 self.instances,
-                self.get_std_replication_policy_function(),
+                self.get_default_replication_policy_function(),
                 self.get_buffer_replication_policy_function(),
             )
 
-    def get_std_replication_policy_function(self):
+    def get_default_replication_policy_function(self):
         return lambda value, instance, num_instances: value * num_instances + instance
 
     def get_buffer_replication_policy_function(self):
