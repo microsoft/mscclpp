@@ -600,6 +600,9 @@ class Context : public std::enable_shared_from_this<Context> {
   /// @return The newly created endpoint.
   Endpoint createEndpoint(EndpointConfig config);
 
+  std::shared_ptr<void> get(std::string name) {return nullptr;}
+  void set(std::string name, std::shared_ptr<void> value) {}
+
  private:
   Context();
 
