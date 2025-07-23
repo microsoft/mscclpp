@@ -56,16 +56,6 @@ IbCtx *Context::Impl::getIbContext(Transport ibTransport) {
   return it->second.get();
 }
 
-void Context::Impl::setContext(std::string ctxName, std::shared_ptr<void> ctx) { customerContext[ctxName] = ctx; }
-
-std::shared_ptr<void> Context::Impl::getContext(std::string ctxName) {
-  auto it = customerContext.find(ctxName);
-  if (it != customerContext.end()) {
-    return it->second;
-  }
-  return nullptr;
-}
-
 MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
 
 MSCCLPP_API_CPP Context::~Context() = default;

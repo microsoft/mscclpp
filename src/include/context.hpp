@@ -43,8 +43,6 @@ struct Context::Impl {
   Impl();
 
   IbCtx *getIbContext(Transport ibTransport);
-  void setContext(std::string, std::shared_ptr<void> ctx);
-  std::shared_ptr<void> getContext(std::string ctxName);
 };
 
 }  // namespace mscclpp
