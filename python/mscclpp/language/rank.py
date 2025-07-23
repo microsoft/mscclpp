@@ -123,14 +123,14 @@ class Buffer(BaseBuffer):
 
 
 class Semaphore:
-    __semaphore_counts = defaultdict(int)
+    _semaphore_counts = defaultdict(int)
 
     def __init__(self, rank: int, initial_value: int):
         num_ranks = get_program().num_ranks
         if rank >= num_ranks:
             raise RuntimeError(f"Source rank {rank} is out of bounds. Number of ranks: {num_ranks}")
-        self.id = Semaphore.__semaphore_counts[rank]
-        Semaphore.__semaphore_counts[rank] += 1
+        self.id = Semaphore._semaphore_counts[rank]
+        Semaphore._semaphore_counts[rank] += 1
 
         self.rank = rank
         self.initial_value = initial_value
