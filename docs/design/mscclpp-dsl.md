@@ -13,6 +13,11 @@ Here is the highlights of the MSCCL++ DSL:
 
 ## MSCCL++ DSL Concepts
 
+### Collectives
+
+Collectives define the communication pattern for distributed operations such as AllReduce, AllGather, and ReduceScatter. The input and output buffers are predefined based on the collective type and parameters. The number of chunks in each buffer is determined by the `chunk_factor` parameter multiplied by `num_ranks` where appropriate. For example, AllReduce uses `num_ranks * chunk_factor` chunks for both input and output, while AllGather uses `chunk_factor` input chunks and `num_ranks * chunk_factor` output chunks per rank.
+
+
 ### Buffer/Chunk
 Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. User can allocate scratch buffer for intermediate data movement. Chunk is a slice of the buffer.
 
@@ -78,6 +83,9 @@ But for multi-thread-blocks synchronization and cross ranks synchronization, we 
 ## Kernel fusion
 MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.  
 
+## Data dependencies analysis
+
+The MSCCL++ DSL automatically tracks data dependencies at the chunk level within each thread block by maintaining the last writer and active readers for each memory slot. When operations have data dependencies, the DSL automatically inserts necessary synchronization points to ensure correct execution order. Additionally, the system analyzes the dependency graph to remove redundant synchronization operations (such as unnecessary barriers) when the execution order already guarantees correctness, optimizing performance while maintaining safety.
 
 ## Pipeline Loop
 Pipeline enables overlapping operations across thread blocks. Using Semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
@@ -100,44 +108,67 @@ with LoopIterationContext(unit=2**20, num_chunks=1):
 Here is the example for two ranks allreduce. Which achieve non-zero copy and use nvls. We use 3 thread-blocks to do the allreduce.
 The first thread-block is used to copy data from input buffer to scratch buffer, the second thread-block is used to do allreduce in scratch buffer, and the third thread-block is used to copy data from scratch buffer to output buffer.  The thread-blocks are synchronized by semaphores.
 ```python
-nvls_chan = SwitchChannel(rank_list=[0, 1], buffer=Buffer.scratch)
-nranks = 2
+nvls_chan = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.scratch)
+scratch_buffer = []
+for i in range(nranks):
+    scratch_buffer.append(Buffer(i, nranks))
+
 for i in range(nranks):
     src_rank = i
     dst_rank = (i + 1) % nranks
     chan = MemoryChannel(dst_rank, src_rank)
     chan1 = MemoryChannel(dst_rank, src_rank)
     rank = Rank(i)
-    sem0 = Semaphore(rank=i, initial_value=1)
-    sem1 = Semaphore(rank=i, initial_value=1)
+    sem0 = Semaphore(rank=i, initial_value=0)
+    sem1 = Semaphore(rank=i, initial_value=0)
     input_buffer = rank.get_input_buffer()
     output_buffer = rank.get_output_buffer()
-    scratch_buffer = Buffer(i, scratch_buffer_size)
-    with Loop.iteration(unit=2**20, num_chunks=1):
-        # copy data to scratch buffer
-        for offset in range(nranks):
-            dst_chunk = scratch_buffer[offset:offset+1]
-            src_chunk = input_buffer[offset:offset+1]
-            rank.copy(dst_chunk, src_chunk, tb=0)
-        chan.signal(tb=0, SyncType.before)
-        chan.wait(tb=0, SyncType.after)
-        sem0.release(tb=0)
 
-        # do allreduce in scratch buffer
-        sem0.acquire(tb=1, SyncType.after)
-        nvls_chan.group_load_reduce(buffer_offset=i, size=1, dst_chunk=scratch_buffer[i:i+1], tb=1)
-        nvls_chan.group_store(src_chunk=input_buffer[i:i+1], buffer_offset=i, size=1, tb=1)
-        chan1.signal(tb=1, SyncType.before)
+    # Define loop iteration context for processing data chunks
+    with LoopIterationContext(unit=2**20, num_chunks=1):
+        # Copy input data to scratch buffers
+        for offset in range(nranks):
+            dst_chunk = scratch_buffer[i][offset : offset + 1]
+            src_chunk = input_buffer[offset : offset + 1]
+            rank.copy(dst_chunk, src_chunk, tb=0)
+
+        # Synchronize with other ranks
+        chan.signal(tb=0, data_sync=SyncType.before)
+        chan.wait(tb=0, data_sync=SyncType.after)
+        sem0.release(tb=0)  # Release semaphore to allow next step to proceed
+
+        # Wait for previous step completion
+        sem0.acquire(tb=1, data_sync=SyncType.after)
+
+        # Reduce operation: combine data from multiple ranks into local chunk
+        nvls_chan.at_rank(src_rank).reduce(
+            buffer_offset=i, size=1, dst_chunk=scratch_buffer[i][i : i + 1], tb=1
+        )
+
+        # Broadcast the reduced result to all participating ranks
+        nvls_chan.at_rank(src_rank).broadcast(
+            src_chunk=scratch_buffer[i][i : i + 1], buffer_offset=i, size=1, tb=1
+        )
+
+        # Signal completion of reduction stage and prepare for next stage
+        chan1.signal(tb=1, data_sync=SyncType.before)
         sem1.release(tb=1)
 
-        # copy data back to output buffer
+        # Wait for previous stage completion
         sem1.acquire(tb=2)
-        chan1.wait(tb=2, SyncType.after)
+        chan1.wait(tb=2, data_sync=SyncType.after)
+
+        # Copy all reduced chunks from scratch buffer to final output buffer
         for index in range(nranks):
-            dst_chunk = output_buffer[index:index+1]
-            src_chunk = scratch_buffer[index:index+1]
+            dst_chunk = output_buffer[index : index + 1]
+            src_chunk = scratch_buffer[i][index : index + 1]
             rank.copy(dst_chunk, src_chunk, tb=2)
 ```
+
+## Adjust the number of instances
+
+The MSCCL++ DSL supports replicating algorithm instances to increase parallelism and improve performance. When `instances > 1` is specified in `MSCCLPPProgram`, the DSL automatically replicates thread blocks, channels, and buffer chunks across multiple instances. Each instance operates on separate data partitions, allowing concurrent execution of the same algorithm pattern. The replication uses configurable policies: interleaved (default) distributes data chunks across instances in round-robin fashion, while other policies can control how channels and thread block IDs are mapped. This feature is particularly useful for scaling algorithms across larger data sizes or increasing GPU utilization.
+
 
 ## Generate execution plan
 The MSCCL++ DSL generates an execution plan in JSON format, which describes the operations to be executed on each rank. The execution plan includes information about the buffers, channels, and synchronization points. This plan is then used by the MSCCL++ runtime to execute the operations on the GPU.
