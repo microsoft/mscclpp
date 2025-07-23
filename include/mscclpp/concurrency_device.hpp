@@ -41,7 +41,7 @@ struct DeviceSyncer {
   /// finished.
   /// @param blockNum The number of blocks that will synchronize.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void sync(int blockNum, int64_t maxSpinCount = 100000000) {
+  MSCCLPP_DEVICE_INLINE void sync(int blockNum, [[maybe_unused]] int64_t maxSpinCount = 100000000) {
     unsigned int targetCnt = blockNum;
     __syncthreads();
     if (blockNum == 1) return;
@@ -108,12 +108,13 @@ struct DeviceSemaphore {
   /// @param value The value to set.
   MSCCLPP_DEVICE_INLINE void set(int value) { atomicStore<int, scopeDevice>(&semaphore_, value, memoryOrderRelease); }
 
-  /// Acquire the semaphore (wait until the semaphore value is greater than 0 and decrease it by 1).
+  /// Acquire the semaphore (decrease the semaphore value by 1).
   /// This function will spin until the semaphore is acquired or the maximum spin count is reached.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void acquire(int maxSpinCount = -1) {
-    if (atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire) <= 0) {
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < 0), maxSpinCount);
+  MSCCLPP_DEVICE_INLINE void acquire([[maybe_unused]] int maxSpinCount = -1) {
+    int oldVal = atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire);
+    if (oldVal <= 0) {
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) != oldVal), maxSpinCount);
     }
   }
 

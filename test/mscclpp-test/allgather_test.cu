@@ -536,16 +536,11 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
 };
 
 AllGatherProxyService::AllGatherProxyService(int worldSize, int rank, int cudaDevice)
-    : worldSize_(worldSize),
-      rank_(rank),
-      cudaDevice_(cudaDevice),
-      sendBytes_(0),
-      proxy_(
-          std::make_shared<mscclpp::Proxy>([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); },
-                                           [&]() {
-                                             int deviceNumaNode = getDeviceNumaNode(cudaDevice_);
-                                             numaBind(deviceNumaNode);
-                                           })) {}
+    : worldSize_(worldSize), rank_(rank), cudaDevice_(cudaDevice), sendBytes_(0) {
+  MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
+  auto handlerFunc = [&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
+  proxy_ = std::make_shared<mscclpp::Proxy>(handlerFunc);
+}
 
 mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyTrigger triggerRaw) {
   size_t offset = rank_ * sendBytes_;
@@ -574,7 +569,7 @@ mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyT
       conn->flush();
     }
   }
-  return mscclpp::ProxyHandlerResult::FlushFifoTailAndContinue;
+  return mscclpp::ProxyHandlerResult::Continue;
 }
 
 class AllGatherTestColl : public BaseTestColl {

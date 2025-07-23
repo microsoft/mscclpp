@@ -1,9 +1,14 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-set(MSCCLPP_MAJOR "0")
-set(MSCCLPP_MINOR "6")
-set(MSCCLPP_PATCH "0")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
+if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
+    set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
+    set(MSCCLPP_MINOR "${CMAKE_MATCH_2}")
+    set(MSCCLPP_PATCH "${CMAKE_MATCH_3}")
+else()
+    message(FATAL_ERROR "VERSION file must be in the format MAJOR.MINOR.PATCH")
+endif()
 
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
@@ -21,7 +26,7 @@ option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
-option(MSCCLPP_NPKIT_FLAGS "Enable NPKIT" OFF)
+option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -52,42 +57,35 @@ else()
         message(STATUS "Detected AMD/ROCm.")
         set(MSCCLPP_USE_CUDA OFF)
         set(MSCCLPP_USE_ROCM ON)
+    elseif(CUDAToolkit_FOUND)
+        message(WARNING "CUDAToolkit found but no compatible GPU detected. Defaulting to CUDA.")
+        set(MSCCLPP_USE_CUDA ON)
+        set(MSCCLPP_USE_ROCM OFF)
+    elseif(hip_FOUND)
+        message(WARNING "HIP found but no compatible GPU detected. Defaulting to ROCm.")
+        set(MSCCLPP_USE_CUDA OFF)
+        set(MSCCLPP_USE_ROCM ON)
     else()
-        message(FATAL_ERROR "Neither NVIDIA/CUDA nor AMD/ROCm is found.")
+        message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
     endif()
 endif()
-
 if(MSCCLPP_GPU_ARCHS)
-    # Remove any leading/trailing whitespace
     string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
-
-    # Split the string into a list
     string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
     string(REPLACE "," ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
-
-    # Check if the list is empty
     if(NOT MSCCLPP_GPU_ARCHS)
-        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is given empty. Please specify GPU architectures or do not set MSCCLPP_GPU_ARCHS.")
+        message(FATAL_ERROR "MSCCLPP_GPU_ARCHS is empty. Specify GPU architectures or leave unset.")
     endif()
 elseif(MSCCLPP_USE_CUDA)
-    # CUDA 11 or higher is required
-    if(CUDAToolkit_VERSION_MAJOR LESS 11)
-        message(FATAL_ERROR "CUDA 11 or higher is required but detected ${CUDAToolkit_VERSION}")
+    if(CUDAToolkit_VERSION VERSION_LESS "11.8")
+        message(FATAL_ERROR "CUDA 11.8 or higher required, found ${CUDAToolkit_VERSION}")
     endif()
-
-    # Ampere architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 11)
-        set(MSCCLPP_GPU_ARCHS 80)
+    set(MSCCLPP_GPU_ARCHS 80)
+    if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.0")
+        list(APPEND MSCCLPP_GPU_ARCHS 90)
     endif()
-
-    # Hopper architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 90)
-    endif()
-
-    # Blackwell architecture
-    if(CUDAToolkit_VERSION_MAJOR GREATER_EQUAL 12 AND CUDAToolkit_VERSION_MINOR GREATER_EQUAL 8)
-        set(MSCCLPP_GPU_ARCHS ${MSCCLPP_GPU_ARCHS} 100)
+    if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+        list(APPEND MSCCLPP_GPU_ARCHS 100)
     endif()
 elseif(MSCCLPP_USE_ROCM)
     set(CMAKE_HIP_ARCHITECTURES gfx90a gfx941 gfx942)
@@ -124,7 +122,6 @@ endif()
 # Format targets
 include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
 
-# Find ibverbs and libnuma
 find_package(IBVerbs)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)

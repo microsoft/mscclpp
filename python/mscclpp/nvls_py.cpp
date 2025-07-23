@@ -15,17 +15,16 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_nvls(nb::module_& m) {
-  nb::class_<NvlsConnection::DeviceMulticastPointer>(m, "DeviceMulticastPointer")
-      .def("get_device_ptr",
-           [](NvlsConnection::DeviceMulticastPointer* self) { return (uintptr_t)self->getDevicePtr(); })
-      .def("device_handle", &NvlsConnection::DeviceMulticastPointer::deviceHandle);
+  nb::class_<SwitchChannel>(m, "SwitchChannel")
+      .def("get_device_ptr", [](SwitchChannel* self) { return (uintptr_t)self->getDevicePtr(); })
+      .def("device_handle", &SwitchChannel::deviceHandle);
 
-  nb::class_<NvlsConnection::DeviceMulticastPointer::DeviceHandle>(m, "DeviceHandle")
+  nb::class_<SwitchChannel::DeviceHandle>(m, "DeviceHandle")
       .def(nb::init<>())
-      .def_rw("devicePtr", &NvlsConnection::DeviceMulticastPointer::DeviceHandle::devicePtr)
-      .def_rw("mcPtr", &NvlsConnection::DeviceMulticastPointer::DeviceHandle::mcPtr)
-      .def_rw("size", &NvlsConnection::DeviceMulticastPointer::DeviceHandle::bufferSize)
-      .def_prop_ro("raw", [](const NvlsConnection::DeviceMulticastPointer::DeviceHandle& self) -> nb::bytes {
+      .def_rw("devicePtr", &SwitchChannel::DeviceHandle::devicePtr)
+      .def_rw("mcPtr", &SwitchChannel::DeviceHandle::mcPtr)
+      .def_rw("size", &SwitchChannel::DeviceHandle::bufferSize)
+      .def_prop_ro("raw", [](const SwitchChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 

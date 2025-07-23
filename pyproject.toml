@@ -7,16 +7,18 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
-version = "0.6.0"
+version = "0.7.0"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
 cmake.build-type = "Release"
-# for dlpack issue: https://github.com/microsoft/vcpkg/pull/44679
-cmake.args = ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5"]
 build-dir = "build/{wheel_tag}"
-wheel.packages = ["python/mscclpp", "python/mscclpp_benchmark"]
-wheel.install-dir = "mscclpp"
+
+[tool.scikit-build.wheel]
+packages = ["python/mscclpp", "python/mscclpp_benchmark"]
+install-dir = "mscclpp"
+license-files = ["VERSION", "LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
+exclude = ["mscclpp/*.cpp"]
 
 [tool.scikit-build.cmake.define]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"

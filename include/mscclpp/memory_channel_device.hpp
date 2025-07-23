@@ -11,7 +11,7 @@
 
 namespace mscclpp {
 
-/// Device-side handle of a MemoryChannel.
+/// Device-side handle of a MemoryChannel without specific source and destination.
 struct BaseMemoryChannelDeviceHandle {
   MemoryDevice2DeviceSemaphoreDeviceHandle semaphore_;
 
@@ -34,12 +34,6 @@ struct BaseMemoryChannelDeviceHandle {
   /// User requires to call proper fencing before using this function.
   ///
   MSCCLPP_DEVICE_INLINE void relaxedSignal() { semaphore_.relaxedSignal(); }
-
-  /// Increase the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE void semaphoreIncrement() { semaphore_.semaphoreIncrement(); }
-
-  /// Read the counter of the local semaphore.
-  MSCCLPP_DEVICE_INLINE uint64_t semaphoreGetLocal() const { return semaphore_.semaphoreGetLocal(); }
 
   /// Check if the remote semaphore has signaled.
   /// @return true if the remote semaphore has signaled.
