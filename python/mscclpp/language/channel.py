@@ -370,17 +370,16 @@ class SwitchChannel:
         if dst_chunk.size != size:
             raise RuntimeError(f"Destination chunk size {dst_chunk.size} does not match the required size {size}.")
 
-        if self.buffer_type != BufferType.scratch:
-            for rank in self.rank_group.ranks:
-                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
-                    raise RuntimeError(
-                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
-                        f"required size {buffer_offset + size} for rank {rank}."
-                    )
-        else:
-            for rank in self.rank_group.ranks:
-                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
-                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+        for rank in self.rank_group.ranks:
+            if self.buffer_type == BufferType.scratch:
+                buffer_size = get_program().gpus[rank].scratch_chunks
+            else:
+                buffer_size = get_program().buffers[rank][self.buffer_type].size
+
+            if buffer_size < buffer_offset + size:
+                raise RuntimeError(
+                    f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
+                )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = GroupLoadReduce(
@@ -403,17 +402,16 @@ class SwitchChannel:
         if src_chunk.size != size:
             raise RuntimeError(f"Destination chunk size {src_chunk.size} does not match the required size {size}.")
 
-        if self.buffer_type != BufferType.scratch:
-            for rank in self.rank_group.ranks:
-                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
-                    raise RuntimeError(
-                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
-                        f"required size {buffer_offset + size} for rank {rank}."
-                    )
-        else:
-            for rank in self.rank_group.ranks:
-                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
-                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+        for rank in self.rank_group.ranks:
+            if self.buffer_type == BufferType.scratch:
+                buffer_size = get_program().gpus[rank].scratch_chunks
+            else:
+                buffer_size = get_program().buffers[rank][self.buffer_type].size
+
+            if buffer_size < buffer_offset + size:
+                raise RuntimeError(
+                    f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
+                )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
