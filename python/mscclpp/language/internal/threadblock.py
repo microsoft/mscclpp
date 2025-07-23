@@ -12,39 +12,39 @@ class ThreadBlock:
         self.id = id
         self.ops = []
 
-        self.__remote_buffers = OrderedDict()
-        self.__intra_remote_buffer_ids = {ChannelType.memory: {}, ChannelType.port: {}}
-        self.__channels = OrderedDict()
-        self.__intra_channel_ids = {ChannelType.memory: {}, ChannelType.port: {}, ChannelType.switch: {}}
+        self._remote_buffers = OrderedDict()
+        self._intra_remote_buffer_ids = {ChannelType.memory: {}, ChannelType.port: {}}
+        self._channels = OrderedDict()
+        self._intra_channel_ids = {ChannelType.memory: {}, ChannelType.port: {}, ChannelType.switch: {}}
 
     def add_channel(self, channel):
-        if channel.channel_type not in self.__channels:
-            self.__channels[channel.channel_type] = ThreadBlock.Channel(channel_type=channel.channel_type)
+        if channel.channel_type not in self._channels:
+            self._channels[channel.channel_type] = ThreadBlock.Channel(channel_type=channel.channel_type)
 
         if channel.channel_type == ChannelType.switch:
             channel_id = channel.channel_ids[channel.src_rank]
         else:
             channel_id = channel.channel_id
 
-        if channel_id not in self.__intra_channel_ids[channel.channel_type]:
-            self.__intra_channel_ids[channel.channel_type][channel_id] = len(
-                self.__channels[channel.channel_type].channel_ids
+        if channel_id not in self._intra_channel_ids[channel.channel_type]:
+            self._intra_channel_ids[channel.channel_type][channel_id] = len(
+                self._channels[channel.channel_type].channel_ids
             )
-            self.__channels[channel.channel_type].channel_ids.append(channel_id)
-        return self.__intra_channel_ids[channel.channel_type][channel_id]
+            self._channels[channel.channel_type].channel_ids.append(channel_id)
+        return self._intra_channel_ids[channel.channel_type][channel_id]
 
     def add_remote_buffer(self, remote_buffer_id: int, access_channel_type: ChannelType) -> int:
-        if access_channel_type not in self.__remote_buffers:
-            self.__remote_buffers[access_channel_type] = ThreadBlock.RemoteBuffer(
+        if access_channel_type not in self._remote_buffers:
+            self._remote_buffers[access_channel_type] = ThreadBlock.RemoteBuffer(
                 access_channel_type=access_channel_type
             )
 
-        if remote_buffer_id not in self.__intra_remote_buffer_ids[access_channel_type]:
-            self.__intra_remote_buffer_ids[access_channel_type][remote_buffer_id] = len(
-                self.__intra_remote_buffer_ids[access_channel_type]
+        if remote_buffer_id not in self._intra_remote_buffer_ids[access_channel_type]:
+            self._intra_remote_buffer_ids[access_channel_type][remote_buffer_id] = len(
+                self._intra_remote_buffer_ids[access_channel_type]
             )
-            self.__remote_buffers[access_channel_type].remote_buffer_ids.append(remote_buffer_id)
-        return self.__intra_remote_buffer_ids[access_channel_type][remote_buffer_id]
+            self._remote_buffers[access_channel_type].remote_buffer_ids.append(remote_buffer_id)
+        return self._intra_remote_buffer_ids[access_channel_type][remote_buffer_id]
 
     def add_operation(self, op):
         self.ops.append(op)
@@ -60,7 +60,7 @@ class ThreadBlock:
         self.ops = interval_map.process_operations(self.ops)
 
     def shift_channels(self, instance, num_instances, replication_function):
-        for channel in self.__channels.values():
+        for channel in self._channels.values():
             for i in range(len(channel.channel_ids)):
                 channel.channel_ids[i] = replication_function(channel.channel_ids[i], instance, num_instances)
 
@@ -76,9 +76,9 @@ class ThreadBlock:
         return {
             "id": self.id,
             "ops": [op.to_json() for op in self.ops],
-            "channels": [ch.to_json() for ch in self.__channels.values() if len(ch.channel_ids) > 0],
+            "channels": [ch.to_json() for ch in self._channels.values() if len(ch.channel_ids) > 0],
             "remote_buffer_refs": (
-                [rb.to_json() for rb in self.__remote_buffers.values()] if self.__remote_buffers else []
+                [rb.to_json() for rb in self._remote_buffers.values()] if self._remote_buffers else []
             ),
         }
 
