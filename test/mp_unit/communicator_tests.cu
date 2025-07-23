@@ -44,20 +44,26 @@ void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
 void CommunicatorTestBase::connectMesh(bool useIpc, bool useIb, bool useEthernet) {
   std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> cpuConnectionFutures(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && useIpc) {
         connectionFutures[i] = communicator->connect(mscclpp::Transport::CudaIpc, i);
       } else if (useIb) {
         connectionFutures[i] = communicator->connect(ibTransport, i);
+        cpuConnectionFutures[i] = communicator->connect({ibTransport, mscclpp::DeviceType::CPU}, i);
       } else if (useEthernet) {
         connectionFutures[i] = communicator->connect(mscclpp::Transport::Ethernet, i);
+        cpuConnectionFutures[i] = communicator->connect({mscclpp::Transport::Ethernet, mscclpp::DeviceType::CPU}, i);
       }
     }
   }
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       connections[i] = connectionFutures[i].get();
+      if (cpuConnectionFutures[i].valid()) {
+        cpuConnections[i] = cpuConnectionFutures[i].get();
+      }
     }
   }
 }
@@ -241,7 +247,8 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::unordered_map<int, std::shared_ptr<mscclpp::Host2HostSemaphore>> semaphores;
-  for (auto entry : connections) {
+  // Iterate over cpuConnections, which is guaranteed by design to only contain CPU connections.
+  for (auto entry : cpuConnections) {
     auto& conn = entry.second;
     // Host2HostSemaphore cannot be used with CudaIpc transport
     if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
