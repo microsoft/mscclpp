@@ -20,6 +20,7 @@ def allreduce_example(name, num_threads_per_block, min_message_size, max_message
         instances=1,
         protocol="Simple",
         instr_fusion=True,
+        reuse_resources=True,
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
