@@ -227,14 +227,7 @@ int runMultipleTests(
 
     std::vector<mscclpp::Transport> trans{mscclpp::Transport::IB0, mscclpp::Transport::IB1};
     cudaSetDevice(rank);
-    std::vector<std::shared_ptr<mscclpp::Connection>> conns;
     std::shared_ptr<mscclpp::Communicator> comm = std::make_shared<mscclpp::Communicator>(bootstrap);
-    for (int i = 0; i < size; i++) {
-      if (i == rank) {
-        continue;
-      }
-      conns.push_back(comm->connect(trans[rank], i).get());
-    }
     bootstrap->barrier();
 
     // Create test context
@@ -243,7 +236,7 @@ int runMultipleTests(
     context.size = size;
     context.local_rank = local_rank;
     context.communicator = comm;
-    context.connections = conns;
+    context.bootstrap = bootstrap;
 
     for (const auto& test : tests) {
       const std::string& testName = std::get<0>(test);

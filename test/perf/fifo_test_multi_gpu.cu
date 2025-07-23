@@ -120,7 +120,8 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   int rank = context.rank;
   int worldSize = context.size;
   auto communicator = context.communicator;
-  auto connections = context.connections;
+  auto bootstrap = context.bootstrap;
+
   if (config.fifoSize <= 0) {
     throw std::invalid_argument("FIFO size must be positive");
   }
@@ -137,30 +138,26 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
 
   // Setup transport
   mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc;
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   if (worldSize > 1) {
-    // Add IB transport for multi-node scenarios
-    transport |= mscclpp::Transport::IB0;
+    for (int i = 0; i < worldSize; i++) {
+      if (i == rank) {
+        continue;
+      }
+      // Use different IB transports for different ranks
+      std::vector<mscclpp::Transport> ibTransports{mscclpp::Transport::IB0, mscclpp::Transport::IB1};
+      mscclpp::Transport selectedTransport = ibTransports[rank % ibTransports.size()];
+      transport |= selectedTransport;
+      connections.push_back(communicator->connect(selectedTransport, i).get());
+    }
   }
+
+  // Wait for all connections to be established
+  bootstrap->barrier();
 
   // Create and start proxy service with specified FIFO size
   auto proxyService = std::make_shared<mscclpp::ProxyService>(config.fifoSize);
   proxyService->startProxy();
-
-  // Register send buffer memory
-  mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(buff.get(), nElem * sizeof(int), transport);
-
-  // Register receive buffer memory (same as send for simplicity)
-  mscclpp::RegisteredMemory recvBufRegMem = communicator->registerMemory(buff.get(), nElem * sizeof(int), transport);
-
-  // Exchange memory with other ranks
-  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
-  for (int r = 0; r < worldSize; r++) {
-    if (r == rank) {
-      continue;
-    }
-    communicator->sendMemory(recvBufRegMem, r, 0);
-    remoteMemFutures[r] = communicator->recvMemory(r, 0);
-  }
 
   // Allocate and setup local semaphore flag
   uint64_t* localSemaphoreFlag;
@@ -225,7 +222,7 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
       connection = connections[connIndex];
       semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connection);
       auto portChannel =
-          proxyService->portChannel(semaphoreId, proxyService->addMemory(remoteMemFutures[peerRank].get()),
+          proxyService->portChannel(semaphoreId, proxyService->addMemory(localFlagRegmem),
                                     proxyService->addMemory(localFlagRegmem));
       portChannelHandle = portChannel.deviceHandle();
       cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);

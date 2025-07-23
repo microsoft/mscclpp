@@ -30,7 +30,7 @@ struct TestContext {
   int size;
   int local_rank;
   std::shared_ptr<mscclpp::Communicator> communicator;
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
 };
 
 // Test result structure
