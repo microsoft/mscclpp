@@ -7,7 +7,7 @@ from collections import defaultdict
 
 @dataclass
 class MemoryChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, dst_rank: int, src_rank: int):
         num_ranks = get_program().num_ranks
@@ -16,8 +16,8 @@ class MemoryChannel:
         if dst_rank >= num_ranks:
             raise RuntimeError(f"Destination rank {dst_rank} is out of bounds. Number of ranks: {num_ranks}")
 
-        self.channel_id = MemoryChannel.__channel_counts[src_rank]
-        MemoryChannel.__channel_counts[src_rank] += 1
+        self.channel_id = MemoryChannel._channel_counts[src_rank]
+        MemoryChannel._channel_counts[src_rank] += 1
 
         self.dst_rank = dst_rank
         self.src_rank = src_rank
@@ -181,7 +181,7 @@ class MemoryChannel:
 
 @dataclass
 class PortChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, dst_rank: int, src_rank: int):
         num_ranks = get_program().num_ranks
@@ -190,8 +190,8 @@ class PortChannel:
         if dst_rank >= num_ranks:
             raise RuntimeError(f"Destination rank {dst_rank} is out of bounds. Number of ranks: {num_ranks}")
 
-        self.channel_id = PortChannel.__channel_counts[src_rank]
-        PortChannel.__channel_counts[src_rank] += 1
+        self.channel_id = PortChannel._channel_counts[src_rank]
+        PortChannel._channel_counts[src_rank] += 1
 
         self.dst_rank = dst_rank
         self.src_rank = src_rank
@@ -336,7 +336,7 @@ class PortChannel:
 
 @dataclass
 class SwitchChannel:
-    __channel_counts = defaultdict(int)
+    _channel_counts = defaultdict(int)
 
     def __init__(self, rank_list: List[int], buffer_type: BufferType):
         num_ranks = get_program().num_ranks
@@ -347,8 +347,8 @@ class SwitchChannel:
         for rank in rank_list:
             if rank >= num_ranks:
                 raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {num_ranks}")
-            self.channel_ids[rank] = SwitchChannel.__channel_counts[rank]
-            SwitchChannel.__channel_counts[rank] += 1
+            self.channel_ids[rank] = SwitchChannel._channel_counts[rank]
+            SwitchChannel._channel_counts[rank] += 1
 
         self.channel_type = ChannelType.switch
         self.buffer_type = buffer_type
@@ -361,7 +361,7 @@ class SwitchChannel:
             raise RuntimeError(f"Rank {rank} is not part of this SwitchChannel's rank group.")
         return SwitchChannel.SwitchChannelRankView(self, rank)
 
-    def group_load_reduce(self, rank, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+    def reduce(self, rank, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
         self.src_rank = rank
         if dst_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
@@ -370,17 +370,16 @@ class SwitchChannel:
         if dst_chunk.size != size:
             raise RuntimeError(f"Destination chunk size {dst_chunk.size} does not match the required size {size}.")
 
-        if self.buffer_type != BufferType.scratch:
-            for rank in self.rank_group.ranks:
-                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
-                    raise RuntimeError(
-                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
-                        f"required size {buffer_offset + size} for rank {rank}."
-                    )
-        else:
-            for rank in self.rank_group.ranks:
-                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
-                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+        for rank in self.rank_group.ranks:
+            if self.buffer_type == BufferType.scratch:
+                buffer_size = get_program().gpus[rank].scratch_chunks
+            else:
+                buffer_size = get_program().buffers[rank][self.buffer_type].size
+
+            if buffer_size < buffer_offset + size:
+                raise RuntimeError(
+                    f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
+                )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = GroupLoadReduce(
@@ -394,7 +393,7 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
-    def group_store(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
+    def broadcast(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
         self.src_rank = rank
         if src_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
@@ -403,17 +402,16 @@ class SwitchChannel:
         if src_chunk.size != size:
             raise RuntimeError(f"Destination chunk size {src_chunk.size} does not match the required size {size}.")
 
-        if self.buffer_type != BufferType.scratch:
-            for rank in self.rank_group.ranks:
-                if get_program().buffers[rank][self.buffer_type].size < buffer_offset + size:
-                    raise RuntimeError(
-                        f"Buffer size {get_program().buffers[rank][BufferType.input].size} is smaller than "
-                        f"required size {buffer_offset + size} for rank {rank}."
-                    )
-        else:
-            for rank in self.rank_group.ranks:
-                if get_program().gpus[rank].scratch_chunks < buffer_offset + size:
-                    get_program().gpus[rank].scratch_chunks = buffer_offset + size
+        for rank in self.rank_group.ranks:
+            if self.buffer_type == BufferType.scratch:
+                buffer_size = get_program().gpus[rank].scratch_chunks
+            else:
+                buffer_size = get_program().buffers[rank][self.buffer_type].size
+
+            if buffer_size < buffer_offset + size:
+                raise RuntimeError(
+                    f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
+                )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
@@ -424,8 +422,8 @@ class SwitchChannel:
             self._channel: SwitchChannel = channel
             self._rank: int = rank
 
-        def group_load_reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
-            return self._channel.group_load_reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
+        def reduce(self, buffer_offset, size, dst_chunk: Chunk, tb, reduce_op=ReduceOperationType.sum):
+            return self._channel.reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
 
-        def group_store(self, src_chunk: Chunk, buffer_offset, size, tb):
-            return self._channel.group_store(self._rank, src_chunk, buffer_offset, size, tb)
+        def broadcast(self, src_chunk: Chunk, buffer_offset, size, tb):
+            return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)

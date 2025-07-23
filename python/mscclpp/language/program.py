@@ -87,22 +87,18 @@ class MSCCLPPProgram:
             gpu.resolve_data_dependency()
             gpu.replicate_instances(
                 self.instances,
-                self.get_channel_replication_policy_function(),
+                self.get_default_replication_policy_function(),
                 self.get_buffer_replication_policy_function(),
-                self.get_semaphore_replication_policy_function(),
             )
 
-    def get_channel_replication_policy_function(self):
-        return lambda value, num_instances, instance: value * num_instances + instance
+    def get_default_replication_policy_function(self):
+        return lambda value, instance, num_instances: value * num_instances + instance
 
     def get_buffer_replication_policy_function(self):
         if self.replication_policy == ReplicationPolicy.interleaved:
-            return lambda value, num_instances, instance: value * num_instances + instance
+            return lambda value, instance, num_instances: value * num_instances + instance
         else:
-            return lambda value, num_instances, instance: value
-
-    def get_semaphore_replication_policy_function(self):
-        return lambda value, num_instances, instance: value * num_instances + instance
+            return lambda value, instance, num_instances: value
 
     def set_loop_context(self, loop_context):
         if self.loop_context is not None and loop_context is not None:
