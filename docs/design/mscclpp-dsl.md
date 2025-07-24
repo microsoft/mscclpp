@@ -81,11 +81,39 @@ But for multi-thread-blocks synchronization and cross ranks synchronization, we 
 
 
 ## Kernel fusion
-MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.  
+MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.
+
+For example:
+
+```python
+# Reduce operation followed by put operation
+rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
+channel.put(remote_chunk, dst_chunk, tb=0)
+```
+
+When the DSL detects that a reduce operation is immediately followed by a put operation using the same data chunk, it automatically fuses them into a single operation internally, eliminating intermediate memory writes and improving performance.
 
 ## Data dependencies analysis
 
 The MSCCL++ DSL automatically tracks data dependencies at the chunk level within each thread block by maintaining the last writer and active readers for each memory slot. When operations have data dependencies, the DSL automatically inserts necessary synchronization points to ensure correct execution order. Additionally, the system analyzes the dependency graph to remove redundant synchronization operations (such as unnecessary barriers) when the execution order already guarantees correctness, optimizing performance while maintaining safety.
+
+For example:
+
+```python
+# Within the same thread block - copy then put dependency
+rank.copy(dst_chunk, src_chunk, tb=0)
+channel.put(remote_chunk, dst_chunk, tb=0)  # Same tb reads from dst_chunk
+```
+
+The DSL automatically inserts a `nop` operation to synchronize within the thread block:
+
+```python
+rank.copy(dst_chunk, src_chunk, tb=0)
+rank.nop(tb=0)  # Inserted for intra-block synchronization, nop is an internal operation, hidden from users
+channel.put(remote_chunk, dst_chunk, tb=0)
+```
+
+
 
 ## Pipeline Loop
 Pipeline enables overlapping operations across thread blocks. Using Semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
@@ -169,11 +197,28 @@ for i in range(nranks):
 
 The MSCCL++ DSL supports replicating algorithm instances to increase parallelism and improve performance. When `instances > 1` is specified in `MSCCLPPProgram`, the DSL automatically replicates thread blocks, channels, and buffer chunks across multiple instances. Each instance operates on separate data partitions, allowing concurrent execution of the same algorithm pattern. The replication uses configurable policies: interleaved (default) distributes data chunks across instances in round-robin fashion, while other policies can control how channels and thread block IDs are mapped. This feature is particularly useful for scaling algorithms across larger data sizes or increasing GPU utilization.
 
+For example:
+```python
+# Create program with 2 instances for increased parallelism
+program = MSCCLPPProgram(
+    name="allreduce_2x", 
+    collective=AllReduce(num_ranks=8, chunk_factor=1),
+    num_ranks=8,
+    instances=2  # Replicate algorithm 2 times
+)
+```
 
-## Generate execution plan
-The MSCCL++ DSL generates an execution plan in JSON format, which describes the operations to be executed on each rank. The execution plan includes information about the buffers, channels, and synchronization points. This plan is then used by the MSCCL++ runtime to execute the operations on the GPU.
+The following figure shows how thread blocks and channels are replicated across multiple instances. Each instance operates on separate data chunks, with thread block IDs and channel mappings automatically adjusted by the DSL to avoid conflicts:
 
-For the details of the execution plan, please refer to the [MSCCL++ Execution Plan](./mscclpp-execution-plan.md).
+![replication](../figs/replication.png)
+
+
+## Execution plan
+
+The MSCCL++ DSL generates an execution plan in JSON format, describing the operations to be executed on each rank. The execution plan contains details about buffers, channels, and synchronization points, and is distributed to all participating machines. Once distributed, the MSCCL++ executor can use this JSON file to run the algorithm.
+
+Following picture shows the overall workflow for generating and distributing the execution plan:
+![generate_distribute_execution_plan](../figs/mscclpp_dsl_json_schema.png)
 
 ## All2All support
 Currently, the DSL only supports the static all2all algorithm. To support all2allv, we need to obtain the send/receive sizes at runtime. This may require using placeholders in the JSON execution plan, which would be replaced with the actual sizes during execution. If we can make the chunk size variable, the same approach could be used to support all2allv.
