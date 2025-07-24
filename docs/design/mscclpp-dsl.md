@@ -210,17 +210,28 @@ program = MSCCLPPProgram(
 
 The following figure shows how thread blocks and channels are replicated across multiple instances. Each instance operates on separate data chunks, with thread block IDs and channel mappings automatically adjusted by the DSL to avoid conflicts:
 
-<p align="center">
-    <img src="../figs/replication.png" alt="replication" width="400">
-</p>
+```{figure} ../figs/replication.png
+:name: MSCCL++ DSL Replication
+:alt: MSCCL++ DSL Replication
+:align: center
+:width: 400px
+
+MSCCL++ DSL Instance Replication Overview
+```
 
 
 ## Execution plan
 
 The MSCCL++ DSL generates an execution plan in JSON format, describing the operations to be executed on each rank. The execution plan contains details about buffers, channels, and synchronization points, and is distributed to all participating machines. Once distributed, the MSCCL++ executor can use this JSON file to run the algorithm.
 
-Following picture shows the overall workflow for generating and distributing the execution plan:
-![generate_distribute_execution_plan](../figs/mscclpp_dsl_json_schema.png)
+Following picture shows the overall workflow for running with MSCCL++ DSL:
+```{figure} ../figs/mscclpp_dsl_json_schema.png
+:name: workflow for running with MSCCL++ DSL
+:alt: workflow for running with MSCCL++ DSL
+:align: center
+
+Overall workflow for running with MSCCL++ DSL
+```
 
 ## All2All support
 Currently, the DSL only supports the static all2all algorithm. To support all2allv, we need to obtain the send/receive sizes at runtime. This may require using placeholders in the JSON execution plan, which would be replaced with the actual sizes during execution. If we can make the chunk size variable, the same approach could be used to support all2allv.
