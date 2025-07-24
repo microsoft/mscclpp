@@ -504,7 +504,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       if (buff.contains("type")) {
         bufferType = convertToBufferType(buff["type"]);
         operation.inputBufferRefs[i].type = bufferType;
-        constOffset = getConstOffset(operation.inputBufferRefs[i].type);
       }
       if (buff.contains("buffer_id")) {
         operation.inputBufferRefs[i].id = buff["buffer_id"];
@@ -533,7 +532,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       if (buff.contains("type")) {
         bufferType = convertToBufferType(buff["type"]);
         operation.outputBufferRefs[i].type = bufferType;
-        constOffset = getConstOffset(operation.outputBufferRefs[i].type);
       }
       if (buff.contains("buffer_id")) {
         operation.outputBufferRefs[i].id = buff["buffer_id"];
