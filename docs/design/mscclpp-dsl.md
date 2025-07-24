@@ -60,8 +60,8 @@ for gpu in range(gpu_size):
     buffer_offset = gpu
     rank = Rank(gpu)
     input_buffer = rank.get_input_buffer()
-    switch_chan.at_rank(gpu).group_load_reduce(buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
-    switch_chan.at_rank(gpu).group_store(input_buffer[gpu : gpu + 1], buffer_offset, size=1, tb=0)
+    switch_chan.at_rank(gpu).reduce(buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
+    switch_chan.at_rank(gpu).broadcast(input_buffer[gpu : gpu + 1], buffer_offset, size=1, tb=0)
 ```
 
 ### Synchronization
@@ -93,7 +93,7 @@ Pipeline enables overlapping operations across thread blocks. Using Semaphore fo
 This example demonstrates a pipelined loop that copies data from an input buffer to a scratch buffer, then transfers it to other peers. The `Semaphore` is used to synchronize the two stages. `unit` specifies the size of each chunk, and `num_chunks` indicates how many chunks will be processed in the loop.
 
 ```python
-sem = Semaphore(rank=rank, initial_value=1)
+sem = Semaphore(rank=rank, initial_value=0)
 rank = Rank(rank)
 channel = MemoryChannel(dst_rank, src_rank)
 with LoopIterationContext(unit=2**20, num_chunks=1):
