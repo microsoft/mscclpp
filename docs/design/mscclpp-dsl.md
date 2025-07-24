@@ -1,114 +1,237 @@
 # MSCCL++ DSL
-## MSCCLPPLang Introduction
-MSCCLPPLang is a Python moudule for writing high-performance commnunication algorithms. It is designed to be easy to use and efficient, while providing a high-level interface for writing communication algorithms. MSCCLPPLang program will be compiled to json based execution plan, which can be executed by MSCCL++ executor.
+## Introduction
 
-## How to use MSCCLPPLang
-### Install mscclpp package
-```bash
-git clone https://github.com/microsoft/mscclpp.git
-cd mscclpp
-pip install .
-```
+The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collective. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
 
-### Import mscclpp language module
+Here is the highlights of the MSCCL++ DSL:
+- **Fine-grained Python-native API**: MSCCL++ DSL provides a Pythonic, fine-grained API for defining and executing GPU-based communication collectives. Users can construct complex data movement and synchronization workflows without writing low-level CUDA code, while still achieving performance comparable to hand-tuned CUDA implementations.
+
+- **Effortless performance tuning**:  The MSCCL++ DSL analyzes data dependencies and synchronization patterns to automatically fuse operations to eliminate data movement overhead, while instance counts can be manually configured to boost performance.
+
+- **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration.
+
+
+## MSCCL++ DSL Concepts
+
+### Collectives
+
+Collectives define the communication pattern for distributed operations such as AllReduce, AllGather, and ReduceScatter. The input and output buffers are predefined based on the collective type and parameters. The number of chunks in each buffer is determined by the `chunk_factor` parameter multiplied by `num_ranks` where appropriate. For example, AllReduce uses `num_ranks * chunk_factor` chunks for both input and output, while AllGather uses `chunk_factor` input chunks and `num_ranks * chunk_factor` output chunks per rank.
+
+
+### Buffer/Chunk
+Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. User can allocate scratch buffer for intermediate data movement. Chunk is a slice of the buffer.
+
 ```python
-from mscclpp.language import *
-from mscclpp.language.types import ChannelType, ReplicationPolicy
-from mscclpp.language.collectives import AllGather
-
-instances = 1
-size = gpus
-collective = AllGather(size, chunk_factor=1, inplace=True)
-with MSCCLPPProgram(
-    "allgather",
-    collective,
-    size,
-    instances,
-    protocol="Simple",
-    replication_policy=ReplicationPolicy.interleaved,
-):
-    pass
+rank = Rank(rank_id)
+input_buffer = rank.get_input_buffer()
+dst_chunk = input_buffer[0:1]
+src_chunk = input_buffer[1:2]
+rank.copy(dst_chunk, src_chunk, tb=0)
+rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
 ```
 
-## How MSCCLPPLang Works
-MSCCLPPLang provides a high-level interface for writing communication algorithms. We treat the communication algorithm as a graph, where the nodes are the data and the edges are the communication operations. The graph is represented as a Python program, which is compiled to a json based execution plan.
+### Channel
+User need to use channel to communicate between ranks. Now we have three types of channels: memoryChannel, portChannel and switchChannel.
+- **MemoryChannel**: Uses peer-to-peer memory access to communicate between GPUs.
+- **PortChannel**: Uses interconnection ports to communicate between GPUs.
+- **SwitchChannel**: Uses interconnection-switch-enabled multimem memory access to communicate between GPUs.
 
-### Core Concepts
+**Note:** Each time call channel will created a new one. If user want to reuse the channel, please keep the channel object.
 
-#### MSCCLPPProgram
-A MSCCLPPProgram provides the context to write MSCCLPPLang program, which can be initialized with `with` statement in Python. Its parameters include:
-
-- `name`: Name of this program.
-- `collective`: Collective type of this program, should be from `mscclpp.language.collectives`.
-- `instances`: Number of parallel instances of this program. Please see the [Instance](#instance) section for more details.
-- `protocol`: Data transmission protocol used in this program, can be `LL` or `Simple`. Optional, default is `Simple`.
-- `instr_fusion`: Whether low-level instruction fusion is enabled. Optional, default is `True`.
-- `replication_policy`: Data replication policy, should be from `mscclpp.language.types.ReplicationPolicy`. Optional, default is `duplicated`. Please see the [Instance](#instance) section for more details.
-- `num_threads_per_block`: Thread block size. Optional, default is `1024`.
-- `use_double_scratch_buffer`: Whether requires double scratch buffer during execution. Optional, default is `False`.
-
-### Collective:
-A collective is a communication operation that involves multiple GPUs. We provide a set of collective operations for users to utilize. For example, the `AllGather` operation gathers data from all GPUs to all GPUs. To instantiate a collective, the user needs to specify the number of ranks, the chunk factor (how many chunks the input buffer will be split into), and whether the operation is in-place.
-
-#### Chunk
-A chunk is a piece of data that is sent between GPUs. It is the basic unit of data in MSCCLPPLang. Chunk can be a piece of data from input buffer, output buffer or intermediate buffer.
-Example of creating a chunk:
+Here is the example for two ranks synchronization with each others.
 ```python
-c = chunk(rank, Buffer.input, index, size)
+nranks = 2
+for i in range(nranks):
+    src_rank = i
+    dst_rank = (i + 1) % nranks
+    channel = MemoryChannel(dst_rank, src_rank)
+    channel.signal(tb=0, data_sync=SyncType.none)
+    channel.wait(tb=0, data_sync=SyncType.after)
 ```
-- rank: the rank of the GPU that the chunk belongs to.
-- buffer: the buffer that the chunk belongs to. It can be Buffer.input, Buffer.output or Buffer.scratch.
-- index: the index of the chunk in the buffer.
-- size: the number of unit chunks.
 
-Assume we split the input data in the buffer into 4 chunks. On GPU rank 0, we can retrieve the chunks from indices 0 to 2 using the following command:
+#### For switch channel
+Switch channel associates a group of buffers from a specified set of ranks. All operations invoked on the channel will be applied to those buffers.
+
+Example for two ranks allreduce via switch channel.
 ```python
-c = chunk(0, Buffer.input, 0, 2)
+# Creating Channels
+switch_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
+for gpu in range(gpu_size):
+    buffer_offset = gpu
+    rank = Rank(gpu)
+    input_buffer = rank.get_input_buffer()
+    switch_chan.at_rank(gpu).reduce(buffer_offset, size=1, dst_chunk=input_buffer[gpu : gpu + 1], tb=0)
+    switch_chan.at_rank(gpu).broadcast(input_buffer[gpu : gpu + 1], buffer_offset, size=1, tb=0)
 ```
 
-#### Operation
-The operation can only be applied to the chunks. We provide a set of communications operations for the users to use. For example, the `put` operation is used to send the data from one GPU to another GPU. The `get` operation is used to receive the data from another GPU.
+### Synchronization
+We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize a set of thread blocks in the rank, while the semaphore allows asynchronous signaling and waiting between thread blocks.
 
-***Please notice***: MSCCLPPLang only provides one-sided communication operations. The user needs to make sure that the data is ready to be sent or received before calling the communication operations. Also we provides `wait/signal` operations to synchronize the communication across GPUs.
+```python
+rank = Rank(0)
+rank.barrier([0, 1])
+sem = Semaphore(rank=0, initial_value=1)
+sem.acquire(tb=0, data_sync=SyncType.after)
+sem.release(tb=0, data_sync=SyncType.before)
+```
 
-#### Channel
-A channel is a communication channel between two GPUs. It is used to send and receive data between GPUs. We supports three types of channel: `ChannelType.memory`, `ChannelType.port` and `ChannelType.nvls`.
+The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
 
-`ChannelType.memory` is used for communication between GPUs on the same node. This channel uses GPU processors to transfer data.
-
-`ChannelType.port` is used for communication between GPUs, whether they are on different nodes or the same node. This channel will offload the data transfer to CPU processors, which can provide better throughput compared to `ChannelType.memory`. However, this comes at the cost of higher latency compared to `ChannelType.memory`.
-
-`ChannelType.nvls` is used for communication between GPUs on the same node. This feature offloads the data processing task to the switch, requiring specific hardware support. Refer [nvdia documentation](https://www.nvidia.com/en-us/data-center/nvlink/) for more details.
-
-#### Thread Block
-We can assign operations to a thread block. The thread block is a group of threads that are executed together on the GPU. In the operation function, we can specify the thread block that the operation belongs to via `sendtb` or `recvtb` parameter.
-
-#### Instance
-An instance is a parallel execution of the program. For example, if a collective algorithm is designed to run on `n` chunks with `m` thread blocks, setting the instance to 2 will run the algorithm on `2n` chunks with `2m` thread blocks. Serveral replication policies are supported, including `duplicated` and `interleaved`.
-- `duplicated`: Each chunk is split into smaller parts based on the number of instances, duplicating the same instructions for all parts. For example, ChunkA is split into ChunkA0 and ChunkA1, while ChunkB is split into ChunkB0 and ChunkB1. Both ChunkA0 and ChunkA1 belong to Instance 0, and both ChunkB0 and ChunkB1 belong to Instance 1.
-- `interleaved`: Assign chunks to instances in an interleaved manner. For example, ChunkA and ChunkB are split into to ChunkA0, ChunkA1, ChunkB0, and ChunkB1. ChunkA0 and ChunkB0 belong to Instance 0, while ChunkA1 and ChunkB1 belong to Instance 1.
-
-#### Instruction Fusion
-MSCCLPPLang provides the instruction fusion mechanism to fuse multiple operations into a single kernel. This can reduce the overhead of launching multiple instructions. When users create the MSCCLPPLang program, they can specify the `instr_fusion` parameter to enable the instruction fusion. By default, the instruction fusion is enabled.
-
-## MSCCLPPLang APIs
-
-### Basic APIs
-- `chunk(rank, buffer, index, size)`: create a chunk.
-- `put(self, dst, buffer, index, sendtb, chan_type)`: send the data from one GPU to another GPU. User can specify the index of the chunk in the destination buffer, the sendtb and the channel type.
-- `get(self, src, buffer, index, recvtb, chan_type)`: receive the data from another GPU. User can specify the index of the chunk in the destination buffer, the recvtb and the channel type.
-- `signal(self, dst, buffer, index, sendtb, chan_type)`: send a signal to another GPU.
-- `wait(self, src, buffer, index, recvtb, chan_type)`: wait for a signal from another GPU.
-- `flush(self, dst, buffer, index, sendtb, chan_type)`: flush the data in the buffer to the destination GPU. This is used to make sure the data is sent to the destination GPU.
-- `copy(self, dst, buffer, index, sendtb)`: copy the data from one buffer to another buffer in the same GPU.
-- `reduce(self, other_chunkref, recvtb, channel_type)`: Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref
-
-### Packet APIs
-Packet APIs are used when user wants to use LL algorithm. The packet APIs are similar to the basic APIs, it will packet the data and flags into a packet and send the packet to the destination GPU. The destination GPU will unpack the packet and get the data and flags. So no synchronization is needed when using packet APIs. (`ChannelType.nvls` does not support packet APIs)
-- `packet_put(self, dst, buffer, index, sendtb, chan_type)`: send the data from one GPU to another GPU using packet.
-- `copy_packet(self, dst, buffer, index, sendtb)`: copy the data from one buffer to another buffer in the same GPU using packet.
-- `reduce_packet(self, other_chunkref, recvtb)`: Reduces the chunk(s) referenced by other_chunkref into the chunk(s) referenced by this chunkref using packet.
+But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
 
 
-### Examples
-We provide several examples demonstrating how to use the MSCCL++ DSL to write communication collective algorithms. For more details, please refer to the [examples](https://github.com/microsoft/mscclpp/tree/main/python/examples) folder.
+## Kernel fusion
+MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.
+
+For example:
+
+```python
+# Reduce operation followed by put operation
+rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
+channel.put(remote_chunk, dst_chunk, tb=0)
+```
+
+When the DSL detects that a reduce operation is immediately followed by a put operation using the same data chunk, it automatically fuses them into a single operation internally, eliminating intermediate memory writes and improving performance.
+
+## Data dependencies analysis
+
+The MSCCL++ DSL automatically tracks data dependencies at the chunk level within each thread block by maintaining the last writer and active readers for each memory slot. When operations have data dependencies, the DSL automatically inserts necessary synchronization points to ensure correct execution order. Additionally, the system analyzes the dependency graph to remove redundant synchronization operations (such as unnecessary barriers) when the execution order already guarantees correctness, optimizing performance while maintaining safety.
+
+For example:
+
+```python
+# Within the same thread block - copy then put dependency
+rank.copy(dst_chunk, src_chunk, tb=0)
+channel.put(remote_chunk, dst_chunk, tb=0)  # Same tb reads from dst_chunk
+```
+
+The DSL automatically inserts a `nop` operation to synchronize within the thread block:
+
+```python
+rank.copy(dst_chunk, src_chunk, tb=0)
+rank.nop(tb=0)  # Inserted for intra-block synchronization, nop is an internal operation, hidden from users
+channel.put(remote_chunk, dst_chunk, tb=0)
+```
+
+
+
+## Pipeline Loop
+Pipeline enables overlapping operations across thread blocks. Using Semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.
+
+This example demonstrates a pipelined loop that copies data from an input buffer to a scratch buffer, then transfers it to other peers. The `Semaphore` is used to synchronize the two stages. `unit` specifies the size of each chunk, and `num_chunks` indicates how many chunks will be processed in the loop.
+
+```python
+sem = Semaphore(rank=rank, initial_value=0)
+rank = Rank(rank)
+channel = MemoryChannel(dst_rank, src_rank)
+with LoopIterationContext(unit=2**20, num_chunks=1):
+    # The dst_chunk and src_chunk sizes should match the num_chunks parameter in the loop context.
+    rank.copy(dst_chunk, src_chunk, tb=0)
+    sem.release(tb=0)
+    sem.acquire(tb=1)
+    channel.put(other_peer_chunk, dst_chunk, tb=1)
+``` 
+
+
+Here is the example for two ranks allreduce. Which achieve non-zero copy and use nvls. We use 3 thread-blocks to do the allreduce.
+The first thread-block is used to copy data from input buffer to scratch buffer, the second thread-block is used to do allreduce in scratch buffer, and the third thread-block is used to copy data from scratch buffer to output buffer.  The thread-blocks are synchronized by semaphores.
+```python
+nvls_chan = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.scratch)
+scratch_buffer = []
+for i in range(nranks):
+    scratch_buffer.append(Buffer(i, nranks))
+
+for i in range(nranks):
+    src_rank = i
+    dst_rank = (i + 1) % nranks
+    chan = MemoryChannel(dst_rank, src_rank)
+    chan1 = MemoryChannel(dst_rank, src_rank)
+    rank = Rank(i)
+    sem0 = Semaphore(rank=i, initial_value=0)
+    sem1 = Semaphore(rank=i, initial_value=0)
+    input_buffer = rank.get_input_buffer()
+    output_buffer = rank.get_output_buffer()
+
+    # Define loop iteration context for processing data chunks
+    with LoopIterationContext(unit=2**20, num_chunks=1):
+        # Copy input data to scratch buffers
+        for offset in range(nranks):
+            dst_chunk = scratch_buffer[i][offset : offset + 1]
+            src_chunk = input_buffer[offset : offset + 1]
+            rank.copy(dst_chunk, src_chunk, tb=0)
+
+        # Synchronize with other ranks
+        chan.signal(tb=0, data_sync=SyncType.before)
+        chan.wait(tb=0, data_sync=SyncType.after)
+        sem0.release(tb=0)  # Release semaphore to allow next step to proceed
+
+        # Wait for previous step completion
+        sem0.acquire(tb=1, data_sync=SyncType.after)
+
+        # Reduce operation: combine data from multiple ranks into local chunk
+        nvls_chan.at_rank(src_rank).reduce(
+            buffer_offset=i, size=1, dst_chunk=scratch_buffer[i][i : i + 1], tb=1
+        )
+
+        # Broadcast the reduced result to all participating ranks
+        nvls_chan.at_rank(src_rank).broadcast(
+            src_chunk=scratch_buffer[i][i : i + 1], buffer_offset=i, size=1, tb=1
+        )
+
+        # Signal completion of reduction stage and prepare for next stage
+        chan1.signal(tb=1, data_sync=SyncType.before)
+        sem1.release(tb=1)
+
+        # Wait for previous stage completion
+        sem1.acquire(tb=2)
+        chan1.wait(tb=2, data_sync=SyncType.after)
+
+        # Copy all reduced chunks from scratch buffer to final output buffer
+        for index in range(nranks):
+            dst_chunk = output_buffer[index : index + 1]
+            src_chunk = scratch_buffer[i][index : index + 1]
+            rank.copy(dst_chunk, src_chunk, tb=2)
+```
+
+## Adjust the number of instances
+
+The MSCCL++ DSL supports replicating algorithm instances to increase parallelism and improve performance. When `instances > 1` is specified in `MSCCLPPProgram`, the DSL automatically replicates thread blocks, channels, and buffer chunks across multiple instances. Each instance operates on separate data partitions, allowing concurrent execution of the same algorithm pattern. The replication uses configurable policies: interleaved (default) distributes data chunks across instances in round-robin fashion, while other policies can control how channels and thread block IDs are mapped. This feature is particularly useful for scaling algorithms across larger data sizes or increasing GPU utilization.
+
+For example:
+```python
+# Create program with 2 instances for increased parallelism
+program = MSCCLPPProgram(
+    name="allreduce_2x", 
+    collective=AllReduce(num_ranks=8, chunk_factor=1),
+    num_ranks=8,
+    instances=2  # Replicate algorithm 2 times
+)
+```
+
+The following figure shows how thread blocks and channels are replicated across multiple instances. Each instance operates on separate data chunks, with thread block IDs and channel mappings automatically adjusted by the DSL to avoid conflicts:
+
+```{figure} ../figs/replication.png
+:name: MSCCL++ DSL Replication
+:alt: MSCCL++ DSL Replication
+:align: center
+:width: 400px
+
+MSCCL++ DSL Instance Replication Overview
+```
+
+
+## Execution plan
+
+The MSCCL++ DSL generates an execution plan in JSON format, describing the operations to be executed on each rank. The execution plan contains details about buffers, channels, and synchronization points, and is distributed to all participating machines. Once distributed, the MSCCL++ executor can use this JSON file to run the algorithm.
+
+Following picture shows the overall workflow for running with MSCCL++ DSL:
+```{figure} ../figs/mscclpp_dsl_json_schema.png
+:name: workflow for running with MSCCL++ DSL
+:alt: workflow for running with MSCCL++ DSL
+:align: center
+
+Overall workflow for running with MSCCL++ DSL
+```
+
+## All2All support
+Currently, the DSL only supports the static all2all algorithm. To support all2allv, we need to obtain the send/receive sizes at runtime. This may require using placeholders in the JSON execution plan, which would be replaced with the actual sizes during execution. If we can make the chunk size variable, the same approach could be used to support all2allv.
