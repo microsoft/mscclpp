@@ -501,11 +501,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       auto& buff = op["src_buff"][i];
       size_t constOffset = 0;
       BufferType bufferType = BufferType::NONE;
-      if (buff.contains("type")) {
-        bufferType = convertToBufferType(buff["type"]);
-        operation.inputBufferRefs[i].type = bufferType;
-        constOffset = getConstOffset(operation.inputBufferRefs[i].type);
-      }
       if (buff.contains("buffer_id")) {
         operation.inputBufferRefs[i].id = buff["buffer_id"];
         bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);
@@ -530,11 +525,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       auto& buff = op["dst_buff"][i];
       size_t constOffset = 0;
       BufferType bufferType = BufferType::NONE;
-      if (buff.contains("type")) {
-        bufferType = convertToBufferType(buff["type"]);
-        operation.outputBufferRefs[i].type = bufferType;
-        constOffset = getConstOffset(operation.outputBufferRefs[i].type);
-      }
       if (buff.contains("buffer_id")) {
         operation.outputBufferRefs[i].id = buff["buffer_id"];
         bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);

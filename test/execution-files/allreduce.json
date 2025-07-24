@@ -1,0 +1,1424 @@
+{
+  "name": "allreduce",
+  "collective": "allreduce",
+  "protocol": "Simple",
+  "inplace": true,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 16,
+      "output_chunks": 16,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 4,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 4,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 4,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 4,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                4
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 5,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 5,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 5,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 5,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                5
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 6,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 6,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 6,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 6,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                6
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 7,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 7,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 7,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 7,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                7
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 16,
+      "output_chunks": 16,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 8,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 8,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 8,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 8,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 9,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 9,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 9,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 9,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 10,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 10,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 10,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 10,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 11,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 11,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 11,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 11,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 12,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 12,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 12,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 12,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                4
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 13,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 13,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 13,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 13,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                5
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 14,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 14,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 14,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 14,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                6
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 15,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 15,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 15,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 15,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                7
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
