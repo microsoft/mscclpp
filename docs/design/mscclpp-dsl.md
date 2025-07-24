@@ -210,7 +210,9 @@ program = MSCCLPPProgram(
 
 The following figure shows how thread blocks and channels are replicated across multiple instances. Each instance operates on separate data chunks, with thread block IDs and channel mappings automatically adjusted by the DSL to avoid conflicts:
 
-<img src="../figs/replication.png" alt="replication" width="400" style="display: block; margin: 0 auto;">
+<p align="center">
+    <img src="../figs/replication.png" alt="replication" width="400">
+</p>
 
 
 ## Execution plan
