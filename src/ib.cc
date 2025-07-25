@@ -357,8 +357,6 @@ IbCtx::IbCtx(const std::string& devName) : devName(devName) {
 }
 
 IbCtx::~IbCtx() {
-  this->mrs.clear();
-  this->qps.clear();
   if (this->pd != nullptr) {
     IBVerbs::ibv_dealloc_pd(this->pd);
   }
@@ -393,8 +391,8 @@ int IbCtx::getAnyActivePort() const {
   return -1;
 }
 
-IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
-                      int port /*=-1*/) {
+std::shared_ptr<IbQp> IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                                      int port /*=-1*/) {
   if (port == -1) {
     port = this->getAnyActivePort();
     if (port == -1) {
@@ -403,13 +401,12 @@ IbQp* IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRec
   } else if (!this->isPortUsable(port)) {
     throw Error("invalid IB port: " + std::to_string(port), ErrorCode::InvalidUsage);
   }
-  qps.emplace_back(new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
-  return qps.back().get();
+  return std::shared_ptr<IbQp>(
+      new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
 }
 
-const IbMr* IbCtx::registerMr(void* buff, std::size_t size) {
-  mrs.emplace_back(new IbMr(this->pd, buff, size));
-  return mrs.back().get();
+std::shared_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
+  return std::shared_ptr<const IbMr>(new IbMr(this->pd, buff, size));
 }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
