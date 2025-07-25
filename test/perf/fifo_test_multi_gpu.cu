@@ -30,8 +30,8 @@ __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
 struct MultiGpuTestConfig {
   int fifoSize;
-  int numGpus;           // Total number of GPUs
-  int numGroups;         // Number of groups
+  int numGpus;    // Total number of GPUs
+  int numGroups;  // Number of groups
   std::vector<int> parallelismLevels;
 
   MultiGpuTestConfig(int size, int gpus, int groups, const std::vector<int>& parallel = {64, 128, 256, 512})
@@ -148,14 +148,9 @@ std::tuple<double, double, int, int> runSingleKernelVariant(std::unique_ptr<mscc
 
 // Enhanced performance measurement function
 std::tuple<double, double, int> runMultiGpuKernelVariant(
-    std::unique_ptr<mscclpp::Fifo>& hostFifo,
-    cudaStream_t stream,
-    int numParallel,
-    int rank,
+    std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel, int rank,
     const std::vector<mscclpp::PortChannelDeviceHandle>& sendPortHandles,
-    const std::vector<mscclpp::PortChannelDeviceHandle>& recvPortHandles,
-    const MultiGpuTestConfig& config) {
-
+    const std::vector<mscclpp::PortChannelDeviceHandle>& recvPortHandles, const MultiGpuTestConfig& config) {
   // Calculate triggers based on FIFO size, but respect the limit
   const int maxParallel = std::min(numParallel, config.fifoSize);
   const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
@@ -191,15 +186,15 @@ std::tuple<double, double, int> runMultiGpuKernelVariant(
   if (shouldSignal) {
     // Launch signaling kernels
     if (!sendPortHandles.empty()) {
-      kernelMultiGpuSignalSend<<<threadBlocks, threadsPerBlock, 0, stream>>>(
-          d_sendHandles, sendPortHandles.size(), maxParallel);
+      kernelMultiGpuSignalSend<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_sendHandles, sendPortHandles.size(),
+                                                                             maxParallel);
       utils::CUDA_CHECK(cudaGetLastError());
     }
 
     // Launch waiting kernels
     if (!recvPortHandles.empty()) {
-      kernelMultiGpuSignalWait<<<threadBlocks, threadsPerBlock, 0, stream>>>(
-          d_recvHandles, recvPortHandles.size(), maxParallel);
+      kernelMultiGpuSignalWait<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_recvHandles, recvPortHandles.size(),
+                                                                             maxParallel);
       utils::CUDA_CHECK(cudaGetLastError());
     }
   }
@@ -469,11 +464,9 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
         auto semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connection);
 
         // Create port channels for bidirectional communication
-        auto sendPortChannel = proxyService->portChannel(semaphoreId,
-                                                         proxyService->addMemory(localFlagRegmem),
+        auto sendPortChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(localFlagRegmem),
                                                          proxyService->addMemory(localFlagRegmem));
-        auto recvPortChannel = proxyService->portChannel(semaphoreId,
-                                                         proxyService->addMemory(localFlagRegmem),
+        auto recvPortChannel = proxyService->portChannel(semaphoreId, proxyService->addMemory(localFlagRegmem),
                                                          proxyService->addMemory(localFlagRegmem));
 
         sendPortHandles.push_back(sendPortChannel.deviceHandle());
@@ -483,14 +476,13 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
   }
 
   // Create test name
-  std::string testName = "MultiGpuTest_GPUs" + std::to_string(config.numGpus) +
-                         "_Groups" + std::to_string(config.numGroups) +
-                         "_FifoSize" + std::to_string(config.fifoSize);
+  std::string testName = "MultiGpuTest_GPUs" + std::to_string(config.numGpus) + "_Groups" +
+                         std::to_string(config.numGroups) + "_FifoSize" + std::to_string(config.fifoSize);
 
   // Print test configuration
   if (utils::isMainRank()) {
-    std::cout << "Running Multi-GPU test: " << config.numGpus << " GPUs, "
-              << config.numGroups << " groups, FIFO size=" << config.fifoSize << std::endl;
+    std::cout << "Running Multi-GPU test: " << config.numGpus << " GPUs, " << config.numGroups
+              << " groups, FIFO size=" << config.fifoSize << std::endl;
 
     // Print which ranks participate in cross-group signaling
     auto signalingRanks = config.getCrossGroupSignalingRanks();
@@ -513,8 +505,8 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
     MPI_Barrier(MPI_COMM_WORLD);
 
     if (config.shouldParticipateInSignaling(rank)) {
-      auto [throughput, duration, totalSignals] = runMultiGpuKernelVariant(
-          hostFifo, stream, effectiveParallel, rank, sendPortHandles, recvPortHandles, config);
+      auto [throughput, duration, totalSignals] =
+          runMultiGpuKernelVariant(hostFifo, stream, effectiveParallel, rank, sendPortHandles, recvPortHandles, config);
 
       std::string prefix = "p" + std::to_string(effectiveParallel) + "_";
       combinedMetrics[prefix + "throughput_signals_per_sec"] = double(int(throughput * 10)) / 10.0;
@@ -625,8 +617,7 @@ int main(int argc, char* argv[]) {
 
   std::vector<std::tuple<std::string, std::string, std::function<void(const mscclpp::test::TestContext&)>>> tests = {
       // {"AllFifoTests", "FIFO performance tests with multiple configurations", runAllFifoTests},
-      {"AllMultiGpuTests", "Multi-GPU signaling tests with configurable groups", runAllMultiGpuTests}
-  };
+      {"AllMultiGpuTests", "Multi-GPU signaling tests with configurable groups", runAllMultiGpuTests}};
 
   int result = utils::runMultipleTests(argc, argv, tests);
 
