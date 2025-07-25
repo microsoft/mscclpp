@@ -3,7 +3,8 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8"
+            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8",
+            "SSH_PORT": "22345"
         }
     },
     "remoteUser": "mscclpp",
@@ -24,9 +25,14 @@
     "runArgs": [
         "--net=host",
         "--ipc=host",
-        "--gpus=all",
-        "--ulimit=memlock=-1:-1"
+        "--ulimit=memlock=-1:-1",
+        // For NVIDIA
+        "--gpus=all"
+        // For AMD
+        // "--security-opt=seccomp=unconfined",
+        // "--group-add=video"
     ],
     "workspaceFolder": "/home/mscclpp/mscclpp",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/home/mscclpp/mscclpp,type=bind,consistency=cached"
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/mscclpp/mscclpp,type=bind,consistency=cached",
+    "postStartCommand": "sudo service ssh start"
 }

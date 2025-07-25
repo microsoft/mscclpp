@@ -19,10 +19,10 @@
 
 namespace mscclpp {
 
-#define MSCCLPP_UNIQUE_ID_BYTES 128
+constexpr unsigned int UniqueIdBytes = 128;
 
 /// Unique ID for initializing the TcpBootstrap.
-using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
+using UniqueId = std::array<uint8_t, UniqueIdBytes>;
 
 /// Return a version string.
 /// @return The MSCCL++ version string in "major.minor.patch" format.
@@ -739,52 +739,6 @@ using NonblockingFuture [[deprecated("Use std::shared_future instead. This will 
 /// communicator.sendMemory(memory1, 0, tag);
 /// ```
 /// In the wrong example, the connection information from rank 1 will be sent to the `mem1` object on rank 0,
-/// where the object type is RegisteredMemory, not Connection.
-///
-/// Correct Example 1:
-/// ```cpp
-/// // Rank 0
-/// communicator.sendMemory(memory1, 1, tag);
-/// communicator.sendMemory(memory2, 1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
-/// connection.get(); // This will return the connection.
-/// // Rank 1
-/// auto mem1 = communicator.recvMemory(0, tag);
-/// auto mem2 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
-/// mem2.get();       // This will return memory2.
-/// connection.get(); // This will return the connection.
-/// mem1.get();       // This will return memory1.
-/// ```
-///
-/// Correct Example 2:
-/// ```cpp
-/// // Rank 0
-/// communicator.sendMemory(memory0, 1, tag);
-/// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
-/// connection.get(); // This will return the connection.
-/// mem1.get();       // This will return memory1.
-/// // Rank 1
-/// auto mem0 = communicator.recvMemory(0, tag);
-/// communicator.sendMemory(memory1, 0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc);
-/// mem0.get();       // This will return memory0.
-/// connection.get(); // This will return the connection.
-/// ```
-///
-/// Wrong Example:
-/// ```cpp
-/// // Rank 0
-/// communicator.sendMemory(memory0, 1, tag);
-/// auto mem1 = communicator.recvMemory(1, tag);
-/// auto connection = communicator.connect(1, tag, Transport::CudaIpc);
-/// // Rank 1
-/// auto mem0 = communicator.recvMemory(0, tag);
-/// auto connection = communicator.connect(0, tag, Transport::CudaIpc); // undefined behavior
-/// communicator.sendMemory(memory1, 0, tag);
-/// ```
-/// In the wrong example, the connection information from rank 1 will be sent to `mem1` object on rank 0,
 /// where the object type is RegisteredMemory, not Connection.
 ///
 class Communicator {
