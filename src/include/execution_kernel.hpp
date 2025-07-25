@@ -815,9 +815,9 @@ __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int 
   eventBuffer_ = (NpKitEvent*)((char*)sharedMem + sizeof(DeviceExecutionPlan));
   uint64_t eventBufferHead = 0;
 #if defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
-  uint64_t npkit_timestamp_entry = 0;
+  uint64_t npkitTimestampEntry = 0;
   if (tid == 0) {
-    npkit_timestamp_entry = NPKIT_GET_GPU_TIMESTAMP();
+    npkitTimestampEntry = NPKIT_GET_GPU_TIMESTAMP();
   }
 #endif
 #endif
@@ -856,8 +856,7 @@ __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int 
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY) && \
     defined(ENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT)
-  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_ENTRY, 0, 0, npkit_timestamp_entry, eventBuffer_,
-                            &eventBufferHead);
+  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_ENTRY, 0, 0, npkitTimestampEntry, eventBuffer_, &eventBufferHead);
   NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_INIT_EXIT, 0, 0, NPKIT_GET_GPU_TIMESTAMP(), eventBuffer_,
                             &eventBufferHead);
 #endif
