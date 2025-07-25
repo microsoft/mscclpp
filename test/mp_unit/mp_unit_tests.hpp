@@ -108,6 +108,7 @@ class CommunicatorTestBase : public MultiProcessTest {
   std::shared_ptr<mscclpp::Communicator> communicator;
   mscclpp::Transport ibTransport;
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
+  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> cpuConnections;
 };
 
 class CommunicatorTest : public CommunicatorTestBase {
