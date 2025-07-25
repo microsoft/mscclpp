@@ -22,7 +22,7 @@
         ```bash
         sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
         ```
-        If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source (Libraries and Headers)](#install-from-source-libraries-and-headers)).
+        If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
 * Others
     * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
@@ -57,26 +57,25 @@ $ git clone https://github.com/microsoft/mscclpp.git
 $ mkdir -p mscclpp/build && cd mscclpp/build
 ```
 
-For NVIDIA platforms, build MSCCL++ as follows. Replace `/usr/local/mscclpp` with your desired installation path.
+For NVIDIA platforms, build MSCCL++ as follows. Replace `/usr` with your desired installation path.
 
 ```bash
 # For NVIDIA platforms
-$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp ..
-$ make -j
+$ cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr ..
+$ make -j$(nproc)
 ```
 
 For AMD platforms, use HIPCC instead of the default C++ compiler. The HIPCC path is usually `/opt/rocm/bin/hipcc` in official ROCm installations. If the path is different in your environment, please change it accordingly.
 
 ```bash
 # For AMD platforms
-$ CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local/mscclpp ..
-$ make -j
+$ CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr ..
+$ make -j$(nproc)
 ```
 
 After build succeeds, install the headers and binaries.
 
 ```bash
-$ make -j mscclpp mscclpp_static
 $ sudo make install/fast
 ```
 
@@ -159,7 +158,7 @@ $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 
 We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
 
-1. [Build MSCCL++ from source](#build-from-source).
+1. [Build MSCCL++ from source](#install-from-source).
 2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/apps/nccl/` directory.
 
 For example, you can run [nccl-tests](https://github.com/NVIDIA/nccl-tests) using `libmscclpp_nccl.so` as follows, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
@@ -170,7 +169,7 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
 
-See limitations of the current NCCL over MSCCL++ from [here](../design/nccl-over-mscclpp.md#limitations).
+See limitations of the current NCCL over MSCCL++ from [here](design/nccl-over-mscclpp.md#limitations).
 
 MSCCL++ also supports fallback to NCCL/RCCL collectives by adding following environment variables.
 ```bash
