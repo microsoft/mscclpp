@@ -26,7 +26,7 @@ from mscclpp.language.collectives import *
 def read_put_packet_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     # Initialize MSCCLPP program context with LL (Low Latency) protocol
     with MSCCLPPProgram(
         "read_put_packet_test",
@@ -48,18 +48,14 @@ def read_put_packet_test(num_threads_per_block, min_message_size, max_message_si
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Perform read_put_packet operation:
                     # - Reads from src_rank's buffer[0:1]
                     # - Writes to dst_rank's buffer[1:2]
                     # - Uses threadblock 0 for the operation
                     # Note: Both source and destination chunks must use scratch buffers
                     # because the data is in LL (Low Latency) format
-                    ch.read_put_packet(
-                        scratch_buffers[dst_rank][1:2],
-                        scratch_buffers[src_rank][0:1],
-                        tb=0
-                    )
+                    ch.read_put_packet(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
 
         print(JSON())
 

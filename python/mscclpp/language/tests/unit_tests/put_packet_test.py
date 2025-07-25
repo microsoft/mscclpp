@@ -25,7 +25,7 @@ from mscclpp.language.collectives import *
 def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 1, 0)
-    
+
     # Initialize MSCCLPP program context with LL (Low Latency) protocol
     with MSCCLPPProgram(
         "put_packet_test",
@@ -44,10 +44,10 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     # Create a destination buffer on the target GPU
                     dst_buff = Buffer(dst_rank, 1)
-                    
+
                     # Establish a memory channel from source to destination GPU
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Perform put_packet operation:
                     # - Transfers data from src_buff[0:1] to dst_buff[0:1]
                     # - Uses threadblock 0 for the operation

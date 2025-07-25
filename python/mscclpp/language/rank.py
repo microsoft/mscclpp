@@ -42,7 +42,7 @@ class Rank:
         )
 
         get_program().add_operation(self.rank, tb, op)
-    
+
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
 

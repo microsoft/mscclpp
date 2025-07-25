@@ -87,7 +87,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     rank.unpack_copy_packet(
                         input_buffer[input_index : input_index + gpu_size],
                         scratch_buffer[gpu][scratch_index : scratch_index + gpu_size],
-                        peer
+                        peer,
                     )
 
         print(JSON())

@@ -80,8 +80,8 @@ The synchronization inside the thread-block can be inferred by MSCCL++ DSL autom
 But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
 
 
-## Kernel fusion
-MSCCL++ DSL performs kernel fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single GPU kernel function. This fusion strategy reduces launch overhead and memory traffic, resulting in more efficient execution.
+## Operation Fusion (Instruction Fusion)
+MSCCL++ DSL performs operation fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single operation function. This fusion strategy reduces memory traffic and avoids unnecessary synchronization, resulting in more efficient execution.
 
 For example:
 

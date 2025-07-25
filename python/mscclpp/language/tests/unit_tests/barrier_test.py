@@ -26,7 +26,7 @@ def barrier_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 1 GPU
     gpus = 1
     collective = TestCollective(gpus, 0, 0)
-    
+
     # Initialize MSCCLPP program context with Simple protocol
     with MSCCLPPProgram(
         "barrier_test",
@@ -40,7 +40,7 @@ def barrier_test(num_threads_per_block, min_message_size, max_message_size):
     ):
         # Get rank 0 for barrier synchronization
         rank = Rank(0)
-        
+
         # Perform barrier operation to synchronize thread blocks 0 and 1
         # This ensures both thread blocks reach this point before proceeding
         rank.barrier(tb_list=[0, 1])

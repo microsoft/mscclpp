@@ -46,7 +46,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                         ch.read_put_packet(
                             scratch_buffer[dst_rank][src_rank : src_rank + 1],
                             scratch_buffer[src_rank][src_rank : src_rank + 1],
-                            tb=peer
+                            tb=peer,
                         )
 
         # Inter node put pkt
@@ -58,7 +58,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 ch.read_put_packet(
                     scratch_buffer[dst_rank][src_rank : src_rank + 1],
                     scratch_buffer[src_rank][src_rank : src_rank + 1],
-                    tb=gpu
+                    tb=gpu,
                 )
 
         # Intra node put pkt
@@ -73,7 +73,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                         ch.read_put_packet(
                             scratch_buffer[dst_rank][src_offset : src_offset + 1],
                             scratch_buffer[src_rank][src_offset : src_offset + 1],
-                            tb=peer
+                            tb=peer,
                         )
 
         # Copying packet from local scratch buffer to local buffer
@@ -83,9 +83,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 rank = Rank(gpu)
                 input_buffer = rank.get_output_buffer()
                 rank.unpack_copy_packet(
-                    input_buffer[dst_rank : dst_rank + 1],
-                    scratch_buffer[gpu][dst_rank : dst_rank + 1],
-                    tb=peer
+                    input_buffer[dst_rank : dst_rank + 1], scratch_buffer[gpu][dst_rank : dst_rank + 1], tb=peer
                 )
 
         print(JSON())

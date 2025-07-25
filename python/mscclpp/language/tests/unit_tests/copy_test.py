@@ -26,7 +26,7 @@ def copy_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 1 GPU
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
-    
+
     # Initialize MSCCLPP program context with Simple protocol
     with MSCCLPPProgram(
         "copy_test",
@@ -40,7 +40,7 @@ def copy_test(num_threads_per_block, min_message_size, max_message_size):
     ):
         # Get rank 0 for the copy operation
         rank = Rank(0)
-        
+
         # Get input and output buffers from the rank
         input_buffer = rank.get_input_buffer()
         output_buffer = rank.get_output_buffer()

@@ -60,12 +60,12 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
                         memory_channels[(dst_rank_id, src_rank_id)].put_packet(
                             scratch_buffer[dst_rank_id][dst_offset : dst_offset + 1],
                             src_buffer[dst_rank_id : dst_rank_id + 1],
-                            tb=0
+                            tb=0,
                         )
                         memory_channels[(dst_rank_id, src_rank_id)].put_packet(
                             scratch_buffer[dst_rank_id][r_dst_offset : r_dst_offset + 1],
                             src_buffer[next_dst_rank_id : next_dst_rank_id + 1],
-                            tb=0
+                            tb=0,
                         )
 
         # Reducing Internode Data
@@ -88,12 +88,12 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 src_rank.copy_packet(
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
                     src_buffer[next_src_rank_id : next_src_rank_id + 1],
-                    tb=0
+                    tb=0,
                 )
                 port_channels[src_rank_id].read_put_packet(
                     scratch_buffer[next_src_rank_id][gpu_size - 1 : gpu_size],
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
-                    tb=0
+                    tb=0,
                 )
 
         # Final Reducing
