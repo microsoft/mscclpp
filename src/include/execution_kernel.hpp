@@ -253,7 +253,7 @@ MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* out
   const uint32_t* sizes = op.inputBufferSizes;
   const uint32_t* srcOffsets = op.inputOffsets;
   const uint32_t* dstOffsets = op.outputOffsets;
-  for (int i = 0; i < count; i++) {
+  for (uint32_t i = 0; i < count; i++) {
     uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset);
     uint32_t srcOffset =
         srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
@@ -275,7 +275,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   const uint32_t* outputSizes = op.outputBufferSizes;
   char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type));
   if (chType == ChannelType::MEMORY) {
-    for (int i = 0; i < count; i++) {
+    for (uint32_t i = 0; i < count; i++) {
       uint32_t dstOffset =
           dstOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[i].id], offset);
       uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset);
@@ -286,7 +286,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
     return;
   }
   if (chType == ChannelType::PORT) {
-    int tid = threadIdx.x;
+    uint32_t tid = threadIdx.x;
     if (tid < count) {
       uint32_t size = min(outputSizes[tid] - offset, unitSize);
       MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
@@ -420,7 +420,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratc
   if (chType == ChannelType::MEMORY) {
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
-      for (int idx = 0; idx < nOutput; ++idx) {
+      for (uint32_t idx = 0; idx < nOutput; ++idx) {
         PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
         PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
         PacketType pkt(data, flag_);
@@ -433,15 +433,15 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratc
     // Ensuring Data Is Ready
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
-      for (int idx = 0; idx < nOutput; ++idx) {
+      for (uint32_t idx = 0; idx < nOutput; ++idx) {
         PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
+        pkts[pktIdx].read(flag_);
       }
     }
     __syncthreads();
 
     // Putting the data
-    int chIdx = threadIdx.x;
+    uint32_t chIdx = threadIdx.x;
     if (chIdx >= nOutput) {
       return;
     }
@@ -473,7 +473,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
       (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type) + dstOffset;
   for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
-    for (int index = 0; index < nSrcs; ++index) {
+    for (uint32_t index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
       data = add_vectors<T>(data, val);
@@ -667,7 +667,7 @@ MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* outp
 }
 
 MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
-  int tid = threadIdx.x;
+  uint32_t tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
     DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
     sem->release();
@@ -675,7 +675,7 @@ MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
 }
 
 MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
-  int tid = threadIdx.x;
+  uint32_t tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
     DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
     sem->acquire();
@@ -874,7 +874,8 @@ class ExecutionKernel {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchChunkSize, plan, semaphores, flag
+            rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -884,7 +885,8 @@ class ExecutionKernel {
         break;
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchChunkSize, plan, semaphores, flag
+            rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -894,7 +896,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchChunkSize, plan, semaphores, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -904,7 +906,7 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchChunkSize, plan, semaphores, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -914,7 +916,8 @@ class ExecutionKernel {
         break;
       case DataType::BFLOAT16:
         executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchChunkSize, plan, semaphores, flag
+            rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
