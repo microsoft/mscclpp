@@ -82,9 +82,9 @@ class CopyOperation(BaseOperation):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            super().__init__(Instruction.copy_packet)
+            super().__init__(Instruction.unpack_copy_packet)
         elif to_packet:
-            super().__init__(Instruction.transform_to_packet)
+            super().__init__(Instruction.copy_packet)
         else:
             super().__init__(Instruction.copy)
 
@@ -93,12 +93,12 @@ class CopyOperation(BaseOperation):
 
     def local_data_access(self, sync_purpose=True):
         data_access = []
-        if self.name != Instruction.copy_packet or not sync_purpose:
+        if self.name != Instruction.unpack_copy_packet or not sync_purpose:
             for chunk in self.src_buff:
                 data_access.append(
                     DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
                 )
-        if self.name != Instruction.transform_to_packet or not sync_purpose:
+        if self.name != Instruction.copy_packet or not sync_purpose:
             for chunk in self.dst_buff:
                 data_access.append(
                     DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)

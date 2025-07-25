@@ -1,6 +1,20 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Read-Put-Packet Operation Test
+
+This file demonstrates the use of the read_put_packet operation in MSCCLPP.
+The read_put_packet operation combines a local read with a remote write in a single
+operation. It reads data from the source in packet format to ensure the data
+is ready, then transfers it in packet format to the destination, which is useful for
+certain communication patterns.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (read_put_packet) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -12,6 +26,8 @@ from mscclpp.language.collectives import *
 def read_put_packet_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
+    
+    # Initialize MSCCLPP program context with LL (Low Latency) protocol
     with MSCCLPPProgram(
         "read_put_packet_test",
         collective,
@@ -22,16 +38,27 @@ def read_put_packet_test(num_threads_per_block, min_message_size, max_message_si
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # Create scratch buffers for each GPU rank
         scratch_buffers = []
         for rank in range(gpus):
             scratch_buffers.append(Buffer(rank, 2))
 
+        # Perform read_put_packet operations
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.put_packet(
-                        scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0, from_packet=True
+                    
+                    # Perform read_put_packet operation:
+                    # - Reads from src_rank's buffer[0:1]
+                    # - Writes to dst_rank's buffer[1:2]
+                    # - Uses threadblock 0 for the operation
+                    # Note: Both source and destination chunks must use scratch buffers
+                    # because the data is in LL (Low Latency) format
+                    ch.read_put_packet(
+                        scratch_buffers[dst_rank][1:2],
+                        scratch_buffers[src_rank][0:1],
+                        tb=0
                     )
 
         print(JSON())

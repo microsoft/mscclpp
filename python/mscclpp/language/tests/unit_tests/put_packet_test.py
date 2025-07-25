@@ -1,6 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Put-Packet Operation Test
+
+This file demonstrates the use of the put_packet operation in MSCCLPP.
+The put_packet operation writes data from a source buffer to a destination buffer
+in packet format, which is useful for efficient data transfer in distributed
+GPU communication patterns.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (put_packet) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -12,6 +25,8 @@ from mscclpp.language.collectives import *
 def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 1, 0)
+    
+    # Initialize MSCCLPP program context with LL (Low Latency) protocol
     with MSCCLPPProgram(
         "put_packet_test",
         collective,
@@ -27,8 +42,16 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
             src_buff = rank.get_input_buffer()
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
+                    # Create a destination buffer on the target GPU
                     dst_buff = Buffer(dst_rank, 1)
+                    
+                    # Establish a memory channel from source to destination GPU
                     ch = MemoryChannel(dst_rank, src_rank)
+                    
+                    # Perform put_packet operation:
+                    # - Transfers data from src_buff[0:1] to dst_buff[0:1]
+                    # - Uses threadblock 0 for the operation
+                    # - Data is transferred in packet format for efficient communication
                     ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
 
         print(JSON())

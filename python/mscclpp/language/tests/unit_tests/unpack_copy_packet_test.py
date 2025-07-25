@@ -9,14 +9,14 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def transform_to_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def unpack_copy_packet_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
     with MSCCLPPProgram(
-        "transform_to_packet_test",
+        "unpack_copy_packet_test",
         collective,
         gpus,
-        protocol="Simple",
+        protocol="LL",
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         max_message_size=max_message_size,
@@ -24,9 +24,11 @@ def transform_to_packet_test(num_threads_per_block, min_message_size, max_messag
     ):
         rank = Rank(0)
         input_buffer = rank.get_input_buffer()
+        output_buffer = rank.get_output_buffer()
         scratch_buffer = Buffer(0, 1)
 
-        rank.copy(scratch_buffer[0:1], input_buffer[0:1], tb=0, to_packet=True)
+        rank.copy_packet(scratch_buffer[0:1], input_buffer[0:1], tb=0)
+        rank.unpack_copy_packet(output_buffer[0:1], scratch_buffer[0:1], tb=0)
 
         print(JSON())
 
@@ -39,4 +41,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-transform_to_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+unpack_copy_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

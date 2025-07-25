@@ -67,7 +67,7 @@ class Instruction(Enum):
     nop = "nop"
     copy = "copy"
     copy_packet = "cpkt"
-    transform_to_packet = "tpkt"
+    unpack_copy_packet = "ucpkt"
     reduce = "re"
     reduce_packet = "repkt"
     sem_acquire = "sem_acquire"
