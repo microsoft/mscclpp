@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.internal.types import BufferType, Chunk
 from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
@@ -7,20 +10,73 @@ from collections import defaultdict
 
 @dataclass
 class Rank:
+    """Represents a single rank (GPU) in an MSCCL++ program.
+    
+    Rank provides operations that can be performed locally on a single GPU,
+    including copy operations, reduce operations, and synchronization barriers.
+    It manages local buffer operations and coordinates with other ranks through
+    the program context.
+    
+    Attributes:
+        rank (int): The rank identifier for this GPU.
+    """
     rank: int
 
     def __init__(self, rank: int):
+        """Initialize a new Rank.
+        
+        Args:
+            rank (int): The rank identifier for this GPU.
+            
+        Raises:
+            RuntimeError: If rank is out of bounds for the current program.
+            
+        Example:
+            >>> rank = Rank(0)
+        """
         self.rank = rank
         if rank >= get_program().num_ranks:
             raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
 
     def get_input_buffer(self):
+        """Get the input buffer for this rank.
+        
+        Returns:
+            BaseBuffer: The input buffer associated with this rank.
+            
+        Example:
+            >>> input_buf = rank.get_input_buffer()
+        """
         return get_program().buffers[self.rank][BufferType.input]
 
     def get_output_buffer(self):
+        """Get the output buffer for this rank.
+        
+        Returns:
+            BaseBuffer: The output buffer associated with this rank.
+            
+        Example:
+            >>> output_buf = rank.get_output_buffer()
+        """
         return get_program().buffers[self.rank][BufferType.output]
 
     def _copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
+        """Internal copy operation implementation.
+        
+        Performs a local copy operation between chunks on this rank with optional
+        packet format conversion. This is used by the public copy methods.
+        
+        Args:
+            dst_chunk (Chunk): The destination chunk to copy data to.
+            src_chunk (Chunk): The source chunk to copy data from.
+            tb (int): The thread block ID that will execute this operation.
+            from_packet (bool, optional): Whether to unpack from packet format. Defaults to False.
+            to_packet (bool, optional): Whether to pack to packet format. Defaults to False.
+            
+        Raises:
+            RuntimeError: If chunk ranks don't match this rank, if chunk sizes differ,
+                or if packet operations are used with non-scratch buffers.
+        """
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
             raise RuntimeError(
                 f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
@@ -42,14 +98,53 @@ class Rank:
         )
 
         get_program().add_operation(self.rank, tb, op)
-
+    
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        """Copy data from source chunk to destination chunk.
+        
+        Performs a simple local copy operation between two chunks on this rank
+        without any packet format conversion.
+        
+        Args:
+            dst_chunk (Chunk): The destination chunk to copy data to.
+            src_chunk (Chunk): The source chunk to copy data from.
+            tb (int): The thread block ID that will execute this operation.
+            
+        Example:
+            >>> rank.copy(dst_chunk, src_chunk, tb=0)
+        """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
 
     def unpack_copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        """Copy data from packet format to regular format.
+        
+        Unpacks data from packet format in the source scratch buffer and copies
+        it to the destination chunk in regular format.
+        
+        Args:
+            dst_chunk (Chunk): The destination chunk to copy unpacked data to.
+            src_chunk (Chunk): The source scratch chunk containing packed data.
+            tb (int): The thread block ID that will execute this operation.
+            
+        Example:
+            >>> rank.unpack_copy_packet(dst_chunk, src_chunk, tb=0)
+        """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
 
     def copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        """Copy data from regular format to packet format.
+        
+        Packs data from the source chunk and copies it to the destination
+        scratch buffer in packet format.
+        
+        Args:
+            dst_chunk (Chunk): The destination scratch chunk to store packed data.
+            src_chunk (Chunk): The source chunk containing data to pack.
+            tb (int): The thread block ID that will execute this operation.
+            
+        Example:
+            >>> rank.copy_packet(dst_chunk, src_chunk, tb=0)
+        """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
 
     def reduce(
@@ -61,6 +156,28 @@ class Rank:
         reduce_op: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
     ):
+        """Perform a local reduction operation on this rank.
+        
+        Reduces data from multiple chunks locally on this rank, combining
+        the source chunk with other chunks using the specified reduction operation.
+        
+        Args:
+            src_chunk (Chunk): The primary source chunk to reduce.
+            other_chunks (List[Chunk]): Additional chunks to include in the reduction.
+            tb (int): The thread block ID that will execute this operation.
+            dst_chunk (Chunk, optional): The destination chunk for the result. 
+                If None, uses src_chunk. Defaults to None.
+            reduce_op (ReduceOperationType, optional): The reduction operation to perform.
+                Defaults to ReduceOperationType.sum.
+            packet (bool, optional): Whether to operate in packet format. Defaults to False.
+            
+        Raises:
+            RuntimeError: If chunk ranks don't match this rank, if chunk sizes are inconsistent,
+                or if other_chunks is empty.
+                
+        Example:
+            >>> rank.reduce(src_chunk, other_chunks, tb=0, dst_chunk)
+        """
         if dst_chunk is None:
             dst_chunk = src_chunk
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
@@ -93,6 +210,21 @@ class Rank:
         get_program().add_operation(self.rank, tb, op)
 
     def barrier(self, tb_list: List[int]):
+        """Create a synchronization barrier between thread blocks.
+        
+        Synchronizes execution between multiple thread blocks on this rank.
+        For a single thread block, creates a sync operation. For multiple
+        thread blocks, creates a barrier operation.
+        
+        Args:
+            tb_list (List[int]): List of thread block IDs to synchronize.
+            
+        Raises:
+            RuntimeError: If tb_list is empty.
+            
+        Example:
+            >>> rank0.barrier(tb_list=[0, 1, 2])
+        """
         if len(tb_list) == 0:
             raise RuntimeError("Barrier requires at least thread block.")
         elif len(tb_list) == 1:
@@ -105,6 +237,19 @@ class Rank:
 
 
 class BaseBuffer:
+    """Base class for buffer objects in MSCCL++ programs.
+    
+    BaseBuffer represents a memory buffer associated with a specific rank,
+    providing indexed access to create chunks for communication operations.
+    It supports slice-based indexing to create Chunk objects.
+    
+    Attributes:
+        rank (int): The rank that owns this buffer.
+        buffer_type (BufferType): The type of buffer (input, output, scratch).
+        offset (int): The starting offset of this buffer.
+        size (int): The total size of the buffer.
+    """
+    
     def __init__(self, rank: int, buffer_type: BufferType, offset: int, size: int):
         self.rank = rank
         self.buffer_type = buffer_type
@@ -120,7 +265,36 @@ class BaseBuffer:
 
 
 class Buffer(BaseBuffer):
+    """A scratch buffer for temporary data storage during communication operations.
+    
+    Buffer extends BaseBuffer to provide dynamically allocated scratch space
+    for a specific rank. It automatically manages scratch buffer allocation
+    within the GPU's scratch memory space.
+    
+    Attributes:
+        rank (int): The rank that owns this buffer.
+        buffer_type (BufferType): Always BufferType.scratch for Buffer instances.
+        offset (int): The starting offset within the rank's scratch space.
+        size (int): The total size of the allocated buffer.
+    """
+    
     def __init__(self, rank: int, size: int):
+        """Initialize a new scratch Buffer.
+        
+        Allocates a scratch buffer of the specified size for the given rank,
+        automatically managing the offset within the rank's scratch space.
+        
+        Args:
+            rank (int): The rank to allocate the buffer for.
+            size (int): The size of the buffer to allocate.
+            
+        Raises:
+            RuntimeError: If rank is out of bounds for the current program.
+            
+        Example:
+            >>> scratch_buf = Buffer(rank=0, size=2)
+            >>> chunk = scratch_buf[0:1]
+        """
         if rank >= get_program().num_ranks:
             raise RuntimeError(f"Rank {rank} is out of bounds. Number of ranks: {self.prog.num_ranks}")
 
@@ -132,9 +306,34 @@ class Buffer(BaseBuffer):
 
 
 class Semaphore:
+    """A semaphore for asynchronus synchronization between thread blocks.
+    
+    Semaphore provides acquire and release operations for synchronization
+    between thread blocks within a rank. Each semaphore has an initial value
+    and supports typical semaphore semantics.
+    
+    Attributes:
+        id (int): Unique identifier for this semaphore within its rank.
+        rank (int): The rank that owns this semaphore.
+        initial_value (int): The initial value of the semaphore.
+    """
     _semaphore_counts = defaultdict(int)
 
     def __init__(self, rank: int, initial_value: int):
+        """Initialize a new Semaphore.
+        
+        Creates a semaphore for the specified rank with the given initial value.
+        
+        Args:
+            rank (int): The rank that will own this semaphore.
+            initial_value (int): The initial value of the semaphore.
+            
+        Raises:
+            RuntimeError: If rank is out of bounds for the current program.
+            
+        Example:
+            >>> sem = Semaphore(rank=0, initial_value=1)
+        """
         num_ranks = get_program().num_ranks
         if rank >= num_ranks:
             raise RuntimeError(f"Source rank {rank} is out of bounds. Number of ranks: {num_ranks}")
@@ -147,9 +346,35 @@ class Semaphore:
         get_program().add_semaphore(self)
 
     def acquire(self, tb: int, data_sync: SyncType = SyncType.none):
+        """Acquire the semaphore from a thread block.
+        
+        Blocks the thread block until the semaphore can be acquired (value > 0),
+        then decrements the semaphore value.
+        
+        Args:
+            tb (int): The thread block ID that will acquire the semaphore.
+            data_sync (SyncType, optional): The type of data synchronization to perform.
+                Defaults to SyncType.none.
+                
+        Example:
+            >>> sem.acquire(tb=0, data_sync=SyncType.before)
+        """
         op = SemaphoreAcquireOperation([self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
 
     def release(self, tb: int, data_sync: SyncType = SyncType.none):
+        """Release the semaphore from a thread block.
+        
+        Increments the semaphore value, potentially unblocking other thread blocks
+        waiting to acquire the semaphore.
+        
+        Args:
+            tb (int): The thread block ID that will release the semaphore.
+            data_sync (SyncType, optional): The type of data synchronization to perform.
+                Defaults to SyncType.none.
+                
+        Example:
+            >>> sem.release(tb=0, data_sync=SyncType.after)
+        """
         op = SemaphoreReleaseOperation([self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
