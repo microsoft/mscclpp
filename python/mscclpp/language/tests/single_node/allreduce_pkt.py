@@ -84,11 +84,10 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
                     input_index = peer * gpu_size
                     scratch_index = peer if peer < gpu else peer - 1
                     scratch_index = gpu_size * (gpu_size - 1) + scratch_index * gpu_size
-                    rank.copy(
+                    rank.unpack_copy_packet(
                         input_buffer[input_index : input_index + gpu_size],
                         scratch_buffer[gpu][scratch_index : scratch_index + gpu_size],
                         peer,
-                        from_packet=True,
                     )
 
         print(JSON())

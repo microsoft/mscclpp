@@ -10,6 +10,32 @@ import json
 
 
 class MSCCLPPProgram:
+    """A program definition for MSCCL++ collective communication operations.
+
+    MSCCLPPProgram serves as the main container for defining and executing
+    collective communication programs using the MSCCL++ DSL. It manages
+    GPU resources, channels, operations, and provides serialization to JSON
+    format for execution.
+
+    Attributes:
+        name (str): The name of the program.
+        collective (Collective): The collective operation this program implements.
+        num_ranks (int): The number of ranks participating in the program.
+        instances (int): The number of instances to replicate.
+        protocol (str): The communication protocol ("Simple" or "LL").
+        instr_fusion (bool): Whether to enable instruction fusion optimization.
+        replication_policy (ReplicationPolicy): The policy for replicating operations.
+        reuse_resources (bool): Whether to reuse resources across instances.
+        num_threads_per_block (int): Number of threads per GPU thread block.
+        use_double_scratch_buffer (bool): Whether to use double scratch buffering.
+        buffer_alignment (int): Buffer alignment in bytes.
+        min_message_size (int): Minimum message size for this program.
+        max_message_size (int): Maximum message size for this program.
+        buffers (list): Buffer configurations for each rank.
+        gpus (List[Gpu]): List of GPU objects representing each rank.
+        loop_context: Current pipeline loop context, if any.
+    """
+
     def __init__(
         self,
         name: str,
@@ -26,6 +52,37 @@ class MSCCLPPProgram:
         min_message_size: int = 0,
         max_message_size: int = 2**64 - 1,
     ):
+        """Initialize a new MSCCLPPProgram.
+
+        Args:
+            name (str): The name identifier for this program.
+            collective (Collective): The collective operation to implement.
+            num_ranks (int): The number of participating ranks.
+            instances (int, optional): Number of instances to replicate. Defaults to 1.
+            protocol (str, optional): Communication protocol ("Simple" or "LL").
+                Defaults to "Simple".
+            instr_fusion (bool, optional): Enable instruction fusion optimization.
+                Defaults to True.
+            replication_policy (ReplicationPolicy, optional): Policy for operation replication.
+                Defaults to ReplicationPolicy.interleaved.
+            reuse_resources (bool, optional): Whether to reuse resources. Defaults to False.
+            num_threads_per_block (int, optional): Threads per GPU thread block. Defaults to 1024.
+            use_double_scratch_buffer (bool, optional): Use double scratch buffering.
+                Defaults to False.
+            buffer_alignment (int, optional): Buffer alignment in bytes. Defaults to 16.
+            min_message_size (int, optional): Minimum message size. Defaults to 0.
+            max_message_size (int, optional): Maximum message size. Defaults to 2^64-1.
+
+        Raises:
+            AssertionError: If protocol is not "Simple" or "LL".
+
+        Example:
+            >>> from mscclpp.language.collectives import AllReduce
+            >>> collective = AllReduce(num_ranks=4, chunk_factor=1, inplace=False)
+            >>> with MSCCLPPProgram("allreduce_4", collective, 4) as prog:
+            ...     # Define communication operations
+            ...     pass
+        """
         self.name = name
         self.collective = collective
         self.num_ranks = num_ranks
@@ -50,9 +107,19 @@ class MSCCLPPProgram:
         self.loop_context = None
 
     def __enter__(self):
+        """Enter the program context and set this as the active program.
+
+        This method is called when entering the 'with' statement and registers
+        this program as the active program in the global context.
+        """
         set_program(self)
 
     def __exit__(self, exc_type, exc_value, traceback):
+        """Exit the program context and clear the active program.
+
+        This method is called when exiting the 'with' statement and removes
+        this program from the global context.
+        """
         set_program(None)
 
     def add_channel(self, channel):

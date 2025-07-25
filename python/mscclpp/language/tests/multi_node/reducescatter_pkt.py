@@ -44,7 +44,7 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 port_channels[src_rank_id] = PortChannel(next_src_rank_id, src_rank_id)
 
         # Sharing Data Intra Node
-        inter_node_data_offset = gpu_size / 2
+        inter_node_data_offset = int(gpu_size / 2)
         for node in range(nodes):
             for gpu in range(gpus_per_node):
                 src_rank_id = gpu + node * gpus_per_node
@@ -85,13 +85,12 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
 
                 if len(chunks) > 0:
                     src_rank.reduce(src_buffer[next_src_rank_id : next_src_rank_id + 1], chunks, tb=0, packet=True)
-                src_rank.copy(
+                src_rank.copy_packet(
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
                     src_buffer[next_src_rank_id : next_src_rank_id + 1],
                     tb=0,
-                    to_packet=True,
                 )
-                port_channels[src_rank_id].put_packet(
+                port_channels[src_rank_id].read_put_packet(
                     scratch_buffer[next_src_rank_id][gpu_size - 1 : gpu_size],
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
                     tb=0,

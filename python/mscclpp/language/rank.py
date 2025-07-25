@@ -20,7 +20,7 @@ class Rank:
     def get_output_buffer(self):
         return get_program().buffers[self.rank][BufferType.output]
 
-    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
+    def _copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
         if dst_chunk.rank != self.rank or src_chunk.rank != self.rank:
             raise RuntimeError(
                 f"Inconsistent ranks: dst {dst_chunk.rank}, src {src_chunk.rank}, self {self.rank}. They must match."
@@ -42,6 +42,15 @@ class Rank:
         )
 
         get_program().add_operation(self.rank, tb, op)
+
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
+
+    def unpack_copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
+
+    def copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
 
     def reduce(
         self,
