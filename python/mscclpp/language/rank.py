@@ -147,6 +147,15 @@ class Rank:
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
 
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
+
+    def unpack_copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
+
+    def copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
+
     def reduce(
         self,
         src_chunk: Chunk,

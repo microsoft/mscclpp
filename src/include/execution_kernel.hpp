@@ -674,7 +674,7 @@ MSCCLPP_DEVICE_INLINE void handleSemRelease(const Operation& op) {
   }
 }
 
-MSCCLPP_DEVICE_INLINE void handleSemAquire(const Operation& op) {
+MSCCLPP_DEVICE_INLINE void handleSemAcquire(const Operation& op) {
   uint32_t tid = threadIdx.x;
   if (tid < op.nDeviceSemaphores) {
     DeviceSemaphore* sem = &deviceSemaphores[op.deviceSemaphoreIds[tid]];
@@ -756,7 +756,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     return handleCopyPacket<PacketType>(op, input, output, scratch);
   }
   if (opType == OperationType::SEM_ACQUIRE) {
-    return handleSemAquire(op);
+    return handleSemAcquire(op);
   }
   if (opType == OperationType::SEM_RELEASE) {
     return handleSemRelease(op);
