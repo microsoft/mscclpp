@@ -255,17 +255,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>& serialization)
     : Impl(serialization.begin(), serialization.end()) {}
 
 RegisteredMemory::Impl::~Impl() {
-  // Close the handle if it was opened during deserialization or initialization.
-  if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
-    if (getPidHash() == this->pidHash) {
-      // For local registered memory
-      if (fileDesc >= 0) {
-        close(fileDesc);
-        fileDesc = -1;
-      }
-      return;
-    }
-
+  // Close the CUDA IPC handle if it was opened during deserialization
+  if (data && transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash && getPidHash() != this->pidHash) {
     // For remote registered memory
     void* base = static_cast<char*>(data) - getTransportInfo(Transport::CudaIpc).cudaIpcOffsetFromBase;
     if (this->isCuMemMapAlloc) {
@@ -277,6 +268,9 @@ RegisteredMemory::Impl::~Impl() {
       MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
       MSCCLPP_CULOG_WARN(cuMemRelease(handle));
       MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
+      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR && fileDesc >= 0) {
+        close(fileDesc);
+      }
     } else {
       cudaError_t err = cudaIpcCloseMemHandle(base);
       if (err != cudaSuccess) {
