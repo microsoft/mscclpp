@@ -546,21 +546,25 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
   proxyService->stopProxy();
 }
 
-// Updated test runner
 void runAllMultiGpuTests(const mscclpp::test::TestContext& context) {
-  // Example configurations for different scenarios
   std::vector<MultiGpuTestConfig> configs = {
-      // 2 GPUs, 2 groups (2 GPUs per group) - group 0 participates in signaling
-      MultiGpuTestConfig(512, 2, 2, {64, 128, 256, 512}),
+      // 2 GPUs, 2 groups (1 GPU per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 2, 2, {1, 8, 64, 128, 256, 512}),
 
-      // 4 GPUs, 2 groups (2 GPUs per group) - group 0 participates in signaling
-      MultiGpuTestConfig(512, 4, 2, {64, 128, 256, 512}),
+      // 4 GPUs, 2 groups (2 GPUs per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 4, 2, {1, 8, 64, 128, 256, 512}),
 
-      // 8 GPUs, 4 groups (2 GPUs per group) - group 0 participates in signaling
-      MultiGpuTestConfig(512, 8, 4, {64, 128, 256, 512}),
+      // 4 GPUs, 4 groups (1 GPU per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 4, 4, {1, 8, 64, 128, 256, 512}),
 
-      // 8 GPUs, 2 groups (4 GPUs per group) - group 0 participates in signaling
-      MultiGpuTestConfig(1024, 8, 2, {128, 256, 512, 1024}),
+      // 8 GPUs, 2 groups (4 GPUs per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 8, 2, {1, 8, 64, 128, 256, 512}),
+
+      // 8 GPUs, 4 groups (2 GPUs per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 8, 4, {1, 8, 64, 128, 256, 512}),
+
+      // 8 GPUs, 8 groups (1 GPU per group) - local rank 0 participates in signaling
+      MultiGpuTestConfig(512, 8, 8, {1, 8, 64, 128, 256, 512}),
   };
 
   for (const auto& config : configs) {
