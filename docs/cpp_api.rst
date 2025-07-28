@@ -1,7 +1,9 @@
 C++ API Reference
 =================
 
-This reference organizes the MSCCL++ C++ API into two main categories: Host-Side Interfaces for CPU code and Device-Side Interfaces for GPU kernels. Components that are used in both host and device code are documented in the Device-Side Interfaces section.
+This reference organizes the MSCCL++ C++ API into two main categories: :ref:`host-side-interfaces` for CPU code and :ref:`device-side-interfaces` for GPU kernels. Components that are used in both host and device code are documented in the Device-Side Interfaces section.
+
+.. _host-side-interfaces:
 
 Host-Side Interfaces
 --------------------
@@ -211,6 +213,9 @@ Macro Functions
 .. doxygendefine:: MSCCLPP_CUDATHROW
 
 .. doxygendefine:: MSCCLPP_CUTHROW
+
+
+.. _device-side-interfaces:
 
 Device-Side Interfaces
 ----------------------
