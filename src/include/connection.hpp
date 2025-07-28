@@ -15,6 +15,30 @@
 
 namespace mscclpp {
 
+class ConnectionFactory {
+ private:
+  using ConnectionCreator = std::function<std::shared_ptr<Connection>(std::shared_ptr<Context>, Endpoint, Endpoint)>;
+  static std::unordered_map<std::string, ConnectionCreator>& getRegistry() {
+    static std::unordered_map<std::string, ConnectionCreator> registry;
+    return registry;
+  }
+
+ public:
+  static void registerConnection(const std::string& connName, ConnectionCreator creator) {
+    getRegistry()[connName] = creator;
+  }
+
+  static std::shared_ptr<Connection> createConnection(const std::string& connName, std::shared_ptr<Context> context,
+                                                      Endpoint localEndpoint, Endpoint remoteEndpoint) {
+    auto& registry = getRegistry();
+    auto it = registry.find(connName);
+    if (it != registry.end()) {
+      return it->second(context, localEndpoint, remoteEndpoint);
+    }
+    throw std::runtime_error("Unknown connection type: " + connName);
+  }
+};
+
 class CudaIpcConnection : public Connection {
  private:
   std::shared_ptr<CudaIpcStream> stream_;

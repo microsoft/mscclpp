@@ -180,8 +180,7 @@ void register_core(nb::module_& m) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
-      .def("create_endpoint", &Context::createEndpoint, nb::arg("config"))
-      .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
+      .def("create_endpoint", &Context::createEndpoint, nb::arg("config"));
 
   nb::class_<SemaphoreStub>(m, "SemaphoreStub")
       .def(nb::init<std::shared_ptr<Connection>>(), nb::arg("connection"))
@@ -213,9 +212,9 @@ void register_core(nb::module_& m) {
       .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("connect",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(EndpointConfig, int, int)>(
-               &Communicator::connect),
-           nb::arg("localConfig"), nb::arg("remoteRank"), nb::arg("tag") = 0)
+           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(
+               EndpointConfig, int, int, std::string)>(&Communicator::connect),
+           nb::arg("localConfig"), nb::arg("remoteRank"), nb::arg("tag") = 0, nb::arg("connName") = "core")
       .def(
           "connect",
           [](Communicator* self, int remoteRank, int tag, EndpointConfig localConfig) {

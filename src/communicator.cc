@@ -4,6 +4,7 @@
 #include "communicator.hpp"
 
 #include "api.h"
+#include "connection.hpp"
 #include "debug.h"
 
 namespace mscclpp {
@@ -15,6 +16,10 @@ Communicator::Impl::Impl(std::shared_ptr<Bootstrap> bootstrap, std::shared_ptr<C
   } else {
     context_ = context;
   }
+  ConnectionFactory::registerConnection(
+      "core", [](std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint) {
+        return context->connect(localEndpoint, remoteEndpoint);
+      });
 }
 
 void Communicator::Impl::setLastRecvItem(int remoteRank, int tag, std::shared_ptr<BaseRecvItem> item) {
@@ -100,7 +105,8 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
 }
 
 MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(EndpointConfig localConfig,
-                                                                                      int remoteRank, int tag) {
+                                                                                      int remoteRank, int tag,
+                                                                                      std::string connName) {
   auto localEndpoint = context()->createEndpoint(localConfig);
 
   if (remoteRank == bootstrap()->getRank()) {
@@ -115,9 +121,9 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
 
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
 
-  auto future =
-      std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
-                                         localEndpoint = std::move(localEndpoint)]() mutable {
+  auto future = std::async(
+      std::launch::deferred, [this, remoteRank, tag, connName, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
+                              localEndpoint = std::move(localEndpoint)]() mutable {
         if (lastRecvItem) {
           // Recursive call to the previous receive items
           lastRecvItem->wait();
@@ -125,7 +131,7 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
         std::vector<char> data;
         bootstrap()->recv(data, remoteRank, tag);
         auto remoteEndpoint = Endpoint::deserialize(data);
-        auto connection = context()->connect(localEndpoint, remoteEndpoint);
+        auto connection = ConnectionFactory::createConnection(connName, context(), localEndpoint, remoteEndpoint);
         pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
         return connection;
       });
