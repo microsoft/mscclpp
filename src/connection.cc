@@ -33,6 +33,11 @@ std::shared_ptr<RegisteredMemory::Impl> Connection::getImpl(RegisteredMemory& me
 
 std::shared_ptr<Endpoint::Impl> Connection::getImpl(Endpoint& memory) { return memory.pimpl_; }
 
+MSCCLPP_API_CPP Connection::  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
+      : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+
+MSCCLPP_API_CPP std::shared_ptr<Context> Connection::context() const { return context_; }
+
 MSCCLPP_API_CPP const Device& Connection::localDevice() const { return localEndpoint_.device(); }
 
 MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }

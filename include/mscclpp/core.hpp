@@ -467,9 +467,9 @@ class Endpoint {
 class Connection {
  public:
   /// Constructor.
+  /// @param context The context associated with the connection.
   /// @param localEndpoint The local endpoint of the connection.
-  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-      : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
 
   /// Destructor.
   virtual ~Connection() = default;
@@ -506,7 +506,7 @@ class Connection {
 
   /// Get the context associated with this connection.
   /// @return A shared pointer to the context associated with this connection.
-  std::shared_ptr<Context> context() const { return context_; }
+  std::shared_ptr<Context> context() const;
 
   /// Get the device used by the local endpoint.
   /// @return The device used by the local endpoint.
