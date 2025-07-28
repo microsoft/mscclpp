@@ -47,22 +47,17 @@ __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle) 
 
 // New kernels for data transfer
 __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements) {
-  int warpId = threadIdx.x / 32;
-  int laneId = threadIdx.x % 32;
-  int totalWarps = blockDim.x / 32;
+  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  int totalThreads = blockDim.x * gridDim.x;
   
-  // Each warp processes a chunk of data
-  for (int i = warpId; i < numElements; i += totalWarps) {
-    if (laneId == 0) {
-      // Use port channel to put data to remote GPU
-      // Transfer one integer from local send buffer to remote receive buffer
-      portHandle.put(i * sizeof(int), i * sizeof(int), sizeof(int));
-    }
-    __syncwarp();
+  for (int i = tid; i < numElements; i += totalThreads) {
+    // Use port channel to put data to remote GPU
+    // Transfer one integer from local send buffer to remote receive buffer
+    portHandle.put(i * sizeof(int), i * sizeof(int), sizeof(int));
   }
   
-  // Signal completion
-  if (threadIdx.x == 0) {
+  // Only thread 0 signals completion
+  if (tid == 0) {
     portHandle.signal();
   }
 }
@@ -71,8 +66,8 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int totalThreads = blockDim.x * gridDim.x;
   
-  // Wait for signal from sender - only thread 0 in block 0 should wait
-  if (blockIdx.x == 0 && threadIdx.x == 0) {
+  // Wait for signal from sender - only global thread 0 should wait
+  if (tid == 0) {
     portHandle.wait();
   }
 
@@ -89,7 +84,7 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   int expectedValue = 1; // GPU0 sends value 1 (rank + 1 where rank = 0)
   int localErrors = 0;
 
-    // Each thread validates a portion of the received data
+  // Each thread validates a portion of the received data
   for (int i = tid; i < numElements; i += totalThreads) {
     if (recvBuffer[i] != expectedValue) {
       localErrors++;
@@ -164,8 +159,9 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
   // Calculate triggers based on FIFO size
   const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
   
-  int threadBlocks = std::min(8, (numParallel + 31) / 32);
-  int threadsPerBlock = std::min(numParallel, 256);
+  int threadsPerBlock = std::min(numParallel, 512);
+  int threadBlocks = (numParallel + threadsPerBlock - 1) / threadsPerBlock;
+  threadBlocks = std::max(1, threadBlocks);  // Ensure at least 1 block
 
   // Benchmark
   utils::Timer timer;
