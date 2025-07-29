@@ -1,6 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Signal-Wait Fuse Operation Test
+
+This file demonstrates the use of fused signal and wait operations in MSCCLPP.
+The signal-wait fuse pattern combines multiple signal and wait operations
+to reduce synchronization overhead while maintaining coordination between
+distributed GPUs.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (signal-wait-fuse) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +23,10 @@ from mscclpp.language.collectives import *
 
 
 def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
+    # Set up 2 GPUs for fused signal-wait synchronization
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
+    
     with MSCCLPPProgram(
         "signal_wait_test",
         collective,
@@ -22,16 +37,21 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # Perform fused signal-wait operations between all GPU pairs
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
+                    # First channel with double signal operations (fused pattern)
                     ch = MemoryChannel(dst_rank, src_rank)
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.signal(tb=0, data_sync=SyncType.before)
+                    
+                    # Second channel with double signal operations
                     ch = MemoryChannel(dst_rank, src_rank)
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.signal(tb=0, data_sync=SyncType.before)
 
+                    # Corresponding wait operations for synchronization completion
                     ch.wait(tb=0, data_sync=SyncType.after)
                     ch.wait(tb=0, data_sync=SyncType.after)
                     ch = MemoryChannel(dst_rank, src_rank)

@@ -1,6 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Reduce Operation Test
+
+This file demonstrates the use of the reduce operation in MSCCLPP.
+The reduce operation combines multiple data chunks using a reduction
+function (such as sum or max), enabling efficient data aggregation
+within a single GPU's memory space.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (reduce) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +23,10 @@ from mscclpp.language.collectives import *
 
 
 def reduce_test(num_threads_per_block, min_message_size, max_message_size):
+    # Set up single GPU for local reduce operation
     gpus = 1
     collective = TestCollective(gpus, 2, 1)
+    
     with MSCCLPPProgram(
         "reduce_test",
         collective,
@@ -26,6 +41,7 @@ def reduce_test(num_threads_per_block, min_message_size, max_message_size):
         input_buffer = rank.get_input_buffer()
         output_buffer = rank.get_output_buffer()
 
+        # Perform local reduce: combine input_buffer[0:1] and input_buffer[1:2] into output_buffer[0:1]
         rank.reduce(input_buffer[0:1], [input_buffer[1:2]], tb=0, dst_chunk=output_buffer[0:1])
 
         print(JSON())

@@ -1,6 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Put Operation Test
+
+This file demonstrates the use of the put operation in MSCCLPP.
+The put operation writes data from local memory to a remote GPU's memory.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (put) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *

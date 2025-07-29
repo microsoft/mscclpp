@@ -2,15 +2,15 @@
 # Licensed under the MIT License.
 
 """
-Switch Broadcast Operation Test
+Switch Reduce Operation Test
 
-This file demonstrates the use of the switch broadcast operation in MSCCLPP.
-The switch broadcast operation sends data from one rank to multiple ranks
-using a switch channel, which is useful for efficient one-to-many
+This file demonstrates the use of the switch reduce operation in MSCCLPP.
+The switch reduce operation aggregates data from multiple ranks into a single rank
+using a switch channel, which is useful for efficient many-to-one reduction
 communication patterns in distributed GPU computations.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
-operation (switch broadcast) and is NOT intended for production use. This test
+operation (switch reduce) and is NOT intended for production use. This test
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -22,14 +22,14 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def group_store_test(num_threads_per_block, min_message_size, max_message_size):
+def switch_reduce_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 3 GPUs
     gpus = 3
     collective = TestCollective(gpus, 1, 1)
-
+    
     # Initialize MSCCLPP program context with Simple protocol
     with MSCCLPPProgram(
-        "group_store_test",
+        "switch_reduce_test",
         collective,
         gpus,
         protocol="Simple",
@@ -38,19 +38,19 @@ def group_store_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        # Create a destination buffer for the broadcast operation
-        dst_chunk = Buffer(0, 2)
+        # Create a destination buffer for the reduce operation result
+        dst_chunk = Buffer(0, 1)
 
         # Create a switch channel connecting ranks 0 and 1 with input buffer type
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-
-        # Perform broadcast operation from rank 0:
-        # - Broadcasts data from dst_chunk[0:1] to all connected ranks
+        
+        # Perform reduce operation at rank 0:
+        # - Aggregates data from all connected ranks (many-to-one reduction)
         # - Uses buffer_offset=0, size=1, and threadblock 0
-        # - Switch channel enables efficient one-to-many communication
-        ch.at_rank(0).broadcast(src_chunk=dst_chunk[0:1], buffer_offset=0, size=1, tb=0)
+        # - Result is stored in dst_chunk[0:1] 
+        # - Switch channel enables efficient data aggregation from multiple sources
+        ch.at_rank(0).reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
 
-        # Output the generated program in JSON format
         print(JSON())
 
 
@@ -62,4 +62,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-group_store_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+switch_reduce_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

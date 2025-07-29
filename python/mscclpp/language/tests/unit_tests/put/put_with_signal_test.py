@@ -1,6 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Put-With-Signal Operation Test
+
+This file demonstrates the use of put operations combined with signaling in MSCCLPP.
+The put-with-signal pattern writes data to remote GPU memory while coordinating
+with synchronization signals.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (put-with-signal) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *

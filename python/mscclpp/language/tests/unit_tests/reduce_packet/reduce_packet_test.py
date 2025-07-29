@@ -1,6 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Reduce Packet Operation Test
+
+This file demonstrates the use of packet-based reduce operations in MSCCLPP.
+The reduce packet operation combines multiple data chunks using packet format
+to ensure data integrity during the reduction process.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (reduce-packet) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +22,10 @@ from mscclpp.language.collectives import *
 
 
 def reduce_packet_test(num_threads_per_block, min_message_size, max_message_size):
+    # Set up single GPU for packet-based reduce operation
     gpus = 1
     collective = TestCollective(gpus, 0, 0)
+    
     with MSCCLPPProgram(
         "reduce_packet_test",
         collective,
@@ -25,6 +39,7 @@ def reduce_packet_test(num_threads_per_block, min_message_size, max_message_size
         rank = Rank(0)
         scratch_buffer = Buffer(0, 3)
 
+        # Perform packet-based reduce: combine scratch_buffer[0:1] and [1:2] into [2:3]
         rank.reduce(scratch_buffer[0:1], [scratch_buffer[1:2]], tb=0, packet=True, dst_chunk=scratch_buffer[2:3])
 
         print(JSON())

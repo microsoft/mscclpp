@@ -1,6 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Read-Reduce Operation Test
+
+This file demonstrates the use of read-reduce operations in MSCCLPP.
+The read-reduce pattern combines remote memory read with local reduction.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (read-reduce) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
