@@ -5,7 +5,7 @@
 Put-With-Signal-And-Flush Operation Test
 
 This file demonstrates the use of put-with-signal-and-flush operations in MSCCLPP.
-The put-with-signal-and-flush operation combines data transfer, signaling, and 
+The put-with-signal-and-flush operation combines data transfer, signaling, and
 flushing to ensure data consistencys.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
@@ -25,7 +25,7 @@ def put_with_signal_and_flush_test(num_threads_per_block, min_message_size, max_
     # Set up 2 GPUs for put-with-signal-and-flush operations
     gpus = 2
     collective = TestCollective(gpus, 2, 0)
-    
+
     with MSCCLPPProgram(
         "put_with_signal_and_flush_test",
         collective,
@@ -46,17 +46,17 @@ def put_with_signal_and_flush_test(num_threads_per_block, min_message_size, max_
                     # Get the destination rank and its input buffer
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
-                    
+
                     # Establish port channel for put-with-signal-and-flush communication
                     ch = PortChannel(dst_rank, src_rank)
-                    
+
                     # Initial synchronization: send signal and wait for completion
                     ch.signal(tb=0)
                     ch.wait(tb=0, data_sync=SyncType.after)
-                    
+
                     # Perform put_with_signal_and_flush operation
                     ch.put_with_signal_and_flush(dst_buff[1:2], src_buff[0:1], tb=0)
-                    
+
                     # Wait for the put-with-signal-and-flush operation to complete
                     ch.wait(tb=0, data_sync=SyncType.after)
 

@@ -25,7 +25,7 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for fused signal-wait synchronization
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "signal_wait_test",
         collective,

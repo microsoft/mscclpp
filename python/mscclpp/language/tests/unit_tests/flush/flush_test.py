@@ -25,7 +25,7 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for flush operation
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "flush_test",
         collective,
@@ -38,7 +38,7 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
     ):
         # Create port channel for communication between GPUs
         ch = PortChannel(1, 0)
-        
+
         # Flush all pending operations on the channel before proceeding
         ch.flush(tb=0, data_sync=SyncType.before)
 

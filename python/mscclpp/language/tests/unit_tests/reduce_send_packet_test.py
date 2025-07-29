@@ -27,7 +27,7 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
     # Set up 2 GPUs for reduce-send-packet operations
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "reduce_send_packet_test",
         collective,
@@ -50,7 +50,7 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
                 if src_rank != dst_rank:
                     # Establish memory channel for packet communication
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Perform packet-based reduce: combine input chunks [0:1] and [1:2] into scratch [2:3]
                     rank.reduce(
                         scratch_buffers[src_rank][0:1],
@@ -59,7 +59,7 @@ def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message
                         dst_chunk=scratch_buffers[src_rank][2:3],
                         packet=True,
                     )
-                    
+
                     # Send reduced result to destination GPU using packet format
                     ch.put_packet(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
 

@@ -5,7 +5,7 @@
 Unpack-Copy-Packet Operation Test
 
 This file demonstrates the use of the unpack_copy_packet operation in MSCCL++.
-The unpack-copy-packet pattern converts data from packet format back to the 
+The unpack-copy-packet pattern converts data from packet format back to the
 standard format and then copies it to the target buffer.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
@@ -25,7 +25,7 @@ def unpack_copy_packet_test(num_threads_per_block, min_message_size, max_message
     # Set up single GPU for unpack-copy-packet operations
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
-    
+
     with MSCCLPPProgram(
         "unpack_copy_packet_test",
         collective,
@@ -43,7 +43,7 @@ def unpack_copy_packet_test(num_threads_per_block, min_message_size, max_message
 
         # Step 1: Copy data from input to scratch buffer in packet format
         rank.copy_packet(scratch_buffer[0:1], input_buffer[0:1], tb=0)
-        
+
         # Step 2: Unpack packet data from scratch buffer to output buffer
         rank.unpack_copy_packet(output_buffer[0:1], scratch_buffer[0:1], tb=0)
 

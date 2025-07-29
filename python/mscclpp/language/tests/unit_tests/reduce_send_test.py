@@ -26,7 +26,7 @@ def reduce_send_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for reduce-send operations
     gpus = 2
     collective = TestCollective(gpus, 2, 2)
-    
+
     with MSCCLPPProgram(
         "reduce_send_test",
         collective,
@@ -46,20 +46,20 @@ def reduce_send_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     peer_rank = Rank(dst_rank)
                     peer_output_buff = peer_rank.get_output_buffer()
-                    
+
                     # Establish memory channel for communication
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Synchronize before operation
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
-                    
+
                     # Perform local reduce: combine input_buff[0:1] and input_buff[1:2]
                     rank.reduce(input_buff[0:1], [input_buff[1:2]], tb=0, dst_chunk=output_buff[0:1])
-                    
+
                     # Send reduced result to peer GPU
                     ch.put(peer_output_buff[1:2], output_buff[0:1], tb=0)
-                    
+
                     # Synchronize after operation
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.wait(tb=0, data_sync=SyncType.after)

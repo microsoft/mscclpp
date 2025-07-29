@@ -26,7 +26,7 @@ def get_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for fused get operations
     gpus = 2
     collective = TestCollective(gpus, 2, 0)
-    
+
     with MSCCLPPProgram(
         "get_test",
         collective,
@@ -45,18 +45,18 @@ def get_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
-                    
+
                     # Establish memory channel for remote memory access
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Synchronize before fused get operations
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
-                    
+
                     # Perform fused get operations: multiple gets with reduced overhead
                     ch.get(src_buff[0:1], dst_buff[1:2], tb=0)
                     ch.get(src_buff[0:1], dst_buff[1:2], tb=0)
-                    
+
                     # Synchronize after fused operations
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.wait(tb=0, data_sync=SyncType.after)

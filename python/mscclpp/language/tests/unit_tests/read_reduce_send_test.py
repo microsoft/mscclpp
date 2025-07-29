@@ -25,7 +25,7 @@ def read_reduce_send_test(num_threads_per_block, min_message_size, max_message_s
     # Set up 2 GPUs for read-reduce-send operations
     gpus = 2
     collective = TestCollective(gpus, 2, 2)
-    
+
     with MSCCLPPProgram(
         "read_reduce_send_test",
         collective,
@@ -48,18 +48,18 @@ def read_reduce_send_test(num_threads_per_block, min_message_size, max_message_s
                     peer_rank = Rank(dst_rank)
                     peer_input_buff = peer_rank.get_input_buffer()
                     peer_output_buff = peer_rank.get_output_buffer()
-                    
+
                     # Establish memory channel for read-reduce-send communication
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Initial synchronization with relaxed semantics for better performance
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
-                    
+
                     # Perform read-reduce-send operation
                     ch.reduce(input_buff[0:1], [peer_input_buff[1:2]], tb=0, local_dst_chunk=output_buff[0:1])
                     ch.put(peer_output_buff[1:2], output_buff[0:1], tb=0)
-                    
+
                     # Final synchronization to ensure all operations complete
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.wait(tb=0, data_sync=SyncType.after)

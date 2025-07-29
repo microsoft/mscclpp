@@ -26,7 +26,7 @@ def reduce_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up single GPU for local reduce operation
     gpus = 1
     collective = TestCollective(gpus, 2, 1)
-    
+
     with MSCCLPPProgram(
         "reduce_test",
         collective,

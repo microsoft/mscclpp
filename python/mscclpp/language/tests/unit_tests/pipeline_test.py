@@ -27,7 +27,7 @@ def pipeline_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 1 GPU for the copy operation
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
-    
+
     # Initialize MSCCLPP program context with Simple protocol
     with MSCCLPPProgram(
         "barrier_test",
@@ -43,16 +43,15 @@ def pipeline_test(num_threads_per_block, min_message_size, max_message_size):
 
         # Get rank 0 for the copy operation (single GPU setup)
         rank = Rank(0)
-        
+
         # Get input and output buffers from the rank for data movement
-        input_buffer = rank.get_input_buffer()   # Source buffer containing data to copy
-        output_buffer = rank.get_output_buffer() # Destination buffer to receive copied data
-        
+        input_buffer = rank.get_input_buffer()
+        output_buffer = rank.get_output_buffer()
+
         # Define the pipeline loop context with specific data chunking parameters
-        with LoopIterationContext(unit=2**20, num_chunks=1):  # Process 1MB data units
-            # Perform copy operation:
+        with LoopIterationContext(unit=2**20, num_chunks=1):
             # Copy data from input_buffer[0:1] to output_buffer[0:1] using threadblock 0
-            rank.copy(output_buffer[0: 1], input_buffer[0: 1], tb=0)
+            rank.copy(output_buffer[0:1], input_buffer[0:1], tb=0)
 
         print(JSON())
 

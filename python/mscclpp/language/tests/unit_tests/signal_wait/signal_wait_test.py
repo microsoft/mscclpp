@@ -26,7 +26,7 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for signal-wait synchronization
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "signal_wait_test",
         collective,
@@ -43,10 +43,10 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
                 if src_rank != dst_rank:
                     # Establish memory channel for synchronization
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Send signal before data operations
                     ch.signal(tb=0, data_sync=SyncType.before)
-                    
+
                     # Wait for signal completion after data operations
                     ch.wait(tb=0, data_sync=SyncType.after)
 

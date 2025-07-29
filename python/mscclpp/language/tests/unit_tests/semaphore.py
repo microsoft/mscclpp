@@ -24,7 +24,7 @@ def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 1 GPUs for semaphore synchronization
     gpus = 1
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "semaphore_test",
         collective,
@@ -37,10 +37,10 @@ def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
     ):
         # Create semaphore for inter-GPU synchronization
         sm = Semaphore(rank=0, initial_value=0)
-        
+
         # Acquire semaphore (blocks until available)
         sm.acquire(tb=0, data_sync=SyncType.after)
-        
+
         # Release semaphore (allows other GPUs to proceed)
         sm.release(tb=1, data_sync=SyncType.before)
 

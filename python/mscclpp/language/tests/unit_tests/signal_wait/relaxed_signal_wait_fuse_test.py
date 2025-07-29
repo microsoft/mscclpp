@@ -25,7 +25,7 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
     # Set up 2 GPUs for fused relaxed signal-wait operations
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "relaxed_signal_wait_test",
         collective,

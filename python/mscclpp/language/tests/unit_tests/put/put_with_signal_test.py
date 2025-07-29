@@ -44,18 +44,18 @@ def put_with_signal_test(num_threads_per_block, min_message_size, max_message_si
                     # Get the destination rank and its input buffer
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
-                    
+
                     # Establish port channel for put-with-signal communication
                     ch = PortChannel(dst_rank, src_rank)
-                    
+
                     # Initial synchronization: send signal and wait for completion
                     ch.signal(tb=0)
                     ch.wait(tb=0, data_sync=SyncType.after)
-                    
+
                     # Perform put_with_signal operation: write data and signal atomically
                     # This combines data transfer (src_buff[0:1] to dst_buff[1:2]) with signaling
                     ch.put_with_signal(dst_buff[1:2], src_buff[0:1], tb=0)
-                    
+
                     # Wait for the put-with-signal operation to complete
                     ch.wait(tb=0, data_sync=SyncType.after)
 

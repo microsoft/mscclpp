@@ -26,7 +26,7 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
     # Set up 2 GPUs for relaxed signal-wait synchronization
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
-    
+
     with MSCCLPPProgram(
         "relaxed_signal_wait_test",
         collective,
@@ -43,10 +43,10 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
                 if src_rank != dst_rank:
                     # Establish memory channel for relaxed synchronization
                     ch = MemoryChannel(dst_rank, src_rank)
-                    
+
                     # Send relaxed signal (allows reordering for better performance)
                     ch.signal(tb=0, relaxed=True)
-                    
+
                     # Wait with relaxed semantics (looser synchronization guarantees)
                     ch.wait(tb=0, relaxed=True)
 

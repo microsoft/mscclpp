@@ -26,7 +26,7 @@ def switch_reduce_test(num_threads_per_block, min_message_size, max_message_size
     # Set up a test environment with 3 GPUs
     gpus = 3
     collective = TestCollective(gpus, 1, 1)
-    
+
     # Initialize MSCCLPP program context with Simple protocol
     with MSCCLPPProgram(
         "switch_reduce_test",
@@ -43,11 +43,11 @@ def switch_reduce_test(num_threads_per_block, min_message_size, max_message_size
 
         # Create a switch channel connecting ranks 0 and 1 with input buffer type
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-        
+
         # Perform reduce operation at rank 0:
         # - Aggregates data from all connected ranks (many-to-one reduction)
         # - Uses buffer_offset=0, size=1, and threadblock 0
-        # - Result is stored in dst_chunk[0:1] 
+        # - Result is stored in dst_chunk[0:1]
         # - Switch channel enables efficient data aggregation from multiple sources
         ch.at_rank(0).reduce(buffer_offset=0, size=1, tb=0, dst_chunk=dst_chunk[0:1])
 
