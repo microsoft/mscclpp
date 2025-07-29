@@ -10,6 +10,7 @@ You can find the followings from this documentation.
 
 - **Overview:** An overview of MSCCL++ and its features. :doc:`🔗 <overview>`
 - **Quick Start:** A guide to build, install, and run MSCCL++. :doc:`🔗 <quickstart>`
+- **Tutorials:** A step-by-step guide to help you learn about GPU communication using MSCCL++. :doc:`🔗 <tutorials>`
 - **C++ API Reference:** Detailed documentation of the MSCCL++ C++ API. :doc:`🔗 <cpp_api>`
 
 .. toctree::
@@ -18,4 +19,5 @@ You can find the followings from this documentation.
 
    overview
    quickstart
+   tutorials
    cpp_api

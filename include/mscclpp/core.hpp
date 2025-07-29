@@ -441,6 +441,14 @@ class Endpoint {
   /// @return The device used.
   const Device& device() const;
 
+  /// Get the host hash.
+  /// @return The host hash.
+  uint64_t hostHash() const;
+
+  /// Get the process ID hash.
+  /// @return The process ID hash.
+  uint64_t pidHash() const;
+
   /// Get the maximum write queue size.
   /// @return The maximum number of write requests that can be queued.
   int maxWriteQueueSize() const;
