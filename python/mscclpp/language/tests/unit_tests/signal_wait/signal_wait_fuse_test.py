@@ -4,10 +4,9 @@
 """
 Signal-Wait Fuse Operation Test
 
-This file demonstrates the use of fused signal and wait operations in MSCCLPP.
-The signal-wait fuse pattern combines multiple signal and wait operations
-to reduce synchronization overhead while maintaining coordination between
-distributed GPUs.
+This file demonstrates the use of fused signal/wait operations in MSCCLPP.
+The signal-wait fuse pattern combines multiple signal/wait operations
+to reduce overhead.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
 operation (signal-wait-fuse) and is NOT intended for production use. This test
@@ -41,25 +40,17 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
-                    # First channel with double signal operations (fused pattern)
+                    # Perform fused signal operation
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.signal(tb=0, data_sync=SyncType.before)
-                    ch.signal(tb=0, data_sync=SyncType.before)
-                    
-                    # Second channel with double signal operations
+                    ch.signal(tb=0)
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.signal(tb=0, data_sync=SyncType.before)
-                    ch.signal(tb=0, data_sync=SyncType.before)
+                    ch.signal(tb=0)
 
-                    # Corresponding wait operations for synchronization completion
-                    ch.wait(tb=0, data_sync=SyncType.after)
-                    ch.wait(tb=0, data_sync=SyncType.after)
+                    # Perform fused wait operation
                     ch = MemoryChannel(dst_rank, src_rank)
-                    ch.wait(tb=0, data_sync=SyncType.after)
-                    ch.wait(tb=0, data_sync=SyncType.before)
-
-                    ch.signal(tb=0, data_sync=SyncType.after)
-                    ch.wait(tb=0, data_sync=SyncType.before)
+                    ch.wait(tb=0)
+                    ch = MemoryChannel(dst_rank, src_rank)
+                    ch.wait(tb=0)
 
         print(JSON())
 

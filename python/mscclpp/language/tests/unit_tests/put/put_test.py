@@ -33,17 +33,29 @@ def put_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # Iterate through all GPU pairs to perform put operations
         for src_rank in range(gpus):
+            # Get the source rank and its input buffer
             rank = Rank(src_rank)
             src_buff = rank.get_input_buffer()
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
+                    # Get the destination rank and its input buffer
                     rank = Rank(dst_rank)
                     dst_buff = rank.get_input_buffer()
+                    
+                    # Establish memory channel from source to destination GPU
                     ch = MemoryChannel(dst_rank, src_rank)
+                    
+                    # Initial synchronization: send relaxed signal and wait
                     ch.signal(tb=0, relaxed=True)
                     ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
+                    
+                    # Perform put operation: write src_buff[0:1] to dst_buff[1:2]
+                    # This transfers data from source GPU to destination GPU memory
                     ch.put(dst_buff[1:2], src_buff[0:1], tb=0)
+                    
+                    # Final synchronization: signal before data transfer completion
                     ch.signal(tb=0, data_sync=SyncType.before)
                     ch.wait(tb=0, data_sync=SyncType.after)
 
