@@ -4,11 +4,11 @@ This tutorial introduces how to use the MSCCL++ Primitive API to write highly fl
 
 ## Hardware Requirements
 
-To run example code in this tutorial, you may need a system with at least two NVIDIA or AMD GPUs. For multi-node examples, you will need RDMA Network Interface Cards (NICs) and a network setup that allows communication between nodes. See the [prerequisites](../quickstart.md#prerequisites) for details.
+To run example code in this tutorial, you may need a system with at least two NVIDIA or AMD GPUs. For multi-node examples, you will need RDMA Network Interface Cards (NICs) and a network setup that allows communication between nodes. See the {ref}`prerequisites` for details.
 
 ## Environment Setup
 
-We provide [Docker images](../quickstart.md#docker-images) and a [VSCode Dev Container](../quickstart.md#vscode-dev-container) to simplify the environment setup.
+We provide {ref}`docker-images` and a {ref}`vscode-dev-container` to simplify the environment setup.
 
 ## Prior Knowledge
 

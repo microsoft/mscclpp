@@ -28,7 +28,7 @@ Elapsed 1.04352 ms per iteration (100)
 Succeed!
 ```
 
-If you see error messages like "At least two GPUs are required" or "GPU 0 cannot access GPU 1", it means that your system does not meet the requirements for running the example. Make sure you have at least two GPUs installed and that they are connected peer-to-peer (through NVLink or under the same PCIe switch). See the [prerequisites](../quickstart.md#prerequisites) for more details.
+If you see error messages like "At least two GPUs are required" or "GPU 0 cannot access GPU 1", it means that your system does not meet the requirements for running the example. Make sure you have at least two GPUs installed and that they are connected peer-to-peer (through NVLink or under the same PCIe switch). See the {ref}`prerequisites` for more details.
 
 ## Code Overview
 

@@ -37,7 +37,7 @@ Succeed!
 
 The example code uses a localhost port `50505` by default. If the port is already in use, you can change it by modifying the `PORT_NUMER` macro in the code.
 
-If you see error messages like "At least two GPUs are required" or "GPU 0 cannot access GPU 1", it means that your system does not meet the requirements for running the example. Make sure you have at least two GPUs installed and that they are connected peer-to-peer (through NVLink or under the same PCIe switch). See the [prerequisites](../quickstart.md#prerequisites) for more details.
+If you see error messages like "At least two GPUs are required" or "GPU 0 cannot access GPU 1", it means that your system does not meet the requirements for running the example. Make sure you have at least two GPUs installed and that they are connected peer-to-peer (through NVLink or under the same PCIe switch). See the {ref}`prerequisites` for more details.
 
 ## Code Overview
 
@@ -105,4 +105,4 @@ We omit explaining the rest of the code, as it is similar to the one in the [Bas
 
 In this tutorial, you have learned how to use `Bootstrap` and `Communicator` interfaces to establish connections between multiple processes. Note that `Bootstrap` and `Communicator` are still optional interfaces for convenience. As noted in the [Basic Concepts](./01-basic-concepts.md) tutorial, you can still use your own IPC mechanisms to build connections and semaphores. For advanced examples that use Redis or `torch.distributed` for IPC, see the [Advanced Connections](../guide/advanced-connections.md) guide.
 
-In the next tutorial, we will introduce various channel types and how to use them for different communication patterns.
+In the next tutorial, we will introduce a more comprehensive usage of `MemoryChannel`.
