@@ -112,7 +112,7 @@
               "reduce_op": "sum"
             },
             {
-              "name": "cpkt",
+              "name": "ucpkt",
               "src_buff": [
                 {
                   "type": "s",
@@ -223,10 +223,7 @@
               "reduce_op": "sum"
             },
             {
-              "name": "nop"
-            },
-            {
-              "name": "cpkt",
+              "name": "ucpkt",
               "src_buff": [
                 {
                   "type": "s",
