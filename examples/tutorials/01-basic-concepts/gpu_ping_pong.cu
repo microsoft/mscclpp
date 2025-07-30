@@ -28,6 +28,25 @@ __global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
 }
 
 int main() {
+  // Optional: check if we have at least two GPUs
+  int deviceCount;
+  MSCCLPP_CUDATHROW(cudaGetDeviceCount(&deviceCount));
+  if (deviceCount < 2) {
+    std::cout << "Error: At least two GPUs are required." << std::endl;
+    return 1;
+  }
+
+  // Optional: check if the two GPUs can peer-to-peer access each other
+  int canAccessPeer;
+  MSCCLPP_CUDATHROW(cudaDeviceCanAccessPeer(&canAccessPeer, 0, 1));
+  if (!canAccessPeer) {
+    std::cout
+        << "Error: GPU 0 cannot access GPU 1. Make sure that the GPUs are connected peer-to-peer. You can check this "
+           "by running `nvidia-smi topo -m` (the connection between GPU 0 and 1 should be either NV# or PIX)."
+        << std::endl;
+    return 1;
+  }
+
   const int iter = 100;
   const mscclpp::Transport transport = mscclpp::Transport::CudaIpc;
 
@@ -40,19 +59,19 @@ int main() {
   std::cout << "GPU 0: Creating a connection and a semaphore stub ..." << std::endl;
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
-  std::shared_ptr<mscclpp::Connection> conn0 = ctx->connect(/*local*/ ep0, /*remote*/ ep1);
+  std::shared_ptr<mscclpp::Connection> conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
   mscclpp::SemaphoreStub semaStub0(conn0);
 
   std::cout << "GPU 1: Creating a connection and a semaphore stub ..." << std::endl;
 
   MSCCLPP_CUDATHROW(cudaSetDevice(1));
-  std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*local*/ ep1, /*remote*/ ep0);
+  std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
   mscclpp::SemaphoreStub semaStub1(conn1);
 
   std::cout << "GPU 0: Creating a semaphore and a memory channel ..." << std::endl;
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
-  mscclpp::Semaphore sema0(/*local*/ semaStub0, /*remote*/ semaStub1);
+  mscclpp::Semaphore sema0(/*localSemaphoreStub*/ semaStub0, /*remoteSemaphoreStub*/ semaStub1);
   mscclpp::BaseMemoryChannel memChan0(sema0);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle0 = memChan0.deviceHandle();
   void *devHandle0;
@@ -62,7 +81,7 @@ int main() {
   std::cout << "GPU 1: Creating a semaphore and a memory channel ..." << std::endl;
 
   MSCCLPP_CUDATHROW(cudaSetDevice(1));
-  mscclpp::Semaphore sema1(/*local*/ semaStub1, /*remote*/ semaStub0);
+  mscclpp::Semaphore sema1(/*localSemaphoreStub*/ semaStub1, /*remoteSemaphoreStub*/ semaStub0);
   mscclpp::BaseMemoryChannel memChan1(sema1);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
   void *devHandle1;
@@ -95,12 +114,12 @@ int main() {
 
   float msPerIter = elapsedMs / iter;
   std::cout << "Elapsed " << msPerIter << " ms per iteration (" << iter << ")" << std::endl;
-  if (msPerIter > 1.0f) {
-    std::cout << "Succeed!" << std::endl;
-  } else {
+  if (msPerIter < 1.0f) {
     std::cout << "Failed: the elapsed time per iteration is less than 1 ms, which may indicate that the relaxedSignal "
                  "and relaxedWait are not working as expected."
               << std::endl;
+    return 1;
   }
+  std::cout << "Succeed!" << std::endl;
   return 0;
 }

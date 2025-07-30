@@ -3,16 +3,23 @@
 (prerequisites)=
 ## Prerequisites
 
-* Azure SKUs
-    * [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series)
-    * [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)
-    * [ND_H100_v5](https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series)
-* Non-Azure Systems
-    * NVIDIA A100 GPUs + CUDA >= 11.8
-    * NVIDIA H100 GPUs + CUDA >= 12.0
-    * AMD MI250X GPUs + ROCm >= 5.7
-    * AMD MI300X GPUs + ROCm >= 6.0
-* OS: tested over Ubuntu 18.04 and later
+* GPUs
+    * NVIDIA CUDA architecture 7.0 (Volta) or later, or AMD CDNA 2 architecture (GFX90a) or later are required. Features are more thoroughly tested on CUDA architecture 8.0 (Ampere) or later and AMD CDNA 3 architecture (GFX942) or later.
+    * A part of the features require GPUs to be connected peer-to-peer (through NVLink/xGMI or under the same PCIe switch).
+        * On NVIDIA platforms, check the connectivity via `nvidia-smi topo -m`. If the output shows `NV#` or `PIX`, it means the GPUs are connected peer-to-peer.
+        * On AMD platforms, check the connectivity via `rocm-smi --showtopohops`. If the output shows `1`, it means the GPUs are connected peer-to-peer.
+    * Below are example systems that meet the requirements:
+        * Azure SKUs
+            * [ND_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/nda100-v4-series)
+            * [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)
+            * [ND_H100_v5](https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series)
+        * Non-Azure Systems
+            * NVIDIA A100 GPUs + CUDA >= 11.8
+            * NVIDIA H100 GPUs + CUDA >= 12.0
+            * AMD MI250X GPUs + ROCm >= 5.7
+            * AMD MI300X GPUs + ROCm >= 6.0
+* OS
+    * Tested on Ubuntu 18.04 and later
 * Libraries
     * [libnuma](https://github.com/numactl/numactl)
         ```bash
@@ -26,10 +33,10 @@
     * (Optional, for benchmarks) MPI
 * Others
     * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
-        ```
+        ```bash
         lsmod | grep nvidia_peermem
         ```
-    * For GPU with nvls support, we require the kernel version to be 5.6 or above.
+    * For NVLink SHARP (NVLS) support on NVIDIA platforms, the Linux kernel version should be 5.6 or above.
 
 (docker-images)=
 ## Docker Images

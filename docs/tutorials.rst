@@ -11,4 +11,6 @@ Start with the :doc:`Before You Start <tutorials/00-before-you-start>`.
    :hidden:
 
    tutorials/00-before-you-start
-   tutorials/01-gpu-ping-pong
+   tutorials/01-basic-concepts
+   tutorials/02-bootstrap-and-communicator
+   tutorials/03-channels

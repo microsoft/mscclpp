@@ -17,4 +17,4 @@ This tutorial assumes that readers have a basic understanding of C++ and GPU pro
 - **CUDA Basics:** thread blocks, warps, shared memory, etc.
 - **(Optional) RDMA Basics:** If you are interested in multi-node communication, understanding RDMA concepts (`ibverbs` library) will be helpful.
 
-In the next page, we introduce how to set up communication between GPUs using the MSCCL++ Primitive API, by a simple ping-pong example between two GPUs.
+In the next page, we will introduce a few basic concepts of the MSCCL++ Primitive API by a simple ping-pong example between two GPUs.

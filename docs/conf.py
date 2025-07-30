@@ -14,7 +14,7 @@ release = "v0.7.0"
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["breathe", "myst_parser"]
+extensions = ["breathe", "myst_parser", "sphinxcontrib.mermaid"]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
@@ -22,6 +22,10 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # Breathe configuration
 breathe_projects = {"mscclpp": "./doxygen/xml"}
 breathe_default_project = "mscclpp"
+
+# Mermaid configuration
+mermaid_version = "11.0.0"
+mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
