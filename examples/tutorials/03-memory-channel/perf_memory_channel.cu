@@ -45,7 +45,7 @@ void worker(int gpuId) {
   const int myRank = gpuId;
   const int remoteRank = myRank == 0 ? 1 : 0;
   const int nRanks = 2;
-  const int iter = 100;
+  const int iter = 1000;
   const mscclpp::Transport transport = mscclpp::Transport::CudaIpc;
   const size_t bufferBytes = 256 * 1024 * 1024;
   const size_t pktBufferBytes = 512 * 1024 * 1024;
@@ -85,13 +85,29 @@ void worker(int gpuId) {
   bootstrap->barrier();
 
   for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
-    if (gpuId == 0) {
-      MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
-    }
+    cudaGraph_t graph;
+    cudaGraphExec_t graphExec;
+
+    MSCCLPP_CUDATHROW(cudaGraphCreate(&graph, 0));
+    MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+
     for (int i = 0; i < iter; ++i) {
       bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle), copyBytes, myRank);
     }
-    MSCCLPP_CUDATHROW(cudaGetLastError());
+
+    MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
+    MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+    // Synchronize before timing
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    bootstrap->barrier();
+    
+    if (gpuId == 0) {
+      MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
+    }
+
+    MSCCLPP_CUDATHROW(cudaGraphLaunch(graphExec, stream));
+
     if (gpuId == 0) {
       MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
       MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
@@ -104,6 +120,8 @@ void worker(int gpuId) {
       log(gpuId, "bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
     }
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    MSCCLPP_CUDATHROW(cudaGraphExecDestroy(graphExec));
+    MSCCLPP_CUDATHROW(cudaGraphDestroy(graph));
   }
 
   bootstrap->barrier();
