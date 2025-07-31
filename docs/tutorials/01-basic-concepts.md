@@ -70,7 +70,7 @@ An **Endpoint** represents an entity that can communicate with another entity, s
 The example code creates endpoints as follows:
 
 ```cpp
-// From gpu_ping_pong.cu, lines 56-57
+// From gpu_ping_pong.cu, lines 70-71
 mscclpp::Endpoint ep0 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 0}});
 mscclpp::Endpoint ep1 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 1}});
 ```
@@ -82,7 +82,7 @@ Both endpoints are created to use the same transport `mscclpp::Transport::CudaIp
 The connection is created by calling `connect` on the context object:
 
 ```cpp
-// From gpu_ping_pong.cu, lines 62 and 68
+// From gpu_ping_pong.cu, lines 76 and 82
 std::shared_ptr<mscclpp::Connection> conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
 std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
 ```
@@ -111,7 +111,7 @@ After a connection is established, both endpoints know how to communicate with e
 To construct a Semaphore, we first need to create a **SemaphoreStub** using the connection from each endpoint. A SemaphoreStub holds one endpoint's resource for a Semaphore, and a Semaphore is constructed using two SemaphoreStubs, one from each endpoint.
 
 ```cpp
-// From gpu_ping_pong.cu, lines 63 and 69
+// From gpu_ping_pong.cu, lines 77 and 83
 mscclpp::SemaphoreStub semaStub0(conn0);
 mscclpp::SemaphoreStub semaStub1(conn1);
 ```
@@ -119,7 +119,7 @@ mscclpp::SemaphoreStub semaStub1(conn1);
 The SemaphoreStubs are created using the connections established earlier. They are then exchanged between the two endpoints to create a Semaphore:
 
 ```cpp
-// From gpu_ping_pong.cu, lines 74 and 84
+// From gpu_ping_pong.cu, lines 88 and 98
 mscclpp::Semaphore sema0(/*localSemaphoreStub*/ semaStub0, /*remoteSemaphoreStub*/ semaStub1);
 mscclpp::Semaphore sema1(/*localSemaphoreStub*/ semaStub1, /*remoteSemaphoreStub*/ semaStub0);
 ```
@@ -133,7 +133,7 @@ Semaphores can be used to synchronize operations between endpoints, but they do 
 However, since this ping-pong example doesn't need to transfer any data, we construct a `BaseMemoryChannel` that is a shallow wrapper around a Semaphore but does not associate with any memory region for data transfer. We will introduce more advanced channels in later tutorials.
 
 ```cpp
-// From gpu_ping_pong.cu, lines 75 and 85
+// From gpu_ping_pong.cu, lines 89 and 99
 mscclpp::BaseMemoryChannel memChan0(sema0);
 mscclpp::BaseMemoryChannel memChan1(sema1);
 ```
@@ -141,7 +141,7 @@ mscclpp::BaseMemoryChannel memChan1(sema1);
 To let the application (GPU kernels) use the channels, we need to obtain the **device handles** for the channels. The device handle is a lightweight object that can be passed to GPU kernels to perform operations on the channel. Different types of channels have different device handle types.
 
 ```cpp
-// From gpu_ping_pong.cu, lines 76 and 86
+// From gpu_ping_pong.cu, lines 90 and 100
 mscclpp::BaseMemoryChannelDeviceHandle memChanHandle0 = memChan0.deviceHandle();
 mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
 ```
@@ -149,21 +149,21 @@ mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
 The device handles are then copied to the GPU memory and passed to the GPU kernels for execution. For example:
 
 ```cpp
-// From gpu_ping_pong.cu, lines 77-79
+// From gpu_ping_pong.cu, lines 91-93
 void *devHandle0;
 MSCCLPP_CUDATHROW(cudaMalloc(&devHandle0, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
 MSCCLPP_CUDATHROW(cudaMemcpy(devHandle0, &memChanHandle0, sizeof(memChanHandle0), cudaMemcpyHostToDevice));
 
-// From gpu_ping_pong.cu, lines 94
+// From gpu_ping_pong.cu, line 108
 gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle *>(devHandle0), iter);
 
-// From gpu_ping_pong.cu, lines 10-19
+// From gpu_ping_pong.cu, lines 26-35
 __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
-      // sleep (roughly) 1ms
-      __nanosleep(1e6);
+      // spin for a few ms
+      spin_cycles(1e7);
       devHandle->relaxedSignal();
     }
   }
@@ -181,16 +181,16 @@ If your application (GPU kernel) needs to access the device handle very frequent
 
 ## Channel Interfaces in GPU Kernels
 
-In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a sleep of approximately 1 millisecond in one side of the ping-pong (GPU 0) and check if the elapsed time is larger than 1 millisecond in the other side (GPU 1).
+In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which will take a few milliseconds) in one side of the ping-pong (GPU 0) and check if the elapsed time is larger than 1 millisecond on the other side (GPU 1).
 
 ```cpp
-// From gpu_ping_pong.cu, lines 10-28
+// From gpu_ping_pong.cu, lines 26-44
 __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
-      // sleep (roughly) 1ms
-      __nanosleep(1e6);
+      // spin for a few ms
+      spin_cycles(1e7);
       devHandle->relaxedSignal();
     }
   }
