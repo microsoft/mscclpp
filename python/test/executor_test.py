@@ -75,8 +75,10 @@ def bench_correctness(
         coll = "all_gather"
     elif "reducescatter" in collective:
         coll = "reduce_scatter"
-    else:
+    elif "allreduce" in collective:
         coll = "all_reduce"
+    else:
+        coll = "all_to_all"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -223,6 +225,11 @@ def main(
     )
 
     mscclpp_group.barrier()
+    """ type_size = cp.dtype(dtype).itemsize
+    nelems = size // type_size
+    for i in range(nelems):
+        print(f"rank {mscclpp_group.my_rank} input_buff {i}: {input_buf[i]}") """
+
     execution_time = bench_time(n_iters, n_graph_iters, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
