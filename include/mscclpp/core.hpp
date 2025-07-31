@@ -220,7 +220,7 @@ enum class Transport {
 };
 
 namespace detail {
-const size_t TransportFlagsSize = 12;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.

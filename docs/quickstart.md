@@ -121,7 +121,7 @@ If you are using VSCode, you can use our VSCode Dev Container that automatically
 5. Wait for the container to build and open (may take a few minutes).
 
 ```{note}
-- Our Dev Container is set up for NVIDIA GPUs by default. If you are using AMD GPUs, you need to modify the [`devcontainer.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer.json) file to use the appropriate base image (such as `ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2`) and enable two `runArgs`, `"--security-opt=seccomp=unconfined"` and `"--group-add=video"`, instead of `"--gpus=all"`.
+- Our Dev Container is set up for NVIDIA GPUs by default. If you are using AMD GPUs, you need to copy [`devcontainer_amd.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer_amd.json) to [`devcontainer.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer.json).
 - Our Dev Container runs an SSH server over the host network and the port number is `22345` by default. You can change the port number by modifying the `SSH_PORT` argument in the [`devcontainer.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer.json) file.
 ```
 

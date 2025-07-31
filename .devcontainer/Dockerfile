@@ -5,13 +5,28 @@ ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 ARG SSH_PORT=22345
 
-# Create the user
-RUN groupadd --gid $USER_GID $USERNAME && \
-    useradd --uid $USER_UID --gid $USER_GID -m $USERNAME && \
+# Create or modify the user
+RUN if getent group $USER_GID > /dev/null; then \
+        EXISTING_GROUP=$(getent group $USER_GID | cut -d: -f1); \
+        if [ "$EXISTING_GROUP" != "$USERNAME" ]; then \
+            groupmod -n $USERNAME $EXISTING_GROUP; \
+        fi; \
+    else \
+        groupadd --gid $USER_GID $USERNAME; \
+    fi && \
+    if id -u $USER_UID > /dev/null 2>&1; then \
+        EXISTING_USER=$(getent passwd $USER_UID | cut -d: -f1); \
+        if [ "$EXISTING_USER" != "$USERNAME" ]; then \
+            usermod -l $USERNAME -d /home/$USERNAME -m $EXISTING_USER; \
+        fi; \
+    else \
+        useradd --uid $USER_UID --gid $USER_GID -m $USERNAME; \
+    fi && \
+    usermod -g $USERNAME $USERNAME && \
     echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME && \
     chmod 0440 /etc/sudoers.d/$USERNAME
 
-RUN rm -r /etc/apt/sources.list.d/cuda-* && \
+RUN rm -rf /etc/apt/sources.list.d/cuda-* && \
     apt-get update && \
     apt install -y --no-install-recommends \
         clang-format \
