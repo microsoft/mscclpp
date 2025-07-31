@@ -1,6 +1,17 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Semaphore Operation Test
+
+This file demonstrates the use of semaphore operations in MSCCLPP.
+The semaphore operations provide asynchronus synchronization mechanisms between GPUs.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (semaphore) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +21,10 @@ from mscclpp.language.collectives import *
 
 
 def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 2
+    # Set up 1 GPUs for semaphore synchronization
+    gpus = 1
     collective = TestCollective(gpus, 0, 0)
+
     with MSCCLPPProgram(
         "semaphore_test",
         collective,
@@ -22,9 +35,14 @@ def semaphore_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        sm = Semaphore(0, 1)
+        # Create semaphore for inter-GPU synchronization
+        sm = Semaphore(rank=0, initial_value=0)
+
+        # Acquire semaphore (blocks until available)
         sm.acquire(tb=0, data_sync=SyncType.after)
-        sm.release(tb=0, data_sync=SyncType.before)
+
+        # Release semaphore (allows other GPUs to proceed)
+        sm.release(tb=1, data_sync=SyncType.before)
 
         print(JSON())
 

@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.internal.globals import *
 from mscclpp.language.internal.operations import PipelineOperation
 

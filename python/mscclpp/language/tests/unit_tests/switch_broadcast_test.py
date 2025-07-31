@@ -22,7 +22,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def group_store_test(num_threads_per_block, min_message_size, max_message_size):
+def switch_broadcast_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 3 GPUs
     gpus = 3
     collective = TestCollective(gpus, 1, 1)
@@ -39,7 +39,7 @@ def group_store_test(num_threads_per_block, min_message_size, max_message_size):
         max_message_size=max_message_size,
     ):
         # Create a destination buffer for the broadcast operation
-        dst_chunk = Buffer(0, 2)
+        dst_chunk = Buffer(0, 1)
 
         # Create a switch channel connecting ranks 0 and 1 with input buffer type
         ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
@@ -62,4 +62,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-group_store_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+switch_broadcast_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
