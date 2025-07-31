@@ -144,9 +144,10 @@ class CommGroup:
         semaphores = self.make_semaphore(connections, MemoryDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         channels = {}
-        tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
         for rank in connections:
-            channels[rank] = MemoryChannel(semaphores[rank], registered_memories[rank], tensor_data_ptr)
+            channels[rank] = MemoryChannel(
+                semaphores[rank], registered_memories[rank], registered_memories[self.my_rank]
+            )
         return channels
 
     def make_memory_channels_with_scratch(
@@ -159,16 +160,19 @@ class CommGroup:
         registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
         channels = {}
         tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
+        local_registered_memory = self.communicator.register_memory(
+            tensor_data_ptr, tensor.numel() * tensor.element_size(), TransportFlags()
+        )
         scratch_data_ptr = scratchTensor.data_ptr() if is_torch_tensor(scratchTensor) else scratchTensor.data.ptr
         for rank in connections:
             channels[rank] = MemoryChannel(
-                semaphores[rank], registered_memories[rank], tensor_data_ptr, scratch_data_ptr
+                semaphores[rank], registered_memories[rank], local_registered_memory, scratch_data_ptr
             )
         return channels
 
     def make_port_channels(
         self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
-    ) -> dict[int, MemoryChannel]:
+    ) -> dict[int, PortChannel]:
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(tensor, connections)
         memory_ids = {}
@@ -220,7 +224,7 @@ class CommGroup:
 
     def register_semaphore_with_proxy(
         self, proxy_service: ProxyService, connections: dict[int, Connection]
-    ) -> dict[int, MemoryChannel]:
+    ) -> dict[int, PortChannel]:
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
         semaphore_ids = {}
         for rank in semaphores:

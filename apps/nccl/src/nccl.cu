@@ -284,14 +284,15 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
 }
 
 static std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
-    ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories, void* src) {
+    ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
+    mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::MemoryChannel> channels;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores = comm->memorySemaphores;
   size_t nConnections = comm->connections.size();
   for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
     for (size_t cid = 0; cid < nConnections; ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], src, nullptr);
+        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], localMemory, nullptr);
       }
     }
   }
@@ -432,8 +433,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   if (count * ncclTypeSize(datatype) <= (1 << 20) || mscclpp::isNvlsSupported()) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelScratchInfos.emplace(sendKey, channelInfo).first;
     }
@@ -444,8 +447,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
 
     auto sendIt = comm->channelInInfos.find(sendKey);
     if (sendIt == comm->channelInInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
     }
@@ -459,8 +464,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
       }
       remoteMemories =
           setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::MemoryChannel> outChannels =
-          setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      std::vector<mscclpp::MemoryChannel> outChannels = setupMemoryChannels(comm, remoteMemories, localMemory);
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
       if (mscclppDisableChannelCache == true) {
@@ -554,8 +560,9 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
       }
       std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
           comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(comm, remoteMemories, localMemory);
       std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
       std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
                      [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
@@ -577,8 +584,10 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 #else
     auto sendIt = comm->channelInInfos.find(sendKey);
     if (sendIt == comm->channelInInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
     }
@@ -935,12 +944,10 @@ NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff
 
   auto it = comm->channelOutInfos.find(recvKey);
   if (it == comm->channelOutInfos.end()) {
-    // std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-    //     comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-    // std::vector<mscclpp::MemoryChannel> channels =
-    //     setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+    mscclpp::RegisteredMemory localMemory =
+        comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
     std::vector<mscclpp::MemoryChannel> channels =
-        setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)recvBasePtr));
+        setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
     std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
     std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
                    [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });

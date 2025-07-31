@@ -458,9 +458,9 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   for (size_t i = 0; i < nChannelPerConnection; ++i) {
     for (size_t cid = 0; cid < connections.size(); ++cid) {
       if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        memoryChannels.emplace_back(
-            memorySemaphores[cid][i], remoteRegMemories[cid].get(),
-            (outputBuff && semantic == ChannelSemantic::GET) ? outputBuff : inputBufRegMem.data(), outputBuff);
+        memoryChannels.emplace_back(memorySemaphores[cid][i], remoteRegMemories[cid].get(),
+                                    (outputBuff && semantic == ChannelSemantic::GET) ? outputBufRegMem : inputBufRegMem,
+                                    outputBuff);
       }
     }
   }
@@ -515,7 +515,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
     if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
       memoryChannels.emplace_back(memorySemaphores[cid],
                                   (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
-                                  inputBufRegMem.data(), (outputBuff) ? outputBufRegMem.data() : nullptr);
+                                  inputBufRegMem, (outputBuff) ? outputBufRegMem.data() : nullptr);
     } else {
       if (putPacketBuff == nullptr || getPacketBuff == nullptr) {
         throw std::runtime_error("IB transport requires putPacketBuff and getPacketBuff");
