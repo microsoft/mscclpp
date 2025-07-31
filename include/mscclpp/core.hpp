@@ -207,7 +207,6 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,        // Unknown transport type.
   CudaIpc,        // CUDA IPC transport type.
-  Nvls,           // NVLS transport type.
   IB0,            // InfiniBand device 0 transport type.
   IB1,            // InfiniBand device 1 transport type.
   IB2,            // InfiniBand device 2 transport type.
