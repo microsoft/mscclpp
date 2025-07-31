@@ -496,7 +496,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleUnpackCopyPacket(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleUnpackPacket(const Operation& op, void* input, void* output, void* scratch) {
   const uint32_t size = op.inputBufferSizes[0];
   const uint32_t dstOffset = op.outputOffsets[0];
   const uint32_t srcOffset = op.inputOffsets[0];
@@ -767,8 +767,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleReduceSendPacket<T, PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::REDUCE_PACKET) {
     handleReduceSendPacket<T, PacketType, false>(op, input, output, scratch);
-  } else if (opType == OperationType::UNPACK_COPY_PACKET) {
-    handleUnpackCopyPacket<PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::UNPACK_PACKET) {
+    handleUnpackPacket<PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::COPY_PACKET) {
     handleCopyPacket<PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::SEM_ACQUIRE) {

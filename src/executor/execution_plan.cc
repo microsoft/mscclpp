@@ -52,8 +52,8 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_SEND_PACKET;
   } else if (str == "cpkt") {
     return mscclpp::OperationType::COPY_PACKET;
-  } else if (str == "ucpkt") {
-    return mscclpp::OperationType::UNPACK_COPY_PACKET;
+  } else if (str == "upkt") {
+    return mscclpp::OperationType::UNPACK_PACKET;
   } else if (str == "repkt") {
     return mscclpp::OperationType::REDUCE_PACKET;
   } else if (str == "glres") {

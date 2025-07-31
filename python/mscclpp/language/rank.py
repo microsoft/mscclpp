@@ -116,7 +116,7 @@ class Rank:
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
 
-    def unpack_copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def unpack_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Copy data from packet format to regular format.
 
         Unpacks data from packet format in the source scratch buffer and copies
@@ -128,7 +128,7 @@ class Rank:
             tb (int): The thread block ID that will execute this operation.
 
         Example:
-            >>> rank.unpack_copy_packet(dst_chunk, src_chunk, tb=0)
+            >>> rank.unpack_packet(dst_chunk, src_chunk, tb=0)
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
 
@@ -146,15 +146,6 @@ class Rank:
         Example:
             >>> rank.copy_packet(dst_chunk, src_chunk, tb=0)
         """
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
-
-    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
-
-    def unpack_copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
-
-    def copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
 
     def reduce(

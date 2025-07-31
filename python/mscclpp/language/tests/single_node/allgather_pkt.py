@@ -43,7 +43,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
             output_buffer = rank.get_output_buffer()
             for peer in range(1, gpu_size):
                 dst_rank = (gpu + peer) % gpu_size
-                rank.unpack_copy_packet(
+                rank.unpack_packet(
                     output_buffer[dst_rank : dst_rank + 1],
                     scratch_buffer[gpu][dst_rank : dst_rank + 1],
                     tb=gpu_size + peer - 2,
