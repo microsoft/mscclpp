@@ -77,6 +77,16 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpo
     int deviceId;
     if (localEndpoint.device().type == DeviceType::GPU) {
       deviceId = localEndpoint.device().id;
+      if (remoteEndpoint.device().type == DeviceType::GPU && localEndpoint.hostHash() == remoteEndpoint.hostHash() &&
+          localEndpoint.pidHash() == remoteEndpoint.pidHash()) {
+        // Connecting two GPUs in the same process - need to enable peer access explicitly
+        MSCCLPP_CUDATHROW(cudaSetDevice(deviceId));
+        int remoteDeviceId = remoteEndpoint.device().id;
+        if (remoteDeviceId < 0) {
+          throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InvalidUsage);
+        }
+        MSCCLPP_CUDATHROW(cudaDeviceEnablePeerAccess(remoteDeviceId, 0));
+      }
     } else if (remoteEndpoint.device().type == DeviceType::GPU) {
       deviceId = remoteEndpoint.device().id;
     } else {

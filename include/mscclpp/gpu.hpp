@@ -53,6 +53,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaSetDevice(...) hipSetDevice(__VA_ARGS__)
 #define cudaDeviceSynchronize(...) hipDeviceSynchronize(__VA_ARGS__)
 #define cudaDeviceGetPCIBusId(...) hipDeviceGetPCIBusId(__VA_ARGS__)
+#define cudaDeviceEnablePeerAccess(...) hipDeviceEnablePeerAccess(__VA_ARGS__)
 #define cudaHostAlloc(...) hipHostMalloc(__VA_ARGS__)
 #define cudaMalloc(...) hipMalloc(__VA_ARGS__)
 #define cudaFree(...) hipFree(__VA_ARGS__)
