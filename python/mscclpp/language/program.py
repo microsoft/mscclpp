@@ -44,6 +44,7 @@ class MSCCLPPProgram:
         instances: int = 1,
         protocol: str = "Simple",
         instr_fusion: bool = True,
+        auto_sync: bool = True,
         replication_policy: ReplicationPolicy = ReplicationPolicy.interleaved,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
@@ -89,6 +90,7 @@ class MSCCLPPProgram:
         self.instances = instances
         self.protocol = protocol
         self.instr_fusion = instr_fusion
+        self.auto_sync = auto_sync
         self.replication_policy = replication_policy
         self.reuse_resources = reuse_resources
         self.num_threads_per_block = num_threads_per_block
@@ -151,7 +153,8 @@ class MSCCLPPProgram:
             if self.instr_fusion:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
-            gpu.resolve_data_dependency()
+            if self.auto_sync:
+                gpu.resolve_data_dependency()
             gpu.replicate_instances(
                 self.instances,
                 self.get_default_replication_policy_function(),
