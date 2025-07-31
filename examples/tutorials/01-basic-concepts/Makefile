@@ -1,5 +1,14 @@
 CUDA_HOME ?= /usr/local/cuda
-NVCC := $(CUDA_HOME)/bin/nvcc
+ROCM_HOME ?= /opt/rocm
+
+# Check if nvcc exists, otherwise use hipcc
+ifeq ($(shell which $(CUDA_HOME)/bin/nvcc 2>/dev/null),)
+    COMPILER := $(ROCM_HOME)/bin/hipcc
+    ARCH_FLAG := -D__HIP_PLATFORM_AMD__=1
+else
+    COMPILER := $(CUDA_HOME)/bin/nvcc
+    ARCH_FLAG := -arch=native
+endif
 
 TARGET = gpu_ping_pong
 SRC = gpu_ping_pong.cu
@@ -7,7 +16,7 @@ SRC = gpu_ping_pong.cu
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(NVCC) -arch=native -o $@ $< -lmscclpp
+	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp
 
 clean:
 	rm -f $(TARGET)
