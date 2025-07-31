@@ -1,6 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Flush Operation Test
+
+This file demonstrates the use of the flush operation in MSCCLPP.
+The flush operation ensures that all pending communication operations
+on a channel are completed before proceeding.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (flush) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +22,10 @@ from mscclpp.language.collectives import *
 
 
 def flush_test(num_threads_per_block, min_message_size, max_message_size):
+    # Set up 2 GPUs for flush operation
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
+
     with MSCCLPPProgram(
         "flush_test",
         collective,
@@ -22,7 +36,10 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # Create port channel for communication between GPUs
         ch = PortChannel(1, 0)
+
+        # Flush all pending operations on the channel before proceeding
         ch.flush(tb=0, data_sync=SyncType.before)
 
         print(JSON())

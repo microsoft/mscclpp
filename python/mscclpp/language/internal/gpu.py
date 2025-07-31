@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.internal.types import RemoteBuffer, ChannelType, BufferType, RankGroup
 from mscclpp.language.internal.threadblock import ThreadBlock
 from mscclpp.language.internal.operations import BaseOperation
