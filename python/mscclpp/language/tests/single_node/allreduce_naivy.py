@@ -65,7 +65,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
             input_buffer = rank.get_input_buffer()
             for peer in range(gpu_size):
                 if peer != gpu:
-                    rank.unpack_copy_packet(
+                    rank.unpack_packet(
                         input_buffer[peer : peer + 1], scratch_buffer[gpu][gpu_size + peer : gpu_size + peer + 1], 0
                     )
 

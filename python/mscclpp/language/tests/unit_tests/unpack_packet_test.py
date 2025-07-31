@@ -2,9 +2,9 @@
 # Licensed under the MIT License.
 
 """
-Unpack-Copy-Packet Operation Test
+Unpack-Packet Operation Test
 
-This file demonstrates the use of the unpack_copy_packet operation in MSCCL++.
+This file demonstrates the use of the unpack_packet operation in MSCCL++.
 The unpack-copy-packet pattern converts data from packet format back to the
 standard format and then copies it to the target buffer.
 
@@ -21,13 +21,13 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def unpack_copy_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def unpack_packet_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up single GPU for unpack-copy-packet operations
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
 
     with MSCCLPPProgram(
-        "unpack_copy_packet_test",
+        "unpack_packet_test",
         collective,
         gpus,
         protocol="LL",
@@ -45,7 +45,7 @@ def unpack_copy_packet_test(num_threads_per_block, min_message_size, max_message
         rank.copy_packet(scratch_buffer[0:1], input_buffer[0:1], tb=0)
 
         # Step 2: Unpack packet data from scratch buffer to output buffer
-        rank.unpack_copy_packet(output_buffer[0:1], scratch_buffer[0:1], tb=0)
+        rank.unpack_packet(output_buffer[0:1], scratch_buffer[0:1], tb=0)
 
         print(JSON())
 
@@ -58,4 +58,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-unpack_copy_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+unpack_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

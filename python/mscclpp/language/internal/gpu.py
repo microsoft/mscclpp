@@ -82,21 +82,25 @@ class Gpu:
 
         new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
         new_semaphores = []
-        for _ in range(instances):
-            if ChannelType.memory in self._channels:
-                new_channels[ChannelType.memory].extend(self._channels[ChannelType.memory].connected_to)
-            if ChannelType.port in self._channels:
-                new_channels[ChannelType.port].extend(self._channels[ChannelType.port].connected_to)
-            new_channels[ChannelType.switch].extend(self._nvls_channels)
-
-            new_semaphores.extend(self.semaphores)
 
         if ChannelType.memory in self._channels:
+            for rank in self._channels[ChannelType.memory].connected_to:
+                for _ in range(instances):
+                    new_channels[ChannelType.memory].append(rank)
             self._channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
         if ChannelType.port in self._channels:
+            for rank in self._channels[ChannelType.memory].connected_to:
+                for _ in range(instances):
+                    new_channels[ChannelType.port].append(rank)
             self._channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
+        for channel in self._nvls_channels:
+            for _ in range(instances):
+                new_channels[ChannelType.switch].append(channel)
         self._nvls_channels = new_channels[ChannelType.switch]
 
+        for sempahore in self.semaphores:
+            for _ in range(instances):
+                new_semaphores.append(sempahore)
         self.semaphores = new_semaphores
 
         for threadblock in self.threadblocks:
