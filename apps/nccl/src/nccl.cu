@@ -660,7 +660,7 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
-  if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
+  if (mscclpp::UniqueIdBytes != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
   return ncclSuccess;
