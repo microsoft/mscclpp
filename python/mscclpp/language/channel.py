@@ -52,7 +52,7 @@ class MemoryChannel:
         self.channel_type = ChannelType.memory
         get_program().add_channel(self)
 
-    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
+    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed: bool = False):
         """Send a signal through the memory channel.
 
         Signals notify the destination that data is ready or an operation has completed.
@@ -72,7 +72,7 @@ class MemoryChannel:
         op = SignalOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed=False):
+    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed: bool = False):
         """Wait for a signal through the memory channel.
 
         Waits for a signal from the destination rank, typically used for synchronization
