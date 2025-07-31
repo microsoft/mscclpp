@@ -13,7 +13,10 @@ AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptu
 
 AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() { (void)cudaThreadExchangeStreamCaptureMode(&mode_); }
 
+CudaStreamWithFlags::CudaStreamWithFlags() : stream_(nullptr) { MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_)); }
+
 CudaStreamWithFlags::CudaStreamWithFlags(unsigned int flags) {
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
 }
 
@@ -23,7 +26,11 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 
 void CudaStreamWithFlags::set(unsigned int flags) {
   if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
+  int originalDeviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId)); // Save the current device
+  MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
+  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId)); // Restore the original device
 }
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
@@ -31,14 +38,17 @@ bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
 GpuStream::GpuStream(std::shared_ptr<GpuStreamPool> pool, std::shared_ptr<CudaStreamWithFlags> stream)
     : pool_(pool), stream_(stream) {}
 
-GpuStream::~GpuStream() { pool_->streams_.push_back(stream_); }
+GpuStream::~GpuStream() { pool_->streams_[deviceId()].push_back(stream_); }
 
 GpuStreamPool::GpuStreamPool() {}
 
 GpuStream GpuStreamPool::getStream() {
-  if (!streams_.empty()) {
-    auto stream = streams_.back();
-    streams_.pop_back();
+  int deviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+  auto& streamVec = streams_[deviceId];
+  if (!streamVec.empty()) {
+    auto stream = streamVec.back();
+    streamVec.pop_back();
     return GpuStream(gpuStreamPool(), stream);
   }
   return GpuStream(gpuStreamPool(), std::make_shared<CudaStreamWithFlags>(cudaStreamNonBlocking));
