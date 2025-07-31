@@ -48,16 +48,15 @@ __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle) 
 // New kernels for data transfer
 __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  int totalThreads = blockDim.x * gridDim.x;
-  
-  for (int i = tid; i < numElements; i += totalThreads) {
-    // Use port channel to put data to remote GPU
-    // Transfer one integer from local send buffer to remote receive buffer
-    portHandle.put(i * sizeof(int), i * sizeof(int), sizeof(int));
+
+  if (tid == 0) {
+    printf("GPU0: Starting data transfer of %d elements\n", numElements);
+    portHandle.put(0, 0, numElements * sizeof(int));
   }
-  
+
   // Only thread 0 signals completion
   if (tid == 0) {
+    printf("GPU0: Data transfer complete, sending signal\n");
     portHandle.signal();
   }
 }
@@ -65,14 +64,12 @@ __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle 
 __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int totalThreads = blockDim.x * gridDim.x;
-  
+
   // Wait for signal from sender - only global thread 0 should wait
   if (tid == 0) {
     portHandle.wait();
+    printf("GPU1: Received signal, starting data validation\n");
   }
-
-  __threadfence_system();
-  __syncthreads();
 
   __shared__ int errorCount;
   if (threadIdx.x == 0) {
@@ -81,7 +78,7 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   __syncthreads();
 
   // int errorCount = 0;
-  int expectedValue = 1; // GPU0 sends value 1 (rank + 1 where rank = 0)
+  int expectedValue = 1;  // GPU0 sends value 1 (rank + 1 where rank = 0)
   int localErrors = 0;
 
   // Each thread validates a portion of the received data
@@ -99,11 +96,10 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   // Report validation results from thread 0
   __syncthreads();
   if (tid == 0) {
-    assert(errorCount == 0);
     if (errorCount > 0) {
-      printf("GPU1: Data validation FAILED - %d errors found out of %d elements\n",
-             errorCount, numElements);
+      printf("GPU1: Data validation FAILED - %d errors found out of %d elements\n", errorCount, numElements);
     }
+    assert(errorCount == 0);
   }
 }
 
@@ -158,7 +154,7 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
                                                              int* sendBuffer, int* recvBuffer, int numElements) {
   // Calculate triggers based on FIFO size
   const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
-  
+
   int threadsPerBlock = std::min(numParallel, 512);
   int threadBlocks = (numParallel + threadsPerBlock - 1) / threadsPerBlock;
   threadBlocks = std::max(1, threadBlocks);  // Ensure at least 1 block
@@ -213,10 +209,10 @@ void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t s
 
 void runDataTransferTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
                                 nlohmann::ordered_json& combinedMetrics, int rank,
-                                mscclpp::PortChannelDeviceHandle portChannelHandle,
-                                int* sendBuffer, int* recvBuffer, int numElements) {
-  auto [throughput, duration, totalElements] =
-      runDataTransferKernelVariant(hostFifo, stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
+                                mscclpp::PortChannelDeviceHandle portChannelHandle, int* sendBuffer, int* recvBuffer,
+                                int numElements) {
+  auto [throughput, duration, totalElements] = runDataTransferKernelVariant(
+      hostFifo, stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
 
   auto formatThroughput = [](double thru) {
     return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
@@ -226,7 +222,8 @@ void runDataTransferTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaSt
   combinedMetrics[prefix + "data_throughput_elements_per_sec"] = formatThroughput(throughput);
   combinedMetrics[prefix + "data_duration_us"] = duration;
   combinedMetrics[prefix + "total_elements"] = totalElements;
-  combinedMetrics[prefix + "bandwidth_GB_per_sec"] = formatThroughput((totalElements * sizeof(int)) / (duration / 1e6) / 1e9);
+  combinedMetrics[prefix + "bandwidth_GB_per_sec"] =
+      formatThroughput((totalElements * sizeof(int)) / (duration / 1e6) / 1e9);
 }
 
 struct FifoTestConfig {
@@ -264,10 +261,11 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   int* recvBuffer = buff.get() + halfElements;
 
   // Initialize send buffer with test data
-  int initValue = rank + 1; // GPU0 uses 1, GPU1 uses 2
-  for (int i = 0; i < halfElements; i++) {
-    cudaMemcpy(sendBuffer + i, &initValue, sizeof(int), cudaMemcpyHostToDevice);
-  }
+  int initValue = rank + 1;  // GPU0 uses 1, GPU1 uses 2
+  std::vector<int> hostBuffer(halfElements, initValue);
+  cudaMemcpy(sendBuffer, hostBuffer.data(), halfElements * sizeof(int), cudaMemcpyHostToDevice);
+
+  // Initialize receive buffer to zero
   cudaMemset(recvBuffer, 0, halfElements * sizeof(int));
 
   // Setup transport
@@ -294,23 +292,25 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   proxyService->startProxy();
 
   // Register send buffer memory (first half)
-  mscclpp::RegisteredMemory sendBufRegMem = communicator->registerMemory(sendBuffer, halfElements * sizeof(int), transport);
+  mscclpp::RegisteredMemory sendBufRegMem =
+      communicator->registerMemory(sendBuffer, halfElements * sizeof(int), transport);
 
   // Register receive buffer memory (second half)
-  mscclpp::RegisteredMemory recvBufRegMem = communicator->registerMemory(recvBuffer, halfElements * sizeof(int), transport);
+  mscclpp::RegisteredMemory recvBufRegMem =
+      communicator->registerMemory(recvBuffer, halfElements * sizeof(int), transport);
 
   // Exchange memory with other ranks
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteSendMemFutures(worldSize);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRecvMemFutures(worldSize);
-  
+
   for (int r = 0; r < worldSize; r++) {
     if (r == rank) {
       continue;
     }
     // Send our buffer info to other ranks
-    communicator->sendMemory(sendBufRegMem, r, 0); // tag 0 for send buffer
-    communicator->sendMemory(recvBufRegMem, r, 1); // tag 1 for recv buffer
-    
+    communicator->sendMemory(sendBufRegMem, r, 0);  // tag 0 for send buffer
+    communicator->sendMemory(recvBufRegMem, r, 1);  // tag 1 for recv buffer
+
     // Receive other ranks' buffer info
     remoteSendMemFutures[r] = communicator->recvMemory(r, 0);
     remoteRecvMemFutures[r] = communicator->recvMemory(r, 1);
@@ -379,11 +379,10 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     if (connIndex < connections.size()) {
       connection = connections[connIndex];
       semaphoreId = proxyService->buildAndAddSemaphore(*communicator, connection);
-      auto portChannel = proxyService->portChannel(semaphoreId, 
-                                                   proxyService->addMemory(remoteSendMemFutures[peerRank].get()),
-                                                   proxyService->addMemory(recvBufRegMem));
-                                                  //  proxyService->addMemory(localFlagRegmem),
-                                                  //  proxyService->addMemory(localFlagRegmem));
+      // Setup port channel to copy from our send buffer to remote's receive buffer
+      auto portChannel =
+          proxyService->portChannel(semaphoreId, proxyService->addMemory(remoteRecvMemFutures[peerRank].get()),
+                                    proxyService->addMemory(sendBufRegMem));
       portChannelHandle = portChannel.deviceHandle();
       cudaMemcpyToSymbol(gPortChannel, &portChannelHandle, sizeof(portChannelHandle), 0, cudaMemcpyHostToDevice);
     }
@@ -394,8 +393,8 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     MPI_Barrier(MPI_COMM_WORLD);
 
     // runFifoTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle);
-    runDataTransferTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle, 
-                               sendBuffer, recvBuffer, halfElements);
+    runDataTransferTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer,
+                               recvBuffer, halfElements);
 
     // Add synchronization after each test iteration
     MPI_Barrier(MPI_COMM_WORLD);
