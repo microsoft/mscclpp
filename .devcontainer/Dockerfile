@@ -29,7 +29,8 @@ RUN python3 -m pip install --no-cache-dir \
     pytest \
     breathe \
     sphinx_rtd_theme \
-    myst_parser
+    myst_parser \
+    sphinxcontrib.mermaid
 
 RUN sed -i "s/^Port 22/Port ${SSH_PORT}/" /etc/ssh/sshd_config && \
     mkdir -p /home/$USERNAME/.ssh && \
