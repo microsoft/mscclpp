@@ -1,6 +1,19 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+"""
+Flush Fuse Operation Test
+
+This file demonstrates the use of fused flush operations in MSCCLPP.
+The flush-fuse pattern merges multiple consecutive flush operations
+into a single flush for optimization, as performing more than one
+flush in sequence is unnecessary.
+
+WARNING: This algorithm is designed solely for demonstrating the use of a single
+operation (flush-fuse) and is NOT intended for production use. This test
+may not work correctly in the MSCCLPP executor.
+"""
+
 import argparse
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -10,8 +23,10 @@ from mscclpp.language.collectives import *
 
 
 def flush_test(num_threads_per_block, min_message_size, max_message_size):
-    gpus = 3
+    # Set up 1 GPUs for fused flush operations
+    gpus = 2
     collective = TestCollective(gpus, 0, 0)
+
     with MSCCLPPProgram(
         "flush_test",
         collective,
@@ -22,8 +37,11 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
+        # First flush operation with post-synchronization
         ch = PortChannel(1, 0)
         ch.flush(tb=0, data_sync=SyncType.after)
+
+        # Second flush operation with pre-synchronization (fused pattern)
         ch = PortChannel(1, 0)
         ch.flush(tb=0, data_sync=SyncType.before)
 

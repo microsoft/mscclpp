@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer, BufferType
 from mscclpp.language.internal.optmizer import *
 from mscclpp.language.internal.buffer_access import *
