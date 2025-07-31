@@ -35,7 +35,3 @@ install(TARGETS mscclpp_nccl
     LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_nccl_static
     ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
-
-if(MSCCLPP_BUILD_TESTS)
-    add_subdirectory(test)
-endif()
