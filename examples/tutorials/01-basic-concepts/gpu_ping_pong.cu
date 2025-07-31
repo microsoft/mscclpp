@@ -8,7 +8,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 
 __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
-  if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
+  if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
       // sleep (roughly) 1ms
@@ -19,7 +19,7 @@ __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
 }
 
 __global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
-  if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
+  if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedSignal();
       devHandle->relaxedWait();

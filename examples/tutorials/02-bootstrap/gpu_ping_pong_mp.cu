@@ -12,7 +12,7 @@
 #define PORT_NUMER "50505"
 
 __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
-  if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
+  if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
       // sleep (roughly) 1ms
@@ -23,7 +23,7 @@ __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
 }
 
 __global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
-  if (threadIdx.x + blockIdx.x * gridDim.x == 0) {
+  if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedSignal();
       devHandle->relaxedWait();
@@ -43,7 +43,7 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaGetDeviceCount(&deviceCount));
   if (deviceCount < 2) {
     std::cout << "Error: At least two GPUs are required." << std::endl;
-    return;
+    std::exit(1);
   }
 
   // Optional: check if the two GPUs can peer-to-peer access each other
@@ -54,7 +54,7 @@ void worker(int gpuId) {
         << "Error: GPU 0 cannot access GPU 1. Make sure that the GPUs are connected peer-to-peer. You can check this "
            "by running `nvidia-smi topo -m` (the connection between GPU 0 and 1 should be either NV# or PIX)."
         << std::endl;
-    return;
+    std::exit(1);
   }
 
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));

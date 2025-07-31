@@ -105,4 +105,4 @@ We omit explaining the rest of the code, as it is similar to the one in the [Bas
 
 In this tutorial, you have learned how to use `Bootstrap` and `Communicator` interfaces to establish connections between multiple processes. Note that `Bootstrap` and `Communicator` are still optional interfaces for convenience. As noted in the [Basic Concepts](./01-basic-concepts.md) tutorial, you can still use your own IPC mechanisms to build connections and semaphores. For advanced examples that use Redis or `torch.distributed` for IPC, see the [Advanced Connections](../guide/advanced-connections.md) guide.
 
-In the next tutorial, we will introduce a more comprehensive usage of `MemoryChannel`.
+In the next tutorial, we will introduce a more comprehensive usage of `MemoryChannel` including how to use it for efficient data transfer between GPUs. It will also cover how to create communication buffers and how to use them with channels.
