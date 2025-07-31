@@ -1,6 +1,6 @@
 # Basic Concepts
 
-In this tutorial, we explain a few basic concepts of the MSCCL++ Primitive API by a simple ping-pong example between two GPUs. The example demonstrates how to set up communication between GPUs.
+In this tutorial, we explain a few basic concepts of the MSCCL++ Primitive API using a simple ping-pong example between two GPUs. The example demonstrates how to set up communication between GPUs.
 
 ## Build and Run the Example
 
@@ -75,7 +75,7 @@ mscclpp::Endpoint ep0 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GP
 mscclpp::Endpoint ep1 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 1}});
 ```
 
-Both endpoints are created to use the same transport `mscclpp::Transport::CudaIpc`, which uses direct communication supported by CUDA IPC. The two endpoints should use the same transport type to build a connection in between them. We will introduce other transport types in later tutorials.
+Both endpoints are created to use the same transport `mscclpp::Transport::CudaIpc`, which uses direct communication supported by CUDA IPC. The two endpoints must use the same transport type to establish a connection between them. We will introduce other transport types in later tutorials.
 
 `mscclpp::DeviceType::GPU` indicates that these endpoints are for GPUs, and the numbers `0` and `1` specify the GPU IDs.
 
@@ -89,7 +89,7 @@ std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1,
 
 The `localEndpoint` and `remoteEndpoint` parameters specify which endpoints are used for the connection. A connection is asymmetric by nature, meaning that we need to create one connection for each endpoint. In this case, `conn0` is created for `ep0` to communicate with `ep1`, and `conn1` is created for `ep1` to communicate with `ep0`.
 
-This example creates both endpoints on a single process for simplicity, so the connections can be established directly using the two endpoints. However, in most real-world applications, the endpoints would be created in different processes. In that case, you can **serialize the endpoints** and send them over a network or through shared memory. For example:
+This example creates both endpoints in a single process for simplicity, so the connections can be established directly using the two endpoints. However, in most real-world applications, the endpoints would be created in different processes. In that case, you can **serialize the endpoints** and send them over a network or through shared memory. For example:
 
 ```cpp
 // Process A
@@ -175,13 +175,13 @@ The kernel code will be explained in the next section.
 ```{tip}
 If your application (GPU kernel) needs to access the device handle very frequently with low latency requirements, you can consider either of the following approaches:
 
-* Use constant memory to store the device handle, which allows faster access by storing the handle in a read-only memory region on the GPU. However, since the constant memory is limited in size, this approach may not be suitable if the other parts of the application also require constant memory.
-* Copy the device handle into GPU's shared memory, which incurs a one-time cost of copying the handle from global memory to shared memory, but allows faster access thereafter.
+* Use constant memory to store the device handle, which allows faster access by storing the handle in a read-only memory region on the GPU. However, since constant memory is limited in size, this approach may not be suitable if other parts of the application also require constant memory.
+* Copy the device handle into the GPU's shared memory, which incurs a one-time cost of copying the handle from global memory to shared memory, but allows faster access thereafter.
 ```
 
 ## Channel Interfaces in GPU Kernels
 
-In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which will take a few milliseconds) in one side of the ping-pong (GPU 0) and check if the elapsed time is larger than 1 millisecond on the other side (GPU 1).
+In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which takes a few milliseconds) on one side of the ping-pong (GPU 0) and check if the elapsed time is greater than 1 millisecond on the other side (GPU 1).
 
 ```cpp
 // From gpu_ping_pong.cu, lines 26-44
@@ -206,9 +206,9 @@ __global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
 }
 ```
 
-`relaxedSignal()` and `relaxedWait()` are used to synchronize the execution flow, while they do not synchronize the memory operations. This means that when `relaxedWait()` returns, it guarantees that the other GPU has executed `relaxedSignal()`, but it does not guarantee that the memory operations before `relaxedSignal()` have completed. This can happen because GPUs follow [weakly-ordered memory models](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#memory-fence-functions). If synchronization of memory operations is needed, you can use `signal()` and `wait()` instead, which will ensure that all memory operations before the signal are visible to the other GPU when its `wait()` returns. In this example, we do not need to synchronize memory operations, so we use `relaxedSignal()` and `relaxedWait()` which are faster.
+`relaxedSignal()` and `relaxedWait()` are used to synchronize the execution flow, but they do not synchronize memory operations. This means that when `relaxedWait()` returns, it guarantees that the other GPU has executed `relaxedSignal()`, but it does not guarantee that the memory operations before `relaxedSignal()` have completed. This can happen because GPUs follow [weakly-ordered memory models](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#memory-fence-functions). If synchronization of memory operations is needed, you can use `signal()` and `wait()` instead, which will ensure that all memory operations before the signal are visible to the other GPU when its `wait()` returns. In this example, we do not need to synchronize memory operations, so we use `relaxedSignal()` and `relaxedWait()` which are faster.
 
 
 ## Summary and Next Steps
 
-In this tutorial, you have learned the basic concepts of connections, semaphores, and channels in MSCCL++. In the next tutorial, we will introduce `Bootstrap` and `Communicator` interfaces, which provides a convenient way to set up connections across multiple processes.
+In this tutorial, you have learned the basic concepts of connections, semaphores, and channels in MSCCL++. In the next tutorial, we will introduce `Bootstrap` and `Communicator` interfaces, which provide a convenient way to set up connections across multiple processes.
