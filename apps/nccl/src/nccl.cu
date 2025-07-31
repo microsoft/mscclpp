@@ -20,12 +20,12 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 #include <dlfcn.h>
+#include <mscclpp/nccl.h>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
 #include "debug.h"
-#include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
