@@ -72,6 +72,14 @@ struct MemoryChannel : public BaseMemoryChannel {
   /// unpackPacket() and unpackPackets() methods are not available.
   MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, void* src, void* packetBuffer = nullptr);
 
+  /// Constructor.
+  /// @param semaphore The semaphore used to synchronize the communication.
+  /// @param dst Registered memory of the destination.
+  /// @param src Registered memory of the source.
+  /// @param packetBuffer A buffer used to store packets. @p packetBuffer is optional and if it is nullptr,
+  /// unpackPacket() and unpackPackets() methods are not available.
+  MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src, void* packetBuffer = nullptr);
+
   /// Device-side handle for MemoryChannel.
   using DeviceHandle = MemoryChannelDeviceHandle;
 
