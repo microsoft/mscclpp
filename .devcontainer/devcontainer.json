@@ -3,10 +3,7 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            // For NVIDIA
             "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8",
-            // For AMD
-            // "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2",
             "USERNAME": "devuser",
             "SSH_PORT": "22345"
         }
@@ -24,9 +21,7 @@
                 "ms-python.python",
                 "ms-python.vscode-pylance",
                 // C++
-                "ms-vscode.cpptools",
-                "ms-vscode.cpptools-extension-pack",
-                "ms-vscode.cmake-tools"
+                "ms-vscode.cpptools"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
@@ -44,20 +39,14 @@
     },
     "privileged": true,
     "runArgs": [
+        "--cap-add=SYS_PTRACE",
         "--net=host",
         "--ipc=host",
         "--ulimit=memlock=-1:-1",
-        // For NVIDIA
         "--gpus=all"
-        // For AMD
-        // "--security-opt=seccomp=unconfined",
-        // "--group-add=video"
     ],
     "workspaceFolder": "/home/devuser/mscclpp",
     "workspaceMount": "source=${localWorkspaceFolder},target=/home/devuser/mscclpp,type=bind,consistency=cached",
     "postStartCommand": "sudo service ssh start",
-    // For NVIDIA
     "postCreateCommand": "bash /home/devuser/mscclpp/tools/install.sh nvidia /usr"
-    // For AMD
-    // "postCreateCommand": "bash /home/devuser/mscclpp/tools/install.sh amd /usr"
 }
