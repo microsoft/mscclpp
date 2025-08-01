@@ -500,9 +500,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
 
     if use_packet:
         registered_scratch_memory = group.register_local_memory(scratch, connections)
-        channels = group.make_memory_channels_with_scratch(
-            memory, registered_scratch_memory, connections
-        )
+        channels = group.make_memory_channels_with_scratch(memory, registered_scratch_memory, connections)
     else:
         channels = group.make_memory_channels(memory, connections)
     kernel = MscclppKernel("memory_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)
