@@ -123,6 +123,7 @@ If you are using VSCode, you can use our VSCode Dev Container that automatically
 ```{note}
 - Our Dev Container is set up for NVIDIA GPUs by default. If you are using AMD GPUs, you need to copy [`devcontainer_amd.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer_amd.json) to [`devcontainer.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer.json).
 - Our Dev Container runs an SSH server over the host network and the port number is `22345` by default. You can change the port number by modifying the `SSH_PORT` argument in the [`devcontainer.json`](https://github.com/microsoft/mscclpp/blob/main/.devcontainer/devcontainer.json) file.
+- Our Dev Container uses a non-root user `devuser` by default, but note that you may need the root privileges to enable all hardware features of the GPUs inside the container. `devuser` is already configured to have `sudo` privileges without a password.
 ```
 
 For more details on how to use the Dev Container, see the [Dev Containers tutorial](https://code.visualstudio.com/docs/devcontainers/tutorial).
