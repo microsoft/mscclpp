@@ -108,23 +108,25 @@ class CommGroup:
     def register_tensor_with_connections(
         self, tensor: Type[cp.ndarray] | Type[np.ndarray], connections: dict[int, Connection]
     ) -> dict[int, RegisteredMemory]:
-        transport_flags = TransportFlags()
-        for rank in connections:
-            transport_flags |= connections[rank].transport()
-        data_ptr = (
-            tensor.data.ptr
-            if isinstance(tensor, cp.ndarray)
-            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
-        )
-        tensor_size = (
-            tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
-        )
-        local_reg_memory = self.communicator.register_memory(data_ptr, tensor_size, transport_flags)
+        local_reg_memory = self.register_local_memory(tensor, connections)
         all_registered_memories = {}
         all_registered_memories[self.my_rank] = local_reg_memory
         future_memories = {}
         for rank in connections:
             self.communicator.send_memory(local_reg_memory, rank)
+            future_memories[rank] = self.communicator.recv_memory(rank)
+        for rank in connections:
+            all_registered_memories[rank] = future_memories[rank].get()
+        return all_registered_memories
+
+    def _register_memory_with_connections(
+        self, memory: RegisteredMemory, connections: dict[int, Connection]
+    ) -> dict[int, RegisteredMemory]:
+        all_registered_memories = {}
+        all_registered_memories[self.my_rank] = memory
+        future_memories = {}
+        for rank in connections:
+            self.communicator.send_memory(memory, rank)
             future_memories[rank] = self.communicator.recv_memory(rank)
         for rank in connections:
             all_registered_memories[rank] = future_memories[rank].get()
@@ -153,23 +155,23 @@ class CommGroup:
     def make_memory_channels_with_scratch(
         self,
         tensor: cp.ndarray,
-        scratchTensor: cp.ndarray,
+        registeredScratchBuffer: RegisteredMemory,
         connections: dict[int, Connection],
-    ) -> Tuple[dict[int, MemoryChannel], RegisteredMemory]:
+    ) -> dict[int, MemoryChannel]:
         semaphores = self.make_semaphore(connections, MemoryDevice2DeviceSemaphore)
-        registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
+        registered_memories = self._register_memory_with_connections(registeredScratchBuffer, connections)
         channels = {}
         tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
         tensor_size = (
             tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
         )
         local_registered_memory = self.communicator.register_memory(tensor_data_ptr, tensor_size, TransportFlags())
-        scratch_data_ptr = scratchTensor.data_ptr() if is_torch_tensor(scratchTensor) else scratchTensor.data.ptr
+        scratch_data_ptr = registeredScratchBuffer.data()
         for rank in connections:
             channels[rank] = MemoryChannel(
                 semaphores[rank], registered_memories[rank], local_registered_memory, scratch_data_ptr
             )
-        return channels, registered_memories[self.my_rank]
+        return channels
 
     def make_port_channels(
         self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
@@ -191,9 +193,9 @@ class CommGroup:
         self,
         proxy_service: ProxyService,
         tensor: cp.ndarray,
-        scratchTensor: cp.ndarray,
+        registeredScratchBuffer: RegisteredMemory,
         connections: dict[int, Connection],
-    ) -> Tuple[dict[int, PortChannel], RegisteredMemory]:
+    ) -> dict[int, PortChannel]:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
@@ -208,7 +210,7 @@ class CommGroup:
         local_reg_memory = self.communicator.register_memory(data_ptr, tensor_size, transport_flags)
 
         semaphores = self.make_semaphore(connections, Host2DeviceSemaphore)
-        registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
+        registered_memories = self._register_memory_with_connections(registeredScratchBuffer, connections)
         memory_ids = {}
         semaphore_ids = {}
         for rank in registered_memories:
@@ -221,7 +223,7 @@ class CommGroup:
         channels = {}
         for rank in semaphores:
             channels[rank] = proxy_service.port_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
-        return channels, registered_memories[self.my_rank]
+        return channels
 
     def register_semaphore_with_proxy(
         self, proxy_service: ProxyService, connections: dict[int, Connection]
@@ -243,3 +245,17 @@ class CommGroup:
         for rank in registered_memories:
             memory_ids[rank] = proxy_service.add_memory(registered_memories[rank])
         return memory_ids
+
+    def register_local_memory(self, tensor: cp.ndarray, connections: dict[int, Connection]) -> RegisteredMemory:
+        transport_flags = TransportFlags()
+        for rank in connections:
+            transport_flags |= connections[rank].transport()
+        data_ptr = (
+            tensor.data.ptr
+            if isinstance(tensor, cp.ndarray)
+            else tensor.data_ptr() if is_torch_tensor(tensor) else tensor.ctypes.data
+        )
+        tensor_size = (
+            tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
+        )
+        return self.communicator.register_memory(data_ptr, tensor_size, transport_flags)
