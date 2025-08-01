@@ -199,6 +199,7 @@ struct ncclComm {
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
   std::unordered_map<channelKey, NvlsChannelInfo> channelNvlsInfos;
   std::shared_ptr<char> scratchBuff;
+  mscclpp::RegisteredMemory registeredScratchMemory;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
   std::vector<ChannelInfo> channelInfos;
 
@@ -268,15 +269,13 @@ static Op getReduceOp(ncclRedOp_t op) {
 }
 
 static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
-                                                                  void* buff, size_t bytes,
-                                                                  mscclpp::TransportFlags transport) {
+                                                                  mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
-  mscclpp::RegisteredMemory memory = comm->registerMemory(buff, bytes, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
   for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     remoteRegMemoryFutures.push_back(comm->recvMemory(i));
-    comm->sendMemory(memory, i);
+    comm->sendMemory(localMemory, i);
   }
   std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
                  [](const auto& future) { return future.get(); });
@@ -462,10 +461,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
         recvBasePtr = (CUdeviceptr)recvbuff;
         offsetOut = 0;
       }
-      remoteMemories =
-          setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
       mscclpp::RegisteredMemory localMemory =
           comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
       std::vector<mscclpp::MemoryChannel> outChannels = setupMemoryChannels(comm, remoteMemories, localMemory);
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
@@ -558,10 +556,9 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
         recvBasePtr = (CUdeviceptr)recvbuff;
         offsetOut = 0;
       }
-      std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-          comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
       mscclpp::RegisteredMemory localMemory =
           comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
       std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(comm, remoteMemories, localMemory);
       std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
       std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
@@ -638,8 +635,9 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
   commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
-  commPtr->remoteScratchRegMemories =
-      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+  commPtr->registeredScratchMemory =
+      commPtr->comm->registerMemory(commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+  commPtr->remoteScratchRegMemories = setupRemoteMemories(commPtr->comm, rank, commPtr->registeredScratchMemory);
 
   commPtr->deviceFlag7 = mscclpp::detail::gpuCallocShared<uint32_t>(7);
   commPtr->deviceFlag28 = mscclpp::detail::gpuCallocShared<uint32_t>(28);
