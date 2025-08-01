@@ -83,7 +83,7 @@ $ make -j$(nproc)
 After build succeeds, install the headers and binaries.
 
 ```bash
-$ sudo make install/fast
+$ sudo make install
 ```
 
 ```{tip}
