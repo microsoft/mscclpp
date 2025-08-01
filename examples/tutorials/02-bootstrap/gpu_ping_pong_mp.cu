@@ -14,7 +14,7 @@
 #define PORT_NUMER "50505"
 
 template <typename... Args>
-void log(Args &&... args) {
+void log(Args &&...args) {
   std::stringstream ss;
   (ss << ... << args);
   ss << std::endl;
@@ -75,7 +75,7 @@ void worker(int gpuId) {
   int deviceCount;
   MSCCLPP_CUDATHROW(cudaGetDeviceCount(&deviceCount));
   if (deviceCount < 2) {
-    std::cout << "Error: At least two GPUs are required." << std::endl;
+    log("Error: At least two GPUs are required.");
     std::exit(1);
   }
 
@@ -83,10 +83,8 @@ void worker(int gpuId) {
   int canAccessPeer;
   MSCCLPP_CUDATHROW(cudaDeviceCanAccessPeer(&canAccessPeer, 0, 1));
   if (!canAccessPeer) {
-    std::cout
-        << "Error: GPU 0 cannot access GPU 1. Make sure that the GPUs are connected peer-to-peer. You can check this "
-           "by running `nvidia-smi topo -m` (the connection between GPU 0 and 1 should be either NV# or PIX)."
-        << std::endl;
+    log("Error: GPU 0 cannot access GPU 1. Make sure that the GPUs are connected peer-to-peer. You can check this "
+        "by running `nvidia-smi topo -m` (the connection between GPU 0 and 1 should be either NV# or PIX).");
     std::exit(1);
   }
 

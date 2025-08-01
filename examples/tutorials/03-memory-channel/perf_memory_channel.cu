@@ -15,7 +15,7 @@
 #define PORT_NUMER "50505"
 
 template <typename... Args>
-void log(Args &&... args) {
+void log(Args &&...args) {
   std::stringstream ss;
   (ss << ... << args);
   ss << std::endl;

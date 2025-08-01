@@ -8,4 +8,17 @@ In this tutorial, we will introduce comprehensive usage of `MemoryChannel`, whic
 
 ## Build and Run the Example
 
+The code of this tutorial is under [examples/tutorials/03-memory-channel](https://github.com/microsoft/mscclpp/blob/main/examples/tutorials/03-memory-channel).
 
+Build the example with `make`:
+
+```bash
+$ cd examples/tutorials/03-memory-channel
+$ make
+```
+
+Run the example with `./perf_memory_channel`. If you are in a container, you may need to run with root privileges. You should see output similar to the following:
+
+```
+# ./perf_memory_channel
+```

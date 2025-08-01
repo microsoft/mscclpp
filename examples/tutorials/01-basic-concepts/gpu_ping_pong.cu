@@ -9,7 +9,7 @@
 #include <sstream>
 
 template <typename... Args>
-void log(Args &&... args) {
+void log(Args &&...args) {
   std::stringstream ss;
   (ss << ... << args);
   ss << std::endl;
