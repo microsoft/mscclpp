@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*)
-file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS include/nccl.h)
+file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS include/*.h)
 
 if(MSCCLPP_USE_ROCM)
     set_source_files_properties(${SOURCES} PROPERTIES LANGUAGE CXX)
@@ -30,12 +30,8 @@ target_link_libraries(mscclpp_nccl_static PUBLIC mscclpp_obj mscclpp_nccl_obj)
 set_target_properties(mscclpp_nccl_static PROPERTIES VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 install(TARGETS mscclpp_nccl_obj
-    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX}/include)
+    FILE_SET HEADERS DESTINATION ${INSTALL_PREFIX})
 install(TARGETS mscclpp_nccl
     LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_nccl_static
     ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
-
-if(MSCCLPP_BUILD_TESTS)
-    add_subdirectory(test)
-endif()
