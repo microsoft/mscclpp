@@ -7,6 +7,7 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
+from mscclpp.language.pipeline import *
 
 
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
@@ -16,7 +17,7 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
         name,
         collective,
         gpu_size,
-        instances=8,
+        instances=4,
         protocol="Simple",
         reuse_resources=True,
         num_threads_per_block=num_threads_per_block,
@@ -51,18 +52,26 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     channels[dst_rank_id, src_rank_id].wait(tb=tb, relaxed=True, data_sync=SyncType.after)
 
         # Copy Data to Scratch Buffer and Put Remote Rank
+        with LoopIterationContext(unit=2**16, num_chunks=1):
+            for gpu in range(gpu_size):
+                src_rank_id = gpu
+                src_rank = Rank(src_rank_id)
+                input_buffer = src_rank.get_input_buffer()
+                for peer in range(gpu_size):
+                    dst_rank_id = peer
+                    if dst_rank_id != src_rank_id:
+                        local_index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
+                        remote_index = src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
+                        tb = local_index
+                        src_rank.copy(scratch_buffer[src_rank_id][local_index: local_index + 1], input_buffer[dst_rank_id: dst_rank_id + 1], tb=tb)
+                        channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][offset + remote_index: offset + remote_index + 1], scratch_buffer[src_rank_id][local_index: local_index + 1], tb=tb)
+
         for gpu in range(gpu_size):
             src_rank_id = gpu
-            src_rank = Rank(src_rank_id)
-            input_buffer = src_rank.get_input_buffer()
             for peer in range(gpu_size):
                 dst_rank_id = peer
                 if dst_rank_id != src_rank_id:
-                    local_index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    remote_index = src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
-                    tb = local_index
-                    src_rank.copy(scratch_buffer[src_rank_id][local_index: local_index + 1], input_buffer[dst_rank_id: dst_rank_id + 1], tb=tb)
-                    channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][offset + remote_index: offset + remote_index + 1], scratch_buffer[src_rank_id][local_index: local_index + 1], tb=tb)
+                    tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
                     channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
 
         # Copy Data From Scratch Buffer
