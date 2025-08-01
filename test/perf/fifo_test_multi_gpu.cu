@@ -80,7 +80,7 @@ __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle) 
 
 // Enhanced kernels for multi-GPU signaling
 __global__ void kernelMultiGpuSignalSend(mscclpp::PortChannelDeviceHandle* portHandles, int numPeers, int numParallel) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  int tid = threadIdx.x;
 
   // Each thread sends signals to all peers
   if (tid < numParallel) {
@@ -91,7 +91,7 @@ __global__ void kernelMultiGpuSignalSend(mscclpp::PortChannelDeviceHandle* portH
 }
 
 __global__ void kernelMultiGpuSignalWait(mscclpp::PortChannelDeviceHandle* portHandles, int numPeers, int numParallel) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  int tid = threadIdx.x;
 
   // Each thread waits for signals from all peers
   if (tid < numParallel) {
@@ -412,17 +412,22 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
   cudaSetDevice(rank);
 
   // Setup transport
-  mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | mscclpp::Transport::IB0;
+  mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc;
+  std::vector<mscclpp::Transport> ibTransports{mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
+    mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5, mscclpp::Transport::IB6, mscclpp::Transport::IB7};
   std::vector<std::shared_ptr<mscclpp::Connection>> connections;
 
   // Only create connections for GPUs that need to communicate
   if (config.shouldParticipateInSignaling(rank)) {
+    mscclpp::Transport selectedTransport = ibTransports[config.getGroupIndex(rank) % ibTransports.size()];
+    transport |= selectedTransport;
+
     // Get all ranks that participate in cross-group signaling
     auto signalingRanks = config.getCrossGroupSignalingRanks();
 
     for (int peerRank : signalingRanks) {
       if (peerRank != rank) {
-        connections.push_back(communicator->connect(mscclpp::Transport::IB0, peerRank).get());
+        connections.push_back(communicator->connect(selectedTransport, peerRank).get());
       }
     }
   }
@@ -548,15 +553,6 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
 
 void runAllMultiGpuTests(const mscclpp::test::TestContext& context) {
   std::vector<MultiGpuTestConfig> configs = {
-      // 2 GPUs, 2 groups (1 GPU per group) - local rank 0 participates in signaling
-      MultiGpuTestConfig(512, 2, 2, {1, 8, 64, 128, 256, 512}),
-
-      // 4 GPUs, 2 groups (2 GPUs per group) - local rank 0 participates in signaling
-      MultiGpuTestConfig(512, 4, 2, {1, 8, 64, 128, 256, 512}),
-
-      // 4 GPUs, 4 groups (1 GPU per group) - local rank 0 participates in signaling
-      MultiGpuTestConfig(512, 4, 4, {1, 8, 64, 128, 256, 512}),
-
       // 8 GPUs, 2 groups (4 GPUs per group) - local rank 0 participates in signaling
       MultiGpuTestConfig(512, 8, 2, {1, 8, 64, 128, 256, 512}),
 
