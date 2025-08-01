@@ -45,30 +45,31 @@ __global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle) 
   }
 }
 
-// New kernels for data transfer
-__global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements) {
+// New kernels for bidirectional data transfer
+__global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements, int rank) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   if (tid == 0) {
-    printf("GPU0: Starting data transfer of %d elements\n", numElements);
+    printf("GPU%d: Starting data transfer of %d elements\n", rank, numElements);
     portHandle.put(0, 0, numElements * sizeof(int));
   }
 
   // Only thread 0 signals completion
   if (tid == 0) {
-    printf("GPU0: Data transfer complete, sending signal\n");
+    printf("GPU%d: Data transfer complete, sending signal\n", rank);
     portHandle.signal();
   }
 }
 
-__global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements) {
+__global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements, int rank,
+                              int expectedValue) {
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int totalThreads = blockDim.x * gridDim.x;
 
   // Wait for signal from sender - only global thread 0 should wait
   if (tid == 0) {
     portHandle.wait();
-    printf("GPU1: Received signal, starting data validation\n");
+    printf("GPU%d: Received signal, starting data validation\n", rank);
   }
 
   __shared__ int errorCount;
@@ -77,8 +78,6 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   }
   __syncthreads();
 
-  // int errorCount = 0;
-  int expectedValue = 1;  // GPU0 sends value 1 (rank + 1 where rank = 0)
   int localErrors = 0;
 
   // Each thread validates a portion of the received data
@@ -96,8 +95,12 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   // Report validation results from thread 0
   __syncthreads();
   if (tid == 0) {
-    if (errorCount > 0) {
-      printf("GPU1: Data validation FAILED - %d errors found out of %d elements\n", errorCount, numElements);
+    if (errorCount == 0) {
+      printf("GPU%d: Data validation PASSED - all %d elements correct (expected value: %d)\n", rank, numElements,
+             expectedValue);
+    } else {
+      printf("GPU%d: Data validation FAILED - %d errors found out of %d elements (expected value: %d)\n", rank,
+             errorCount, numElements, expectedValue);
     }
     assert(errorCount == 0);
   }
@@ -163,20 +166,29 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
   utils::Timer timer;
   timer.start();
 
+  // Launch both put and get operations simultaneously on each GPU for bidirectional transfer
   if (rank == 0) {
-    // GPU0: Put data to GPU1's receive buffer
-    kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements);
+    // GPU0: Send data (value 1) and receive data (expecting value 2 from GPU1)
+    kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements, rank);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelPutData on GPU0\n");
+    printf("Finish kernelPutData on GPU0 (simultaneous bidirectional)\n");
+
+    kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements, rank, 2);
+    utils::CUDA_CHECK(cudaGetLastError());
+    printf("Finish kernelGetData on GPU0 (simultaneous bidirectional)\n");
   } else if (rank == 1) {
-    // GPU1: Get data from GPU0's send buffer to local receive buffer
-    kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements);
+    // GPU1: Send data (value 2) and receive data (expecting value 1 from GPU0)
+    kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements, rank);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelGetData on GPU1\n");
+    printf("Finish kernelPutData on GPU1 (simultaneous bidirectional)\n");
+
+    kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements, rank, 1);
+    utils::CUDA_CHECK(cudaGetLastError());
+    printf("Finish kernelGetData on GPU1 (simultaneous bidirectional)\n");
   }
 
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
-  printf("Finish cudaStreamSynchronize on rank %d\n", rank);
+  printf("Finish cudaStreamSynchronize on rank %d (simultaneous bidirectional)\n", rank);
 
   timer.stop();
 
@@ -211,6 +223,8 @@ void runDataTransferTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaSt
                                 nlohmann::ordered_json& combinedMetrics, int rank,
                                 mscclpp::PortChannelDeviceHandle portChannelHandle, int* sendBuffer, int* recvBuffer,
                                 int numElements) {
+  // Run simultaneous bidirectional data transfer
+  printf("=== Running simultaneous bidirectional GPU0 ↔ GPU1 transfer ===\n");
   auto [throughput, duration, totalElements] = runDataTransferKernelVariant(
       hostFifo, stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
 
