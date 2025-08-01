@@ -499,7 +499,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
         memory_expected[(nelemPerRank * rank) : (nelemPerRank * (rank + 1))] = rank + 1
 
     if use_packet:
-        channels = group.make_memory_channels_with_scratch(memory, scratch, connections)
+        channels, registered_scratch_memory = group.make_memory_channels_with_scratch(memory, scratch, connections)
     else:
         channels = group.make_memory_channels(memory, connections)
     kernel = MscclppKernel("memory_channel", group.my_rank, group.nranks, channels, memory, use_packet, scratch)

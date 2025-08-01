@@ -68,6 +68,8 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     portChannels.emplace_back(proxyService->portChannel(cid, proxyService->addMemory(remoteMemFutures[r].get()),
                                                         proxyService->addMemory(sendBufRegMem)));
   }
+  // Keep memory reference
+  registeredMemories.push_back(recvBufRegMem);
 }
 
 __constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChans;

@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from __future__ import annotations
-from typing import Type
+from typing import Tuple, Type
 
 import cupy as cp
 from ._mscclpp import (
@@ -155,20 +155,21 @@ class CommGroup:
         tensor: cp.ndarray,
         scratchTensor: cp.ndarray,
         connections: dict[int, Connection],
-    ) -> dict[int, MemoryChannel]:
+    ) -> Tuple[dict[int, MemoryChannel], RegisteredMemory]:
         semaphores = self.make_semaphore(connections, MemoryDevice2DeviceSemaphore)
         registered_memories = self.register_tensor_with_connections(scratchTensor, connections)
         channels = {}
         tensor_data_ptr = tensor.data_ptr() if is_torch_tensor(tensor) else tensor.data.ptr
-        local_registered_memory = self.communicator.register_memory(
-            tensor_data_ptr, tensor.numel() * tensor.element_size(), TransportFlags()
+        tensor_size = (
+            tensor.numel() * tensor.element_size() if is_torch_tensor(tensor) else tensor.size * tensor.itemsize
         )
+        local_registered_memory = self.communicator.register_memory(tensor_data_ptr, tensor_size, TransportFlags())
         scratch_data_ptr = scratchTensor.data_ptr() if is_torch_tensor(scratchTensor) else scratchTensor.data.ptr
         for rank in connections:
             channels[rank] = MemoryChannel(
                 semaphores[rank], registered_memories[rank], local_registered_memory, scratch_data_ptr
             )
-        return channels
+        return channels, registered_memories[self.my_rank]
 
     def make_port_channels(
         self, proxy_service: ProxyService, tensor: cp.ndarray, connections: dict[int, Connection]
@@ -192,7 +193,7 @@ class CommGroup:
         tensor: cp.ndarray,
         scratchTensor: cp.ndarray,
         connections: dict[int, Connection],
-    ) -> dict[int, MemoryChannel]:
+    ) -> Tuple[dict[int, PortChannel], RegisteredMemory]:
         transport_flags = TransportFlags()
         for rank in connections:
             transport_flags |= connections[rank].transport()
@@ -220,7 +221,7 @@ class CommGroup:
         channels = {}
         for rank in semaphores:
             channels[rank] = proxy_service.port_channel(semaphore_ids[rank], memory_ids[rank], memory_ids[self.my_rank])
-        return channels
+        return channels, registered_memories[self.my_rank]
 
     def register_semaphore_with_proxy(
         self, proxy_service: ProxyService, connections: dict[int, Connection]

@@ -107,6 +107,7 @@ class CommunicatorTestBase : public MultiProcessTest {
   int numRanksToUse = -1;
   std::shared_ptr<mscclpp::Communicator> communicator;
   mscclpp::Transport ibTransport;
+  std::vector<mscclpp::RegisteredMemory> registeredMemories;
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> cpuConnections;
 };
