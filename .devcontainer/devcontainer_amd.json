@@ -21,13 +21,14 @@
                 "ms-python.python",
                 "ms-python.vscode-pylance",
                 // C++
-                "ms-vscode.cpptools"
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "C_Cpp.default.includePath": [
                     "${workspaceFolder}/**",
-                    "/usr/local/cuda/include",
+                    "/opt/rocm/include",
                     "/usr/include"
                 ],
                 "C_Cpp.default.compilerPath": "/usr/bin/gcc",
