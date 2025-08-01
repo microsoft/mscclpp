@@ -23,8 +23,7 @@ RUN if getent group $USER_GID > /dev/null; then \
         useradd --uid $USER_UID --gid $USER_GID -m $USERNAME; \
     fi && \
     usermod -g $USERNAME $USERNAME && \
-    echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers && \
-    echo "exec sudo -i bash -c 'cd /home/$USERNAME/mscclpp && exec bash'" >> /home/$USERNAME/.bashrc
+    echo "$USERNAME ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 RUN rm -rf /etc/apt/sources.list.d/cuda-* && \
     apt-get update && \
