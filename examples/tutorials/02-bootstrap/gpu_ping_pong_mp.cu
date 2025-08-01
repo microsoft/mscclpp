@@ -1,22 +1,61 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <iostream>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <sys/wait.h>
 #include <sstream>
 
 #define PORT_NUMER "50505"
+
+template <typename... Args>
+void log(Args &&... args) {
+  std::stringstream ss;
+  (ss << ... << args);
+  ss << std::endl;
+  std::cout << ss.str();
+}
+
+int spawn_process(std::function<void()> func) {
+  pid_t pid = fork();
+  if (pid < 0) return -1;
+  if (pid == 0) {
+    // Child process
+    func();
+    exit(0);
+  }
+  return pid;
+}
+
+int wait_process(int pid) {
+  int status;
+  if (waitpid(pid, &status, 0) < 0) {
+    return -1;
+  }
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  return -1;
+}
+
+__device__ void spin_cycles(unsigned long long cycles) {
+  unsigned long long start = clock64();
+  while (clock64() - start < cycles) {
+    // spin
+  }
+}
 
 __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
-      // sleep (roughly) 1ms
-      __nanosleep(1e6);
+      // spin for a few ms
+      spin_cycles(1e7);
       devHandle->relaxedSignal();
     }
   }
@@ -29,12 +68,6 @@ __global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
       devHandle->relaxedWait();
     }
   }
-}
-
-void log(int gpuId, const std::string& msg) {
-  std::stringstream ss;
-  ss << "GPU " << gpuId << ": " << msg << std::endl;
-  std::cout << ss.str();
 }
 
 void worker(int gpuId) {
@@ -64,23 +97,23 @@ void worker(int gpuId) {
   const int iter = 100;
   const mscclpp::Transport transport = mscclpp::Transport::CudaIpc;
 
-  log(gpuId, "Initializing a bootstrap ...");
+  log("GPU ", gpuId, ": Initializing a bootstrap ...");
 
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
   bootstrap->initialize("lo:127.0.0.1:" PORT_NUMER);
   mscclpp::Communicator comm(bootstrap);
 
-  log(gpuId, "Creating a connection ...");
+  log("GPU ", gpuId, ": Creating a connection ...");
 
   auto connFuture = comm.connect({transport, {mscclpp::DeviceType::GPU, gpuId}}, remoteRank);
   auto conn = connFuture.get();
 
-  log(gpuId, "Creating a semaphore ...");
+  log("GPU ", gpuId, ": Creating a semaphore ...");
 
   auto semaFuture = comm.buildSemaphore(conn, remoteRank);
   auto sema = semaFuture.get();
 
-  log(gpuId, "Creating a channel ...");
+  log("GPU ", gpuId, ": Creating a channel ...");
 
   mscclpp::BaseMemoryChannel memChan(sema);
   auto memChanHandle = memChan.deviceHandle();
@@ -88,7 +121,7 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(memChanHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle, &memChanHandle, sizeof(memChanHandle), cudaMemcpyHostToDevice));
 
-  log(gpuId, "Launching a GPU kernel ...");
+  log("GPU ", gpuId, ": Launching a GPU kernel ...");
 
   if (gpuId == 0) {
     gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle *>(devHandle), iter);
@@ -108,11 +141,10 @@ void worker(int gpuId) {
     MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedMs, start, end));
 
     float msPerIter = elapsedMs / iter;
-    std::cout << "Elapsed " << msPerIter << " ms per iteration (" << iter << ")" << std::endl;
+    log("Elapsed ", msPerIter, " ms per iteration (", iter, ")");
     if (msPerIter < 1.0f) {
-      std::cout << "Failed: the elapsed time per iteration is less than 1 ms, which may indicate that the relaxedSignal "
-                   "and relaxedWait are not working as expected."
-                << std::endl;
+      log("Failed: the elapsed time per iteration is less than 1 ms, which may indicate that the relaxedSignal "
+          "and relaxedWait are not working as expected.");
     }
   }
 
@@ -120,25 +152,22 @@ void worker(int gpuId) {
 }
 
 int main() {
-  pid_t pid = fork();
-  if (pid < 0) {
-    std::cout << "Error: fork() failed." << std::endl;
-    return 1;
-  } else if (pid == 0) {
-    // Child process: use GPU 1
-    worker(1);
-    exit(0);
-  } else {
-    // Parent process: use GPU 0
-    worker(0);
-    // Wait for child to finish
-    int status;
-    waitpid(pid, &status, 0);
-    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-      std::cout << "Child process exited with error code: " << WEXITSTATUS(status) << std::endl;
-      return 1;
-    }
+  int pid0 = spawn_process([]() { worker(0); });
+  int pid1 = spawn_process([]() { worker(1); });
+  if (pid0 < 0 || pid1 < 0) {
+    log("Failed to spawn processes.");
+    return -1;
   }
-  std::cout << "Succeed!" << std::endl;
+  int status0 = wait_process(pid0);
+  int status1 = wait_process(pid1);
+  if (status0 < 0 || status1 < 0) {
+    log("Failed to wait for processes.");
+    return -1;
+  }
+  if (status0 != 0 || status1 != 0) {
+    log("One of the processes failed.");
+    return -1;
+  }
+  log("Succeed!");
   return 0;
 }

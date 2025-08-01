@@ -1,16 +1,48 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <iostream>
+#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/concurrency_device.hpp>
-#include <sys/wait.h>
 #include <sstream>
 
 #define PORT_NUMER "50505"
+
+template <typename... Args>
+void log(Args &&... args) {
+  std::stringstream ss;
+  (ss << ... << args);
+  ss << std::endl;
+  std::cout << ss.str();
+}
+
+int spawn_process(std::function<void()> func) {
+  pid_t pid = fork();
+  if (pid < 0) return -1;
+  if (pid == 0) {
+    // Child process
+    func();
+    exit(0);
+  }
+  return pid;
+}
+
+int wait_process(int pid) {
+  int status;
+  if (waitpid(pid, &status, 0) < 0) {
+    return -1;
+  }
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  return -1;
+}
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
@@ -31,15 +63,6 @@ __global__ void bidirCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, s
   }
 }
 
-template <typename ...Args>
-void log(int gpuId, Args&&... args) {
-  std::stringstream ss;
-  ss << "GPU " << gpuId << ": ";
-  (ss << ... << args);
-  ss << std::endl;
-  std::cout << ss.str();
-}
-
 void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int myRank = gpuId;
@@ -50,7 +73,7 @@ void worker(int gpuId) {
   const size_t bufferBytes = 256 * 1024 * 1024;
   const size_t pktBufferBytes = 512 * 1024 * 1024;
 
-  log(gpuId, "Preparing for bidirectional copy tests ...");
+  log("GPU ", gpuId, ": Preparing for bidirectional copy tests ...");
 
   // Build a connection and a semaphore
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
@@ -92,7 +115,8 @@ void worker(int gpuId) {
     MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
     for (int i = 0; i < iter; ++i) {
-      bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle), copyBytes, myRank);
+      bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
+                                               copyBytes, myRank);
     }
 
     MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
@@ -101,7 +125,7 @@ void worker(int gpuId) {
     // Synchronize before timing
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     bootstrap->barrier();
-    
+
     if (gpuId == 0) {
       MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
     }
@@ -117,7 +141,7 @@ void worker(int gpuId) {
       MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
       elapsedTimePerIter = elapsedTime / iter;
       gbps = float(copyBytes) / elapsedTimePerIter * 1e-6f;
-      log(gpuId, "bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
+      log("GPU ", gpuId, ": bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
     }
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
     MSCCLPP_CUDATHROW(cudaGraphExecDestroy(graphExec));
@@ -127,45 +151,23 @@ void worker(int gpuId) {
   bootstrap->barrier();
 }
 
-int spawn_process(std::function<void()> func) {
-  pid_t pid = fork();
-  if (pid < 0) return -1;
-  if (pid == 0) {
-    // Child process
-    func();
-    exit(0);
-  }
-  return pid;
-}
-
-int wait_process(int pid) {
-  int status;
-  if (waitpid(pid, &status, 0) < 0) {
-    return -1;
-  }
-  if (WIFEXITED(status)) {
-    return WEXITSTATUS(status);
-  }
-  return -1;
-}
-
 int main() {
   int pid0 = spawn_process([]() { worker(0); });
   int pid1 = spawn_process([]() { worker(1); });
   if (pid0 < 0 || pid1 < 0) {
-    std::cout << "Failed to spawn processes." << std::endl;
+    log("Failed to spawn processes.");
     return -1;
   }
   int status0 = wait_process(pid0);
   int status1 = wait_process(pid1);
   if (status0 < 0 || status1 < 0) {
-    std::cout << "Failed to wait for processes." << std::endl;
+    log("Failed to wait for processes.");
     return -1;
   }
   if (status0 != 0 || status1 != 0) {
-    std::cout << "One of the processes failed." << std::endl;
+    log("One of the processes failed.");
     return -1;
   }
-  std::cout << "Succeed!" << std::endl;
+  log("Succeed!");
   return 0;
 }
