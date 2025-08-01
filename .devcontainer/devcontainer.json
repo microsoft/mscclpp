@@ -24,9 +24,7 @@
                 "ms-python.python",
                 "ms-python.vscode-pylance",
                 // C++
-                "ms-vscode.cpptools",
-                "ms-vscode.cpptools-extension-pack",
-                "ms-vscode.cmake-tools"
+                "ms-vscode.cpptools"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
@@ -44,6 +42,7 @@
     },
     "privileged": true,
     "runArgs": [
+        "--cap-add=SYS_PTRACE",
         "--net=host",
         "--ipc=host",
         "--ulimit=memlock=-1:-1",
@@ -51,7 +50,9 @@
         "--gpus=all"
         // For AMD
         // "--security-opt=seccomp=unconfined",
-        // "--group-add=video"
+        // "--group-add=video",
+        // "--device=/dev/kfd",
+        // "--device=/dev/dri"
     ],
     "workspaceFolder": "/home/devuser/mscclpp",
     "workspaceMount": "source=${localWorkspaceFolder},target=/home/devuser/mscclpp,type=bind,consistency=cached",
