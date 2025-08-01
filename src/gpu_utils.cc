@@ -57,7 +57,7 @@ GpuStream GpuStreamPool::getStream() {
 void GpuStreamPool::clear() { streams_.clear(); }
 
 // A global pool instance
-std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
+static std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
 
 std::shared_ptr<GpuStreamPool> gpuStreamPool() {
   if (!gGpuStreamPool_) {
