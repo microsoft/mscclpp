@@ -21,7 +21,8 @@
                 "ms-python.python",
                 "ms-python.vscode-pylance",
                 // C++
-                "ms-vscode.cpptools"
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools"
             ],
             "settings": {
                 "terminal.integrated.defaultProfile.linux": "bash",
