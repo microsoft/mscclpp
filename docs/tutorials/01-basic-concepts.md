@@ -40,7 +40,7 @@ sequenceDiagram
     participant ProcessB
 
     rect rgb(240, 240, 240)
-        Note over ProcessA, ProcessB: Construct an Endpoint
+        Note over ProcessA, ProcessB: Create an Endpoint
 
         ProcessA<<->>ProcessB: Exchange the Endpoints
 
@@ -75,7 +75,7 @@ mscclpp::Endpoint ep0 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GP
 mscclpp::Endpoint ep1 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 1}});
 ```
 
-Both endpoints are created to use the same transport `mscclpp::Transport::CudaIpc`, which uses direct communication supported by CUDA IPC. The two endpoints must use the same transport type to establish a connection between them. We will introduce other transport types in later tutorials.
+Both endpoints are created to use the same transport `mscclpp::Transport::CudaIpc`, which uses direct communication supported by CUDA/HIP IPC. The two endpoints must use the same transport type to establish a connection between them. We will introduce other transport types in later tutorials.
 
 `mscclpp::DeviceType::GPU` indicates that these endpoints are for GPUs, and the numbers `0` and `1` specify the GPU IDs.
 

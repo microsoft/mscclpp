@@ -41,7 +41,7 @@ If you see error messages like "At least two GPUs are required" or "GPU 0 cannot
 
 ## Code Overview
 
-The example code is similar to the one in the [Basic Concepts](./01-basic-concepts.md) tutorial, but uses `Bootstrap` and `Communicator` interfaces to establish connections between GPUs. The code first spawns a child process, which will run on the second GPU. The parent process runs on the first GPU.
+The example code is similar to that in the [Basic Concepts](./01-basic-concepts.md) tutorial, but uses `Bootstrap` and `Communicator` interfaces to establish connections between GPUs. The code spawns one child process per GPU. The parent process waits for the child processes to finish before exiting.
 
 ## Bootstrap
 
