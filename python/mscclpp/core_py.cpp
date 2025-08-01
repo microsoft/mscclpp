@@ -127,7 +127,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<RegisteredMemory>(m, "RegisteredMemory")
       .def(nb::init<>())
-      .def("data", &RegisteredMemory::data)
+      .def("data", [](RegisteredMemory& self) { return reinterpret_cast<uintptr_t>(self.data()); })
       .def("size", &RegisteredMemory::size)
       .def("transports", &RegisteredMemory::transports)
       .def("serialize", &RegisteredMemory::serialize)

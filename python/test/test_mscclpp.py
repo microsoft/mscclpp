@@ -500,7 +500,7 @@ def test_memory_channels(mpi_group: MpiGroup, nelem: int, use_packet: bool):
 
     if use_packet:
         registered_scratch_memory = group.register_local_memory(scratch, connections)
-        channels, registered_scratch_memory = group.make_memory_channels_with_scratch(
+        channels = group.make_memory_channels_with_scratch(
             memory, registered_scratch_memory, connections
         )
     else:
