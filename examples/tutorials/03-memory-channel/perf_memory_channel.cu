@@ -47,20 +47,42 @@ int wait_process(int pid) {
 __device__ mscclpp::DeviceSyncer devSyncer;
 
 __global__ void bidirCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
-  int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
     devHandle->relaxedWait();
   }
   devSyncer.sync(gridDim.x);
 
-  uint64_t offset = myRank * copyBytes;
-  devHandle->put(offset, copyBytes, tid, blockDim.x * gridDim.x);
+  const uint64_t srcOffset = myRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  devHandle->put(dstOffset, srcOffset, copyBytes, tid, blockDim.x * gridDim.x);
   devSyncer.sync(gridDim.x);
   if (tid == 0) {
     devHandle->signal();
     devHandle->wait();
   }
+}
+
+__global__ void bidirPacketCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
+                                      uint32_t flag) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  const uint64_t srcOffset = myRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  const uint64_t pktBufOffset = 0;
+  devHandle->putPackets(pktBufOffset, srcOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
+  devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
+}
+
+void bidirCopy(void *devHandle, size_t copyBytes, int myRank, cudaStream_t stream) {
+  bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle), copyBytes,
+                                           myRank);
+}
+
+void bidirPacketCopy(void *devHandle, size_t copyBytes, int myRank, cudaStream_t stream) {
+  static uint32_t flag = 1;
+  bidirPacketCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
+                                                 copyBytes, myRank, flag++);
 }
 
 void worker(int gpuId) {
@@ -73,7 +95,7 @@ void worker(int gpuId) {
   const size_t bufferBytes = 256 * 1024 * 1024;
   const size_t pktBufferBytes = 512 * 1024 * 1024;
 
-  log("GPU ", gpuId, ": Preparing for bidirectional copy tests ...");
+  log("GPU ", gpuId, ": Preparing for tests ...");
 
   // Build a connection and a semaphore
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
@@ -107,45 +129,50 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   bootstrap->barrier();
 
-  for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
-    cudaGraph_t graph;
-    cudaGraphExec_t graphExec;
+  void (*kernels[])(void *, size_t, int, cudaStream_t) = {bidirCopy, bidirPacketCopy};
 
-    MSCCLPP_CUDATHROW(cudaGraphCreate(&graph, 0));
-    MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+  for (auto kernel : kernels) {
+    const std::string testName = (kernel == bidirCopy) ? "Bidir Copy" : "Bidir Packet Copy";
+    for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
+      cudaGraph_t graph;
+      cudaGraphExec_t graphExec;
 
-    for (int i = 0; i < iter; ++i) {
-      bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
-                                               copyBytes, myRank);
+      MSCCLPP_CUDATHROW(cudaGraphCreate(&graph, 0));
+      MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+
+      for (int i = 0; i < iter; ++i) {
+        kernel(devHandle, copyBytes, myRank, stream);
+      }
+
+      MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
+      MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+      // Synchronize before timing
+      MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+      bootstrap->barrier();
+
+      if (gpuId == 0) {
+        MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
+      }
+
+      MSCCLPP_CUDATHROW(cudaGraphLaunch(graphExec, stream));
+
+      if (gpuId == 0) {
+        MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
+        MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
+        float elapsedTime;
+        float elapsedTimePerIter;
+        float gbps;
+        MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
+        elapsedTimePerIter = elapsedTime / iter;
+        gbps = float(copyBytes) / elapsedTimePerIter * 1e-6f;
+        log("GPU ", gpuId, ": [", testName, "] bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ",
+            gbps, " GB/s");
+      }
+      MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+      MSCCLPP_CUDATHROW(cudaGraphExecDestroy(graphExec));
+      MSCCLPP_CUDATHROW(cudaGraphDestroy(graph));
     }
-
-    MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
-    MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
-
-    // Synchronize before timing
-    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-    bootstrap->barrier();
-
-    if (gpuId == 0) {
-      MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
-    }
-
-    MSCCLPP_CUDATHROW(cudaGraphLaunch(graphExec, stream));
-
-    if (gpuId == 0) {
-      MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
-      MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
-      float elapsedTime;
-      float elapsedTimePerIter;
-      float gbps;
-      MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
-      elapsedTimePerIter = elapsedTime / iter;
-      gbps = float(copyBytes) / elapsedTimePerIter * 1e-6f;
-      log("GPU ", gpuId, ": bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
-    }
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-    MSCCLPP_CUDATHROW(cudaGraphExecDestroy(graphExec));
-    MSCCLPP_CUDATHROW(cudaGraphDestroy(graph));
   }
 
   bootstrap->barrier();
