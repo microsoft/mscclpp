@@ -69,7 +69,8 @@ $CMAKE \
 
 make -j$(nproc)
 
-sudo make install/fast
+# Use 'make install' to ensure dependency checks are performed for a reliable installation.
+sudo make install
 
 popd || exit 1
 
