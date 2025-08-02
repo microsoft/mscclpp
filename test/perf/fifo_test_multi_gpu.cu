@@ -90,33 +90,29 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
 
 // Enhanced performance measurement function
 std::tuple<double, double, int> runMultiGpuKernelVariant(
-    std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel, int rank,
+    cudaStream_t stream, int numParallel, int rank,
     const std::vector<mscclpp::PortChannelDeviceHandle>& sendPortHandles,
     const std::vector<mscclpp::PortChannelDeviceHandle>& recvPortHandles, const MultiGpuTestConfig& config) {
   // Calculate triggers based on FIFO size, but respect the limit
   const int maxParallel = std::min(numParallel, config.fifoSize);
-  const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
+  const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(config.fifoSize * TRIGGERS_PER_FIFO_SIZE));
 
   // Configure kernel launch parameters
   int threadsPerBlock = std::min(maxParallel, 256);
   int threadBlocks = (maxParallel + threadsPerBlock - 1) / threadsPerBlock;
 
-  // Copy port handles to device memory
-  mscclpp::PortChannelDeviceHandle* d_sendHandles = nullptr;
-  mscclpp::PortChannelDeviceHandle* d_recvHandles = nullptr;
+  // Copy port handles to device memory using MSCCLPP gpuCallocShared
+  std::shared_ptr<mscclpp::PortChannelDeviceHandle> d_sendHandles = nullptr;
+  std::shared_ptr<mscclpp::PortChannelDeviceHandle> d_recvHandles = nullptr;
 
   if (!sendPortHandles.empty()) {
-    utils::CUDA_CHECK(cudaMalloc(&d_sendHandles, sendPortHandles.size() * sizeof(mscclpp::PortChannelDeviceHandle)));
-    utils::CUDA_CHECK(cudaMemcpy(d_sendHandles, sendPortHandles.data(),
-                                 sendPortHandles.size() * sizeof(mscclpp::PortChannelDeviceHandle),
-                                 cudaMemcpyHostToDevice));
+    d_sendHandles = mscclpp::detail::gpuCallocShared<mscclpp::PortChannelDeviceHandle>(sendPortHandles.size());
+    mscclpp::gpuMemcpy(d_sendHandles.get(), sendPortHandles.data(), sendPortHandles.size(), cudaMemcpyHostToDevice);
   }
 
   if (!recvPortHandles.empty()) {
-    utils::CUDA_CHECK(cudaMalloc(&d_recvHandles, recvPortHandles.size() * sizeof(mscclpp::PortChannelDeviceHandle)));
-    utils::CUDA_CHECK(cudaMemcpy(d_recvHandles, recvPortHandles.data(),
-                                 recvPortHandles.size() * sizeof(mscclpp::PortChannelDeviceHandle),
-                                 cudaMemcpyHostToDevice));
+    d_recvHandles = mscclpp::detail::gpuCallocShared<mscclpp::PortChannelDeviceHandle>(recvPortHandles.size());
+    mscclpp::gpuMemcpy(d_recvHandles.get(), recvPortHandles.data(), recvPortHandles.size(), cudaMemcpyHostToDevice);
   }
 
   // Benchmark
@@ -128,25 +124,21 @@ std::tuple<double, double, int> runMultiGpuKernelVariant(
   if (shouldSignal) {
     // Launch signaling kernels
     if (!sendPortHandles.empty()) {
-      kernelMultiGpuSignalSend<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_sendHandles, sendPortHandles.size(),
-                                                                             maxParallel);
+      kernelMultiGpuSignalSend<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_sendHandles.get(),
+                                                                             sendPortHandles.size(), maxParallel);
       utils::CUDA_CHECK(cudaGetLastError());
     }
 
     // Launch waiting kernels
     if (!recvPortHandles.empty()) {
-      kernelMultiGpuSignalWait<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_recvHandles, recvPortHandles.size(),
-                                                                             maxParallel);
+      kernelMultiGpuSignalWait<<<threadBlocks, threadsPerBlock, 0, stream>>>(d_recvHandles.get(),
+                                                                             recvPortHandles.size(), maxParallel);
       utils::CUDA_CHECK(cudaGetLastError());
     }
   }
 
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
   timer.stop();
-
-  // Cleanup device memory
-  if (d_sendHandles) cudaFree(d_sendHandles);
-  if (d_recvHandles) cudaFree(d_recvHandles);
 
   const int totalSignals = numTriggers * maxParallel * (sendPortHandles.size() + recvPortHandles.size());
   double throughput = totalSignals / timer.elapsedSeconds();
@@ -180,7 +172,7 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
 
   // Only create connections for GPUs that need to communicate
   if (config.shouldParticipateInSignaling(rank)) {
-    mscclpp::Transport selectedTransport = ibTransports[config.getGroupIndex(rank) % ibTransports.size()];
+    mscclpp::Transport selectedTransport = ibTransports[rank % ibTransports.size()];
     transport |= selectedTransport;
 
     // Get all ranks that participate in cross-group signaling
@@ -208,9 +200,6 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
 
   int cudaDevice, numaNode;
   setupCuda(cudaDevice, numaNode);
-
-  // Create FIFO
-  auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
 
   cudaStream_t stream;
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
@@ -272,7 +261,7 @@ void runMultiGpuTest(const MultiGpuTestConfig& config, const mscclpp::test::Test
 
     if (config.shouldParticipateInSignaling(rank)) {
       auto [throughput, duration, totalSignals] =
-          runMultiGpuKernelVariant(hostFifo, stream, effectiveParallel, rank, sendPortHandles, recvPortHandles, config);
+          runMultiGpuKernelVariant(stream, effectiveParallel, rank, sendPortHandles, recvPortHandles, config);
 
       std::string prefix = "p" + std::to_string(effectiveParallel) + "_";
       combinedMetrics[prefix + "throughput_signals_per_sec"] = double(int(throughput * 10)) / 10.0;
