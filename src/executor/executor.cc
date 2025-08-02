@@ -273,6 +273,7 @@ struct Executor::Impl {
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
       }
+      context.registeredMemories[{bufferType, rank}] = std::move(memory);
     }
   }
 
