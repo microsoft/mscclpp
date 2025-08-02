@@ -57,7 +57,7 @@ struct RegisteredMemory::Impl {
   std::vector<TransportInfo> transportInfos;
 
   // Only used for IB transport
-  std::shared_ptr<const IbMr> ibMr;
+  std::unique_ptr<const IbMr> ibMr;
 
   // For sharing memory handle via file descriptor
   int fileDesc = -1;

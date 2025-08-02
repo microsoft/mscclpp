@@ -405,8 +405,8 @@ std::shared_ptr<IbQp> IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSe
       new IbQp(this->ctx, this->pd, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
 }
 
-std::shared_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::shared_ptr<const IbMr>(new IbMr(this->pd, buff, size));
+std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
+  return std::unique_ptr<const IbMr>(new IbMr(this->pd, buff, size));
 }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {

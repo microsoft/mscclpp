@@ -119,7 +119,7 @@ class IbCtx {
 
   std::shared_ptr<IbQp> createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
                                  int port = -1);
-  std::shared_ptr<const IbMr> registerMr(void* buff, std::size_t size);
+  std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -129,7 +129,7 @@ class IbCtx {
                                  [[maybe_unused]] int maxWrPerSend, [[maybe_unused]] int port = -1) {
     return nullptr;
   }
-  std::shared_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
+  std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
     return nullptr;
   }
 #endif
