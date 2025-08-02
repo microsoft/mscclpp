@@ -3,7 +3,7 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8",
+            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2",
             "USERNAME": "devuser",
             "SSH_PORT": "22345"
         }
@@ -28,7 +28,7 @@
                 "terminal.integrated.defaultProfile.linux": "bash",
                 "C_Cpp.default.includePath": [
                     "${workspaceFolder}/**",
-                    "/usr/local/cuda/include",
+                    "/opt/rocm/include",
                     "/usr/include"
                 ],
                 "C_Cpp.default.compilerPath": "/usr/bin/gcc",
@@ -44,10 +44,13 @@
         "--net=host",
         "--ipc=host",
         "--ulimit=memlock=-1:-1",
-        "--gpus=all"
+        "--security-opt=seccomp=unconfined",
+        "--group-add=video",
+        "--device=/dev/kfd",
+        "--device=/dev/dri"
     ],
     "workspaceFolder": "/home/devuser/mscclpp",
     "workspaceMount": "source=${localWorkspaceFolder},target=/home/devuser/mscclpp,type=bind,consistency=cached",
     "postStartCommand": "sudo service ssh start",
-    "postCreateCommand": "bash /home/devuser/mscclpp/tools/install.sh nvidia /usr"
+    "postCreateCommand": "bash /home/devuser/mscclpp/tools/install.sh amd /usr"
 }
