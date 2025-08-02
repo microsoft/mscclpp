@@ -1,136 +1,95 @@
 {
-  "name": "allreduce_pairs",
+  "name": "allreduce",
   "collective": "allreduce",
   "protocol": "Simple",
   "inplace": true,
-  "num_threads_per_block": 512,
+  "reuse_resources": false,
   "gpus": [
     {
       "id": 0,
-      "inputChunks": 8,
-      "outputChunks": 0,
-      "scratchChunks": 0,
-      "chunkGroups": 4,
+      "input_chunks": 16,
+      "output_chunks": 16,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 2
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 0
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 0,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 0
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 0
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
                 }
               ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 0,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 0,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 0,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 0
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 2
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -140,122 +99,82 @@
           "id": 1,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 6
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 4
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 1,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 4
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 4
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
                 }
               ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 4,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 4,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 1,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 4
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 6
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -264,122 +183,82 @@
           "id": 2,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 3
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 1
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 2,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 1
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 1
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
                 }
               ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 1,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 1,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 2,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 1
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 3
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -388,122 +267,418 @@
           "id": 3,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 7
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 5
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 3,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 5
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 5
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
                 }
               ],
-              "src": 0,
-              "srcbuff": "i",
-              "srcoff": 5,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 5,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 3,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 5
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 7
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 4,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 4,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 4,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 4,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                4
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 5,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 5,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 5,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 5,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                5
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 6,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 6,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 6,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 6,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                6
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 7,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 7,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 7,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 7,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                7
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -511,144 +686,115 @@
       ],
       "channels": [
         {
-          "srcbuff": "i",
-          "dstbuff": "i",
-          "type": "sm",
-          "connectedTo": [
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1,
+            1,
+            1,
             1,
             1,
             1,
             1
           ]
         }
-      ]
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
     },
     {
       "id": 1,
-      "inputChunks": 8,
-      "outputChunks": 0,
-      "scratchChunks": 0,
-      "chunkGroups": 4,
+      "input_chunks": 16,
+      "output_chunks": 16,
+      "scratch_chunks": 0,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 0
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 2
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 0,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 2
+                  "type": "i",
+                  "index": 8,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 8,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 2
+                  "type": "i",
+                  "index": 8,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 8,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 2,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 2,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 0,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 2
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 0
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -658,122 +804,82 @@
           "id": 1,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 4
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 6
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 1,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 6
+                  "type": "i",
+                  "index": 9,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 9,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 6
+                  "type": "i",
+                  "index": 9,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 9,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 6,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 6,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 1,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 6
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 4
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -782,122 +888,82 @@
           "id": 2,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 1
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 3
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 2,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 3
+                  "type": "i",
+                  "index": 10,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 10,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 3
+                  "type": "i",
+                  "index": 10,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 10,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 3,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 3,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 2,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 3
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 1
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -906,122 +972,418 @@
           "id": 3,
           "ops": [
             {
-              "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 5
-                }
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 7
-                }
+              "name": "rlxwait",
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 3,
-                  "step": 1
-                }
-              ]
+              "name": "nop"
             },
             {
-              "name": "rrcs",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
+              "name": "rres",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 7
+                  "type": "i",
+                  "index": 11,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 11,
+                  "size": 1
                 }
               ],
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
+              "dst_buff": [
                 {
-                  "id": 0,
-                  "off": 7
+                  "type": "i",
+                  "index": 11,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 11,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcbuff": "i",
-              "srcoff": 7,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 7,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "nop",
-              "deps": [
-                {
-                  "tb": 3,
-                  "step": 3
-                }
-              ]
+              "name": "nop"
             },
             {
               "name": "signal",
-              "o_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "o_cids": [
-                {
-                  "id": 0,
-                  "off": 7
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             },
             {
               "name": "wait",
-              "i_buff": {
-                "src": "i",
-                "dst": "i"
-              },
-              "i_cids": [
-                {
-                  "id": 0,
-                  "off": 5
-                }
+              "channel_ids": [
+                0
               ],
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "i",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
                 3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 12,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 12,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 12,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 12,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                4
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 13,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 13,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 13,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 13,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                5
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 14,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 14,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 14,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 14,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                6
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 7,
+          "ops": [
+            {
+              "name": "rlxsignal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "rlxwait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 15,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 15,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 15,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 15,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                7
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -1029,17 +1391,34 @@
       ],
       "channels": [
         {
-          "srcbuff": "i",
-          "dstbuff": "i",
-          "type": "sm",
-          "connectedTo": [
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0,
+            0,
+            0,
             0,
             0,
             0,
             0
           ]
         }
-      ]
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
     }
-  ]
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
 }
