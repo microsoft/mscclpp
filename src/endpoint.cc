@@ -17,6 +17,7 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
     : transport_(config.transport),
       device_(config.device),
       hostHash_(getHostHash()),
+      pidHash_(getPidHash()),
       maxWriteQueueSize_(config.maxWriteQueueSize) {
   if (device_.type == DeviceType::GPU && device_.id < 0) {
     MSCCLPP_CUDATHROW(cudaGetDevice(&(device_.id)));
@@ -44,6 +45,7 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   it = detail::deserialize(it, transport_);
   it = detail::deserialize(it, device_);
   it = detail::deserialize(it, hostHash_);
+  it = detail::deserialize(it, pidHash_);
   if (AllIBTransports.has(transport_)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
@@ -59,6 +61,10 @@ MSCCLPP_API_CPP Transport Endpoint::transport() const { return pimpl_->transport
 
 MSCCLPP_API_CPP const Device& Endpoint::device() const { return pimpl_->device_; }
 
+MSCCLPP_API_CPP uint64_t Endpoint::hostHash() const { return pimpl_->hostHash_; }
+
+MSCCLPP_API_CPP uint64_t Endpoint::pidHash() const { return pimpl_->pidHash_; }
+
 MSCCLPP_API_CPP int Endpoint::maxWriteQueueSize() const { return pimpl_->maxWriteQueueSize_; }
 
 MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
@@ -66,6 +72,7 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->transport_);
   detail::serialize(data, pimpl_->device_);
   detail::serialize(data, pimpl_->hostHash_);
+  detail::serialize(data, pimpl_->pidHash_);
   if (AllIBTransports.has(pimpl_->transport_)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
   }

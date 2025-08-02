@@ -41,7 +41,7 @@ fi
 if $LINT_CPP; then
     echo "Linting C++ code..."
     # Find all git-tracked files with .c/.h/.cpp/.hpp/.cc/.cu/.cuh extensions
-    files=$(git ls-files --cached | grep -E '\.(c|h|cpp|hpp|cc|cu|cuh)$')
+    files=$(git -C "$PROJECT_ROOT" ls-files --cached | grep -E '\.(c|h|cpp|hpp|cc|cu|cuh)$' | sed "s|^|$PROJECT_ROOT/|")
     if [ -n "$files" ]; then
         if $DRY_RUN; then
             clang-format -style=file --dry-run $files
@@ -54,7 +54,7 @@ fi
 if $LINT_PYTHON; then
     echo "Linting Python code..."
     # Find all git-tracked files with .py extension
-    files=$(git ls-files --cached | grep -E '\.py$')
+    files=$(git -C "$PROJECT_ROOT" ls-files --cached | grep -E '\.py$' | sed "s|^|$PROJECT_ROOT/|")
     if [ -n "$files" ]; then
         if $DRY_RUN; then
             python3 -m black --check --diff $files
