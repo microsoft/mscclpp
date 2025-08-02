@@ -18,16 +18,16 @@ using SemaphoreId = uint32_t;
 using MemoryId = uint32_t;
 
 using TriggerType = uint64_t;
-const TriggerType TriggerData = 0x1;  // Trigger a data transfer.
-const TriggerType TriggerFlag = 0x2;  // Trigger a signaling.
-const TriggerType TriggerSync = 0x4;  // Trigger a flush.
+constexpr TriggerType TriggerData = 0x1;  // Trigger a data transfer.
+constexpr TriggerType TriggerFlag = 0x2;  // Trigger a signaling.
+constexpr TriggerType TriggerSync = 0x4;  // Trigger a flush.
 
-#define MSCCLPP_BITS_SIZE 32
-#define MSCCLPP_BITS_OFFSET 32
-#define MSCCLPP_BITS_MEMORY_ID 9
-#define MSCCLPP_BITS_TYPE 3
-#define MSCCLPP_BITS_SEMAPHORE_ID 10
-#define MSCCLPP_BITS_FIFO_RESERVED 1
+constexpr unsigned int TriggerBitsSize = 32;
+constexpr unsigned int TriggerBitsOffset = 32;
+constexpr unsigned int TriggerBitsMemoryId = 9;
+constexpr unsigned int TriggerBitsType = 3;
+constexpr unsigned int TriggerBitsSemaphoreId = 10;
+constexpr unsigned int TriggerBitsFifoReserved = 1;
 
 /// Basic structure of each work element in the FIFO.
 union ChannelTrigger {
@@ -35,18 +35,18 @@ union ChannelTrigger {
   // The summation of number of bits must be 128 or less.
   struct {
     // First 64 bits: value[0]
-    uint64_t size : MSCCLPP_BITS_SIZE;
-    uint64_t srcOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t : (64 - MSCCLPP_BITS_SIZE - MSCCLPP_BITS_OFFSET);  // ensure 64-bit alignment
+    uint64_t size : TriggerBitsSize;
+    uint64_t srcOffset : TriggerBitsOffset;
+    uint64_t : (64 - TriggerBitsSize - TriggerBitsOffset);  // ensure 64-bit alignment
     // Second 64 bits: value[1]
-    uint64_t dstOffset : MSCCLPP_BITS_OFFSET;
-    uint64_t srcMemoryId : MSCCLPP_BITS_MEMORY_ID;
-    uint64_t dstMemoryId : MSCCLPP_BITS_MEMORY_ID;
-    uint64_t type : MSCCLPP_BITS_TYPE;
-    uint64_t semaphoreId : MSCCLPP_BITS_SEMAPHORE_ID;
-    uint64_t : (64 - MSCCLPP_BITS_OFFSET - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_MEMORY_ID - MSCCLPP_BITS_TYPE -
-                MSCCLPP_BITS_SEMAPHORE_ID - MSCCLPP_BITS_FIFO_RESERVED);  // ensure 64-bit alignment
-    uint64_t reserved : MSCCLPP_BITS_FIFO_RESERVED;
+    uint64_t dstOffset : TriggerBitsOffset;
+    uint64_t srcMemoryId : TriggerBitsMemoryId;
+    uint64_t dstMemoryId : TriggerBitsMemoryId;
+    uint64_t type : TriggerBitsType;
+    uint64_t semaphoreId : TriggerBitsSemaphoreId;
+    uint64_t : (64 - TriggerBitsOffset - TriggerBitsMemoryId - TriggerBitsMemoryId - TriggerBitsType -
+                TriggerBitsSemaphoreId - TriggerBitsFifoReserved);  // ensure 64-bit alignment
+    uint64_t reserved : TriggerBitsFifoReserved;
   } fields;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -66,28 +66,28 @@ union ChannelTrigger {
   /// @param semaphoreId The ID of the semaphore.
   MSCCLPP_DEVICE_INLINE ChannelTrigger(TriggerType type, MemoryId dst, uint64_t dstOffset, MemoryId src,
                                        uint64_t srcOffset, uint64_t bytes, int semaphoreId) {
-    MSCCLPP_ASSERT_DEVICE(type < (1ULL << MSCCLPP_BITS_TYPE), "type is too large");
-    MSCCLPP_ASSERT_DEVICE(dst < (1ULL << MSCCLPP_BITS_MEMORY_ID), "dst is too large");
-    MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << MSCCLPP_BITS_OFFSET), "dstOffset is too large");
-    MSCCLPP_ASSERT_DEVICE(src < (1ULL << MSCCLPP_BITS_MEMORY_ID), "src is too large");
-    MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << MSCCLPP_BITS_OFFSET), "srcOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(type < (1ULL << TriggerBitsType), "type is too large");
+    MSCCLPP_ASSERT_DEVICE(dst < (1ULL << TriggerBitsMemoryId), "dst is too large");
+    MSCCLPP_ASSERT_DEVICE(dstOffset < (1ULL << TriggerBitsOffset), "dstOffset is too large");
+    MSCCLPP_ASSERT_DEVICE(src < (1ULL << TriggerBitsMemoryId), "src is too large");
+    MSCCLPP_ASSERT_DEVICE(srcOffset < (1ULL << TriggerBitsOffset), "srcOffset is too large");
     MSCCLPP_ASSERT_DEVICE(bytes != 0, "bytes must not be zero");
-    MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << MSCCLPP_BITS_SIZE), "bytes is too large");
-    MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << MSCCLPP_BITS_SEMAPHORE_ID), "semaphoreId is too large");
-    constexpr uint64_t maskSize = (1ULL << MSCCLPP_BITS_SIZE) - 1;
-    constexpr uint64_t maskSrcOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
-    constexpr uint64_t maskDstOffset = (1ULL << MSCCLPP_BITS_OFFSET) - 1;
-    constexpr uint64_t maskSrcMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
-    constexpr uint64_t maskDstMemoryId = (1ULL << MSCCLPP_BITS_MEMORY_ID) - 1;
-    constexpr uint64_t maskType = (1ULL << MSCCLPP_BITS_TYPE) - 1;
-    constexpr uint64_t maskSemaphoreId = (1ULL << MSCCLPP_BITS_SEMAPHORE_ID) - 1;
-    value.fst = (((srcOffset & maskSrcOffset) << MSCCLPP_BITS_SIZE) + (bytes & maskSize));
-    value.snd = (((((((((semaphoreId & maskSemaphoreId) << MSCCLPP_BITS_TYPE) + ((uint64_t)type & maskType))
-                      << MSCCLPP_BITS_MEMORY_ID) +
+    MSCCLPP_ASSERT_DEVICE(bytes < (1ULL << TriggerBitsSize), "bytes is too large");
+    MSCCLPP_ASSERT_DEVICE(semaphoreId < (1ULL << TriggerBitsSemaphoreId), "semaphoreId is too large");
+    constexpr uint64_t maskSize = (1ULL << TriggerBitsSize) - 1;
+    constexpr uint64_t maskSrcOffset = (1ULL << TriggerBitsOffset) - 1;
+    constexpr uint64_t maskDstOffset = (1ULL << TriggerBitsOffset) - 1;
+    constexpr uint64_t maskSrcMemoryId = (1ULL << TriggerBitsMemoryId) - 1;
+    constexpr uint64_t maskDstMemoryId = (1ULL << TriggerBitsMemoryId) - 1;
+    constexpr uint64_t maskType = (1ULL << TriggerBitsType) - 1;
+    constexpr uint64_t maskSemaphoreId = (1ULL << TriggerBitsSemaphoreId) - 1;
+    value.fst = (((srcOffset & maskSrcOffset) << TriggerBitsSize) + (bytes & maskSize));
+    value.snd = (((((((((semaphoreId & maskSemaphoreId) << TriggerBitsType) + ((uint64_t)type & maskType))
+                      << TriggerBitsMemoryId) +
                      (dst & maskDstMemoryId))
-                    << MSCCLPP_BITS_MEMORY_ID) +
+                    << TriggerBitsMemoryId) +
                    (src & maskSrcMemoryId))
-                  << MSCCLPP_BITS_OFFSET) +
+                  << TriggerBitsOffset) +
                  (dstOffset & maskDstOffset));
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
