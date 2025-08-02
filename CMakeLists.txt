@@ -119,9 +119,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   add_compile_definitions(DEBUG_BUILD)
 endif()
 
-# Format targets
-include(${PROJECT_SOURCE_DIR}/cmake/AddFormatTargets.cmake)
-
 find_package(IBVerbs)
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
