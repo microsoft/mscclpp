@@ -68,7 +68,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       } else {
         transportInfo.rootPid = getpid();
         if (transportInfo.rootPid < 0) {
-          throw mscclpp::SysError("getpid() failed", errno);
+          throw SysError("getpid() failed", errno);
         }
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&transportInfo.fileDesc, handle, getNvlsMemHandleType(), 0));
         this->fileDesc = transportInfo.fileDesc;

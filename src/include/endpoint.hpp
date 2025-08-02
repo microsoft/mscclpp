@@ -21,6 +21,7 @@ struct Endpoint::Impl {
   Transport transport_;
   Device device_;
   uint64_t hostHash_;
+  uint64_t pidHash_;
   int maxWriteQueueSize_;
 
   // The following are only used for IB and are undefined for other transports.
