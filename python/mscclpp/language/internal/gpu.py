@@ -82,6 +82,7 @@ class Gpu:
 
         new_channels = {ChannelType.memory: [], ChannelType.port: [], ChannelType.switch: []}
         new_semaphores = []
+        
         if ChannelType.memory in self._channels:
             for rank in self._channels[ChannelType.memory].connected_to:
                 for _ in range(instances):
