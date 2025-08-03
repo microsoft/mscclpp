@@ -4,6 +4,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <functional>
 #include <iostream>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
@@ -74,17 +75,6 @@ __global__ void bidirPacketCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHan
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
-void bidirCopy(void *devHandle, size_t copyBytes, int myRank, cudaStream_t stream) {
-  bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle), copyBytes,
-                                           myRank);
-}
-
-void bidirPacketCopy(void *devHandle, size_t copyBytes, int myRank, cudaStream_t stream) {
-  static uint32_t flag = 1;
-  bidirPacketCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
-                                                 copyBytes, myRank, flag++);
-}
-
 void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int myRank = gpuId;
@@ -93,7 +83,7 @@ void worker(int gpuId) {
   const int iter = 1000;
   const mscclpp::Transport transport = mscclpp::Transport::CudaIpc;
   const size_t bufferBytes = 256 * 1024 * 1024;
-  const size_t pktBufferBytes = 512 * 1024 * 1024;
+  const size_t pktBufferBytes = 256 * 1024 * 1024;
 
   log("GPU ", gpuId, ": Preparing for tests ...");
 
@@ -105,21 +95,45 @@ void worker(int gpuId) {
   auto sema = comm.buildSemaphore(conn, remoteRank).get();
 
   mscclpp::GpuBuffer buffer(bufferBytes);
+  mscclpp::GpuBuffer pktBuffer(pktBufferBytes);
   mscclpp::RegisteredMemory localRegMem = comm.registerMemory(buffer.data(), buffer.bytes(), transport);
+  mscclpp::RegisteredMemory localPktRegMem = comm.registerMemory(pktBuffer.data(), pktBuffer.bytes(), transport);
 
   comm.sendMemory(localRegMem, remoteRank);
+  comm.sendMemory(localPktRegMem, remoteRank);
   auto remoteRegMemFuture = comm.recvMemory(remoteRank);
+  auto remotePktRegMemFuture = comm.recvMemory(remoteRank);
   mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
+  mscclpp::RegisteredMemory remotePktRegMem = remotePktRegMemFuture.get();
 
-  mscclpp::GpuBuffer pktBuffer(pktBufferBytes);
-  mscclpp::MemoryChannel memChan(sema, remoteRegMem, localRegMem, pktBuffer.data());
+  mscclpp::MemoryChannel memChan(sema, remoteRegMem, localRegMem.data());
+  mscclpp::MemoryChannel memPktChan(sema, remotePktRegMem, localRegMem.data(), localPktRegMem.data());
+
   auto memChanHandle = memChan.deviceHandle();
+  auto memPktChanHandle = memPktChan.deviceHandle();
+
   void *devHandle;
+  void *devPktHandle;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(memChanHandle)));
+  MSCCLPP_CUDATHROW(cudaMalloc(&devPktHandle, sizeof(memPktChanHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle, &memChanHandle, sizeof(memChanHandle), cudaMemcpyHostToDevice));
+  MSCCLPP_CUDATHROW(cudaMemcpy(devPktHandle, &memPktChanHandle, sizeof(memPktChanHandle), cudaMemcpyHostToDevice));
 
   cudaStream_t stream;
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+
+  std::function<void(size_t)> kernels[2];
+
+  kernels[0] = [&](size_t copyBytes) {
+    bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
+                                             copyBytes, myRank);
+  };
+
+  kernels[1] = [&](size_t copyBytes) {
+    static uint32_t flag = 1;
+    bidirPacketCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devPktHandle),
+                                                   copyBytes, myRank, flag++);
+  };
 
   cudaEvent_t start, end;
   if (gpuId == 0) {
@@ -129,10 +143,8 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   bootstrap->barrier();
 
-  void (*kernels[])(void *, size_t, int, cudaStream_t) = {bidirCopy, bidirPacketCopy};
-
-  for (auto kernel : kernels) {
-    const std::string testName = (kernel == bidirCopy) ? "Bidir Copy" : "Bidir Packet Copy";
+  for (int kernelId = 0; kernelId < 2; ++kernelId) {
+    const std::string testName = (kernelId == 0) ? "Bidir Copy" : "Bidir Packet Copy";
     for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
       cudaGraph_t graph;
       cudaGraphExec_t graphExec;
@@ -141,7 +153,7 @@ void worker(int gpuId) {
       MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
 
       for (int i = 0; i < iter; ++i) {
-        kernel(devHandle, copyBytes, myRank, stream);
+        kernels[kernelId](copyBytes);
       }
 
       MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
