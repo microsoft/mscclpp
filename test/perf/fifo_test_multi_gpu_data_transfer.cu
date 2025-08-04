@@ -19,11 +19,6 @@
 
 using namespace mscclpp::test;
 
-// Constants for trigger calculation
-constexpr int MIN_TRIGGERS = 1000;
-constexpr int TRIGGERS_PER_FIFO_SIZE = 10;
-
-__constant__ mscclpp::FifoDeviceHandle gFifoDeviceHandle;
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
 // New kernels for bidirectional data transfer
@@ -93,13 +88,9 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
   mscclpp::numaBind(numaNode);
 }
 
-std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo,
-                                                             cudaStream_t stream, int numParallel, int rank,
+std::tuple<double, double, int> runDataTransferKernelVariant(cudaStream_t stream, int numParallel, int rank,
                                                              mscclpp::PortChannelDeviceHandle portChannelHandle,
                                                              int* sendBuffer, int* recvBuffer, int numElements) {
-  // Calculate triggers based on FIFO size
-  const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
-
   int threadsPerBlock = std::min(numParallel, 512);
   int threadBlocks = (numParallel + threadsPerBlock - 1) / threadsPerBlock;
   threadBlocks = std::max(1, threadBlocks);  // Ensure at least 1 block
@@ -144,14 +135,14 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
   return {throughput, duration_us, totalElements};
 }
 
-void runDataTransferTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
+void runDataTransferTestVariant(cudaStream_t stream, int numParallel,
                                 nlohmann::ordered_json& combinedMetrics, int rank,
                                 mscclpp::PortChannelDeviceHandle portChannelHandle, int* sendBuffer, int* recvBuffer,
                                 int numElements) {
   // Run simultaneous bidirectional data transfer
   printf("=== Running simultaneous bidirectional GPU0 ↔ GPU1 transfer ===\n");
   auto [throughput, duration, totalElements] = runDataTransferKernelVariant(
-      hostFifo, stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
+      stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
 
   auto formatThroughput = [](double thru) {
     return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
@@ -266,11 +257,6 @@ void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::Test
   int cudaDevice, numaNode;
   setupCuda(cudaDevice, numaNode);
 
-  auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
-
-  mscclpp::FifoDeviceHandle hostHandle = hostFifo->deviceHandle();
-  utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
-
   cudaStream_t stream;
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
 
@@ -330,7 +316,7 @@ void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::Test
     // Add synchronization before each test iteration
     MPI_Barrier(MPI_COMM_WORLD);
 
-    runDataTransferTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer,
+    runDataTransferTestVariant(stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer,
                                recvBuffer, halfElements);
 
     // Add synchronization after each test iteration
@@ -338,7 +324,7 @@ void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::Test
   }
 
   std::map<std::string, std::string> testParams;
-  testParams["fifo_size"] = std::to_string(static_cast<int>(hostFifo->size()));
+  testParams["fifo_size"] = std::to_string(static_cast<int>(config.fifoSize));
   testParams["elements_per_gpu"] = std::to_string(halfElements);
 
   // Add parallelism levels to test parameters
