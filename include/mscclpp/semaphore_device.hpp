@@ -77,7 +77,7 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// Relaxed wait; no memory completion guarantee. Use it only for synchronizing execution, not data.
   MSCCLPP_DEVICE_INLINE void relaxedWait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
     auto expected = incExpectedInbound();
-    POLL_MAYBE_JAILBREAK((loadInbound() < expected), maxSpinCount);
+    POLL_MAYBE_JAILBREAK((loadInboundRelaxed() < expected), maxSpinCount);
   }
 
   /// Signal remote device, ensures prior memory ops complete.
@@ -113,6 +113,12 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// @return The inbound value.
   MSCCLPP_DEVICE_INLINE uint64_t loadInbound() {
     return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderAcquire);
+  }
+
+  /// Thread-safe read of inbound value without memory completion guarantee.
+  /// @return The inbound value.
+  MSCCLPP_DEVICE_INLINE uint64_t loadInboundRelaxed() {
+    return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderRelaxed);
   }
 
   /// Thread-safe read of outbound value.

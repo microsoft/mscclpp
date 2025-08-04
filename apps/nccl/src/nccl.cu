@@ -20,12 +20,12 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 #include <dlfcn.h>
+#include <mscclpp/nccl.h>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
 #include "debug.h"
-#include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -660,7 +660,7 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
-  if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
+  if (mscclpp::UniqueIdBytes != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
   return ncclSuccess;
