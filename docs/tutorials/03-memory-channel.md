@@ -17,27 +17,33 @@ $ cd examples/tutorials/03-memory-channel
 $ make
 ```
 
-Run the example with `./perf_memory_channel`. If you are in a container, you may need to run with root privileges. You should see output similar to the following:
+Run the example with `./bidir_memory_channel`. If you are in a container, you may need to run with root privileges. You should see output similar to the following:
 
 ```
-# ./perf_memory_channel
-GPU 1: Preparing for bidirectional copy tests ...
-GPU 0: Preparing for bidirectional copy tests ...
-GPU 0: bytes 1024, elapsed 0.00654806 ms/iter, BW 0.156382 GB/s
-GPU 0: bytes 1048576, elapsed 0.0092823 ms/iter, BW 112.965 GB/s
-GPU 0: bytes 134217728, elapsed 0.388549 ms/iter, BW 345.433 GB/s
+# ./bidir_memory_channel
+GPU 1: Preparing for tests ...
+GPU 0: Preparing for tests ...
+GPU 0: [Bidir Put] bytes 1024, elapsed 0.0065079 ms/iter, BW 0.157347 GB/s
+GPU 0: [Bidir Put] bytes 1048576, elapsed 0.00926096 ms/iter, BW 113.225 GB/s
+GPU 0: [Bidir Put] bytes 134217728, elapsed 0.389238 ms/iter, BW 344.822 GB/s
+GPU 0: [Bidir Get] bytes 1024, elapsed 0.00437581 ms/iter, BW 0.234014 GB/s
+GPU 0: [Bidir Get] bytes 1048576, elapsed 0.00768634 ms/iter, BW 136.421 GB/s
+GPU 0: [Bidir Get] bytes 134217728, elapsed 0.417454 ms/iter, BW 321.515 GB/s
+GPU 0: [Bidir Put Packets] bytes 1024, elapsed 0.00407117 ms/iter, BW 0.251525 GB/s
+GPU 0: [Bidir Put Packets] bytes 1048576, elapsed 0.0104925 ms/iter, BW 99.936 GB/s
+GPU 0: [Bidir Put Packets] bytes 134217728, elapsed 1.0188 ms/iter, BW 131.741 GB/s
 Succeed!
 ```
 
 The example code uses localhost port `50505` by default. If the port is already in use, you can change it by modifying the `PORT_NUMER` macro in the code.
 
 ```{caution}
-Note that this example is **NOT** a performance benchmark. It is designed to demonstrate the usage of `MemoryChannel` and how to use it for data transfer between GPUs. For the best performance, we need to tune the number of thread blocks and the number of threads per block according to the copy size and the GPU specifications. In addition, the synchronization can be more relaxed depending on the application scenario and implementation.
+Note that this example is **NOT** a performance benchmark. The performance numbers are provided to give you an idea of the performance characteristics of `MemoryChannel`. For the best performance, we need to tune the number of thread blocks and the number of threads per block according to the copy size and the hardware specifications. In addition, the synchronization can be more optimized depending on the application scenario and implementation.
 ```
 
 ## Code Overview
 
-The example code establishes a channel in a similar way to that in the [Bootstrap and Communicator](./02-bootstrap-and-communicator.md) tutorial, but creates a `MemoryChannel` instead of a `BaseMemoryChannel`. To create a `MemoryChannel`, we need to specify the local and remote `RegisteredMemory` objects, which represent the memory regions that will be used for data transfer. The following diagram illustrates how the `RegisteredMemory` objects are created and used to establish a `MemoryChannel`:
+The example code establishes a channel in a similar way to that in the [Bootstrap and Communicator](./02-bootstrap-and-communicator.md) tutorial, but creates a `MemoryChannel` instead of a `BaseMemoryChannel`. To create a `MemoryChannel`, we need to specify the local and remote `RegisteredMemory` objects, which represent the memory regions that the channel can transfer data to/from. The following diagram illustrates how the `RegisteredMemory` objects are created and used to establish a `MemoryChannel`:
 
 ```{mermaid}
 sequenceDiagram
@@ -61,12 +67,13 @@ sequenceDiagram
 
 The procedure of building a `Semaphore` is explained in the [Basic Concepts](./01-basic-concepts.md) tutorial.
 
+The example code demonstrates three different data transfer methods, `put()`, `get()`, and `putPackets()`. The code examines bidirectional data transfer performance of the three methods.
+
 ## RegisteredMemory and GpuBuffer
 
 **RegisteredMemory** represents a memory region that can be accessed by local or remote processes. It provides a way to register a memory region for communication, allowing access to the remote memory. In the example code, each process creates a local `RegisteredMemory` object as follows:
 
 ```cpp
-// From perf_memory_channel.cu, lines 85-86
 mscclpp::GpuBuffer buffer(bufferBytes);
 mscclpp::RegisteredMemory localRegMem = comm.registerMemory(buffer.data(), buffer.bytes(), transport);
 ```
@@ -83,10 +90,9 @@ If you are an optimization expert, we recommend you learn about the details of `
 
 ## MemoryChannel
 
-**MemoryChannel** is a specialized channel that allows direct access to remote GPU memory. In addition to the synchronization methods that are also provided by `BaseMemoryChannel`, `MemoryChannel` provides methods for data access and transfer between the local and remote memory regions. To construct a `MemoryChannel`, we need to specify the local and remote `RegisteredMemory` objects. `RegisteredMemory` provides `serialize()` and `deserialize()` methods to convert the memory region into a serialized format that can be sent over the network. While any inter-process communication (IPC) mechanism can be used to send the serialized data, MSCCL++ `Communicator` provides `sendMemory()` and `recvMemory()` methods to send and receive `RegisteredMemory` objects between processes. The following code shows an example:
+**MemoryChannel** is a specialized channel that allows direct access to remote GPU memory. In addition to the synchronization methods that are also provided by `BaseMemoryChannel`, `MemoryChannel` provides methods for data access and transfer between the local and remote memory regions. To construct a `MemoryChannel`, we need to specify the local and remote `RegisteredMemory` objects. `RegisteredMemory` provides `serialize()` and `deserialize()` methods to convert metadata of the memory region into a serialized format that can be sent over the network. While any IPC mechanism can be used to send the serialized data, MSCCL++ `Communicator` provides `sendMemory()` and `recvMemory()` methods to send and receive `RegisteredMemory` objects between processes. The following code shows an example:
 
 ```cpp
-// From perf_memory_channel.cu, lines 88-90
 comm.sendMemory(localRegMem, remoteRank);
 auto remoteRegMemFuture = comm.recvMemory(remoteRank);
 mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
@@ -95,11 +101,98 @@ mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
 After the `RegisteredMemory` objects are exchanged, we can create a `MemoryChannel` as follows:
 
 ```cpp
-// From perf_memory_channel.cu, line 93
-mscclpp::MemoryChannel memChan(sema, remoteRegMem, localRegMem, pktBuffer.data());
+mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem.data());
 ```
 
-Here, `sema` is a pre-built semaphore that is used for synchronization methods, `remoteRegMem` is the remote `RegisteredMemory` object, and `localRegMem` is the local `RegisteredMemory` object. The `pktBuffer.data()` is an optional buffer that can be provided to enable packet-based communication methods of `MemoryChannel`. Packets will be explained in the [Packets](#packets) section.
+Here, `sema` is a pre-built semaphore that is used for synchronization methods, which is introduced in the [Basic Concepts](./01-basic-concepts.md) tutorial. The `remoteRegMem` and `localRegMem` are the destination and source memory regions, respectively. The following diagram illustrates how `memChan` channel uses these memory regions (A and B representing the two GPUs):
 
-(=packets)
+```{mermaid}
+flowchart TD
+    RegMemA -->|"put() from A"| RegMemB
+    RegMemB -->|"put() from B"| RegMemA
+    RegMemB -->|"get() from A"| RegMemA
+    RegMemA -->|"get() from B"| RegMemB
+```
+
+### Copy with `put()`
+
+The example code demonstrates a bidirectional data copy between two GPUs using `MemoryChannel` interfaces. Below is the GPU kernel code that performs the data copy using the `put()` method:
+
+```cpp
+__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0) {
+    devHandle->relaxedSignal();
+    devHandle->relaxedWait();
+  }
+  devSyncer.sync(gridDim.x);
+
+  const uint64_t srcOffset = myRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  devHandle->put(dstOffset, srcOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
+  devSyncer.sync(gridDim.x);
+  if (tid == 0) {
+    devHandle->signal();
+    devHandle->wait();
+  }
+}
+```
+
+Both GPUs run this kernel concurrently to copy data from their own memory regions to the other GPU's memory region. This code assumes that there is no preceding synchronization between the two GPUs. Therefore, to make sure the other side is ready to receive the data, each kernel needs to check if the other has started execution before proceeding with the data copy. This is done by a single thread (`tid == 0`) in each GPU signaling the other GPU (`relaxedSignal()`), and then waiting for the other GPU to signal that it is ready (`relaxedWait()`). We use the relaxed versions of signal and wait, because the purpose here is execution control, not data synchronization (see [Channel Interfaces in GPU Kernels](./01-basic-concepts.md#channel-interfaces) to recap). After one thread synchronizes the other GPU, all threads in the GPU kernel synchronize with `devSyncer.sync(gridDim.x)`, which ensures that all threads in the GPU kernel starts executing the data copy operation after the other GPU is ready.
+
+The `put()` method is used to copy data from the source offset in the local memory region to the destination offset in the remote memory region. The `threadId` and `numThreads` parameters are used to map the data copy operation to the participating threads in the GPU kernel. Since the example code uses all threads in the GPU kernel to perform the data copy, we pass `tid` as the `threadId` and `blockDim.x * gridDim.x` as the `numThreads`. Users can also use a subset of threads to perform the data copy, in which case they can pass the appropriate values for `threadId` and `numThreads`. This can be useful for optimizing the data copy, especially when there are multiple destinations or sources, or when there is a following computation after `put()` to pipeline the data transfer with computation.
+
+The example code assumes that there can be a following computation that consumes the received data, so it performs another synchronization after the data copy. It first synchronizes all threads in the GPU kernel (`devSyncer.sync(gridDim.x)`) to ensure that all threads have completed the data copy operation, and then the first thread (`tid == 0`) signals the other GPU that the data copy is complete (`devHandle->signal()`) and waits for the other GPU to acknowledge it (`devHandle->wait()`). This ensures that the other GPU can safely access the copied data after the data copy operation is complete.
+
+### Copy with `get()`
+
+While `put()` writes to the remote memory, `get()` reads from the remote memory. The example code demonstrates a bidirectional data copy using `get()` method, which is similar to `put()`, but it reads data from the remote memory region and writes it to the local memory region. The following code shows how to use `get()` in a GPU kernel:
+
+```cpp
+__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0) {
+    devHandle->relaxedSignal();
+    devHandle->relaxedWait();
+  }
+  devSyncer.sync(gridDim.x);
+
+  const int remoteRank = myRank ^ 1;
+  const uint64_t srcOffset = remoteRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  devHandle->get(srcOffset, dstOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
+}
+```
+
+Note that the `get()` method doesn't need explicit data synchronization after the data copy, because it is a read operation. This makes `get()` more efficient than `put()` especially for small data transfers. However, `get()` may not be suitable for all scenarios, especially when the data can be modified by the remote GPU while it is being read. For large data transfers, `put()` is usually considered more efficient, but it highly depends on the hardware implementation and we recommend you to benchmark the performance of both methods for your specific use case.
+
+(packets)=
 ## Packets
+
+The example code creates one more `MemoryChannel` to demonstrate the use of `putPackets()`, which enables a finer-grained synchronization mechanism for data transfer. The channel is created as follows:
+
+```cpp
+mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem.data(),
+                                  /*packetBuffer*/ localPktRegMem.data());
+```
+
+Compared to the previous `memChan` channel, this `memPktChan` channel uses the same source (`localRegMem.data()`) but a different destination (`remotePktRegMem`) and an additional packet buffer (`localPktRegMem.data()`). The following diagram illustrates how the `memPktChan` channel uses these memory regions (A and B representing the two GPUs):
+
+```{mermaid}
+block-beta
+    columns 6
+    space:1
+    RegMemA space:2 RegMemB
+    space:8
+    PktRegMemA space:2 PktRegMemB
+
+    RegMemA --"putPackets()"--> PktRegMemB
+    RegMemB --"putPackets()"--> PktRegMemA
+
+    PktRegMemA --"unpackPackets()"--> RegMemA
+    PktRegMemB --"unpackPackets()"--> RegMemB
+```
+
+The `putPackets()` method reads the data from the source memory region, converts it into packets, and writes the packets to the destination memory region. `memPktChan` channel sets the destination memory region to the packet buffer of the remote GPU, so that the remote GPU can use the `unpackPackets()` method, which reads the packets from the packet buffer and writes the data to the source memory region.
+
+`mscclpp::LLPacket` (or `mscclpp::LL16Packet`) is the default packet type used by `putPackets()` and `unpackPackets()`.

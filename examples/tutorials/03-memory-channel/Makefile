@@ -10,8 +10,8 @@ else
     ARCH_FLAG := -arch=native
 endif
 
-TARGET = perf_memory_channel
-SRC = perf_memory_channel.cu
+TARGET = bidir_memory_channel
+SRC = bidir_memory_channel.cu
 
 all: $(TARGET)
 

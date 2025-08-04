@@ -47,7 +47,7 @@ int wait_process(int pid) {
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
-__global__ void bidirCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -57,7 +57,7 @@ __global__ void bidirCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, s
 
   const uint64_t srcOffset = myRank * copyBytes;
   const uint64_t dstOffset = srcOffset;
-  devHandle->put(dstOffset, srcOffset, copyBytes, tid, blockDim.x * gridDim.x);
+  devHandle->put(dstOffset, srcOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
   devSyncer.sync(gridDim.x);
   if (tid == 0) {
     devHandle->signal();
@@ -65,9 +65,29 @@ __global__ void bidirCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, s
   }
 }
 
-__global__ void bidirPacketCopyKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
-                                      uint32_t flag) {
+__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0) {
+    devHandle->relaxedSignal();
+    devHandle->relaxedWait();
+  }
+  devSyncer.sync(gridDim.x);
+
+  const int remoteRank = myRank ^ 1;
+  const uint64_t srcOffset = remoteRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  devHandle->get(srcOffset, dstOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
+}
+
+__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
+                                     uint32_t flag) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0) {
+    devHandle->relaxedSignal();
+    devHandle->relaxedWait();
+  }
+  devSyncer.sync(gridDim.x);
+
   const uint64_t srcOffset = myRank * copyBytes;
   const uint64_t dstOffset = srcOffset;
   const uint64_t pktBufOffset = 0;
@@ -106,8 +126,9 @@ void worker(int gpuId) {
   mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
   mscclpp::RegisteredMemory remotePktRegMem = remotePktRegMemFuture.get();
 
-  mscclpp::MemoryChannel memChan(sema, remoteRegMem, localRegMem.data());
-  mscclpp::MemoryChannel memPktChan(sema, remotePktRegMem, localRegMem.data(), localPktRegMem.data());
+  mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem.data());
+  mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem.data(),
+                                    /*packetBuffer*/ localPktRegMem.data());
 
   auto memChanHandle = memChan.deviceHandle();
   auto memPktChanHandle = memPktChan.deviceHandle();
@@ -122,17 +143,22 @@ void worker(int gpuId) {
   cudaStream_t stream;
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
 
-  std::function<void(size_t)> kernels[2];
+  std::function<void(size_t)> kernels[3];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
-                                             copyBytes, myRank);
+    bidirPutKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
+                                            copyBytes, myRank);
   };
 
   kernels[1] = [&](size_t copyBytes) {
+    bidirGetKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
+                                            copyBytes, myRank);
+  };
+
+  kernels[2] = [&](size_t copyBytes) {
     static uint32_t flag = 1;
-    bidirPacketCopyKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devPktHandle),
-                                                   copyBytes, myRank, flag++);
+    bidirPutPacketKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devPktHandle),
+                                                  copyBytes, myRank, flag++);
   };
 
   cudaEvent_t start, end;
@@ -143,8 +169,8 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   bootstrap->barrier();
 
-  for (int kernelId = 0; kernelId < 2; ++kernelId) {
-    const std::string testName = (kernelId == 0) ? "Bidir Copy" : "Bidir Packet Copy";
+  for (int kernelId = 0; kernelId < 3; ++kernelId) {
+    const std::string testName = (kernelId == 0) ? "Bidir Put" : (kernelId == 1) ? "Bidir Get" : "Bidir Put Packets";
     for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
       cudaGraph_t graph;
       cudaGraphExec_t graphExec;

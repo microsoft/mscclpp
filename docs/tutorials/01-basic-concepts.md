@@ -179,6 +179,7 @@ If your application (GPU kernel) needs to access the device handle very frequent
 * Copy the device handle into the GPU's shared memory, which incurs a one-time cost of copying the handle from global memory to shared memory, but allows faster access thereafter.
 ```
 
+(=channel-interfaces)
 ## Channel Interfaces in GPU Kernels
 
 In the GPU kernels of this example, we use the `relaxedSignal()` and `relaxedWait()` methods of the `BaseMemoryChannelDeviceHandle` to synchronize operations between the two GPUs. The `relaxedWait()` method blocks the calling thread until it receives a signal from the other GPU, while `relaxedSignal()` sends a signal to the other GPU. To demonstrate the synchronization, we put a spin loop of 10 million clock cycles (which takes a few milliseconds) on one side of the ping-pong (GPU 0) and check if the elapsed time is greater than 1 millisecond on the other side (GPU 1).
