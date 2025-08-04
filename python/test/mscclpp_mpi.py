@@ -6,12 +6,12 @@ import logging
 
 import cupy as cp
 import mpi4py
+import pytest
 
 mpi4py.rc.initialize = False
 mpi4py.rc.finalize = False
 
-from mpi4py import MPI
-import pytest
+from mpi4py import MPI  # noqa: E402
 
 N_GPUS_PER_NODE = 8
 

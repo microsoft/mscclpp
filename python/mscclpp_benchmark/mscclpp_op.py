@@ -239,11 +239,13 @@ class MscclppAllReduce4:
         block_size: int = 512,
         pipeline_depth: int = 3,
     ):
+        def in_same_node(rank):
+            return rank // nranks_per_node == self.group.my_rank // nranks_per_node
+
         self.group = group
         self.memory = memory
 
         self.nranks_per_node = nranks_per_node
-        in_same_node = lambda rank: rank // nranks_per_node == self.group.my_rank // nranks_per_node
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
         transports = {}
@@ -339,12 +341,14 @@ class MscclppAllReduce5:
         nblocks: int = 21,
         block_size: int = 512,
     ):
+        def in_same_node(rank):
+            return rank // nranks_per_node == self.group.my_rank // nranks_per_node
+
         self.group = group
         self.memory = memory
         self.memory_out = memory_out
 
         self.nranks_per_node = nranks_per_node
-        in_same_node = lambda rank: rank // nranks_per_node == self.group.my_rank // nranks_per_node
         remote_nghrs = list(range(self.group.nranks))
         remote_nghrs.remove(self.group.my_rank)
         transports = {}
@@ -430,8 +434,6 @@ class MscclppAllReduce6:
         nblocks: int = 32,
     ):
         self.group = group
-        datatype_size = memory_dtype().itemsize
-        buffer_size = nelem * datatype_size
         type_str = type_to_str(memory_dtype)
         all_ranks = list(range(group.nranks))
         remote_nghrs = all_ranks.copy()

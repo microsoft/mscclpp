@@ -26,7 +26,6 @@ def allreduce_allpairs(gpus, instances):
         instances,
         protocol="Simple",
     ):
-
         # Each rank sends the nth chunk to the nth rank into scratch space
         for rank in range(size):
             for tb in range(size):

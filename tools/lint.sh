@@ -52,14 +52,22 @@ if $LINT_CPP; then
 fi
 
 if $LINT_PYTHON; then
-    echo "Linting Python code..."
+    echo "Formatting Python code..."
     # Find all git-tracked files with .py extension
     files=$(git -C "$PROJECT_ROOT" ls-files --cached | grep -E '\.py$' | sed "s|^|$PROJECT_ROOT/|")
     if [ -n "$files" ]; then
         if $DRY_RUN; then
-            python3 -m black --check --diff $files
+            python3 -m ruff format --diff $files
         else
-            python3 -m black $files
+            python3 -m ruff format $files
         fi
+    fi
+
+    echo "Linting Python code..."
+    # Run ruff on all Python files
+    if $DRY_RUN; then
+        python3 -m ruff check $files
+    else
+        python3 -m ruff check --fix $files
     fi
 fi

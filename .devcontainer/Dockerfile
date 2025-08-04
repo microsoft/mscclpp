@@ -39,7 +39,7 @@ RUN rm -rf /etc/apt/sources.list.d/cuda-* && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN python3 -m pip install --no-cache-dir \
-    black \
+    ruff \
     pytest \
     breathe \
     sphinx_rtd_theme \

@@ -24,7 +24,7 @@ exclude = ["mscclpp/*.cpp"]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
 MSCCLPP_BUILD_TESTS = "OFF"
 
-[tool.black]
+[tool.ruff]
 line-length = 120
-target-version = ['py38']
-include = '\.pyi?$'
+target-version = "py38"
+include = ["**/*.py", "**/*.pyi"]

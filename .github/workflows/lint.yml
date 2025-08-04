@@ -34,9 +34,9 @@ jobs:
         python-version: 3
 
     - name: Install Python dependencies
-      run: python3 -m pip install black
+      run: python3 -m pip install ruff
 
-    - name: Run black
+    - name: Run ruff
       run: bash ./tools/lint.sh py dry
 
   spelling:

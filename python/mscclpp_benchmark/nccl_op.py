@@ -1,5 +1,4 @@
 import cupy.cuda.nccl as nccl
-from mpi4py import MPI
 import cupy as cp
 
 

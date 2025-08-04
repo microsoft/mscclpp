@@ -197,17 +197,18 @@ def main(
         mscclpp_group.nranks,
     )
 
-    executor_func = lambda stream: executor.execute(
-        mscclpp_group.my_rank,
-        input_buf.data.ptr,
-        result_buf.data.ptr,
-        input_buf.nbytes,
-        result_buf.nbytes,
-        dtype_to_mscclpp_dtype(dtype),
-        execution_plan,
-        stream.ptr,
-        packet_type,
-    )
+    def executor_func(stream):
+        return executor.execute(
+            mscclpp_group.my_rank,
+            input_buf.data.ptr,
+            result_buf.data.ptr,
+            input_buf.nbytes,
+            result_buf.nbytes,
+            dtype_to_mscclpp_dtype(dtype),
+            execution_plan,
+            stream.ptr,
+            packet_type,
+        )
 
     mscclpp_group.barrier()
     bench_correctness(

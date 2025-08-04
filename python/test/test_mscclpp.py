@@ -34,7 +34,7 @@ from mscclpp import (
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 from ._cpp import _ext
-from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
+from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups
 
 ethernet_interface_name = "eth0"
 
@@ -119,7 +119,7 @@ def test_bootstrap_init_gil_release(mpi_group: MpiGroup):
             try:
                 # expected to raise a timeout after 3 seconds
                 bootstrap.initialize(uniq_id_global, 3)
-            except:
+            except:  # noqa: E722
                 pass
 
         init_thread = threading.Thread(target=init_target)
@@ -335,6 +335,7 @@ def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
 @parametrize_mpi_groups(8)
 @pytest.mark.skipif(is_nvls_supported() is False, reason="NVLS is not supported")
 def test_nvls_connection(mpi_group: MpiGroup):
+    # noqa F841
     if all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvls for cross node")
     group = mscclpp_comm.CommGroup(mpi_group.comm)
@@ -343,13 +344,13 @@ def test_nvls_connection(mpi_group: MpiGroup):
     memory1 = GpuBuffer(2**29, cp.int8)
     memory2 = GpuBuffer(2**29, cp.int8)
     memory3 = GpuBuffer(2**29, cp.int8)
-    mem_handle1 = nvls_connection.bind_allocated_memory(memory1.data.ptr, memory1.data.mem.size)
-    mem_handle2 = nvls_connection.bind_allocated_memory(memory2.data.ptr, memory2.data.mem.size)
+    _mem_handle1 = nvls_connection.bind_allocated_memory(memory1.data.ptr, memory1.data.mem.size)
+    _mem_handle2 = nvls_connection.bind_allocated_memory(memory2.data.ptr, memory2.data.mem.size)
     with pytest.raises(Exception):
-        mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
+        _mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
     # the memory is freed on the destructor of mem_handle2
-    mem_handle2 = None
-    mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
+    _mem_handle2 = None
+    _mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
 
 
 class MscclppKernel:
@@ -413,7 +414,7 @@ class MscclppKernel:
             assert False
 
         self.params = b""
-        if semaphore_or_channels != None:
+        if semaphore_or_channels is not None:
             first_arg = next(iter(semaphore_or_channels.values()))
             size_of_semaphore_or_channels = len(first_arg.device_handle().raw)
             device_handles = []

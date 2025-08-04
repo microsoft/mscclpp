@@ -17,7 +17,7 @@ def allreduce_ring(size, instances):
     """
     collective = AllReduce(size, size, True)
     with MSCCLPPProgram(
-        f"allreduce_ring",
+        "allreduce_ring",
         collective,
         size,
         instances,

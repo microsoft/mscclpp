@@ -396,14 +396,14 @@ class Ref(ChunkRef):
         op = Op(inst=Instruction.group_load_reduce, rank=self.rank, src=self, dst=None, srcs=other_chunkrefs)
         self.prog.op_dep_dag.add_operation(op)
 
-        assert (
-            len(other_chunkrefs) > 0 and chan_type == ChannelType.nvls
-        ), "Group load reduce only supports nvls channel"
+        assert len(other_chunkrefs) > 0 and chan_type == ChannelType.nvls, (
+            "Group load reduce only supports nvls channel"
+        )
         nranks_per_node = self.prog.collective.num_ranks_per_node
         for other_chunkref in other_chunkrefs:
-            assert (
-                self.rank // nranks_per_node == other_chunkref.rank // nranks_per_node
-            ), "Group load reduce only supports chunks on the same node"
+            assert self.rank // nranks_per_node == other_chunkref.rank // nranks_per_node, (
+                "Group load reduce only supports chunks on the same node"
+            )
             assert self.buffer == other_chunkref.buffer, "Group load reduce only supports chunks with the same buffer"
             assert self.index == other_chunkref.index, "Group load reduce only supports chunks with the same index"
 
@@ -428,9 +428,9 @@ class Ref(ChunkRef):
             buffer, index = self._get_buffer_index(dst, buffer, index)
 
             assert self.buffer == buffer, "Group store only supports chunks with the same buffer"
-            assert (
-                self.rank // nrank_per_node == dst // nrank_per_node
-            ), "Group store only supports chunks on the same node"
+            assert self.rank // nrank_per_node == dst // nrank_per_node, (
+                "Group store only supports chunks on the same node"
+            )
 
             dst_chunkref = self.prog.get_ref(dst, buffer, index, self.size)
             self.prog.apply_send(self.rank, self.buffer, self.index, dst, buffer, index, self.size)
