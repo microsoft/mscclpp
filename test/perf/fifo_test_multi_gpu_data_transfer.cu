@@ -21,29 +21,10 @@ using namespace mscclpp::test;
 
 // Constants for trigger calculation
 constexpr int MIN_TRIGGERS = 1000;
-constexpr int MIN_WARMUP_TRIGGERS = 100;
 constexpr int TRIGGERS_PER_FIFO_SIZE = 10;
-constexpr int WARMUP_TRIGGERS_PER_FIFO_SIZE = 2;
 
 __constant__ mscclpp::FifoDeviceHandle gFifoDeviceHandle;
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
-
-__global__ void kernelFifoPushAndSignal(mscclpp::PortChannelDeviceHandle portHandle) {
-  int tid = threadIdx.x;
-
-  if (tid == 0) {
-    portHandle.signal();
-  }
-}
-
-__global__ void kernelWaitAndCheck(mscclpp::PortChannelDeviceHandle portHandle) {
-  int tid = threadIdx.x;
-
-  // Wait for the signal
-  if (tid == 0) {
-    portHandle.wait();
-  }
-}
 
 // New kernels for bidirectional data transfer
 __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle portHandle, int numElements, int rank) {
@@ -112,45 +93,6 @@ static void setupCuda(int& cudaDevice, int& numaNode) {
   mscclpp::numaBind(numaNode);
 }
 
-// Helper function to run a single kernel variant and return performance metrics
-std::tuple<double, double, int, int> runSingleKernelVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo,
-                                                            cudaStream_t stream, int numParallel, int rank,
-                                                            mscclpp::PortChannelDeviceHandle portChannelHandle) {
-  // Calculate triggers based on FIFO size
-  const int numTriggers = std::max(MIN_TRIGGERS, static_cast<int>(hostFifo->size() * TRIGGERS_PER_FIFO_SIZE));
-  const int warmupTriggers =
-      std::max(MIN_WARMUP_TRIGGERS, static_cast<int>(hostFifo->size() * WARMUP_TRIGGERS_PER_FIFO_SIZE));
-
-  int threadBlocks = std::min(8, numParallel);
-
-  // Benchmark
-  utils::Timer timer;
-  timer.start();
-
-  if (rank == 0) {
-    // Launch on GPU0
-    kernelFifoPushAndSignal<<<threadBlocks, numParallel / threadBlocks, 0, stream>>>(portChannelHandle);
-
-    utils::CUDA_CHECK(cudaGetLastError());
-  } else if (rank == 1) {
-    // Launch on GPU1
-    kernelWaitAndCheck<<<threadBlocks, numParallel / threadBlocks, 0, stream>>>(portChannelHandle);
-    utils::CUDA_CHECK(cudaGetLastError());
-  }
-
-  utils::CUDA_CHECK(cudaStreamSynchronize(stream));
-
-  timer.stop();
-
-  const int totalTriggers = numTriggers * numParallel;
-  double throughput = totalTriggers / timer.elapsedSeconds();
-  double duration_us = timer.elapsedMicroseconds();
-
-  utils::CUDA_CHECK(cudaDeviceSynchronize());
-
-  return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
-}
-
 std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo,
                                                              cudaStream_t stream, int numParallel, int rank,
                                                              mscclpp::PortChannelDeviceHandle portChannelHandle,
@@ -202,23 +144,6 @@ std::tuple<double, double, int> runDataTransferKernelVariant(std::unique_ptr<msc
   return {throughput, duration_us, totalElements};
 }
 
-void runFifoTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
-                        nlohmann::ordered_json& combinedMetrics, int rank,
-                        mscclpp::PortChannelDeviceHandle gPortChannel) {
-  auto [pushThroughput, pushDuration, numTriggers, warmupTriggers] =
-      runSingleKernelVariant(hostFifo, stream, numParallel, rank, gPortChannel);
-
-  auto formatThroughput = [](double thru) {
-    return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
-  };
-
-  std::string prefix = "p" + std::to_string(numParallel) + "_";
-  combinedMetrics[prefix + "push_throughput"] = formatThroughput(pushThroughput);
-  combinedMetrics[prefix + "push_duration_us"] = pushDuration;
-  combinedMetrics[prefix + "num_triggers"] = numTriggers;
-  combinedMetrics[prefix + "warmup_triggers"] = warmupTriggers;
-}
-
 void runDataTransferTestVariant(std::unique_ptr<mscclpp::Fifo>& hostFifo, cudaStream_t stream, int numParallel,
                                 nlohmann::ordered_json& combinedMetrics, int rank,
                                 mscclpp::PortChannelDeviceHandle portChannelHandle, int* sendBuffer, int* recvBuffer,
@@ -249,7 +174,7 @@ struct FifoTestConfig {
       : fifoSize(size), parallelismLevels(parallel) {}
 };
 
-void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext& context) {
+void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::TestContext& context) {
   int rank = context.rank;
   int worldSize = context.size;
   auto communicator = context.communicator;
@@ -350,7 +275,6 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   utils::CUDA_CHECK(cudaStreamCreate(&stream));
 
   // Create test name with parallelism range
-  // std::string testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_Parallel";
   std::string testName = "FifoDataTransferTest_Size" + std::to_string(config.fifoSize) + "_Parallel";
 
   // Add parallelism range to test name (e.g., "P1-16" or "P1-4-16-64")
@@ -406,7 +330,6 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
     // Add synchronization before each test iteration
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // runFifoTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle);
     runDataTransferTestVariant(hostFifo, stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer,
                                recvBuffer, halfElements);
 
@@ -426,7 +349,6 @@ void runFifoTest(const FifoTestConfig& config, const mscclpp::test::TestContext&
   }
   testParams["parallelism_levels"] = parallelismStream.str();
 
-  // utils::recordResult(testName, "fifo", combinedMetrics, testParams);
   utils::recordResult(testName, "fifo_data_transfer", combinedMetrics, testParams);
 
   // Cleanup
@@ -446,7 +368,7 @@ void runAllFifoTests(const mscclpp::test::TestContext& context) {
   // clang-format on
 
   for (const auto& config : configs) {
-    runFifoTest(config, context);
+    runDataTransferTest(config, context);
   }
 }
 
