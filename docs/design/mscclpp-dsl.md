@@ -1,9 +1,9 @@
 # MSCCL++ DSL
 ## Introduction
 
-The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collective. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
+The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collectives. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
 
-Here is the highlights of the MSCCL++ DSL:
+Here are the highlights of the MSCCL++ DSL:
 - **Fine-grained Python-native API**: MSCCL++ DSL provides a Pythonic, fine-grained API for defining and executing GPU-based communication collectives. Users can construct complex data movement and synchronization workflows without writing low-level CUDA code, while still achieving performance comparable to hand-tuned CUDA implementations.
 
 - **Effortless performance tuning**:  The MSCCL++ DSL analyzes data dependencies and synchronization patterns to automatically fuse operations to eliminate data movement overhead, while instance counts can be manually configured to boost performance.
@@ -19,7 +19,7 @@ Collectives define the communication pattern for distributed operations such as 
 
 
 ### Buffer/Chunk
-Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. User can allocate scratch buffer for intermediate data movement. Chunk is a slice of the buffer.
+Buffer is a data structure that holds the data to be sent or received. The input/output buffer is predefined based on communication patterns. Users can allocate scratch buffers for intermediate data movement. Chunk is a slice of the buffer.
 
 ```python
 rank = Rank(rank_id)
@@ -31,14 +31,14 @@ rank.reduce(dst_chunk, src_chunk, op=ReduceOperationType.sum, tb=0)
 ```
 
 ### Channel
-User need to use channel to communicate between ranks. Now we have three types of channels: memoryChannel, portChannel and switchChannel.
+Users need to use channels to communicate between ranks. Now we have three types of channels: MemoryChannel, PortChannel and SwitchChannel.
 - **MemoryChannel**: Uses peer-to-peer memory access to communicate between GPUs.
 - **PortChannel**: Uses interconnection ports to communicate between GPUs.
 - **SwitchChannel**: Uses interconnection-switch-enabled multimem memory access to communicate between GPUs.
 
-**Note:** Each time call channel will created a new one. If user want to reuse the channel, please keep the channel object.
+**Note:** Each time a channel is called, a new one will be created. If users want to reuse the channel, please keep the channel object.
 
-Here is the example for two ranks synchronization with each others.
+Here is an example for two ranks synchronizing with each other.
 ```python
 nranks = 2
 for i in range(nranks):
@@ -49,10 +49,10 @@ for i in range(nranks):
     channel.wait(tb=0, data_sync=SyncType.after)
 ```
 
-#### For switch channel
-Switch channel associates a group of buffers from a specified set of ranks. All operations invoked on the channel will be applied to those buffers.
+#### For SwitchChannel
+SwitchChannel associates a group of buffers from a specified set of ranks. All operations invoked on the channel will be applied to those buffers.
 
-Example for two ranks allreduce via switch channel.
+Example for two ranks allreduce via SwitchChannel.
 ```python
 # Creating Channels
 switch_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
@@ -65,7 +65,7 @@ for gpu in range(gpu_size):
 ```
 
 ### Synchronization
-We provide some synchronization primitives to sync threadblocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize a set of thread blocks in the rank, while the semaphore allows asynchronous signaling and waiting between thread blocks.
+We provide some synchronization primitives to sync thread blocks inside a rank. The synchronization is done through a barrier or semaphore. The barrier is used to synchronize a set of thread blocks in the rank, while the semaphore allows asynchronous signaling and waiting between thread blocks.
 
 ```python
 rank = Rank(0)
@@ -75,9 +75,9 @@ sem.acquire(tb=0, data_sync=SyncType.after)
 sem.release(tb=0, data_sync=SyncType.before)
 ```
 
-The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. Which mean if we have data dependence between two operations, we will insert a synchronization point between them. 
+The synchronization inside the thread-block can be inferred by MSCCL++ DSL automatically. This means if we have data dependence between two operations, we will insert a synchronization point between them. 
 
-But for multi-thread-blocks synchronization and cross ranks synchronization, we need to insert the synchronization point manually.
+But for multi-thread-blocks synchronization and cross-ranks synchronization, we need to insert the synchronization point manually.
 
 
 ## Operation Fusion (Instruction Fusion)
@@ -133,7 +133,7 @@ with LoopIterationContext(unit=2**20, num_chunks=1):
 ``` 
 
 
-Here is the example for two ranks allreduce. Which achieve non-zero copy and use nvls. We use 3 thread-blocks to do the allreduce.
+Here is an example for two ranks allreduce which achieves zero-copy and uses nvls. We use 3 thread-blocks to do the allreduce.
 The first thread-block is used to copy data from input buffer to scratch buffer, the second thread-block is used to do allreduce in scratch buffer, and the third thread-block is used to copy data from scratch buffer to output buffer.  The thread-blocks are synchronized by semaphores.
 ```python
 nvls_chan = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.scratch)
@@ -224,7 +224,7 @@ MSCCL++ DSL Instance Replication Overview
 
 The MSCCL++ DSL generates an execution plan in JSON format, describing the operations to be executed on each rank. The execution plan contains details about buffers, channels, and synchronization points, and is distributed to all participating machines. Once distributed, the MSCCL++ executor can use this JSON file to run the algorithm.
 
-Following picture shows the overall workflow for running with MSCCL++ DSL:
+The following picture shows the overall workflow for running with MSCCL++ DSL:
 ```{figure} ../figs/mscclpp_dsl_json_schema.png
 :name: workflow for running with MSCCL++ DSL
 :alt: workflow for running with MSCCL++ DSL
