@@ -15,6 +15,7 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace mscclpp {
@@ -47,6 +48,11 @@ struct TestResult {
 // Simple utility functions for testing
 namespace utils {
 
+// Test function variant type
+using TestFunction = std::variant<std::function<void(int, int, int)>,      // Legacy API
+                                  std::function<void(const TestContext&)>  // New API
+                                  >;
+
 // Test execution utilities
 int runMultipleTests(
     int argc, char* argv[],
@@ -55,6 +61,10 @@ int runMultipleTests(
 int runMultipleTests(
     int argc, char* argv[],
     const std::vector<std::tuple<std::string, std::string, std::function<void(const TestContext&)>>>& tests);
+
+// Unified test execution API
+int runMultipleTests(int argc, char* argv[],
+                     const std::vector<std::tuple<std::string, std::string, TestFunction>>& tests);
 
 // MPI management
 void initializeMPI(int argc, char* argv[]);
