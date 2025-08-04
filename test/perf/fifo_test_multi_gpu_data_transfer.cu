@@ -135,14 +135,13 @@ std::tuple<double, double, int> runDataTransferKernelVariant(cudaStream_t stream
   return {throughput, duration_us, totalElements};
 }
 
-void runDataTransferTestVariant(cudaStream_t stream, int numParallel,
-                                nlohmann::ordered_json& combinedMetrics, int rank,
+void runDataTransferTestVariant(cudaStream_t stream, int numParallel, nlohmann::ordered_json& combinedMetrics, int rank,
                                 mscclpp::PortChannelDeviceHandle portChannelHandle, int* sendBuffer, int* recvBuffer,
                                 int numElements) {
   // Run simultaneous bidirectional data transfer
   printf("=== Running simultaneous bidirectional GPU0 ↔ GPU1 transfer ===\n");
-  auto [throughput, duration, totalElements] = runDataTransferKernelVariant(
-      stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
+  auto [throughput, duration, totalElements] =
+      runDataTransferKernelVariant(stream, numParallel, rank, portChannelHandle, sendBuffer, recvBuffer, numElements);
 
   auto formatThroughput = [](double thru) {
     return double(int(thru * 10)) / 10.0;  // Round to 1 decimal place
@@ -316,8 +315,8 @@ void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::Test
     // Add synchronization before each test iteration
     MPI_Barrier(MPI_COMM_WORLD);
 
-    runDataTransferTestVariant(stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer,
-                               recvBuffer, halfElements);
+    runDataTransferTestVariant(stream, numParallel, combinedMetrics, rank, portChannelHandle, sendBuffer, recvBuffer,
+                               halfElements);
 
     // Add synchronization after each test iteration
     MPI_Barrier(MPI_COMM_WORLD);
@@ -344,7 +343,7 @@ void runDataTransferTest(const FifoTestConfig& config, const mscclpp::test::Test
   proxyService->stopProxy();
 }
 
-void runAllFifoTests(const mscclpp::test::TestContext& context) {
+void runAllDataTransferTests(const mscclpp::test::TestContext& context) {
   // clang-format off
   std::vector<FifoTestConfig> configs = {
       {1, {1}},
@@ -403,7 +402,7 @@ int main(int argc, char* argv[]) {
   }
 
   std::vector<std::tuple<std::string, std::string, std::function<void(const mscclpp::test::TestContext&)>>> tests = {
-      {"AllFifoTests", "FIFO performance tests with multiple configurations", runAllFifoTests}};
+      {"AllDataTransferTests", "Data transfer tests with multiple configurations", runAllDataTransferTests}};
 
   int result = utils::runMultipleTests(argc, argv, tests);
 
