@@ -23,7 +23,6 @@ using namespace mscclpp::test;
 constexpr int MIN_TRIGGERS = 1000;
 constexpr int TRIGGERS_PER_FIFO_SIZE = 10;
 
-__constant__ mscclpp::FifoDeviceHandle gFifoDeviceHandle;
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
 struct MultiGpuTestConfig {
