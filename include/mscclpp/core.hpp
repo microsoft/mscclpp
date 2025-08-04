@@ -19,10 +19,10 @@
 
 namespace mscclpp {
 
-#define MSCCLPP_UNIQUE_ID_BYTES 128
+constexpr unsigned int UniqueIdBytes = 128;
 
 /// Unique ID for initializing the TcpBootstrap.
-using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
+using UniqueId = std::array<uint8_t, UniqueIdBytes>;
 
 /// Return a version string.
 /// @return The MSCCL++ version string in "major.minor.patch" format.
@@ -207,7 +207,6 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,        // Unknown transport type.
   CudaIpc,        // CUDA IPC transport type.
-  Nvls,           // NVLS transport type.
   IB0,            // InfiniBand device 0 transport type.
   IB1,            // InfiniBand device 1 transport type.
   IB2,            // InfiniBand device 2 transport type.
@@ -221,7 +220,7 @@ enum class Transport {
 };
 
 namespace detail {
-const size_t TransportFlagsSize = 12;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -441,6 +440,14 @@ class Endpoint {
   /// @return The device used.
   const Device& device() const;
 
+  /// Get the host hash.
+  /// @return The host hash.
+  uint64_t hostHash() const;
+
+  /// Get the process ID hash.
+  /// @return The process ID hash.
+  uint64_t pidHash() const;
+
   /// Get the maximum write queue size.
   /// @return The maximum number of write requests that can be queued.
   int maxWriteQueueSize() const;
@@ -467,9 +474,9 @@ class Endpoint {
 class Connection {
  public:
   /// Constructor.
+  /// @param context The context associated with the connection.
   /// @param localEndpoint The local endpoint of the connection.
-  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-      : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
 
   /// Destructor.
   virtual ~Connection() = default;
@@ -506,7 +513,7 @@ class Connection {
 
   /// Get the context associated with this connection.
   /// @return A shared pointer to the context associated with this connection.
-  std::shared_ptr<Context> context() const { return context_; }
+  std::shared_ptr<Context> context() const;
 
   /// Get the device used by the local endpoint.
   /// @return The device used by the local endpoint.
