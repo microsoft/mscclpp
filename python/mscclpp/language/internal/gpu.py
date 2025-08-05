@@ -89,7 +89,7 @@ class Gpu:
                     new_channels[ChannelType.memory].append(rank)
             self._channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
         if ChannelType.port in self._channels:
-            for rank in self._channels[ChannelType.memory].connected_to:
+            for rank in self._channels[ChannelType.port].connected_to:
                 for _ in range(instances):
                     new_channels[ChannelType.port].append(rank)
             self._channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
