@@ -193,6 +193,22 @@ block-beta
     PktRegMemB --"unpackPackets()"--> RegMemB
 ```
 
-The `putPackets()` method reads the data from the source memory region, converts it into packets, and writes the packets to the destination memory region. `memPktChan` channel sets the destination memory region to the packet buffer of the remote GPU, so that the remote GPU can use the `unpackPackets()` method, which reads the packets from the packet buffer and writes the data to the source memory region.
+MSCCL++ **Packet** refers to any data structure that contains user data and metadata that can validate the user data's integrity, which allows the receiver to safely retrieve the user data without explicit synchronization (signal and wait). We currently implement two types of packets, `mscclpp::LL16Packet` and `mscclpp::LL8Packet`, which can be selected when you call `putPackets()` or `unpackPackets()`. The `putPackets()` method reads the data from the source memory region, converts it into packets, and writes the packets to the destination memory region. `memPktChan` channel sets the destination memory region to the packet buffer of the remote GPU, so that the remote GPU can use the `unpackPackets()` method, which reads the packets from the local packet buffer and writes the data to the source memory region on the local. The example code demonstrates how to use `putPackets()` and `unpackPackets()` in a GPU kernel:
 
-`mscclpp::LLPacket` (or `mscclpp::LL16Packet`) is the default packet type used by `putPackets()` and `unpackPackets()`.
+```cpp
+__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
+                                     uint32_t flag) {
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
+  if (tid == 0) {
+    devHandle->relaxedSignal();
+    devHandle->relaxedWait();
+  }
+  devSyncer.sync(gridDim.x);
+
+  const uint64_t srcOffset = myRank * copyBytes;
+  const uint64_t dstOffset = srcOffset;
+  const uint64_t pktBufOffset = 0;
+  devHandle->putPackets(pktBufOffset, srcOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
+  devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
+}
+```
