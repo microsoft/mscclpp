@@ -446,7 +446,7 @@ class MscclppAllReduce6:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.nvlink_connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        self.nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
+        self.nvls_connection = group.make_connection(all_ranks, Transport.CudaIpc, use_switch=True)
         self.memory = GpuBuffer(nelem, memory_dtype)
         self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
             self.memory.data.ptr, self.memory.data.mem.size

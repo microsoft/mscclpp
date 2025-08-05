@@ -87,6 +87,7 @@ class CommGroup:
         self,
         all_ranks: list[int],
         endpoints: EndpointConfig | Transport | dict[int, EndpointConfig] | dict[int, Transport],
+        use_switch: bool = False,
     ) -> dict[int, Connection]:
         if type(endpoints) is Transport:
             endpoints = EndpointConfig(endpoints)
@@ -98,7 +99,7 @@ class CommGroup:
                 endpoint = endpoints[rank]
             else:
                 endpoint = endpoints
-            if endpoint.transport == Transport.Nvls:
+            if endpoint.transport == Transport.CudaIpc and use_switch:
                 return connect_nvls_collective(self.communicator, all_ranks, 2**30)
             else:
                 connections[rank] = self.communicator.connect(endpoint, rank)

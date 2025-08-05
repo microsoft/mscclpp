@@ -361,6 +361,7 @@ enum class DeviceType {
   GPU,      // GPU device type.
 };
 
+/// Declaration of a device.
 struct Device {
   /// Constructor.
   Device() = default;
@@ -377,8 +378,149 @@ struct Device {
   int id;
 };
 
+/// Used to configure an endpoint.
+struct EndpointConfig {
+  static const int DefaultMaxCqSize = 1024;
+  static const int DefaultMaxCqPollNum = 1;
+  static const int DefaultMaxSendWr = 8192;
+  static const int DefaultMaxWrPerSend = 64;
+
+  Transport transport;
+  Device device;
+  int ibMaxCqSize;
+  int ibMaxCqPollNum;
+  int ibMaxSendWr;
+  int ibMaxWrPerSend;
+  int maxWriteQueueSize;
+
+  /// Constructor that takes a transport and sets the other fields to their default values.
+  ///
+  /// @param transport The transport to use.
+  /// @param device The device to use.
+  /// @param ibMaxCqSize The maximum completion queue size.
+  /// @param ibMaxCqPollNum The maximum completion queue poll number.
+  /// @param ibMaxSendWr The maximum send work requests.
+  /// @param ibMaxWrPerSend The maximum work requests per send.
+  /// @param maxWriteQueueSize The maximum write queue size.
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
+                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
+                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
+                 int maxWriteQueueSize = -1)
+      : transport(transport),
+        device(device),
+        ibMaxCqSize(ibMaxCqSize),
+        ibMaxCqPollNum(ibMaxCqPollNum),
+        ibMaxSendWr(ibMaxSendWr),
+        ibMaxWrPerSend(ibMaxWrPerSend),
+        maxWriteQueueSize(maxWriteQueueSize) {}
+};
+
 class Context;
 class Connection;
+class RegisteredMemory;
+class SemaphoreStub;
+
+/// One end of a connection.
+class Endpoint {
+ public:
+  /// Constructor.
+  Endpoint() = default;
+
+  /// Get the transport used.
+  /// @return The transport used.
+  Transport transport() const;
+
+  /// Get the device used.
+  /// @return The device used.
+  const Device& device() const;
+
+  /// Get the host hash.
+  /// @return The host hash.
+  uint64_t hostHash() const;
+
+  /// Get the process ID hash.
+  /// @return The process ID hash.
+  uint64_t pidHash() const;
+
+  /// Get the maximum write queue size.
+  /// @return The maximum number of write requests that can be queued.
+  int maxWriteQueueSize() const;
+
+  /// Serialize the Endpoint object to a vector of characters.
+  /// @return A vector of characters representing the serialized Endpoint object.
+  std::vector<char> serialize() const;
+
+  /// Deserialize an Endpoint object from a vector of characters.
+  /// @param data A vector of characters representing a serialized Endpoint object.
+  /// @return A deserialized Endpoint object.
+  static Endpoint deserialize(const std::vector<char>& data);
+
+ private:
+  struct Impl;
+  Endpoint(std::shared_ptr<Impl> pimpl);
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
+};
+
+/// Context for communication. This provides a low-level interface for forming connections in use-cases
+/// where the process group abstraction offered by Communicator is not suitable, e.g., ephemeral client-server
+/// connections. Correct use of this class requires external synchronization when finalizing connections with the
+/// connect() method.
+///
+/// As an example, a client-server scenario where the server will write to the client might proceed as follows:
+///   1. The client creates an endpoint with createEndpoint() and sends it to the server.
+///   2. The server receives the client endpoint, creates its own endpoint with createEndpoint(), sends it to the
+///      client, and creates a connection with connect().
+///   3. The client receives the server endpoint, creates a connection with connect() and sends a
+///      RegisteredMemory to the server.
+///   4. The server receives the RegisteredMemory and writes to it using the previously created connection.
+/// The client waiting to create a connection before sending the RegisteredMemory ensures that the server cannot
+/// write to the RegisteredMemory before the connection is established.
+///
+/// While some transports may have more relaxed implementation behavior, this should not be relied upon.
+class Context : public std::enable_shared_from_this<Context> {
+ public:
+  /// Create a new Context instance.
+  static std::shared_ptr<Context> create() { return std::shared_ptr<Context>(new Context()); }
+
+  /// Destructor.
+  ~Context();
+
+  /// Register a region of GPU memory for use in this context.
+  ///
+  /// @param ptr Base pointer to the memory.
+  /// @param size Size of the memory region in bytes.
+  /// @param transports Transport flags.
+  /// @return A RegisteredMemory object representing the registered memory region.
+  RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
+
+  /// Create an endpoint for establishing connections.
+  ///
+  /// @param config The configuration for the endpoint.
+  /// @return The newly created endpoint.
+  Endpoint createEndpoint(EndpointConfig config);
+
+  /// Establish a connection between two endpoints. While this method immediately returns a connection object, the
+  /// connection is only safe to use after the corresponding connection on the remote endpoint has been established.
+  /// This method must be called on both endpoints to establish a connection.
+  ///
+  /// @param localEndpoint The local endpoint.
+  /// @param remoteEndpoint The remote endpoint.
+  /// @return A shared pointer to the connection.
+  std::shared_ptr<Connection> connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+
+ private:
+  Context();
+
+  struct Impl;
+  std::unique_ptr<Impl> pimpl_;
+
+  friend class Endpoint;
+  friend class Connection;
+  friend class RegisteredMemory;
+};
 
 /// Block of memory that has been registered to a Context.
 /// RegisteredMemory does not own the memory it points to, but it provides a way to transfer metadata about the memory
@@ -424,50 +566,6 @@ class RegisteredMemory {
   friend class Context;
   friend class Connection;
   friend class SemaphoreStub;
-};
-
-/// One end of a connection.
-class Endpoint {
- public:
-  /// Constructor.
-  Endpoint() = default;
-
-  /// Get the transport used.
-  /// @return The transport used.
-  Transport transport() const;
-
-  /// Get the device used.
-  /// @return The device used.
-  const Device& device() const;
-
-  /// Get the host hash.
-  /// @return The host hash.
-  uint64_t hostHash() const;
-
-  /// Get the process ID hash.
-  /// @return The process ID hash.
-  uint64_t pidHash() const;
-
-  /// Get the maximum write queue size.
-  /// @return The maximum number of write requests that can be queued.
-  int maxWriteQueueSize() const;
-
-  /// Serialize the Endpoint object to a vector of characters.
-  /// @return A vector of characters representing the serialized Endpoint object.
-  std::vector<char> serialize() const;
-
-  /// Deserialize an Endpoint object from a vector of characters.
-  /// @param data A vector of characters representing a serialized Endpoint object.
-  /// @return A deserialized Endpoint object.
-  static Endpoint deserialize(const std::vector<char>& data);
-
- private:
-  struct Impl;
-  Endpoint(std::shared_ptr<Impl> pimpl);
-  std::shared_ptr<Impl> pimpl_;
-
-  friend class Context;
-  friend class Connection;
 };
 
 /// Connection between two processes.
@@ -524,106 +622,13 @@ class Connection {
   int getMaxWriteQueueSize() const;
 
  protected:
-  static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
-  static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
+  static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
+  static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
+  static Context::Impl& getImpl(Context& context);
 
   std::shared_ptr<Context> context_;
   Endpoint localEndpoint_;
   int maxWriteQueueSize_;
-};
-
-/// Used to configure an endpoint.
-struct EndpointConfig {
-  static const int DefaultMaxCqSize = 1024;
-  static const int DefaultMaxCqPollNum = 1;
-  static const int DefaultMaxSendWr = 8192;
-  static const int DefaultMaxWrPerSend = 64;
-
-  Transport transport;
-  Device device;
-  int ibMaxCqSize;
-  int ibMaxCqPollNum;
-  int ibMaxSendWr;
-  int ibMaxWrPerSend;
-  int maxWriteQueueSize;
-
-  /// Constructor that takes a transport and sets the other fields to their default values.
-  ///
-  /// @param transport The transport to use.
-  /// @param device The device to use.
-  /// @param ibMaxCqSize The maximum completion queue size.
-  /// @param ibMaxCqPollNum The maximum completion queue poll number.
-  /// @param ibMaxSendWr The maximum send work requests.
-  /// @param ibMaxWrPerSend The maximum work requests per send.
-  /// @param maxWriteQueueSize The maximum write queue size.
-  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
-                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
-                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
-                 int maxWriteQueueSize = -1)
-      : transport(transport),
-        device(device),
-        ibMaxCqSize(ibMaxCqSize),
-        ibMaxCqPollNum(ibMaxCqPollNum),
-        ibMaxSendWr(ibMaxSendWr),
-        ibMaxWrPerSend(ibMaxWrPerSend),
-        maxWriteQueueSize(maxWriteQueueSize) {}
-};
-
-/// Context for communication. This provides a low-level interface for forming connections in use-cases
-/// where the process group abstraction offered by Communicator is not suitable, e.g., ephemeral client-server
-/// connections. Correct use of this class requires external synchronization when finalizing connections with the
-/// connect() method.
-///
-/// As an example, a client-server scenario where the server will write to the client might proceed as follows:
-///   1. The client creates an endpoint with createEndpoint() and sends it to the server.
-///   2. The server receives the client endpoint, creates its own endpoint with createEndpoint(), sends it to the
-///      client, and creates a connection with connect().
-///   3. The client receives the server endpoint, creates a connection with connect() and sends a
-///      RegisteredMemory to the server.
-///   4. The server receives the RegisteredMemory and writes to it using the previously created connection.
-/// The client waiting to create a connection before sending the RegisteredMemory ensures that the server cannot
-/// write to the RegisteredMemory before the connection is established.
-///
-/// While some transports may have more relaxed implementation behavior, this should not be relied upon.
-class Context : public std::enable_shared_from_this<Context> {
- public:
-  /// Create a new Context instance.
-  static std::shared_ptr<Context> create() { return std::shared_ptr<Context>(new Context()); }
-
-  /// Destructor.
-  ~Context();
-
-  /// Register a region of GPU memory for use in this context.
-  ///
-  /// @param ptr Base pointer to the memory.
-  /// @param size Size of the memory region in bytes.
-  /// @param transports Transport flags.
-  /// @return A RegisteredMemory object representing the registered memory region.
-  RegisteredMemory registerMemory(void* ptr, size_t size, TransportFlags transports);
-
-  /// Create an endpoint for establishing connections.
-  ///
-  /// @param config The configuration for the endpoint.
-  /// @return The newly created endpoint.
-  Endpoint createEndpoint(EndpointConfig config);
-
-  /// Establish a connection between two endpoints. While this method immediately returns a connection object, the
-  /// connection is only safe to use after the corresponding connection on the remote endpoint has been established.
-  /// This method must be called on both endpoints to establish a connection.
-  ///
-  /// @param localEndpoint The local endpoint.
-  /// @param remoteEndpoint The remote endpoint.
-  /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
-
- private:
-  Context();
-
-  struct Impl;
-  std::unique_ptr<Impl> pimpl_;
-
-  friend class RegisteredMemory;
-  friend class Endpoint;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.

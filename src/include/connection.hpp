@@ -20,8 +20,7 @@ class CudaIpcConnection : public Connection {
   std::shared_ptr<CudaIpcStream> stream_;
 
  public:
-  CudaIpcConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
-                    std::shared_ptr<CudaIpcStream> stream);
+  CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
   Transport transport() const override;
 
@@ -44,7 +43,7 @@ class IBConnection : public Connection {
   mscclpp::TransportInfo dstTransportInfo_;
 
  public:
-  IBConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint);
+  IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
   Transport transport() const override;
 
@@ -72,7 +71,7 @@ class EthernetConnection : public Connection {
   void sendMessage();
 
  public:
-  EthernetConnection(std::shared_ptr<Context> context, Endpoint localEndpoint, Endpoint remoteEndpoint,
+  EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint,
                      uint64_t sendBufferSize = 256 * 1024 * 1024, uint64_t recvBufferSize = 256 * 1024 * 1024);
 
   ~EthernetConnection();
