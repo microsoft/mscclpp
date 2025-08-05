@@ -2,15 +2,15 @@
 # Licensed under the MIT License.
 
 """
-Reduce Packet Fuse Operation Test
+Reduce Packets Fuse Operation Test
 
 This file demonstrates the use of fused packet-based reduce operations in MSCCLPP.
-The reduce packet fuse pattern combines multiple packet-based reduce operations
+The reduce packets fuse pattern combines multiple packet-based reduce operations
 to efficiently aggregate data with packet format integrity while reducing
 synchronization overhead.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
-operation (reduce-packet-fuse) and is NOT intended for production use. This test
+operation (reduce-packets-fuse) and is NOT intended for production use. This test
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -22,13 +22,13 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def reduce_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def reduce_packets_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up single GPU for fused packet-based reduce operations
     gpus = 1
     collective = TestCollective(gpus, 0, 0)
 
     with MSCCLPPProgram(
-        "reduce_packet_test",
+        "reduce_packets_test",
         collective,
         gpus,
         protocol="LL",  # Low Latency protocol required for packet operations
@@ -57,4 +57,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-reduce_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+reduce_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

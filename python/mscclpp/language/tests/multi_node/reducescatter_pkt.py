@@ -57,12 +57,12 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
                         dst_offset = gpu
                         r_dst_offset = gpu if gpu < peer else gpu - 1
                         r_dst_offset += inter_node_data_offset
-                        memory_channels[(dst_rank_id, src_rank_id)].put_packet(
+                        memory_channels[(dst_rank_id, src_rank_id)].put_packets(
                             scratch_buffer[dst_rank_id][dst_offset : dst_offset + 1],
                             src_buffer[dst_rank_id : dst_rank_id + 1],
                             tb=0,
                         )
-                        memory_channels[(dst_rank_id, src_rank_id)].put_packet(
+                        memory_channels[(dst_rank_id, src_rank_id)].put_packets(
                             scratch_buffer[dst_rank_id][r_dst_offset : r_dst_offset + 1],
                             src_buffer[next_dst_rank_id : next_dst_rank_id + 1],
                             tb=0,
@@ -85,12 +85,12 @@ def allreduce_example(name, gpus_per_node, num_threads_per_block, min_message_si
 
                 if len(chunks) > 0:
                     src_rank.reduce(src_buffer[next_src_rank_id : next_src_rank_id + 1], chunks, tb=0, packet=True)
-                src_rank.copy_packet(
+                src_rank.copy_packets(
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
                     src_buffer[next_src_rank_id : next_src_rank_id + 1],
                     tb=0,
                 )
-                port_channels[src_rank_id].read_put_packet(
+                port_channels[src_rank_id].read_put_packets(
                     scratch_buffer[next_src_rank_id][gpu_size - 1 : gpu_size],
                     scratch_buffer[src_rank_id][gpu : gpu + 1],
                     tb=0,

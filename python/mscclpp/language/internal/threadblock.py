@@ -2,7 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer, BufferType
-from mscclpp.language.internal.optmizer import *
+from mscclpp.language.internal.optimizer import *
 from mscclpp.language.internal.buffer_access import *
 from dataclasses import dataclass, field
 from collections import OrderedDict
@@ -53,10 +53,10 @@ class ThreadBlock:
         self.ops.append(op)
 
     def optimize_operations(self):
-        self.ops = fuse_instructions(self.ops)
+        self.ops = fuse_operations(self.ops)
 
     def adding_data_sync(self):
-        self.ops = adding_data_sync(self.ops)
+        self.ops = add_data_sync(self.ops)
 
     def resolve_data_dependency(self):
         interval_map = BuffersAccess()

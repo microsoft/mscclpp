@@ -116,7 +116,7 @@ class Rank:
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
 
-    def unpack_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def unpack_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Copy data from packet format to regular format.
 
         Unpacks data from packet format in the source scratch buffer and copies
@@ -132,7 +132,7 @@ class Rank:
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
 
-    def copy_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def copy_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Copy data from regular format to packet format.
 
         Packs data from the source chunk and copies it to the destination
@@ -347,7 +347,7 @@ class Semaphore:
 
         get_program().add_semaphore(self)
 
-    def acquire(self, tb: int, data_sync: SyncType = SyncType.none):
+    def acquire(self, tb: int, data_sync: SyncType = SyncType.both):
         """Acquire the semaphore from a thread block.
 
         Blocks the thread block until the semaphore can be acquired (value > 0),
@@ -355,8 +355,9 @@ class Semaphore:
 
         Args:
             tb (int): The thread block ID that will acquire the semaphore.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the acquire operation.
+                Defaults to SyncType.both.
 
         Example:
             >>> sem.acquire(tb=0, data_sync=SyncType.before)
@@ -364,7 +365,7 @@ class Semaphore:
         op = SemaphoreAcquireOperation([self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
 
-    def release(self, tb: int, data_sync: SyncType = SyncType.none):
+    def release(self, tb: int, data_sync: SyncType = SyncType.both):
         """Release the semaphore from a thread block.
 
         Increments the semaphore value, potentially unblocking other thread blocks
@@ -372,8 +373,9 @@ class Semaphore:
 
         Args:
             tb (int): The thread block ID that will release the semaphore.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the release operation.
+                Defaults to SyncType.both.
 
         Example:
             >>> sem.release(tb=0, data_sync=SyncType.after)

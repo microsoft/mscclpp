@@ -379,7 +379,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handlePutPackets(const Operation& op, void* input, void* output, void* scratch) {
   ChannelType chType = op.channelType;
   uint16_t nDstChannels = op.nOutputs;
   const uint32_t* dstOffsets = op.outputOffsets;
@@ -413,7 +413,7 @@ MSCCLPP_DEVICE_INLINE void handlePutPacket(const Operation& op, void* input, voi
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scratch) {
   uint32_t nOutput = op.nOutputs;
   const uint32_t* dstOffsets = op.outputOffsets;
   const uint32_t* srcOffsets = op.inputOffsets;
@@ -457,7 +457,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPacket(const Operation& op, void* scratc
 }
 
 template <typename T, typename PacketType, bool SendToRemote = true>
-MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
   const uint32_t nSrcs = op.nInputs - 1;
   const uint32_t nDstChannels = op.nOutputs - 1;
@@ -496,7 +496,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPacket(const Operation& op, void* inp
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleUnpackPacket(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleUnpackPackets(const Operation& op, void* input, void* output, void* scratch) {
   const uint32_t size = op.inputBufferSizes[0];
   const uint32_t dstOffset = op.outputOffsets[0];
   const uint32_t srcOffset = op.inputOffsets[0];
@@ -512,7 +512,7 @@ MSCCLPP_DEVICE_INLINE void handleUnpackPacket(const Operation& op, void* input, 
 }
 
 template <typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleCopyPacket(const Operation& op, void* input, void* output, void* scratch) {
+MSCCLPP_DEVICE_INLINE void handleCopyPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
   uint32_t dstOffset = op.outputOffsets[0];
   uint32_t srcOffset = op.inputOffsets[0];
@@ -747,10 +747,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handlePut<ReuseScratch, true>(op, input, output, scratch, offset, unitSize);
   } else if (opType == OperationType::PUT_WITH_SIGNAL_AND_FLUSH) {
     handlePut<ReuseScratch, true, true>(op, input, output, scratch, offset, unitSize);
-  } else if (opType == OperationType::PUT_PACKET) {
-    handlePutPacket<PacketType>(op, input, output, scratch);
-  } else if (opType == OperationType::READ_PUT_PACKET) {
-    handleReadPutPacket<PacketType>(op, scratch);
+  } else if (opType == OperationType::PUT_PACKETS) {
+    handlePutPackets<PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::READ_PUT_PACKETS) {
+    handleReadPutPackets<PacketType>(op, scratch);
   } else if (opType == OperationType::GET) {
     handleGet<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   } else if (opType == OperationType::READ_REDUCE_SEND) {
@@ -763,14 +763,14 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleReduceSend<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
   } else if (opType == OperationType::REDUCE) {
     handleReduceSend<T, ReuseScratch, false>(op, input, output, scratch, offset, unitSize);
-  } else if (opType == OperationType::REDUCE_SEND_PACKET) {
-    handleReduceSendPacket<T, PacketType>(op, input, output, scratch);
-  } else if (opType == OperationType::REDUCE_PACKET) {
-    handleReduceSendPacket<T, PacketType, false>(op, input, output, scratch);
-  } else if (opType == OperationType::UNPACK_PACKET) {
-    handleUnpackPacket<PacketType>(op, input, output, scratch);
-  } else if (opType == OperationType::COPY_PACKET) {
-    handleCopyPacket<PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::REDUCE_SEND_PACKETS) {
+    handleReduceSendPackets<T, PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::REDUCE_PACKETS) {
+    handleReduceSendPackets<T, PacketType, false>(op, input, output, scratch);
+  } else if (opType == OperationType::UNPACK_PACKETS) {
+    handleUnpackPackets<PacketType>(op, input, output, scratch);
+  } else if (opType == OperationType::COPY_PACKETS) {
+    handleCopyPackets<PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::SEM_ACQUIRE) {
     handleSemAcquire(op);
   } else if (opType == OperationType::SEM_RELEASE) {
