@@ -851,6 +851,10 @@ class PipelineOperation(BaseOperation):
         for operation in self.operations:
             operation.shift_buffers(instance, num_instances, replication_function)
 
+    def shift_ids(self, instance, num_instances, replication_function):
+        for operation in self.operations:
+            operation.shift_ids(instance, num_instances, replication_function)
+
     def __add__(self, other):
         fused_operation = None
         if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
