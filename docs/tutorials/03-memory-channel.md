@@ -176,7 +176,7 @@ mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRe
                                   /*packetBuffer*/ localPktRegMem.data());
 ```
 
-Compared to the previous `memChan` channel, this `memPktChan` channel uses the same source (`localRegMem.data()`) but a different destination (`remotePktRegMem`) and an additional packet buffer (`localPktRegMem.data()`). The following diagram illustrates how the `memPktChan` channel uses these memory regions (A and B representing the two GPUs):
+Compared to the previous `memChan` channel, this `memPktChan` channel uses the same source (`localRegMem.data()`) but a different destination (`remotePktRegMem`) and an additional packet buffer (`localPktRegMem.data()`). The following diagram illustrates how the `memPktChan` channel uses these memory regions ("A" and "B" representing the two GPUs):
 
 ```{mermaid}
 block-beta
