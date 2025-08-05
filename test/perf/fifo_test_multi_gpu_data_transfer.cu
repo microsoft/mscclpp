@@ -117,7 +117,7 @@ std::tuple<double, double, int> runDataTransferKernelVariant(cudaStream_t stream
 
   timer.stop();
 
-  const int totalElements = numElements * numParallel;
+  const int totalElements = numElements;
   double throughput = totalElements / timer.elapsedSeconds();
   double duration_us = timer.elapsedMicroseconds();
 
