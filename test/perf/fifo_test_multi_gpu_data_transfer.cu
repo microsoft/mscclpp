@@ -26,13 +26,11 @@ __global__ void kernelPutData(int* sendBuffer, mscclpp::PortChannelDeviceHandle 
   int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
   if (tid == 0) {
-    printf("GPU%d: Starting data transfer of %d elements\n", rank, numElements);
     portHandle.put(0, 0, numElements * sizeof(int));
   }
 
   // Only thread 0 signals completion
   if (tid == 0) {
-    printf("GPU%d: Data transfer complete, sending signal\n", rank);
     portHandle.signal();
   }
 }
@@ -45,7 +43,6 @@ __global__ void kernelGetData(int* recvBuffer, mscclpp::PortChannelDeviceHandle 
   // Wait for signal from sender - only global thread 0 should wait
   if (tid == 0) {
     portHandle.wait();
-    printf("GPU%d: Received signal, starting data validation\n", rank);
   }
 
   __shared__ int errorCount;
@@ -104,24 +101,19 @@ std::tuple<double, double, int> runDataTransferKernelVariant(cudaStream_t stream
     // GPU0: Send data (value 1) and receive data (expecting value 2 from GPU1)
     kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements, rank);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelPutData on GPU0 (simultaneous bidirectional)\n");
 
     kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements, rank, 2);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelGetData on GPU0 (simultaneous bidirectional)\n");
   } else if (rank == 1) {
     // GPU1: Send data (value 2) and receive data (expecting value 1 from GPU0)
     kernelPutData<<<threadBlocks, threadsPerBlock, 0, stream>>>(sendBuffer, portChannelHandle, numElements, rank);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelPutData on GPU1 (simultaneous bidirectional)\n");
 
     kernelGetData<<<threadBlocks, threadsPerBlock, 0, stream>>>(recvBuffer, portChannelHandle, numElements, rank, 1);
     utils::CUDA_CHECK(cudaGetLastError());
-    printf("Finish kernelGetData on GPU1 (simultaneous bidirectional)\n");
   }
 
   utils::CUDA_CHECK(cudaStreamSynchronize(stream));
-  printf("Finish cudaStreamSynchronize on rank %d (simultaneous bidirectional)\n", rank);
 
   timer.stop();
 
@@ -130,7 +122,6 @@ std::tuple<double, double, int> runDataTransferKernelVariant(cudaStream_t stream
   double duration_us = timer.elapsedMicroseconds();
 
   utils::CUDA_CHECK(cudaDeviceSynchronize());
-  printf("Finish cudaDeviceSynchronize on rank %d\n", rank);
 
   return {throughput, duration_us, totalElements};
 }
