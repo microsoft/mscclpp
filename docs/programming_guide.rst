@@ -10,3 +10,4 @@ This section provides advanced topics and best practices for using MSCCL++. It i
 
    guide/memory-management
    guide/advanced-connections
+   guide/cpp-examples
