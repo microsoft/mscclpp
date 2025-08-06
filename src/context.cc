@@ -68,32 +68,20 @@ MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
   return Endpoint(std::make_shared<Endpoint::Impl>(config, *pimpl_));
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(Endpoint localEndpoint, Endpoint remoteEndpoint) {
+MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &localEndpoint,
+                                                             const Endpoint &remoteEndpoint) {
+  if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
+    throw Error("No GPU device ID provided for local endpoint", ErrorCode::InvalidUsage);
+  }
+  if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
+    throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InvalidUsage);
+  }
   std::shared_ptr<Connection> conn;
   if (localEndpoint.transport() == Transport::CudaIpc) {
     if (remoteEndpoint.transport() != Transport::CudaIpc) {
       throw Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
     }
-    int deviceId;
-    if (localEndpoint.device().type == DeviceType::GPU) {
-      deviceId = localEndpoint.device().id;
-    } else if (remoteEndpoint.device().type == DeviceType::GPU) {
-      deviceId = remoteEndpoint.device().id;
-    } else {
-      throw Error("CudaIpc transport requires at least one GPU device", ErrorCode::InvalidUsage);
-    }
-    if (deviceId < 0) {
-      throw Error("No GPU device ID provided", ErrorCode::InvalidUsage);
-    }
-#if defined(MSCCLPP_DEVICE_HIP)
-    pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>(deviceId));
-#else   // !defined(MSCCLPP_DEVICE_HIP)
-    if (pimpl_->ipcStreams_.empty()) {
-      pimpl_->ipcStreams_.emplace_back(std::make_shared<CudaIpcStream>(deviceId));
-    }
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
-    conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint,
-                                               pimpl_->ipcStreams_.back());
+    conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (AllIBTransports.has(localEndpoint.transport())) {
     if (!AllIBTransports.has(remoteEndpoint.transport())) {
       throw Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);

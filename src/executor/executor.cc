@@ -294,6 +294,7 @@ struct Executor::Impl {
           context.registeredMemoryIds.push_back(context.proxyService->addMemory(context.registeredMemories.back()));
         }
       }
+      context.registeredMemories[{bufferType, rank}] = std::move(memory);
     }
   }
 
@@ -333,7 +334,9 @@ struct Executor::Impl {
       for (ChannelInfo& info : channelInfos) {
         for (size_t i = 0; i < info.connectedPeers.size(); i++) {
           if (channelType == ChannelType::MEMORY) {
-            context.memoryChannels.emplace_back(context.memorySemaphores[index++]);
+            context.memoryChannels.emplace_back(context.memorySemaphores[index++],
+                                                context.registeredMemories[{info.dstBufferType, peer}], localMemory,
+                                                nullptr);
           } else if (channelType == ChannelType::PORT) {
             context.portChannels.emplace_back(context.proxyService->basePortChannel(context.proxySemaphores[index++]));
           }

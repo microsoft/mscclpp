@@ -20,12 +20,12 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 #include <dlfcn.h>
+#include <mscclpp/nccl.h>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
 #include "debug.h"
-#include "nccl.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -199,6 +199,7 @@ struct ncclComm {
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
   std::unordered_map<channelKey, NvlsChannelInfo> channelNvlsInfos;
   std::shared_ptr<char> scratchBuff;
+  mscclpp::RegisteredMemory registeredScratchMemory;
   std::vector<mscclpp::RegisteredMemory> remoteScratchRegMemories;
   std::vector<ChannelInfo> channelInfos;
 
@@ -268,15 +269,13 @@ static Op getReduceOp(ncclRedOp_t op) {
 }
 
 static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
-                                                                  void* buff, size_t bytes,
-                                                                  mscclpp::TransportFlags transport) {
+                                                                  mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
-  mscclpp::RegisteredMemory memory = comm->registerMemory(buff, bytes, transport);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
   for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
     if (i == rank) continue;
     remoteRegMemoryFutures.push_back(comm->recvMemory(i));
-    comm->sendMemory(memory, i);
+    comm->sendMemory(localMemory, i);
   }
   std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
                  [](const auto& future) { return future.get(); });
@@ -284,14 +283,15 @@ static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_pt
 }
 
 static std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
-    ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories, void* src) {
+    ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
+    mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::MemoryChannel> channels;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores = comm->memorySemaphores;
   size_t nConnections = comm->connections.size();
   for (size_t idx = 0; idx < NUM_CHANNELS_PER_CONNECTION; ++idx) {
     for (size_t cid = 0; cid < nConnections; ++cid) {
       if (comm->connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
-        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], src, nullptr);
+        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], localMemory, nullptr);
       }
     }
   }
@@ -432,8 +432,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   if (count * ncclTypeSize(datatype) <= (1 << 20) || mscclpp::isNvlsSupported()) {
     auto sendIt = comm->channelScratchInfos.find(sendKey);
     if (sendIt == comm->channelScratchInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelScratchInfos.emplace(sendKey, channelInfo).first;
     }
@@ -444,8 +446,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
 
     auto sendIt = comm->channelInInfos.find(sendKey);
     if (sendIt == comm->channelInInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
     }
@@ -457,10 +461,10 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
         recvBasePtr = (CUdeviceptr)recvbuff;
         offsetOut = 0;
       }
-      remoteMemories =
-          setupRemoteMemories(comm->comm, rank, (void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::MemoryChannel> outChannels =
-          setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
+      std::vector<mscclpp::MemoryChannel> outChannels = setupMemoryChannels(comm, remoteMemories, localMemory);
       ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
       recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
       if (mscclppDisableChannelCache == true) {
@@ -552,10 +556,10 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
         recvBasePtr = (CUdeviceptr)recvbuff;
         offsetOut = 0;
       }
-      std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-          comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+      std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
+      std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(comm, remoteMemories, localMemory);
       std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
       std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
                      [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
@@ -577,8 +581,10 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 #else
     auto sendIt = comm->channelInInfos.find(sendKey);
     if (sendIt == comm->channelInInfos.end()) {
+      mscclpp::RegisteredMemory localMemory =
+          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
       std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)sendBasePtr));
+          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
       ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
       sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
     }
@@ -629,8 +635,9 @@ static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_pt
   commPtr->buffFlag = 0;
   commPtr->numScratchBuff = 2;
   commPtr->scratchBuff = mscclpp::GpuBuffer<char>(SCRATCH_SIZE).memory();
-  commPtr->remoteScratchRegMemories =
-      setupRemoteMemories(commPtr->comm, rank, commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+  commPtr->registeredScratchMemory =
+      commPtr->comm->registerMemory(commPtr->scratchBuff.get(), SCRATCH_SIZE, mscclpp::Transport::CudaIpc);
+  commPtr->remoteScratchRegMemories = setupRemoteMemories(commPtr->comm, rank, commPtr->registeredScratchMemory);
 
   commPtr->deviceFlag7 = mscclpp::detail::gpuCallocShared<uint32_t>(7);
   commPtr->deviceFlag28 = mscclpp::detail::gpuCallocShared<uint32_t>(28);
@@ -660,7 +667,7 @@ NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
     WARN("uniqueId is nullptr");
     return ncclInvalidArgument;
   }
-  if (MSCCLPP_UNIQUE_ID_BYTES != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
+  if (mscclpp::UniqueIdBytes != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
   mscclpp::UniqueId id = mscclpp::TcpBootstrap::createUniqueId();
   memcpy(uniqueId, &id, sizeof(ncclUniqueId));
   return ncclSuccess;
@@ -935,12 +942,10 @@ NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff
 
   auto it = comm->channelOutInfos.find(recvKey);
   if (it == comm->channelOutInfos.end()) {
-    // std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(
-    //     comm->comm, rank, const_cast<void*>((void*)recvBasePtr), recvBytes, mscclpp::Transport::CudaIpc);
-    // std::vector<mscclpp::MemoryChannel> channels =
-    //     setupMemoryChannels(comm, remoteMemories, const_cast<void*>((void*)recvBasePtr));
+    mscclpp::RegisteredMemory localMemory =
+        comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
     std::vector<mscclpp::MemoryChannel> channels =
-        setupMemoryChannels(comm, comm->remoteScratchRegMemories, const_cast<void*>((void*)recvBasePtr));
+        setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
     std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
     std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
                    [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });

@@ -21,11 +21,12 @@ struct Endpoint::Impl {
   Transport transport_;
   Device device_;
   uint64_t hostHash_;
+  uint64_t pidHash_;
   int maxWriteQueueSize_;
 
   // The following are only used for IB and are undefined for other transports.
   bool ibLocal_;
-  IbQp* ibQp_;
+  std::shared_ptr<IbQp> ibQp_;
   IbQpInfo ibQpInfo_;
 
   // The following are only used for Ethernet and are undefined for other transports.

@@ -19,10 +19,10 @@
 
 namespace mscclpp {
 
-#define MSCCLPP_UNIQUE_ID_BYTES 128
+constexpr unsigned int UniqueIdBytes = 128;
 
 /// Unique ID for initializing the TcpBootstrap.
-using UniqueId = std::array<uint8_t, MSCCLPP_UNIQUE_ID_BYTES>;
+using UniqueId = std::array<uint8_t, UniqueIdBytes>;
 
 /// Return a version string.
 /// @return The MSCCL++ version string in "major.minor.patch" format.
@@ -207,7 +207,6 @@ class TcpBootstrap : public Bootstrap {
 enum class Transport {
   Unknown,        // Unknown transport type.
   CudaIpc,        // CUDA IPC transport type.
-  Nvls,           // NVLS transport type.
   IB0,            // InfiniBand device 0 transport type.
   IB1,            // InfiniBand device 1 transport type.
   IB2,            // InfiniBand device 2 transport type.
@@ -221,7 +220,7 @@ enum class Transport {
 };
 
 namespace detail {
-const size_t TransportFlagsSize = 12;
+const size_t TransportFlagsSize = 11;
 static_assert(TransportFlagsSize == static_cast<size_t>(Transport::NumTransports),
               "TransportFlagsSize must match the number of transports");
 /// Bitset for storing transport flags.
@@ -362,6 +361,7 @@ enum class DeviceType {
   GPU,      // GPU device type.
 };
 
+/// Declaration of a device.
 struct Device {
   /// Constructor.
   Device() = default;
@@ -376,153 +376,6 @@ struct Device {
 
   /// Device ID.
   int id;
-};
-
-class Context;
-class Connection;
-
-/// Block of memory that has been registered to a Context.
-/// RegisteredMemory does not own the memory it points to, but it provides a way to transfer metadata about the memory
-/// to other processes, hence allowing their access to the memory block.
-class RegisteredMemory {
- public:
-  /// Constructor.
-  RegisteredMemory() = default;
-
-  /// Destructor.
-  ~RegisteredMemory();
-
-  /// Get a pointer to the memory block.
-  /// @return A pointer to the memory block.
-  void* data() const;
-
-  /// Get a pointer to the original memory block.
-  /// @return A pointer to the original memory block.
-  void* originalDataPtr() const;
-
-  /// Get the size of the memory block.
-  /// @return The size of the memory block.
-  size_t size() const;
-
-  /// Get the transport flags associated with the memory block.
-  /// @return The transport flags associated with the memory block.
-  TransportFlags transports() const;
-
-  /// Serialize the RegisteredMemory object to a vector of characters.
-  /// @return A vector of characters representing the serialized RegisteredMemory object.
-  std::vector<char> serialize() const;
-
-  /// Deserialize a RegisteredMemory object from a vector of characters.
-  /// @param data A vector of characters representing a serialized RegisteredMemory object.
-  /// @return A deserialized RegisteredMemory object.
-  static RegisteredMemory deserialize(const std::vector<char>& data);
-
- private:
-  struct Impl;
-  RegisteredMemory(std::shared_ptr<Impl> pimpl);
-  std::shared_ptr<Impl> pimpl_;
-
-  friend class Context;
-  friend class Connection;
-  friend class SemaphoreStub;
-};
-
-/// One end of a connection.
-class Endpoint {
- public:
-  /// Constructor.
-  Endpoint() = default;
-
-  /// Get the transport used.
-  /// @return The transport used.
-  Transport transport() const;
-
-  /// Get the device used.
-  /// @return The device used.
-  const Device& device() const;
-
-  /// Get the maximum write queue size.
-  /// @return The maximum number of write requests that can be queued.
-  int maxWriteQueueSize() const;
-
-  /// Serialize the Endpoint object to a vector of characters.
-  /// @return A vector of characters representing the serialized Endpoint object.
-  std::vector<char> serialize() const;
-
-  /// Deserialize an Endpoint object from a vector of characters.
-  /// @param data A vector of characters representing a serialized Endpoint object.
-  /// @return A deserialized Endpoint object.
-  static Endpoint deserialize(const std::vector<char>& data);
-
- private:
-  struct Impl;
-  Endpoint(std::shared_ptr<Impl> pimpl);
-  std::shared_ptr<Impl> pimpl_;
-
-  friend class Context;
-  friend class Connection;
-};
-
-/// Connection between two processes.
-class Connection {
- public:
-  /// Constructor.
-  /// @param localEndpoint The local endpoint of the connection.
-  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-      : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
-
-  /// Destructor.
-  virtual ~Connection() = default;
-
-  /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
-  ///
-  /// @param dst The destination RegisteredMemory.
-  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
-  /// @param src The source RegisteredMemory.
-  /// @param srcOffset The offset in bytes from the start of the source RegisteredMemory.
-  /// @param size The number of bytes to write.
-  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                     uint64_t size) = 0;
-
-  /// Update an 8-byte value in a destination RegisteredMemory and synchronize the change with the remote process.
-  ///
-  /// @param dst The destination RegisteredMemory.
-  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
-  /// @param src A pointer to the value to update.
-  /// @param newValue The new value to write.
-  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
-
-  /// Flush any pending writes to the remote process.
-  /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
-  virtual void flush(int64_t timeoutUsec = -1) = 0;
-
-  /// Get the transport used by the local process.
-  /// @return The transport used by the local process.
-  virtual Transport transport() const = 0;
-
-  /// Get the transport used by the remote process.
-  /// @return The transport used by the remote process.
-  virtual Transport remoteTransport() const = 0;
-
-  /// Get the context associated with this connection.
-  /// @return A shared pointer to the context associated with this connection.
-  std::shared_ptr<Context> context() const { return context_; }
-
-  /// Get the device used by the local endpoint.
-  /// @return The device used by the local endpoint.
-  const Device& localDevice() const;
-
-  /// Get the maximum write queue size.
-  /// @return The maximum number of write requests that can be queued.
-  int getMaxWriteQueueSize() const;
-
- protected:
-  static std::shared_ptr<RegisteredMemory::Impl> getImpl(RegisteredMemory& memory);
-  static std::shared_ptr<Endpoint::Impl> getImpl(Endpoint& memory);
-
-  std::shared_ptr<Context> context_;
-  Endpoint localEndpoint_;
-  int maxWriteQueueSize_;
 };
 
 /// Used to configure an endpoint.
@@ -560,6 +413,55 @@ struct EndpointConfig {
         ibMaxSendWr(ibMaxSendWr),
         ibMaxWrPerSend(ibMaxWrPerSend),
         maxWriteQueueSize(maxWriteQueueSize) {}
+};
+
+class Context;
+class Connection;
+class RegisteredMemory;
+class SemaphoreStub;
+
+/// One end of a connection.
+class Endpoint {
+ public:
+  /// Constructor.
+  Endpoint() = default;
+
+  /// Get the transport used.
+  /// @return The transport used.
+  Transport transport() const;
+
+  /// Get the device used.
+  /// @return The device used.
+  const Device& device() const;
+
+  /// Get the host hash.
+  /// @return The host hash.
+  uint64_t hostHash() const;
+
+  /// Get the process ID hash.
+  /// @return The process ID hash.
+  uint64_t pidHash() const;
+
+  /// Get the maximum write queue size.
+  /// @return The maximum number of write requests that can be queued.
+  int maxWriteQueueSize() const;
+
+  /// Serialize the Endpoint object to a vector of characters.
+  /// @return A vector of characters representing the serialized Endpoint object.
+  std::vector<char> serialize() const;
+
+  /// Deserialize an Endpoint object from a vector of characters.
+  /// @param data A vector of characters representing a serialized Endpoint object.
+  /// @return A deserialized Endpoint object.
+  static Endpoint deserialize(const std::vector<char>& data);
+
+ private:
+  struct Impl;
+  Endpoint(std::shared_ptr<Impl> pimpl);
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
 };
 
 /// Context for communication. This provides a low-level interface for forming connections in use-cases
@@ -607,7 +509,7 @@ class Context : public std::enable_shared_from_this<Context> {
   /// @param localEndpoint The local endpoint.
   /// @param remoteEndpoint The remote endpoint.
   /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connect(Endpoint localEndpoint, Endpoint remoteEndpoint);
+  std::shared_ptr<Connection> connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
  private:
   Context();
@@ -615,8 +517,118 @@ class Context : public std::enable_shared_from_this<Context> {
   struct Impl;
   std::unique_ptr<Impl> pimpl_;
 
-  friend class RegisteredMemory;
   friend class Endpoint;
+  friend class Connection;
+  friend class RegisteredMemory;
+};
+
+/// Block of memory that has been registered to a Context.
+/// RegisteredMemory does not own the memory it points to, but it provides a way to transfer metadata about the memory
+/// to other processes, hence allowing their access to the memory block.
+class RegisteredMemory {
+ public:
+  /// Constructor.
+  RegisteredMemory() = default;
+
+  /// Destructor.
+  ~RegisteredMemory();
+
+  /// Get a pointer to the memory block.
+  /// @return A pointer to the memory block.
+  void* data() const;
+
+  /// Get a pointer to the original memory block.
+  /// @return A pointer to the original memory block.
+  void* originalDataPtr() const;
+
+  /// Get the size of the memory block.
+  /// @return The size of the memory block.
+  size_t size() const;
+
+  /// Get the transport flags associated with the memory block.
+  /// @return The transport flags associated with the memory block.
+  TransportFlags transports() const;
+
+  /// Serialize the RegisteredMemory object to a vector of characters.
+  /// @return A vector of characters representing the serialized RegisteredMemory object.
+  std::vector<char> serialize() const;
+
+  /// Deserialize a RegisteredMemory object from a vector of characters.
+  /// @param data A vector of characters representing a serialized RegisteredMemory object.
+  /// @return A deserialized RegisteredMemory object.
+  static RegisteredMemory deserialize(const std::vector<char>& data);
+
+ private:
+  struct Impl;
+  RegisteredMemory(std::shared_ptr<Impl> pimpl);
+  std::shared_ptr<Impl> pimpl_;
+
+  friend class Context;
+  friend class Connection;
+  friend class SemaphoreStub;
+};
+
+/// Connection between two processes.
+class Connection {
+ public:
+  /// Constructor.
+  /// @param context The context associated with the connection.
+  /// @param localEndpoint The local endpoint of the connection.
+  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
+
+  /// Destructor.
+  virtual ~Connection() = default;
+
+  /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
+  ///
+  /// @param dst The destination RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
+  /// @param src The source RegisteredMemory.
+  /// @param srcOffset The offset in bytes from the start of the source RegisteredMemory.
+  /// @param size The number of bytes to write.
+  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                     uint64_t size) = 0;
+
+  /// Update an 8-byte value in a destination RegisteredMemory and synchronize the change with the remote process.
+  ///
+  /// @param dst The destination RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
+  /// @param src A pointer to the value to update.
+  /// @param newValue The new value to write.
+  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
+
+  /// Flush any pending writes to the remote process.
+  /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
+  virtual void flush(int64_t timeoutUsec = -1) = 0;
+
+  /// Get the transport used by the local process.
+  /// @return The transport used by the local process.
+  virtual Transport transport() const = 0;
+
+  /// Get the transport used by the remote process.
+  /// @return The transport used by the remote process.
+  virtual Transport remoteTransport() const = 0;
+
+  /// Get the context associated with this connection.
+  /// @return A shared pointer to the context associated with this connection.
+  std::shared_ptr<Context> context() const;
+
+  /// Get the device used by the local endpoint.
+  /// @return The device used by the local endpoint.
+  const Device& localDevice() const;
+
+  /// Get the maximum write queue size.
+  /// @return The maximum number of write requests that can be queued.
+  int getMaxWriteQueueSize() const;
+
+ protected:
+  static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
+  static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
+  static Context::Impl& getImpl(Context& context);
+
+  std::shared_ptr<Context> context_;
+  Endpoint localEndpoint_;
+  int maxWriteQueueSize_;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
