@@ -27,10 +27,10 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 void CudaStreamWithFlags::set(unsigned int flags) {
   if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
   int originalDeviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));  // Save the current device
+  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId)); // Save the current device
   MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
-  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));  // Restore the original device
+  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId)); // Restore the original device
 }
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
@@ -57,7 +57,7 @@ GpuStream GpuStreamPool::getStream() {
 void GpuStreamPool::clear() { streams_.clear(); }
 
 // A global pool instance
-std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
+static std::shared_ptr<GpuStreamPool> gGpuStreamPool_;
 
 std::shared_ptr<GpuStreamPool> gpuStreamPool() {
   if (!gGpuStreamPool_) {
