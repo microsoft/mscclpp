@@ -126,8 +126,8 @@ void worker(int gpuId) {
   mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
   mscclpp::RegisteredMemory remotePktRegMem = remotePktRegMemFuture.get();
 
-  mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem.data());
-  mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem.data(),
+  mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem);
+  mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem,
                                     /*packetBuffer*/ localPktRegMem.data());
 
   auto memChanHandle = memChan.deviceHandle();
