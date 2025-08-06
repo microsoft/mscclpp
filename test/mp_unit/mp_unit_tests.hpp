@@ -80,8 +80,8 @@ class IbPeerToPeerTest : public IbTestBase {
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
-  mscclpp::IbQp* qp;
-  const mscclpp::IbMr* mr;
+  std::shared_ptr<mscclpp::IbQp> qp;
+  std::shared_ptr<const mscclpp::IbMr> mr;
   size_t bufSize;
 
   std::array<mscclpp::IbQpInfo, 2> qpInfo;
@@ -107,6 +107,7 @@ class CommunicatorTestBase : public MultiProcessTest {
   int numRanksToUse = -1;
   std::shared_ptr<mscclpp::Communicator> communicator;
   mscclpp::Transport ibTransport;
+  std::vector<mscclpp::RegisteredMemory> registeredMemories;
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
   std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> cpuConnections;
 };
