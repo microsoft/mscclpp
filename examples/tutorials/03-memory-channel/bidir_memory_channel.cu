@@ -13,7 +13,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
 
-#define PORT_NUMER "50505"
+#define PORT_NUMBER "50505"
 
 template <typename... Args>
 void log(Args &&...args) {
@@ -109,7 +109,7 @@ void worker(int gpuId) {
 
   // Build a connection and a semaphore
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
-  bootstrap->initialize("lo:127.0.0.1:" PORT_NUMER);
+  bootstrap->initialize("lo:127.0.0.1:" PORT_NUMBER);
   mscclpp::Communicator comm(bootstrap);
   auto conn = comm.connect({transport, {mscclpp::DeviceType::GPU, gpuId}}, remoteRank).get();
   auto sema = comm.buildSemaphore(conn, remoteRank).get();
