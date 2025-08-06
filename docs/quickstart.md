@@ -201,9 +201,10 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with the fallback features.
 
-### C++ Benchmark (mscclpp-test, *Deprecated*)
+(mscclpp-test)=
+### C++ Examples (mscclpp-test)
 
-*NOTE: mscclpp-test is retired and maintained only as an example of C++ implementation. If you want to get the latest performance numbers, please use the Python benchmark or the NCCL APIs instead.*
+*NOTE: mscclpp-test is maintained only as a set of C++ implementation examples. If you want to get the latest performance numbers, please use the Python benchmark or the NCCL APIs instead.*
 
 mscclpp-test is a set of C++ performance benchmarks. It requires MPI on the system, and the path should be provided via `MPI_HOME` environment variable to the CMake build system.
 
