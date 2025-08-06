@@ -33,7 +33,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
         for gpu in range(gpu_size):
             rank = Rank(gpu)
             input_buffer = rank.get_output_buffer()
-            rank.copy_packet(scratch_buffer[gpu][gpu : gpu + 1], input_buffer[gpu : gpu + 1], tb=gpu)
+            rank.copy_packets(scratch_buffer[gpu][gpu : gpu + 1], input_buffer[gpu : gpu + 1], tb=gpu)
 
         # Intra node put pkt
         for node in range(nodes):
@@ -43,7 +43,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                     if peer != gpu:
                         dst_rank = peer + gpus_per_node * node
                         ch = MemoryChannel(dst_rank, src_rank)
-                        ch.read_put_packet(
+                        ch.read_put_packets(
                             scratch_buffer[dst_rank][src_rank : src_rank + 1],
                             scratch_buffer[src_rank][src_rank : src_rank + 1],
                             tb=peer,
@@ -55,7 +55,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 src_rank = gpu + gpus_per_node * node
                 dst_rank = gpu + gpus_per_node * ((node + 1) % nodes)
                 ch = PortChannel(dst_rank, src_rank)
-                ch.read_put_packet(
+                ch.read_put_packets(
                     scratch_buffer[dst_rank][src_rank : src_rank + 1],
                     scratch_buffer[src_rank][src_rank : src_rank + 1],
                     tb=gpu,
@@ -70,7 +70,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                     if peer != gpu:
                         dst_rank = peer + gpus_per_node * node
                         ch = MemoryChannel(dst_rank, src_rank)
-                        ch.read_put_packet(
+                        ch.read_put_packets(
                             scratch_buffer[dst_rank][src_offset : src_offset + 1],
                             scratch_buffer[src_rank][src_offset : src_offset + 1],
                             tb=peer,
@@ -82,7 +82,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
                 dst_rank = (gpu + peer) % gpu_size
                 rank = Rank(gpu)
                 input_buffer = rank.get_output_buffer()
-                rank.unpack_packet(
+                rank.unpack_packets(
                     input_buffer[dst_rank : dst_rank + 1], scratch_buffer[gpu][dst_rank : dst_rank + 1], tb=peer
                 )
 

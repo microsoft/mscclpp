@@ -52,7 +52,7 @@ class MemoryChannel:
         self.channel_type = ChannelType.memory
         get_program().add_channel(self)
 
-    def signal(self, tb: int, data_sync: SyncType = SyncType.none, relaxed: bool = False):
+    def signal(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
         """Send a signal through the memory channel.
 
         Signals notify the destination that data is ready or an operation has completed.
@@ -60,8 +60,9 @@ class MemoryChannel:
 
         Args:
             tb (int): The thread block ID that will execute this signal operation.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the signal operation.
+                Defaults to SyncType.both.
             relaxed (bool, optional): Whether to use relaxed memory ordering.
                 Defaults to False.
 
@@ -72,7 +73,7 @@ class MemoryChannel:
         op = SignalOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def wait(self, tb: int, data_sync: SyncType = SyncType.none, relaxed: bool = False):
+    def wait(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
         """Wait for a signal through the memory channel.
 
         Waits for a signal from the destination rank, typically used for synchronization
@@ -80,8 +81,9 @@ class MemoryChannel:
 
         Args:
             tb (int): The thread block ID that will execute this wait operation.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the wait operation.
+                Defaults to SyncType.both.
             relaxed (bool, optional): Whether to use relaxed memory ordering.
                 Defaults to False.
 
@@ -180,7 +182,7 @@ class MemoryChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def read_put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Transfer data in packet format from local to remote scratch buffer.
 
         Performs a specialized put operation that transfers data in packet format
@@ -231,7 +233,7 @@ class MemoryChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Transfer data from local buffer to remote scratch buffer in packet format.
 
         Performs a put operation that transfers data from the source rank's buffer
@@ -404,7 +406,7 @@ class PortChannel:
         self.channel_type = ChannelType.port
         get_program().add_channel(self)
 
-    def signal(self, tb: int, data_sync: SyncType = SyncType.none):
+    def signal(self, tb: int, data_sync: SyncType = SyncType.both):
         """Send a signal through the port channel.
 
         Signals notify the destination that data is ready or an operation has completed.
@@ -412,8 +414,9 @@ class PortChannel:
 
         Args:
             tb (int): The thread block ID that will execute this signal operation.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the signal operation.
+                Defaults to SyncType.both.
 
         Example:
             >>> channel.signal(tb=0, data_sync=SyncType.before)
@@ -422,7 +425,7 @@ class PortChannel:
         op = SignalOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def wait(self, tb: int, data_sync: SyncType = SyncType.none):
+    def wait(self, tb: int, data_sync: SyncType = SyncType.both):
         """Wait for a signal through the port channel.
 
         Waits for a signal from the destination rank, typically used for synchronization
@@ -430,8 +433,9 @@ class PortChannel:
 
         Args:
             tb (int): The thread block ID that will execute this wait operation.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the wait operation.
+                Defaults to SyncType.both.
 
         Example:
             >>> channel.wait(tb=0, data_sync=SyncType.after)
@@ -440,7 +444,7 @@ class PortChannel:
         op = WaitOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def flush(self, tb: int, data_sync: SyncType = SyncType.none):
+    def flush(self, tb: int, data_sync: SyncType = SyncType.both):
         """Flush pending operations through the port channel.
 
         Forces completion of all pending operations on the port channel, ensuring
@@ -448,8 +452,9 @@ class PortChannel:
 
         Args:
             tb (int): The thread block ID that will execute this flush operation.
-            data_sync (SyncType, optional): The type of data synchronization to perform.
-                Defaults to SyncType.none.
+            data_sync (SyncType, optional): Defines the order where threads inside the thread block
+                will be synchronized (equivalent to __syncthreads()) relative to the flush operation.
+                Defaults to SyncType.both.
 
         Example:
             >>> channel.flush(tb=0, data_sync=SyncType.after)
@@ -593,7 +598,7 @@ class PortChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
-    def read_put_packet(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Transfer data in packet format from local to remote scratch buffer.
 
         Performs a specialized put operation that transfers data in packet format

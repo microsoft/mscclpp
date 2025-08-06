@@ -2,15 +2,15 @@
 # Licensed under the MIT License.
 
 """
-Put-Packet Operation Test
+Put-Packets Operation Test
 
-This file demonstrates the use of the put_packet operation in MSCCLPP.
-The put_packet operation writes data from a source buffer to a destination buffer
+This file demonstrates the use of the put_packets operation in MSCCLPP.
+The put_packets operation writes data from a source buffer to a destination buffer
 in packet format, which is useful for efficient data transfer in distributed
 GPU communication patterns.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
-operation (put_packet) and is NOT intended for production use. This test
+operation (put_packets) and is NOT intended for production use. This test
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -22,13 +22,13 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def put_packets_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 1, 0)
 
     # Initialize MSCCLPP program context with LL (Low Latency) protocol
     with MSCCLPPProgram(
-        "put_packet_test",
+        "put_packets_test",
         collective,
         gpus,
         protocol="LL",
@@ -48,11 +48,11 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
                     # Establish a memory channel from source to destination GPU
                     ch = MemoryChannel(dst_rank, src_rank)
 
-                    # Perform put_packet operation:
+                    # Perform put_packets operation:
                     # - Transfers data from src_buff[0:1] to dst_buff[0:1]
                     # - Uses threadblock 0 for the operation
                     # - Data is transferred in packet format for efficient communication
-                    ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+                    ch.put_packets(dst_buff[0:1], src_buff[0:1], tb=0)
 
         print(JSON())
 
@@ -65,4 +65,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+put_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

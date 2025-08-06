@@ -11,26 +11,86 @@ from mscclpp.language.internal.types import (
     DataAccess,
     DataAccessType,
 )
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List
 import uuid
 
 
 @dataclass
-class BaseOperation:
+class BaseOperation(ABC):
+    """Abstract base class for all MSCCLPP operations.
+
+    This class provides the foundation for all operations that can be performed
+    in MSCCLPP programs, including communication operations, synchronization
+    operations, and data manipulation operations.
+
+    Attributes:
+        id (uuid.UUID): Unique identifier for this operation instance, automatically
+            generated using UUID4.
+        name (str): The name/type of the operation, typically from the Instruction enum.
+    """
+
     id: uuid.UUID = field(default_factory=uuid.uuid4, init=False)
     name: str
 
     def local_data_access(self, sync_purpose=True):
+        """Get list of local data accesses performed by this operation.
+
+        Returns information about which local memory regions (buffers/chunks)
+        this operation reads from or writes to. This is used for dependency
+        analysis and optimization.
+
+        Args:
+            sync_purpose (bool, optional): Whether this access info is being used
+                for synchronization analysis. Defaults to True.
+
+        Returns:
+            List[DataAccess]: List of DataAccess objects describing the memory
+                regions accessed by this operation. Returns empty list if no
+                local data access occurs.
+        """
         return []
 
     def shift_buffers(self, instance, num_instances, replication_function):
+        """Shift buffer indices for operation replication across instances.
+
+        When operations are replicated across multiple instances, buffer indices
+        need to be adjusted to avoid conflicts. This method applies the replication
+        function to all buffer indices used by this operation.
+
+        Args:
+            instance (int): The current instance number (0-based).
+            num_instances (int): Total number of instances being created.
+            replication_function (callable): Function that takes (original_index,
+                instance, num_instances) and returns the new index for this instance.
+        """
         return
 
     def shift_ids(self, instance, num_instances, replication_function):
+        """Shift resource IDs for operation replication across instances.
+
+        Similar to shift_buffers, but operates on resource IDs like channel IDs,
+        semaphore IDs, or barrier IDs that need to be unique across instances.
+
+        Args:
+            instance (int): The current instance number (0-based).
+            num_instances (int): Total number of instances being created.
+            replication_function (callable): Function that takes (original_id,
+                instance, num_instances) and returns the new ID for this instance.
+        """
         return
 
     def __add__(self, other):
+        """Attempt to fuse this operation with another operation.
+
+        Operation fusion is an optimization technique where compatible operations
+        can be combined into a single operation to reduce overhead. This method
+        implements the fusion logic specific to each operation type.
+
+        Args:
+            other (BaseOperation): Another operation to potentially fuse with.
+        """
         return None
 
 
@@ -877,3 +937,33 @@ def check_data_sync_op(operation):
         or isinstance(operation, WaitOperation)
         or isinstance(operation, FlushOperation)
     )
+
+
+def add_data_sync(operations):
+    result_operations = []
+    data_sync_operations = {
+        Instruction.sem_acquire,
+        Instruction.sem_release,
+        Instruction.signal,
+        Instruction.wait,
+        Instruction.relaxed_signal,
+        Instruction.relaxed_wait,
+        Instruction.flush,
+    }
+
+    for operation in operations:
+        if operation.name == Instruction.pipeline:
+            pipeline_result_operations = add_data_sync(operation.operations)
+            operation.operations = pipeline_result_operations
+
+        if operation.name in data_sync_operations and (
+            operation.data_sync == SyncType.before or operation.data_sync == SyncType.both
+        ):
+            result_operations.append(SyncOperation())
+        result_operations.append(operation)
+        if operation.name in data_sync_operations and (
+            operation.data_sync == SyncType.after or operation.data_sync == SyncType.both
+        ):
+            result_operations.append(SyncOperation())
+
+    return result_operations

@@ -2,14 +2,14 @@
 # Licensed under the MIT License.
 
 """
-Unpack-Packet Operation Test
+Unpack-Packets Operation Test
 
-This file demonstrates the use of the unpack_packet operation in MSCCL++.
-The unpack-copy-packet pattern converts data from packet format back to the
+This file demonstrates the use of the unpack_packets operation in MSCCL++.
+The unpack-copy-packets pattern converts data from packet format back to the
 standard format and then copies it to the target buffer.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
-operation (unpack-copy-packet) and is NOT intended for production use. This test
+operation (unpack-copy-packets) and is NOT intended for production use. This test
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -21,13 +21,13 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def unpack_packet_test(num_threads_per_block, min_message_size, max_message_size):
+def unpack_packets_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up single GPU for unpack-copy-packet operations
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
 
     with MSCCLPPProgram(
-        "unpack_packet_test",
+        "unpack_packets_test",
         collective,
         gpus,
         protocol="LL",
@@ -42,10 +42,10 @@ def unpack_packet_test(num_threads_per_block, min_message_size, max_message_size
         scratch_buffer = Buffer(0, 1)
 
         # Step 1: Copy data from input to scratch buffer in packet format
-        rank.copy_packet(scratch_buffer[0:1], input_buffer[0:1], tb=0)
+        rank.copy_packets(scratch_buffer[0:1], input_buffer[0:1], tb=0)
 
         # Step 2: Unpack packet data from scratch buffer to output buffer
-        rank.unpack_packet(output_buffer[0:1], scratch_buffer[0:1], tb=0)
+        rank.unpack_packets(output_buffer[0:1], scratch_buffer[0:1], tb=0)
 
         print(JSON())
 
@@ -58,4 +58,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-unpack_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+unpack_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)

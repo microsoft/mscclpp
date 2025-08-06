@@ -45,17 +45,17 @@ auto getOpType = [](const std::string& str) {
   } else if (str == "rres") {
     return mscclpp::OperationType::READ_REDUCE_SEND;
   } else if (str == "ppkt") {
-    return mscclpp::OperationType::PUT_PACKET;
+    return mscclpp::OperationType::PUT_PACKETS;
   } else if (str == "rppkt") {
-    return mscclpp::OperationType::READ_PUT_PACKET;
+    return mscclpp::OperationType::READ_PUT_PACKETS;
   } else if (str == "respkt") {
-    return mscclpp::OperationType::REDUCE_SEND_PACKET;
+    return mscclpp::OperationType::REDUCE_SEND_PACKETS;
   } else if (str == "cpkt") {
-    return mscclpp::OperationType::COPY_PACKET;
+    return mscclpp::OperationType::COPY_PACKETS;
   } else if (str == "upkt") {
-    return mscclpp::OperationType::UNPACK_PACKET;
+    return mscclpp::OperationType::UNPACK_PACKETS;
   } else if (str == "repkt") {
-    return mscclpp::OperationType::REDUCE_PACKET;
+    return mscclpp::OperationType::REDUCE_PACKETS;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
   } else if (str == "rlxsignal") {
