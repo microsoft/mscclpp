@@ -273,6 +273,7 @@ struct Executor::Impl {
       for (size_t i = 0; i < remoteRegMemoryFutures.size(); i++) {
         context.registeredMemories[{bufferType, connectedPeers[i]}] = std::move(remoteRegMemoryFutures[i].get());
       }
+      context.registeredMemories[{bufferType, rank}] = std::move(memory);
     }
   }
 
@@ -332,7 +333,8 @@ struct Executor::Impl {
         for (int peer : info.connectedPeers) {
           if (channelType == ChannelType::MEMORY) {
             context.memoryChannels.emplace_back(context.memorySemaphores[index++],
-                                                context.registeredMemories[{info.dstBufferType, peer}], src, nullptr);
+                                                context.registeredMemories[{info.dstBufferType, peer}], localMemory,
+                                                nullptr);
           } else if (channelType == ChannelType::PORT) {
             context.portChannels.emplace_back(context.proxyService->portChannel(
                 context.proxySemaphores[index++],
