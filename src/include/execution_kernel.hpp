@@ -262,8 +262,8 @@ MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* out
         srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
     uint32_t size = min(sizes[i] - offset, unitSize);
     char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[i].id]);
-    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
-                  remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
+    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + dstOffset,
+                  remoteMemory + srcOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
