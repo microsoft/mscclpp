@@ -5,7 +5,7 @@
 [![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
 [![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yaml/badge.svg)](https://microsoft.github.io/mscclpp/)
 
-| Pipelines                | Build Status      |
+| Testing Pipelines        | Build Status      |
 |--------------------------|-------------------|
 | Unit Tests (CUDA)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
 | Integration Tests (CUDA) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398479&branchName=main) |
@@ -13,9 +13,11 @@
 
 A GPU-driven communication stack for scalable AI applications.
 
-See [Quick Start](https://microsoft.github.io/mscclpp/getting-started/quickstart.html) to quickly get started.
-
-Check our [paper](https://arxiv.org/abs/2504.09014) to know more about MSCCL++.
+| [Quick Start](https://microsoft.github.io/mscclpp/quickstart.html)
+| [Tutorials](https://microsoft.github.io/mscclpp/tutorials.html)
+| [API Reference](https://microsoft.github.io/mscclpp/cpp_api.html)
+| [Paper](https://arxiv.org/abs/2504.09014)
+|
 
 ## Overview
 
