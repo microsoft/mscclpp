@@ -50,7 +50,6 @@ The example code is similar to that in the [Basic Concepts](./01-basic-concepts.
 In the example code, two processes create and initialize a `TcpBootstrap` instance as follows:
 
 ```cpp
-// From gpu_ping_pong_mp.cu, lines 100-101
 auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
 bootstrap->initialize("lo:127.0.0.1:" PORT_NUMER);
 ```
@@ -75,14 +74,12 @@ While `Bootstrap` provides general IPC interfaces, `Communicator` is a wrapper a
 In the example code, `Communicator` is constructed as follows:
 
 ```cpp
-// From gpu_ping_pong_mp.cu, line 102
 mscclpp::Communicator comm(bootstrap);
 ```
 
 Then it creates a GPU endpoint that connects to the remote rank:
 
 ```cpp
-// From gpu_ping_pong_mp.cu, lines 106-107
 auto connFuture = comm.connect({transport, {mscclpp::DeviceType::GPU, gpuId}}, remoteRank);
 auto conn = connFuture.get();
 ```
@@ -92,7 +89,6 @@ The `connect()` method builds a connection asynchronously; it returns a future o
 After the connection is established, we create a semaphore for synchronization:
 
 ```cpp
-// From gpu_ping_pong_mp.cu, lines 111-112
 auto semaFuture = comm.buildSemaphore(conn, remoteRank);
 auto sema = semaFuture.get();
 ```
