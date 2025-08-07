@@ -103,7 +103,7 @@ struct FifoDeviceHandle {
   /// @param trigger Trigger to push.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
   /// @return Previous head of the FIFO where the trigger was pushed.
-  MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, [[maybe_unused]] int64_t maxSpinCount = 1000000) {
+  MSCCLPP_DEVICE_INLINE uint64_t push(ProxyTrigger trigger, int64_t maxSpinCount = 1000000) {
     uint64_t prevHead = atomicFetchAdd<uint64_t, scopeDevice>(head, 1, memoryOrderRelaxed);
 
     // Flip the last bit for safe polling; host will revert.

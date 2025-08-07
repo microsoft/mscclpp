@@ -35,70 +35,71 @@ struct BasePortChannelDeviceHandle {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerData to the FIFO.
-  /// @param dst The destination memory region.
+  /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
-  /// @param src The source memory region.
+  /// @param srcId The ID of source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void put(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset, uint64_t size) {
-    fifo_.push({TriggerData, dst, dstOffset, src, srcOffset, size, semaphoreId_});
+  MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
+                                 uint64_t size) {
+    fifo_.push({TriggerData, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
   /// Push a TriggerData to the FIFO.
-  /// @param dst The destination memory region.
-  /// @param src The source memory region.
+  /// @param dstId The ID of destination memory region.
+  /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void put(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
-    put(dst, offset, src, offset, size);
+  MSCCLPP_DEVICE_INLINE void put(MemoryId dstId, MemoryId srcId, uint64_t offset, uint64_t size) {
+    put(dstId, offset, srcId, offset, size);
   }
 
   /// Push a TriggerFlag to the FIFO.
   MSCCLPP_DEVICE_INLINE void signal() { fifo_.push({TriggerFlag, 0, 0, 0, 0, 1, semaphoreId_}); }
 
   /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
-  /// @param dst The destination memory region.
+  /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
-  /// @param src The source memory region.
+  /// @param srcId The ID of source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
+  MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, uint64_t dstOffset, MemoryId srcId, uint64_t srcOffset,
                                            uint64_t size) {
-    fifo_.push({TriggerData | TriggerFlag, dst, dstOffset, src, srcOffset, size, semaphoreId_});
+    fifo_.push({TriggerData | TriggerFlag, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
   }
 
   /// Push a TriggerData and a TriggerFlag at the same time to the FIFO.
-  /// @param dst The destination memory region.
-  /// @param src The source memory region.
+  /// @param dstId The ID of destination memory region.
+  /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
-  MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size) {
-    putWithSignal(dst, offset, src, offset, size);
+  MSCCLPP_DEVICE_INLINE void putWithSignal(MemoryId dstId, MemoryId srcId, uint64_t offset, uint64_t size) {
+    putWithSignal(dstId, offset, srcId, offset, size);
   }
 
   /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
-  /// @param dst The destination memory region.
+  /// @param dstId The ID of destination memory region.
   /// @param dstOffset The offset into the destination memory region.
-  /// @param src The source memory region.
+  /// @param srcId The ID of source memory region.
   /// @param srcOffset The offset into the source memory region.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, uint64_t dstOffset, MemoryId src, uint64_t srcOffset,
-                                                   uint64_t size, int64_t maxSpinCount = 1000000) {
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
+                                                   uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
     uint64_t curFifoHead =
-        fifo_.push({TriggerData | TriggerFlag | TriggerSync, dst, dstOffset, src, srcOffset, size, semaphoreId_});
+        fifo_.push({TriggerData | TriggerFlag | TriggerSync, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
     fifo_.sync(curFifoHead, maxSpinCount);
   }
 
   /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
-  /// @param dst The destination memory region.
-  /// @param src The source memory region.
+  /// @param dstId The ID of destination memory region.
+  /// @param srcId The ID of source memory region.
   /// @param offset The common offset into the destination and source memory regions.
   /// @param size The size of the transfer.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
-  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dst, MemoryId src, uint64_t offset, uint64_t size,
+  MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, MemoryId srcId, uint64_t offset, uint64_t size,
                                                    int64_t maxSpinCount = 1000000) {
-    putWithSignalAndFlush(dst, offset, src, offset, size, maxSpinCount);
+    putWithSignalAndFlush(dstId, offset, srcId, offset, size, maxSpinCount);
   }
 
   /// Push a TriggerSync to the FIFO.
