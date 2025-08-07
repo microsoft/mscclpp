@@ -10,6 +10,7 @@ baseImageTable=(
     ["cuda12.3"]="nvidia/cuda:12.3.2-devel-ubuntu20.04"
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
+    ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu22.04"
     ["rocm6.2"]="rocm/rocm-terminal:6.2.1"
 )
 
@@ -25,13 +26,14 @@ declare -A ofedVersionTable
 ofedVersionTable=(
     ["cuda12.4"]="23.07-0.5.1.2"
     ["cuda12.8"]="24.10-1.1.4.0"
+    ["cuda12.9"]="24.10-1.1.4.0"
 )
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 TARGET=${1}
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|rocm6.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
