@@ -112,8 +112,8 @@ void worker(int gpuId) {
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
   bootstrap->barrier();
 
-  for (int kernelId = 0; kernelId < 3; ++kernelId) {
-    const std::string testName = (kernelId == 0) ? "Bidir Put" : (kernelId == 1) ? "Bidir Get" : "Bidir Put Packets";
+  for (int kernelId = 0; kernelId < 1; ++kernelId) {
+    const std::string testName = "Bidir PutWithSignal";
     for (size_t copyBytes : {1024, 1024 * 1024, 128 * 1024 * 1024}) {
       cudaGraph_t graph;
       cudaGraphExec_t graphExec;
