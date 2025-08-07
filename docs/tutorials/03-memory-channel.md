@@ -101,7 +101,7 @@ mscclpp::RegisteredMemory remoteRegMem = remoteRegMemFuture.get();
 After exchanging the `RegisteredMemory` objects, we can create a `MemoryChannel` as follows:
 
 ```cpp
-mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem.data());
+mscclpp::MemoryChannel memChan(sema, /*dst*/ remoteRegMem, /*src*/ localRegMem);
 ```
 
 Here, `sema` is a pre-built semaphore used for synchronization methods, which is introduced in the [Basic Concepts](./01-basic-concepts.md) tutorial. The `remoteRegMem` and `localRegMem` are the destination and source memory regions, respectively. The following diagram illustrates how the `memChan` channel uses these memory regions (A and B representing the two GPUs):
@@ -174,11 +174,11 @@ In MSCCL++, **Packet** is a data structure that contains user data with metadata
 The example code creates one more `MemoryChannel` to demonstrate usage of packets. The channel is created as follows:
 
 ```cpp
-mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem.data(),
+mscclpp::MemoryChannel memPktChan(sema, /*dst*/ remotePktRegMem, /*src*/ localRegMem,
                                   /*packetBuffer*/ localPktRegMem.data());
 ```
 
-Compared to the previous `memChan` channel, this `memPktChan` channel uses the same source (`localRegMem.data()`) but a different destination (`remotePktRegMem`) and an additional packet buffer (`localPktRegMem.data()`). The following diagram illustrates how the `memPktChan` channel uses these memory regions (A and B representing the two GPUs):
+Compared to the previous `memChan` channel, this `memPktChan` channel uses the same source (`localRegMem`) but a different destination (`remotePktRegMem`) and an additional packet buffer (`localPktRegMem.data()`). The following diagram illustrates how the `memPktChan` channel uses these memory regions (A and B representing the two GPUs):
 
 ```{mermaid}
 block-beta
