@@ -7,12 +7,30 @@
 
 #include "common.hpp"
 
+
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
+__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[256];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
-void* localRecvBuff;
-void* localSendBuff;
+__device__ mscclpp::DeviceSemaphore deviceSemaphore[64];
+__device__ int peerMap[] = {1, 0, 3, 2, 5, 4, 7, 6 /*first */,
+                            2, 3, 0, 1, 6, 7, 4, 5 /* second */,
+                            3, 2, 1, 0, 7, 6, 5, 4 /*third*/,
+                            4, 5, 6, 7, 0, 1, 2, 3 /*forth*/,
+                            5, 4, 7, 6, 1, 0, 3, 2 /*fifth*/,
+                            6, 7, 4, 5, 2, 3, 0, 1 /*sixth*/,
+                            7, 6, 5, 4, 3, 2, 1, 0 /*seventh*/};
+
+static void* localRecvBuff;
+static void* localSendBuff;
+static void* localScratchBuff;
 
 __device__ void localAlltoall(int rank, int nRanksPerNode, size_t nElements) {
   int remoteRank = ((int)blockIdx.x < rank) ? blockIdx.x : blockIdx.x + 1;
@@ -49,6 +67,66 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
   localAlltoall(rank, nRanksPerNode, nElements);
 }
 
+__global__ void __launch_bounds__(1024)
+    alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+  constexpr int nWarpForPut = 20;
+  constexpr int nWarpForCopy = 12;
+  constexpr int putStartWid = 0;
+  constexpr int putEndWid = putStartWid + nWarpForPut;
+  constexpr int copyStartWid = putEndWid;
+  constexpr int copyEndWid = copyStartWid + nWarpForCopy;
+  constexpr size_t unit = 1 << 18;  // 256 KB
+
+  size_t totalCount = nElements * sizeof(int);
+  size_t nBytesPerBlock = totalCount / gridDim.x;
+  size_t nIters = nBytesPerBlock / unit;
+  int wid = threadIdx.x / WARP_SIZE;
+  int lid = threadIdx.x % WARP_SIZE;
+  DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
+  auto& sem = deviceSemaphore[blockIdx.x];
+  if (wid == 0 && lid < nRanksPerNode - 1) {
+    memoryChannels[lid].relaxedSignal();
+    memoryChannels[lid].relaxedWait();
+  }
+  __syncthreads();
+  for (int step = 0; step < nRanksPerNode - 1; step++) {
+    int peer = peerMap[step * nRanksPerNode + rank];
+    int peerId = peer < rank ? peer : peer - 1;
+    size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
+    if (wid >= putStartWid && wid < putEndWid) {
+      int tidInPut = wid * WARP_SIZE + lid - putStartWid * WARP_SIZE;
+      for (size_t i = 0; i < nIters; i++) {
+        mscclpp::copy((char*)memoryChannels[peerId].dst_ + dstOffset + i * unit,
+                      (char*)inputBuffer + startOffset + i * unit, unit, wid * WARP_SIZE + lid,
+                      nWarpForPut * WARP_SIZE);
+        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
+        if (tidInPut == 0) {
+          memoryChannels[peerId].signal();
+          sem.release();
+        }
+      }
+    } else if (wid >= copyStartWid && wid < copyEndWid) {
+      int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
+      for (size_t i = 0; i < nIters; i++) {
+        if (tidInCopy == 0) {
+          sem.acquire();
+          memoryChannels[peerId].wait();
+        }
+        // barrier for n warp
+        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, unit,
+                      wid * WARP_SIZE + lid, nWarpForCopy * WARP_SIZE);
+      }
+    }
+  }
+  __syncthreads();
+  if (wid == 0 && lid < nRanksPerNode - 1) {
+    memoryChannels[lid].relaxedSignal();
+    memoryChannels[lid].relaxedWait();
+  }
+}
+
 class AllToAllTestColl : public BaseTestColl {
  public:
   AllToAllTestColl() = default;
@@ -66,12 +144,16 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
   const int nRanksPerNode = args.nRanksPerNode;
-  CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
-                            paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+  if (kernelNum != 2) {
+    CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
+                              paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
+  }
   if (kernelNum == 0) {
     alltoall0<<<worldSize - 1, 32, 0, stream>>>(rank, paramCount_);
   } else if (kernelNum == 1) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
+  } else if (kernelNum == 2) {
+    alltoall2<<<32, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
   }
 }
 
@@ -112,9 +194,10 @@ void AllToAllTestColl::setupCollTest(size_t size) {
 }
 
 std::vector<KernelRestriction> AllToAllTestColl::getKernelRestrictions() {
-  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes}
+  return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
           {0, "alltoall0", true, 1, 4 * worldSize_},
-          {1, "alltoall1", false, 1, 4 * worldSize_}};
+          {1, "alltoall1", false, 1, 4 * worldSize_},
+          {2, "alltoall2", false, 1, 4 * worldSize_}};
 }
 
 class AllToAllTestEngine : public BaseTestEngine {
@@ -131,32 +214,54 @@ class AllToAllTestEngine : public BaseTestEngine {
 
  private:
   void* getExpectedBuff() override;
+  bool isInPlace() const;
 
   std::shared_ptr<int> sendBuff_;
   std::shared_ptr<int> recvBuff_;
   std::shared_ptr<int[]> expectedBuff_;
+  std::shared_ptr<int> scratchBuff_;
+
+  std::vector<mscclpp::MemoryChannel> memoryChannels;
 };
 
-AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") { inPlace_ = false; }
+bool AllToAllTestEngine::isInPlace() const {
+  return (args_.kernelNum == 2);
+}
+
+AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") {
+  inPlace_ = isInPlace();
+}
 
 void AllToAllTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   recvBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
+  scratchBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
 
   localSendBuff = sendBuff_.get();
   localRecvBuff = recvBuff_.get();
+  localScratchBuff = scratchBuff_.get();
 }
 
 void AllToAllTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
+  std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
   setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
+  setupMeshConnections(this->memoryChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
+                       ChannelSemantic::PUT, 32);
 
   if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
     std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constPortChans, portChannels.data(),
                                sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
+  std::transform(this->memoryChannels.begin(), this->memoryChannels.end(), std::back_inserter(memoryChannelHandles),
+                 [](const mscclpp::MemoryChannel& channel) { return mscclpp::deviceHandle(channel); });
+  if (memoryChannelHandles.size() > sizeof(constMemChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
+    std::runtime_error("unexpected error");
+  }
+  CUDATHROW(cudaMemcpyToSymbol(constMemChans, memoryChannelHandles.data(),
+                               sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size()));
 }
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }
