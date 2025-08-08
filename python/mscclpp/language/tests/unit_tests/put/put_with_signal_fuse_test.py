@@ -26,7 +26,7 @@ def put_with_signal_test(num_threads_per_block, min_message_size, max_message_si
     gpus = 2
     collective = TestCollective(gpus, 4, 0)
 
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "put_with_signal_test",
         collective,
         gpus,

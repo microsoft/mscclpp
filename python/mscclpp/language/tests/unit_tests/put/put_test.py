@@ -23,7 +23,7 @@ from mscclpp.language.collectives import *
 def put_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 2, 0)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "put_test",
         collective,
         gpus,

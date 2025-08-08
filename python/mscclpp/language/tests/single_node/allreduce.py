@@ -12,7 +12,7 @@ from mscclpp.language.collectives import *
 def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     num_tb = 8
     collective = AllReduce(gpu_size, num_tb, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,

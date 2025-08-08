@@ -27,7 +27,7 @@ def flush_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
 
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "flush_test",
         collective,
         gpus,

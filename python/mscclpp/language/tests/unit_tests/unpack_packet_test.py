@@ -26,7 +26,7 @@ def unpack_packets_test(num_threads_per_block, min_message_size, max_message_siz
     gpus = 1
     collective = TestCollective(gpus, 1, 1)
 
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "unpack_packets_test",
         collective,
         gpus,

@@ -14,7 +14,7 @@ def allgather_example(name, gpus_per_node, num_threads_per_block, min_message_si
     gpu_size = nodes * gpus_per_node
     chunksperloop = 1
     collective = AllGather(gpu_size, chunksperloop, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,

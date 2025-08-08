@@ -27,7 +27,7 @@ def reduce_packets_test(num_threads_per_block, min_message_size, max_message_siz
     gpus = 1
     collective = TestCollective(gpus, 0, 0)
 
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "reduce_packets_test",
         collective,
         gpus,

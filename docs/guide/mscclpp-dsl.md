@@ -195,12 +195,12 @@ for i in range(nranks):
 
 ## Adjust the number of instances
 
-The MSCCL++ DSL supports replicating algorithm instances to increase parallelism and improve performance. When `instances > 1` is specified in `MSCCLPPProgram`, the DSL automatically replicates thread blocks, channels, and buffer chunks across multiple instances. Each instance operates on separate data partitions, allowing concurrent execution of the same algorithm pattern. The replication uses configurable policies: interleaved (default) distributes data chunks across instances in round-robin fashion, while other policies can control how channels and thread block IDs are mapped. This feature is particularly useful for scaling algorithms across larger data sizes or increasing GPU utilization.
+The MSCCL++ DSL supports replicating algorithm instances to increase parallelism and improve performance. When `instances > 1` is specified in `CollectiveProgram`, the DSL automatically replicates thread blocks, channels, and buffer chunks across multiple instances. Each instance operates on separate data partitions, allowing concurrent execution of the same algorithm pattern. The replication uses configurable policies: interleaved (default) distributes data chunks across instances in round-robin fashion, while other policies can control how channels and thread block IDs are mapped. This feature is particularly useful for scaling algorithms across larger data sizes or increasing GPU utilization.
 
 For example:
 ```python
 # Create program with 2 instances for increased parallelism
-program = MSCCLPPProgram(
+program = CollectiveProgram(
     name="allreduce_2x", 
     collective=AllReduce(num_ranks=8, chunk_factor=1),
     num_ranks=8,

@@ -75,13 +75,13 @@ class ThreadBlock:
         for op in self.ops:
             op.shift_ids(instance, num_instances, replication_function)
 
-    def to_json(self) -> dict:
+    def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "ops": [op.to_json() for op in self.ops],
-            "channels": [ch.to_json() for ch in self._channels.values() if len(ch.channel_ids) > 0],
+            "ops": [op.to_dict() for op in self.ops],
+            "channels": [ch.to_dict() for ch in self._channels.values() if len(ch.channel_ids) > 0],
             "remote_buffer_refs": (
-                [rb.to_json() for rb in self._remote_buffers.values()] if self._remote_buffers else []
+                [rb.to_dict() for rb in self._remote_buffers.values()] if self._remote_buffers else []
             ),
         }
 
@@ -90,7 +90,7 @@ class ThreadBlock:
         channel_type: ChannelType
         channel_ids: list[int] = field(default_factory=list)
 
-        def to_json(self) -> dict:
+        def to_dict(self) -> dict:
             return {"channel_type": self.channel_type.value, "channel_ids": self.channel_ids}
 
     @dataclass
@@ -98,7 +98,7 @@ class ThreadBlock:
         access_channel_type: ChannelType
         remote_buffer_ids: list[int] = field(default_factory=list)
 
-        def to_json(self) -> dict:
+        def to_dict(self) -> dict:
             return {
                 "access_channel_type": self.access_channel_type.value,
                 "remote_buffer_ids": self.remote_buffer_ids,

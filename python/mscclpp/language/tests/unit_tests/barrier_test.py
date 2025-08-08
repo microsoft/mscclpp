@@ -28,7 +28,7 @@ def barrier_test(num_threads_per_block, min_message_size, max_message_size):
     collective = TestCollective(gpus, 0, 0)
 
     # Initialize MSCCLPP program context with Simple protocol
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "barrier_test",
         collective,
         gpus,
