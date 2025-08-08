@@ -204,7 +204,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
   if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
-  } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
+  } else if (transports.has(Transport::CudaIpc)) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
