@@ -42,7 +42,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
                 dst_rank_id = peer
                 if src_rank_id != dst_rank_id:
                     channels[dst_rank_id, src_rank_id].wait(tb=0, data_sync=SyncType.after, relaxed=True)
-        
+
         # Perform AllGather
         for src_rank_id in range(gpu_size):
             src_rank = Rank(src_rank_id)

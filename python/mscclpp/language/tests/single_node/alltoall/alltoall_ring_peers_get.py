@@ -8,6 +8,7 @@ from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
+
 def find_pairs(size):
     partner = [{j for j in range(size) if j != i} for i in range(size)]
     step = []
@@ -29,6 +30,7 @@ def find_pairs(size):
         step.append(matches)
 
     return step
+
 
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
@@ -70,7 +72,9 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 dst_rank_id = step_paris[step][src_rank_id]
                 index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
 
-                src_rank.copy(scratch_buffer[src_rank_id][index: index + 1], input_buffer[dst_rank_id: dst_rank_id + 1], tb=0)
+                src_rank.copy(
+                    scratch_buffer[src_rank_id][index : index + 1], input_buffer[dst_rank_id : dst_rank_id + 1], tb=0
+                )
                 channels[dst_rank_id, src_rank_id].signal(tb=0, data_sync=SyncType.before)
                 semaphores[dst_rank_id, src_rank_id].release(tb=0)
 
@@ -85,7 +89,11 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
 
                 semaphores[dst_rank_id, src_rank_id].acquire(tb=1)
                 channels[dst_rank_id, src_rank_id].wait(tb=1, data_sync=SyncType.after)
-                channels[dst_rank_id, src_rank_id].get(input_buffer[local_index: local_index + 1], scratch_buffer[dst_rank_id][remote_index: remote_index + 1], tb=1)
+                channels[dst_rank_id, src_rank_id].get(
+                    input_buffer[local_index : local_index + 1],
+                    scratch_buffer[dst_rank_id][remote_index : remote_index + 1],
+                    tb=1,
+                )
 
         # Final Synchronization
         for gpus in range(gpu_size):
@@ -100,6 +108,7 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     sync_channels[dst_rank_id, src_rank_id].wait(tb=1, relaxed=True)
 
         print(JSON())
+
 
 parser = argparse.ArgumentParser()
 

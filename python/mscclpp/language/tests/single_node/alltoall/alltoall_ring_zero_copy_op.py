@@ -56,13 +56,20 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 output_buffer = Rank(dst_rank_id).get_output_buffer()
                 local_index = dst_rank_id
                 remote_index = src_rank_id
-                
+
                 if dst_rank_id != src_rank_id:
-                    channels[dst_rank_id, src_rank_id].put(output_buffer[remote_index: remote_index + 1],  input_buffer[local_index: local_index + 1], tb=0)
+                    channels[dst_rank_id, src_rank_id].put(
+                        output_buffer[remote_index : remote_index + 1],
+                        input_buffer[local_index : local_index + 1],
+                        tb=0,
+                    )
                 else:
-                    src_rank.copy(output_buffer[src_rank_id: src_rank_id + 1], input_buffer[src_rank_id: src_rank_id + 1], tb=0)
+                    src_rank.copy(
+                        output_buffer[src_rank_id : src_rank_id + 1], input_buffer[src_rank_id : src_rank_id + 1], tb=0
+                    )
 
         print(JSON())
+
 
 parser = argparse.ArgumentParser()
 

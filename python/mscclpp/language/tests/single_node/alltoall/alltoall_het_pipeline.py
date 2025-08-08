@@ -74,18 +74,32 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
                             local_index = dst_rank_id * chunksperloop + i * chunks_per_step + chunks_per_step // 2
-                            remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop + i * chunks_per_step + chunks_per_step // 2
+                            remote_index = (
+                                (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop
+                                + i * chunks_per_step
+                                + chunks_per_step // 2
+                            )
                             tb = tb_offset + (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1)
-                            first_step_channel[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunks_per_step // 2],  input_buffer[local_index: local_index + chunks_per_step // 2], tb=tb)
+                            first_step_channel[dst_rank_id, src_rank_id].put(
+                                scratch_buffer[dst_rank_id][remote_index : remote_index + chunks_per_step // 2],
+                                input_buffer[local_index : local_index + chunks_per_step // 2],
+                                tb=tb,
+                            )
                             first_step_channel[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
 
                     for peer in range(gpu_size):
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
                             local_index = dst_rank_id * chunksperloop + i * chunks_per_step
-                            remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop + i * chunks_per_step
+                            remote_index = (
+                                src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
+                            ) * chunksperloop + i * chunks_per_step
                             tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                            channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunks_per_step // 2],  input_buffer[local_index: local_index + chunks_per_step // 2], tb=tb)
+                            channels[dst_rank_id, src_rank_id].put(
+                                scratch_buffer[dst_rank_id][remote_index : remote_index + chunks_per_step // 2],
+                                input_buffer[local_index : local_index + chunks_per_step // 2],
+                                tb=tb,
+                            )
                             channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
                             semaphores[gpu, tb].release(tb=tb)
 
@@ -96,22 +110,36 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     for peer in range(gpu_size):
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
-                            src_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop + i * chunks_per_step + chunks_per_step // 2
+                            src_index = (
+                                (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop
+                                + i * chunks_per_step
+                                + chunks_per_step // 2
+                            )
                             dst_index = dst_rank_id * chunksperloop + i * chunks_per_step + chunks_per_step // 2
                             tb = tb_offset + (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1)
                             first_step_channel[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                            src_rank.copy(input_buffer[dst_index: dst_index + chunks_per_step // 2], scratch_buffer[src_rank_id][src_index: src_index + chunks_per_step // 2], tb=tb)
+                            src_rank.copy(
+                                input_buffer[dst_index : dst_index + chunks_per_step // 2],
+                                scratch_buffer[src_rank_id][src_index : src_index + chunks_per_step // 2],
+                                tb=tb,
+                            )
 
                     for peer in range(gpu_size):
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
-                            src_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop + i * chunks_per_step
+                            src_index = (
+                                dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
+                            ) * chunksperloop + i * chunks_per_step
                             dst_index = dst_rank_id * chunksperloop + i * chunks_per_step
                             tb = tb_offset + (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1)
                             semaphores[gpu, tb - tb_offset].acquire(tb=tb)
                             channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                            src_rank.copy(input_buffer[dst_index: dst_index + chunks_per_step // 2], scratch_buffer[src_rank_id][src_index: src_index + chunks_per_step // 2], tb=tb)
-                    
+                            src_rank.copy(
+                                input_buffer[dst_index : dst_index + chunks_per_step // 2],
+                                scratch_buffer[src_rank_id][src_index : src_index + chunks_per_step // 2],
+                                tb=tb,
+                            )
+
             else:
                 for gpu in range(gpu_size):
                     src_rank_id = gpu
@@ -121,17 +149,33 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
                             local_index = dst_rank_id * chunksperloop + i * chunks_per_step
-                            remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop + i * chunks_per_step
+                            remote_index = (
+                                src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
+                            ) * chunksperloop + i * chunks_per_step
                             tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
                             if i == steps_pipeline - 1 and last_step_process:
-                                channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index + chunks_per_step // 2: remote_index + chunks_per_step],  input_buffer[local_index + chunks_per_step // 2: local_index + chunks_per_step], tb=tb)
+                                channels[dst_rank_id, src_rank_id].put(
+                                    scratch_buffer[dst_rank_id][
+                                        remote_index + chunks_per_step // 2 : remote_index + chunks_per_step
+                                    ],
+                                    input_buffer[local_index + chunks_per_step // 2 : local_index + chunks_per_step],
+                                    tb=tb,
+                                )
                                 last_step_channel[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
 
-                                channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunks_per_step // 2],  input_buffer[local_index: local_index + chunks_per_step // 2], tb=tb)
+                                channels[dst_rank_id, src_rank_id].put(
+                                    scratch_buffer[dst_rank_id][remote_index : remote_index + chunks_per_step // 2],
+                                    input_buffer[local_index : local_index + chunks_per_step // 2],
+                                    tb=tb,
+                                )
                                 channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
                                 semaphores[gpu, tb].release(tb=tb)
                             else:
-                                channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunks_per_step],  input_buffer[local_index: local_index + chunks_per_step], tb=tb)
+                                channels[dst_rank_id, src_rank_id].put(
+                                    scratch_buffer[dst_rank_id][remote_index : remote_index + chunks_per_step],
+                                    input_buffer[local_index : local_index + chunks_per_step],
+                                    tb=tb,
+                                )
                                 channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
                                 semaphores[gpu, tb].release(tb=tb)
 
@@ -143,22 +187,41 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     for peer in range(gpu_size):
                         dst_rank_id = peer
                         if dst_rank_id != src_rank_id:
-                            src_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop + i * chunks_per_step
+                            src_index = (
+                                dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
+                            ) * chunksperloop + i * chunks_per_step
                             dst_index = dst_rank_id * chunksperloop + i * chunks_per_step
                             tb = tb_offset + (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1)
                             if i == steps_pipeline - 1 and last_step_process:
-                                last_step_channel[dst_rank_id, src_rank_id].wait(tb=tb - tb_offset, data_sync=SyncType.after)
-                                src_rank.copy(input_buffer[dst_index + chunks_per_step // 2: dst_index + chunks_per_step], scratch_buffer[src_rank_id][src_index + chunks_per_step // 2: src_index + chunks_per_step], tb=tb - tb_offset)
-                            
+                                last_step_channel[dst_rank_id, src_rank_id].wait(
+                                    tb=tb - tb_offset, data_sync=SyncType.after
+                                )
+                                src_rank.copy(
+                                    input_buffer[dst_index + chunks_per_step // 2 : dst_index + chunks_per_step],
+                                    scratch_buffer[src_rank_id][
+                                        src_index + chunks_per_step // 2 : src_index + chunks_per_step
+                                    ],
+                                    tb=tb - tb_offset,
+                                )
+
                                 semaphores[gpu, tb - tb_offset].acquire(tb=tb)
                                 channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                                src_rank.copy(input_buffer[dst_index: dst_index + chunks_per_step // 2], scratch_buffer[src_rank_id][src_index: src_index + chunks_per_step // 2], tb=tb)
+                                src_rank.copy(
+                                    input_buffer[dst_index : dst_index + chunks_per_step // 2],
+                                    scratch_buffer[src_rank_id][src_index : src_index + chunks_per_step // 2],
+                                    tb=tb,
+                                )
                             else:
                                 semaphores[gpu, tb - tb_offset].acquire(tb=tb)
                                 channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                                src_rank.copy(input_buffer[dst_index: dst_index + chunks_per_step], scratch_buffer[src_rank_id][src_index: src_index + chunks_per_step], tb=tb)
+                                src_rank.copy(
+                                    input_buffer[dst_index : dst_index + chunks_per_step],
+                                    scratch_buffer[src_rank_id][src_index : src_index + chunks_per_step],
+                                    tb=tb,
+                                )
 
         print(JSON())
+
 
 parser = argparse.ArgumentParser()
 

@@ -60,7 +60,11 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     local_index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
                     remote_index = src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
                     tb = local_index
-                    channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + 1],  input_buffer[dst_rank_id: dst_rank_id + 1], tb=tb)
+                    channels[dst_rank_id, src_rank_id].put(
+                        scratch_buffer[dst_rank_id][remote_index : remote_index + 1],
+                        input_buffer[dst_rank_id : dst_rank_id + 1],
+                        tb=tb,
+                    )
                     channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
 
         # Copy Data From Scratch Buffer
@@ -74,9 +78,14 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
                     tb = index
                     channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                    src_rank.copy(input_buffer[dst_rank_id: dst_rank_id + 1], scratch_buffer[src_rank_id][index: index + 1], tb=tb)
+                    src_rank.copy(
+                        input_buffer[dst_rank_id : dst_rank_id + 1],
+                        scratch_buffer[src_rank_id][index : index + 1],
+                        tb=tb,
+                    )
 
         print(JSON())
+
 
 parser = argparse.ArgumentParser()
 
