@@ -46,7 +46,8 @@ RUN python3 -m pip install --no-cache-dir \
     myst_parser \
     sphinxcontrib.mermaid
 
-RUN sed -i "s/^Port 22/Port ${SSH_PORT}/" /etc/ssh/sshd_config && \
+RUN sed -i '/^[#]*Port[[:space:]]\+[0-9]\+/d' /etc/ssh/sshd_config && \
+    echo "Port ${SSH_PORT}" >> /etc/ssh/sshd_config && \
     mkdir -p /home/$USERNAME/.ssh && \
     ssh-keygen -t rsa -f /home/$USERNAME/.ssh/id_rsa -N "" -q && \
     cat /home/$USERNAME/.ssh/id_rsa.pub >> /home/$USERNAME/.ssh/authorized_keys && \
