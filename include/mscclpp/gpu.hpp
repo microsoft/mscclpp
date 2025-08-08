@@ -79,6 +79,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
 #define cudaStreamEndCapture(...) hipStreamEndCapture(__VA_ARGS__)
 #define cudaStreamDestroy(...) hipStreamDestroy(__VA_ARGS__)
+#define cudaGraphCreate(...) hipGraphCreate(__VA_ARGS__)
 #define cudaGraphInstantiate(...) hipGraphInstantiate(__VA_ARGS__)
 #define cudaGraphLaunch(...) hipGraphLaunch(__VA_ARGS__)
 #define cudaGraphDestroy(...) hipGraphDestroy(__VA_ARGS__)
