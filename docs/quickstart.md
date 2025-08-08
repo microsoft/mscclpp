@@ -177,8 +177,6 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
 
-See limitations of the current NCCL over MSCCL++ from [here](design/nccl-over-mscclpp.md#limitations).
-
 MSCCL++ also supports fallback to NCCL/RCCL collectives by adding following environment variables.
 ```bash
 -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE

@@ -23,3 +23,4 @@ You can find the followings from this documentation.
    tutorials
    programming_guide
    cpp_api
+   py_api
