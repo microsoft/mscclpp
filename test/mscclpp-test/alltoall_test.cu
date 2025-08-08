@@ -69,17 +69,17 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
 
 __global__ void __launch_bounds__(1024)
     alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
-  constexpr int nWarpForPut = 20;
-  constexpr int nWarpForCopy = 12;
+  constexpr int nWarpForPut = 16;
+  constexpr int nWarpForCopy = 16;
   constexpr int putStartWid = 0;
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
-  constexpr size_t unit = 1 << 18;  // 256 KB
+  constexpr size_t unit = 1 << 16; // 256K
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = totalCount / gridDim.x;
-  size_t nIters = nBytesPerBlock / unit;
+  size_t nIters = (nBytesPerBlock  + unit - 1) / unit;
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
@@ -89,6 +89,8 @@ __global__ void __launch_bounds__(1024)
     memoryChannels[lid].relaxedWait();
   }
   __syncthreads();
+  size_t size = unit;
+  size_t lastIterSize = nBytesPerBlock - (nIters - 1) * unit;
   for (int step = 0; step < nRanksPerNode - 1; step++) {
     int peer = peerMap[step * nRanksPerNode + rank];
     int peerId = peer < rank ? peer : peer - 1;
@@ -97,8 +99,11 @@ __global__ void __launch_bounds__(1024)
     if (wid >= putStartWid && wid < putEndWid) {
       int tidInPut = wid * WARP_SIZE + lid - putStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
+        if (i == nIters - 1) {
+          size = lastIterSize;
+        }
         mscclpp::copy((char*)memoryChannels[peerId].dst_ + dstOffset + i * unit,
-                      (char*)inputBuffer + startOffset + i * unit, unit, wid * WARP_SIZE + lid,
+                      (char*)inputBuffer + startOffset + i * unit, size, wid * WARP_SIZE + lid,
                       nWarpForPut * WARP_SIZE);
         asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
         if (tidInPut == 0) {
@@ -113,10 +118,71 @@ __global__ void __launch_bounds__(1024)
           sem.acquire();
           memoryChannels[peerId].wait();
         }
+        if (i == nIters - 1) {
+          size = lastIterSize;
+        }
         // barrier for n warp
         asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
-        mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, unit,
+        mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, size,
                       wid * WARP_SIZE + lid, nWarpForCopy * WARP_SIZE);
+      }
+    }
+  }
+}
+
+__global__ void __launch_bounds__(1024)
+    alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+  constexpr int nWarpForPut = 22;
+  constexpr int nWarpForCopy = 10;
+  constexpr int putStartWid = 0;
+  constexpr int putEndWid = putStartWid + nWarpForPut;
+  constexpr int copyStartWid = putEndWid;
+  constexpr int copyEndWid = copyStartWid + nWarpForCopy;
+  constexpr size_t unit = 1 << 19; // 128K
+
+  size_t totalCount = nElements * sizeof(int);
+  size_t nBytesPerBlock = totalCount / gridDim.x;
+  size_t nIters = (nBytesPerBlock  + unit - 1) / unit;
+  int wid = threadIdx.x / WARP_SIZE;
+  int lid = threadIdx.x % WARP_SIZE;
+  DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
+  auto& sem = deviceSemaphore[blockIdx.x];
+  size_t size = unit;
+  size_t lastIterSize = nBytesPerBlock - (nIters - 1) * unit;
+  for (int step = 0; step < nRanksPerNode - 1; step++) {
+    int peer = peerMap[step * nRanksPerNode + rank];
+    int peerId = peer < rank ? peer : peer - 1;
+    size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
+    if (wid >= putStartWid && wid < putEndWid) {
+      int tidInPut = wid * WARP_SIZE + lid - putStartWid * WARP_SIZE;
+      for (size_t i = 0; i < nIters; i++) {
+        if (i == nIters - 1) {
+          size = lastIterSize;
+        }
+        mscclpp::copy((char*)scratchBuffer + startOffset + i * unit, (char*)inputBuffer + startOffset + i * unit, size,
+                      wid * WARP_SIZE + lid, nWarpForPut * WARP_SIZE);
+        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
+        if (tidInPut == 0) {
+          memoryChannels[peerId].signal();
+          sem.release();
+        }
+      }
+    } else if (wid >= copyStartWid && wid < copyEndWid) {
+      int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
+      for (size_t i = 0; i < nIters; i++) {
+        if (tidInCopy == 0) {
+          sem.acquire();
+          memoryChannels[peerId].wait();
+        }
+        if (i == nIters - 1) {
+          size = lastIterSize;
+        }
+        // barrier for n warp
+        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        mscclpp::copy((char*)memoryChannels[peerId].dst_ + dstOffset + i * unit,
+                      (char*)inputBuffer + startOffset + i * unit, size, wid * WARP_SIZE + lid,
+                      nWarpForCopy * WARP_SIZE);
       }
     }
   }
@@ -126,6 +192,8 @@ __global__ void __launch_bounds__(1024)
     memoryChannels[lid].relaxedWait();
   }
 }
+
+
 
 class AllToAllTestColl : public BaseTestColl {
  public:
@@ -154,6 +222,8 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   } else if (kernelNum == 2) {
     alltoall2<<<32, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
+  } else if (kernelNum == 3) {
+    alltoall3<<<32, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
   }
 }
 
@@ -197,7 +267,8 @@ std::vector<KernelRestriction> AllToAllTestColl::getKernelRestrictions() {
   return {// {kernelNum, kernelName, compatibleWithMultiNodes, countDivisorForMultiNodes, alignedBytes}
           {0, "alltoall0", true, 1, 4 * worldSize_},
           {1, "alltoall1", false, 1, 4 * worldSize_},
-          {2, "alltoall2", false, 1, 4 * worldSize_}};
+          {2, "alltoall2", false, 1, 4 * worldSize_},
+          {3, "alltoall3", false, 1, 4 * worldSize_}};
 }
 
 class AllToAllTestEngine : public BaseTestEngine {
@@ -225,7 +296,7 @@ class AllToAllTestEngine : public BaseTestEngine {
 };
 
 bool AllToAllTestEngine::isInPlace() const {
-  return (args_.kernelNum == 2);
+  return (args_.kernelNum == 2 || args_.kernelNum == 3);
 }
 
 AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") {
