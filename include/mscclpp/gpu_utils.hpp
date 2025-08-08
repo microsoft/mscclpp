@@ -5,6 +5,7 @@
 #define MSCCLPP_GPU_UTILS_HPP_
 
 #include <memory>
+#include <unordered_map>
 
 #include "env.hpp"
 #include "errors.hpp"
@@ -47,7 +48,7 @@ struct AvoidCudaGraphCaptureGuard {
 struct CudaStreamWithFlags {
   /// Constructor without flags. This will not create any stream. set() can be called later to create a stream with
   /// specified flags.
-  CudaStreamWithFlags() : stream_(nullptr) {}
+  CudaStreamWithFlags();
 
   /// Constructor with flags. This will create a stream with the specified flags on the current device.
   /// @param flags The flags to create the stream with.
@@ -56,8 +57,8 @@ struct CudaStreamWithFlags {
   /// Destructor. This will destroy the stream if it was created.
   ~CudaStreamWithFlags();
 
-  /// Set the stream with the specified flags. If the stream was already created, it will raise an error with
-  /// ErrorCode::InvalidUsage.
+  /// Set the stream with the specified flags. The current device at the time of the construction will be used. If the
+  /// stream was already created, it will raise an error with ErrorCode::InvalidUsage.
   /// @param flags The flags to create the stream with.
   /// @throws Error if the stream was already created.
   void set(unsigned int flags);
@@ -68,7 +69,10 @@ struct CudaStreamWithFlags {
 
   operator cudaStream_t() const { return stream_; }
 
+  int deviceId() const { return deviceId_; }
+
   cudaStream_t stream_;
+  int deviceId_;
 };
 
 class GpuStreamPool;
@@ -88,6 +92,8 @@ class GpuStream {
   ~GpuStream();
 
   operator cudaStream_t() const { return stream_->stream_; }
+
+  int deviceId() const { return stream_->deviceId(); }
 
  private:
   friend class GpuStreamPool;
@@ -111,7 +117,7 @@ class GpuStreamPool {
 
  protected:
   friend class GpuStream;
-  std::vector<std::shared_ptr<CudaStreamWithFlags>> streams_;
+  std::unordered_map<int, std::vector<std::shared_ptr<CudaStreamWithFlags>>> streams_;
 };
 
 /// Get the singleton instance of GpuStreamPool.

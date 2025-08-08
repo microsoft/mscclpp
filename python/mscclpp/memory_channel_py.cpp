@@ -28,13 +28,11 @@ void register_memory_channel(nb::module_& m) {
       .def(nb::init<>())
       .def("__init__",
            [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
-              RegisteredMemory dst,
-              uintptr_t src) { new (memoryChannel) MemoryChannel(semaphore, dst, reinterpret_cast<void*>(src)); })
+              RegisteredMemory dst, RegisteredMemory src) { new (memoryChannel) MemoryChannel(semaphore, dst, src); })
       .def("__init__",
            [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
-              RegisteredMemory dst, uintptr_t src, uintptr_t packet_buffer) {
-             new (memoryChannel)
-                 MemoryChannel(semaphore, dst, reinterpret_cast<void*>(src), reinterpret_cast<void*>(packet_buffer));
+              RegisteredMemory dst, RegisteredMemory src, uintptr_t packet_buffer) {
+             new (memoryChannel) MemoryChannel(semaphore, dst, src, reinterpret_cast<void*>(packet_buffer));
            })
       .def("device_handle", &MemoryChannel::deviceHandle);
 

@@ -121,6 +121,8 @@ struct ExecutionContext {
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
   std::vector<void*> registeredMemoryAddresses;
   std::vector<mscclpp::MemoryId> registeredMemoryIds;
+  // local registered memories to keep resources alive
+  std::vector<mscclpp::RegisteredMemory> localRegisteredMemories;
 
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<mscclpp::SemaphoreId> proxySemaphores;
@@ -283,6 +285,7 @@ struct Executor::Impl {
       RegisteredMemory memory =
           this->comm->registerMemory(bufferInfo.first, bufferInfo.second, getTransportFlags(buffer, rank));
       comm->sendMemory(memory, buffer.accessRank);
+      context.localRegisteredMemories.emplace_back(std::move(memory));
     }
     for (const auto& bufferInfo : plan.impl_->getRemoteBufferInfos()) {
       std::shared_future<RegisteredMemory> remoteRegMemoryFuture = comm->recvMemory(bufferInfo.rank);
