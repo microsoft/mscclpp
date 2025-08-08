@@ -27,15 +27,17 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
     ):
         # Creating Channels and Scratch Buffer
         channels = {}
+        sync_channels = {}
         scratch_buffer = {}
-        offset = gpu_size - 1
+        tb_offset = 0
         for gpu in range(gpu_size):
             src_rank_id = gpu
-            scratch_buffer[src_rank_id] = Buffer(src_rank_id, 2 * (gpu_size - 1))
+            scratch_buffer[src_rank_id] = Buffer(src_rank_id, gpu_size - 1)
             for peer in range(gpu_size):
                 dst_rank_id = peer
                 if src_rank_id != dst_rank_id:
                     channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
+                    sync_channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
 
         # Initial Synchronization
         for gpus in range(gpu_size):
@@ -44,15 +46,15 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 dst_rank_id = peer
                 if src_rank_id != peer:
                     tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    channels[dst_rank_id, src_rank_id].signal(tb=tb, relaxed=True)
+                    sync_channels[dst_rank_id, src_rank_id].signal(tb=tb, relaxed=True)
             for peer in range(gpu_size):
                 dst_rank_id = peer
                 if src_rank_id != dst_rank_id:
                     tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    channels[dst_rank_id, src_rank_id].wait(tb=tb, relaxed=True, data_sync=SyncType.after)
+                    sync_channels[dst_rank_id, src_rank_id].wait(tb=tb, relaxed=True, data_sync=SyncType.after)
 
         # Copy Data to Scratch Buffer and Put Remote Rank
-        with LoopIterationContext(unit=2**16, num_chunks=1):
+        with LoopIterationContext(unit=2**18, num_chunks=1):
             for gpu in range(gpu_size):
                 src_rank_id = gpu
                 src_rank = Rank(src_rank_id)
@@ -60,32 +62,27 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 for peer in range(gpu_size):
                     dst_rank_id = peer
                     if dst_rank_id != src_rank_id:
+                        semaphore = Semaphore(src_rank_id, initial_value=0)
                         local_index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
                         remote_index = src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
                         tb = local_index
-                        src_rank.copy(scratch_buffer[src_rank_id][local_index: local_index + 1], input_buffer[dst_rank_id: dst_rank_id + 1], tb=tb)
-                        channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][offset + remote_index: offset + remote_index + 1], scratch_buffer[src_rank_id][local_index: local_index + 1], tb=tb)
+                        channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + 1],  input_buffer[dst_rank_id: dst_rank_id + 1], tb=tb)
+                        semaphore.release(tb=tb, data_sync=SyncType.before)
+                        semaphore.acquire(tb=tb_offset + tb, data_sync=SyncType.after)
+                        channels[dst_rank_id, src_rank_id].signal(tb=tb_offset + tb, data_sync=SyncType.before)
 
-        for gpu in range(gpu_size):
-            src_rank_id = gpu
-            for peer in range(gpu_size):
-                dst_rank_id = peer
-                if dst_rank_id != src_rank_id:
-                    tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
-
-        # Copy Data From Scratch Buffer
-        for gpu in range(gpu_size):
-            src_rank_id = gpu
-            src_rank = Rank(src_rank_id)
-            input_buffer = src_rank.get_input_buffer()
-            for peer in range(gpu_size):
-                dst_rank_id = peer
-                if dst_rank_id != src_rank_id:
-                    index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    tb = index
-                    channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
-                    src_rank.copy(input_buffer[dst_rank_id: dst_rank_id + 1], scratch_buffer[src_rank_id][offset + index: offset + index + 1], tb=tb)
+            # Copy Data From Scratch Buffer
+            for gpu in range(gpu_size):
+                src_rank_id = gpu
+                src_rank = Rank(src_rank_id)
+                input_buffer = src_rank.get_input_buffer()
+                for peer in range(gpu_size):
+                    dst_rank_id = peer
+                    if dst_rank_id != src_rank_id:
+                        index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
+                        tb = tb_offset + index
+                        channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
+                        src_rank.copy(input_buffer[dst_rank_id: dst_rank_id + 1], scratch_buffer[src_rank_id][index: index + 1], tb=tb)
 
         print(JSON())
 

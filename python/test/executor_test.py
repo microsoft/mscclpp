@@ -225,11 +225,6 @@ def main(
     )
 
     mscclpp_group.barrier()
-    """ type_size = cp.dtype(dtype).itemsize
-    nelems = size // type_size
-    for i in range(nelems):
-        print(f"rank {mscclpp_group.my_rank} input_buff {i}: {input_buf[i]}") """
-
     execution_time = bench_time(n_iters, n_graph_iters, executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)

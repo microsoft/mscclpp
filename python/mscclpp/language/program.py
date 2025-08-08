@@ -166,7 +166,7 @@ class MSCCLPPProgram:
 
     def get_buffer_replication_policy_function(self):
         if self.replication_policy == ReplicationPolicy.interleaved:
-            return lambda value, instance, num_instances: value * num_instances + instance
+            return lambda value, size, instance, num_instances: value * num_instances + instance * size
         else:
             return lambda value, instance, num_instances: value
 

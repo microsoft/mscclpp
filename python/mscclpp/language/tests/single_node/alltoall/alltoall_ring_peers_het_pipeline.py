@@ -1,0 +1,170 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+import argparse
+from mscclpp.language.channel import *
+from mscclpp.language.rank import *
+from mscclpp.language.general import *
+from mscclpp.language.program import *
+from mscclpp.language.collectives import *
+from mscclpp.language.pipeline import *
+
+def find_pairs(size):
+    partner = [{j for j in range(size) if j != i} for i in range(size)]
+    step = []
+    for _ in range(size - 1):
+        used = set()
+        matches = {}
+        for x in range(size):
+            if x not in used:
+                for y in range(x + 1, size):
+                    if y not in used and y in partner[x] and x in partner[y]:
+                        matches[x] = y
+                        matches[y] = x
+                        used.add(x)
+                        used.add(y)
+                        partner[x].remove(y)
+                        partner[y].remove(x)
+                        break
+
+        step.append(matches)
+
+    return step
+
+def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
+    chunksperloop = 2
+    collective = AllToAll(gpu_size, chunksperloop, True)
+    with MSCCLPPProgram(
+        name,
+        collective,
+        gpu_size,
+        instances=32,
+        protocol="Simple",
+        reuse_resources=True,
+        num_threads_per_block=num_threads_per_block,
+        use_double_scratch_buffer=False,
+        min_message_size=min_message_size,
+        max_message_size=max_message_size,
+    ):
+        # Creating Channels and Scratch Buffer
+        channels = {}
+        first_step_channel = {}
+        sync_channels = {}
+        semaphores = {}
+        scratch_buffer = {}
+        step_paris = find_pairs(gpu_size)
+        for gpu in range(gpu_size):
+            src_rank_id = gpu
+            scratch_buffer[src_rank_id] = Buffer(src_rank_id, chunksperloop * (gpu_size - 1))
+            for peer in range(gpu_size):
+                dst_rank_id = peer
+                if src_rank_id != dst_rank_id:
+                    channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
+                    first_step_channel[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
+                    sync_channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
+                    semaphores[src_rank_id, dst_rank_id] = Semaphore(src_rank_id, initial_value=0)
+
+        # Initial Synchronization
+        for gpus in range(gpu_size):
+            src_rank_id = gpus
+            for peer in range(gpu_size):
+                dst_rank_id = peer
+                if src_rank_id != peer:
+                    sync_channels[dst_rank_id, src_rank_id].signal(tb=0, relaxed=True)
+            for peer in range(gpu_size):
+                dst_rank_id = peer
+                if src_rank_id != dst_rank_id:
+                    sync_channels[dst_rank_id, src_rank_id].wait(tb=0, relaxed=True, data_sync=SyncType.after)
+
+        # Copy Data to Scratch Buffer and Put Remote Rank
+        for step_pair in range(gpu_size - 1):
+            i = step_pair
+            if i == 0:
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    local_index = dst_rank_id * chunksperloop
+                    remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop
+                    channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunksperloop // 2], input_buffer[local_index: local_index + chunksperloop // 2], tb=0)
+                    channels[dst_rank_id, src_rank_id].signal(tb=0, data_sync=SyncType.before)
+                    semaphores[src_rank_id, dst_rank_id].release(tb=0)
+
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    local_index = dst_rank_id * chunksperloop + chunksperloop // 2
+                    remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop + chunksperloop // 2
+                    first_step_channel[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunksperloop // 2], input_buffer[local_index: local_index + chunksperloop // 2], tb=1)
+                    first_step_channel[dst_rank_id, src_rank_id].signal(tb=1, data_sync=SyncType.before)
+
+
+                # Copy Data From Scratch Buffer
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    src_index = dst_rank_id * chunksperloop
+                    dst_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop
+                    semaphores[src_rank_id, dst_rank_id].acquire(tb=1)
+                    channels[dst_rank_id, src_rank_id].wait(tb=1, data_sync=SyncType.after)
+                    src_rank.copy(input_buffer[src_index: src_index + chunksperloop // 2], scratch_buffer[src_rank_id][dst_index: dst_index + chunksperloop // 2], tb=1)
+
+                # Copy Data From Scratch Buffer
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    src_index = dst_rank_id * chunksperloop + chunksperloop // 2
+                    dst_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop + chunksperloop // 2
+                    first_step_channel[dst_rank_id, src_rank_id].wait(tb=1, data_sync=SyncType.after)
+                    src_rank.copy(input_buffer[src_index: src_index + chunksperloop // 2], scratch_buffer[src_rank_id][dst_index: dst_index + chunksperloop // 2], tb=1)
+            else:
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    local_index = dst_rank_id * chunksperloop
+                    remote_index = (src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1) * chunksperloop
+                    channels[dst_rank_id, src_rank_id].put(scratch_buffer[dst_rank_id][remote_index: remote_index + chunksperloop], input_buffer[local_index: local_index + chunksperloop], tb=0)
+                    channels[dst_rank_id, src_rank_id].signal(tb=0, data_sync=SyncType.before)
+                    semaphores[src_rank_id, dst_rank_id].release(tb=0)
+
+
+                # Copy Data From Scratch Buffer
+                for gpu in range(gpu_size):
+                    src_rank_id = gpu
+                    src_rank = Rank(src_rank_id)
+                    input_buffer = src_rank.get_input_buffer()
+                    dst_rank_id = step_paris[step_pair][src_rank_id]
+
+                    src_index = dst_rank_id * chunksperloop
+                    dst_index = (dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1) * chunksperloop
+                    semaphores[src_rank_id, dst_rank_id].acquire(tb=1)
+                    channels[dst_rank_id, src_rank_id].wait(tb=1, data_sync=SyncType.after)
+                    src_rank.copy(input_buffer[src_index: src_index + chunksperloop], scratch_buffer[src_rank_id][dst_index: dst_index + chunksperloop], tb=1)
+
+        print(JSON())
+
+parser = argparse.ArgumentParser()
+
+parser.add_argument("--name", type=str, help="name of the program")
+parser.add_argument("--num_gpus", type=int, help="number of gpus")
+parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
+parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
+parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
+
+args = parser.parse_args()
+
+alltoall_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)

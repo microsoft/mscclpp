@@ -2,7 +2,6 @@
 // Licensed under the MIT license.
 
 #include <assert.h>
-#include <stdio.h>
 
 #if defined(__HIP_PLATFORM_AMD__)
 #include <hip/hip_fp16.h>
@@ -28,7 +27,6 @@ static __device__ unsigned int ranqd1(unsigned int seed) {
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) { \
       seed = ranqd1(seed);                                                                               \
       input_buf[i] = DataType(seed % blockDim.x) / DataType(blockDim.x);                                 \
-      /* printf("seq: %d, rank: %d, i: %lu, input_buf: %f\n", seq, rank, (unsigned long)i, (float)input_buf[i]);  */         \
     }                                                                                                    \
   }
 
