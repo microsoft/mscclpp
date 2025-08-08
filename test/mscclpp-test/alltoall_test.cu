@@ -69,8 +69,8 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
 
 __global__ void __launch_bounds__(1024)
     alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
-  constexpr int nWarpForPut = 16;
-  constexpr int nWarpForCopy = 16;
+  constexpr int nWarpForPut = 20;
+  constexpr int nWarpForCopy = 12;
   constexpr int putStartWid = 0;
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
@@ -124,7 +124,7 @@ __global__ void __launch_bounds__(1024)
         // barrier for n warp
         asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
         mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, size,
-                      wid * WARP_SIZE + lid, nWarpForCopy * WARP_SIZE);
+                      tidInCopy, nWarpForCopy * WARP_SIZE);
       }
     }
   }
@@ -132,13 +132,13 @@ __global__ void __launch_bounds__(1024)
 
 __global__ void __launch_bounds__(1024)
     alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
-  constexpr int nWarpForPut = 22;
-  constexpr int nWarpForCopy = 10;
+  constexpr int nWarpForPut = 16;
+  constexpr int nWarpForCopy = 16;
   constexpr int putStartWid = 0;
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
-  constexpr size_t unit = 1 << 19; // 128K
+  constexpr size_t unit = 1 << 16; // 128K
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = totalCount / gridDim.x;
@@ -161,18 +161,18 @@ __global__ void __launch_bounds__(1024)
           size = lastIterSize;
         }
         mscclpp::copy((char*)scratchBuffer + startOffset + i * unit, (char*)inputBuffer + startOffset + i * unit, size,
-                      wid * WARP_SIZE + lid, nWarpForPut * WARP_SIZE);
+                      tidInPut, nWarpForPut * WARP_SIZE);
         asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
         if (tidInPut == 0) {
           memoryChannels[peerId].signal();
-          sem.release();
+          sem.release<mscclpp::scopeBlock>();
         }
       }
     } else if (wid >= copyStartWid && wid < copyEndWid) {
       int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
         if (tidInCopy == 0) {
-          sem.acquire();
+          sem.acquire<mscclpp::scopeBlock>();
           memoryChannels[peerId].wait();
         }
         if (i == nIters - 1) {
@@ -180,8 +180,8 @@ __global__ void __launch_bounds__(1024)
         }
         // barrier for n warp
         asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
-        mscclpp::copy((char*)memoryChannels[peerId].dst_ + dstOffset + i * unit,
-                      (char*)inputBuffer + startOffset + i * unit, size, wid * WARP_SIZE + lid,
+        mscclpp::copy((char*)inputBuffer + startOffset + i * unit,
+                      (char*)memoryChannels[peerId].dst_ + dstOffset + i * unit, size, tidInCopy,
                       nWarpForCopy * WARP_SIZE);
       }
     }
@@ -212,7 +212,8 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
   const int nRanksPerNode = args.nRanksPerNode;
-  if (kernelNum != 2) {
+  auto isInPlaceKernel = [kernelNum]() { return kernelNum == 2 || kernelNum == 3; };
+  if (!isInPlaceKernel()) {
     CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
                               paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
   }
@@ -337,7 +338,12 @@ void AllToAllTestEngine::setupConnections() {
 
 std::vector<void*> AllToAllTestEngine::getSendBuff() { return {sendBuff_.get()}; }
 void* AllToAllTestEngine::getExpectedBuff() { return expectedBuff_.get(); }
-void* AllToAllTestEngine::getRecvBuff() { return recvBuff_.get(); }
+void* AllToAllTestEngine::getRecvBuff() {
+  if (this->isInPlace())
+    return sendBuff_.get();
+  else
+    return recvBuff_.get();
+}
 void* AllToAllTestEngine::getScratchBuff() { return nullptr; }
 
 std::shared_ptr<BaseTestEngine> getTestEngine(const TestArgs& args) {
