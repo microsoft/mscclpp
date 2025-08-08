@@ -17,7 +17,7 @@
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
-__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[256];
+__constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __device__ mscclpp::DeviceSemaphore deviceSemaphore[64];
 __device__ int peerMap[] = {1, 0, 3, 2, 5, 4, 7, 6 /*first */,
@@ -75,11 +75,17 @@ __global__ void __launch_bounds__(1024)
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
-  constexpr size_t unit = 1 << 16; // 256K
+  constexpr size_t unit = 1 << 18; // 256K
 
   size_t totalCount = nElements * sizeof(int);
-  size_t nBytesPerBlock = totalCount / gridDim.x;
-  size_t nIters = (nBytesPerBlock  + unit - 1) / unit;
+  size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
+  nBytesPerBlock = nBytesPerBlock / 16 * 16; // alignment
+  size_t nBytesForLastBlock = totalCount - (nBytesPerBlock * (gridDim.x - 1));
+  size_t totalBytesForCurrentBlock = nBytesPerBlock;
+  if (blockIdx.x == gridDim.x - 1) {
+    totalBytesForCurrentBlock = nBytesForLastBlock;
+  }
+  size_t nIters = (totalBytesForCurrentBlock  + unit - 1) / unit;
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
@@ -90,7 +96,7 @@ __global__ void __launch_bounds__(1024)
   }
   __syncthreads();
   size_t size = unit;
-  size_t lastIterSize = nBytesPerBlock - (nIters - 1) * unit;
+  size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
   for (int step = 0; step < nRanksPerNode - 1; step++) {
     int peer = peerMap[step * nRanksPerNode + rank];
     int peerId = peer < rank ? peer : peer - 1;
@@ -132,57 +138,64 @@ __global__ void __launch_bounds__(1024)
 
 __global__ void __launch_bounds__(1024)
     alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
-  constexpr int nWarpForPut = 16;
   constexpr int nWarpForCopy = 16;
-  constexpr int putStartWid = 0;
-  constexpr int putEndWid = putStartWid + nWarpForPut;
-  constexpr int copyStartWid = putEndWid;
+  constexpr int nWarpForGet = 16;
+  constexpr int copyStartWid = 0;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
-  constexpr size_t unit = 1 << 16; // 128K
+  constexpr int getStartWid = copyEndWid;
+  constexpr int getEndWid = getStartWid + nWarpForGet;
+  constexpr size_t unit = 1 << 18; // 256K
 
   size_t totalCount = nElements * sizeof(int);
-  size_t nBytesPerBlock = totalCount / gridDim.x;
-  size_t nIters = (nBytesPerBlock  + unit - 1) / unit;
+  size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
+  nBytesPerBlock = nBytesPerBlock / 16 * 16; // alignment
+  size_t nBytesForLastBlock = totalCount - (nBytesPerBlock * (gridDim.x - 1));
+  size_t totalBytesForCurrentBlock = nBytesPerBlock;
+  if (blockIdx.x == gridDim.x - 1) {
+    totalBytesForCurrentBlock = nBytesForLastBlock;
+  }
+
+  size_t nIters = (totalBytesForCurrentBlock  + unit - 1) / unit;
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
   auto& sem = deviceSemaphore[blockIdx.x];
   size_t size = unit;
-  size_t lastIterSize = nBytesPerBlock - (nIters - 1) * unit;
+  size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
   for (int step = 0; step < nRanksPerNode - 1; step++) {
     int peer = peerMap[step * nRanksPerNode + rank];
     int peerId = peer < rank ? peer : peer - 1;
     size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
     size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
-    if (wid >= putStartWid && wid < putEndWid) {
-      int tidInPut = wid * WARP_SIZE + lid - putStartWid * WARP_SIZE;
+    if (wid >= copyStartWid && wid < copyEndWid) {
+      int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
         if (i == nIters - 1) {
           size = lastIterSize;
         }
         mscclpp::copy((char*)scratchBuffer + startOffset + i * unit, (char*)inputBuffer + startOffset + i * unit, size,
-                      tidInPut, nWarpForPut * WARP_SIZE);
-        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
-        if (tidInPut == 0) {
+                      tidInCopy, nWarpForCopy * WARP_SIZE);
+        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        if (tidInCopy == 0) {
           memoryChannels[peerId].signal();
-          sem.release<mscclpp::scopeBlock>();
+          sem.release();
         }
       }
-    } else if (wid >= copyStartWid && wid < copyEndWid) {
-      int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
+    } else if (wid >= getStartWid && wid < getEndWid) {
+      int tidInGet = wid * WARP_SIZE + lid - getStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
-        if (tidInCopy == 0) {
-          sem.acquire<mscclpp::scopeBlock>();
+        if (tidInGet == 0) {
+          sem.acquire();
           memoryChannels[peerId].wait();
         }
         if (i == nIters - 1) {
           size = lastIterSize;
         }
         // barrier for n warp
-        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForGet * WARP_SIZE) : "memory");
         mscclpp::copy((char*)inputBuffer + startOffset + i * unit,
-                      (char*)memoryChannels[peerId].dst_ + dstOffset + i * unit, size, tidInCopy,
-                      nWarpForCopy * WARP_SIZE);
+                      (char*)memoryChannels[peerId].dst_ + dstOffset + i * unit, size, tidInGet,
+                      nWarpForGet * WARP_SIZE);
       }
     }
   }
@@ -222,9 +235,9 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   } else if (kernelNum == 1) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   } else if (kernelNum == 2) {
-    alltoall2<<<32, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
+    alltoall2<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
   } else if (kernelNum == 3) {
-    alltoall3<<<32, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
+    alltoall3<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
   }
 }
 
@@ -320,7 +333,7 @@ void AllToAllTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
   setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
   setupMeshConnections(this->memoryChannels, sendBuff_.get(), args_.maxBytes, scratchBuff_.get(), args_.maxBytes,
-                       ChannelSemantic::PUT, 32);
+                       ChannelSemantic::PUT, 64);
 
   if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
     std::runtime_error("unexpected error");
