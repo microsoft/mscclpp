@@ -131,7 +131,7 @@ int main(int argc, char* argv[]) {
     NpKit::Init(rank);
   }
 
-  mscclpp::ExecutionPlan plan(executionPlanPath);
+  mscclpp::ExecutionPlan plan(executionPlanPath, rank);
   std::shared_ptr<char> sendbuff = mscclpp::GpuBuffer(bufferSize).memory();
   std::vector<int> dataHost(bufferSize / sizeof(int), rank);
   MSCCLPP_CUDATHROW(cudaMemcpy(sendbuff.get(), dataHost.data(), bufferSize, cudaMemcpyHostToDevice));
