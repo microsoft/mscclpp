@@ -262,8 +262,8 @@ MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* out
         srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
     uint32_t size = min(sizes[i] - offset, unitSize);
     char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[i].id]);
-    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
-                  remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
+    mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + dstOffset,
+                  remoteMemory + srcOffset, size, threadIdx.x, blockDim.x);
   }
 }
 
@@ -720,8 +720,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   if (unitSize < UINT32_MAX) {
     opSize = getOpSize(op, offset, unitSize);
   }
-  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, opSize, 0, NPKIT_GET_GPU_TIMESTAMP(),
-                            eventBuffer_, &eventBufferHead);
+  if (op.type != OperationType::PIPELINE){
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY + (int)op.type, opSize, 0, NPKIT_GET_GPU_TIMESTAMP(),
+                              eventBuffer_, &eventBufferHead);
+  }
 #endif
   if (nSteps != nullptr) {
     *nSteps = 1;
@@ -790,8 +792,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 #endif
   }
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT)
-  NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, opSize, 0, NPKIT_GET_GPU_TIMESTAMP(),
-                            eventBuffer_, &eventBufferHead);
+  if (op.type != OperationType::PIPELINE){
+    NpKit::CollectGpuEventShm(NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT + (int)op.type, opSize, 0, NPKIT_GET_GPU_TIMESTAMP(),
+                              eventBuffer_, &eventBufferHead);
+  }
 #endif
   return;
 }
