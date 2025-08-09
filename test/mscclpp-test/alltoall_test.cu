@@ -95,13 +95,13 @@ __global__ void __launch_bounds__(1024)
     memoryChannels[lid].relaxedWait();
   }
   __syncthreads();
-  size_t size = unit;
   size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
   for (int step = 0; step < nRanksPerNode - 1; step++) {
     int peer = peerMap[step * nRanksPerNode + rank];
     int peerId = peer < rank ? peer : peer - 1;
     size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
     size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t size = unit;
     if (wid >= putStartWid && wid < putEndWid) {
       int tidInPut = wid * WARP_SIZE + lid - putStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
@@ -160,13 +160,13 @@ __global__ void __launch_bounds__(1024)
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
   auto& sem = deviceSemaphore[blockIdx.x];
-  size_t size = unit;
   size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
   for (int step = 0; step < nRanksPerNode - 1; step++) {
     int peer = peerMap[step * nRanksPerNode + rank];
     int peerId = peer < rank ? peer : peer - 1;
     size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
     size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t size = unit;
     if (wid >= copyStartWid && wid < copyEndWid) {
       int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
