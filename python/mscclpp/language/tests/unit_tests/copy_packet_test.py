@@ -28,7 +28,7 @@ def copy_packets_test(num_threads_per_block, min_message_size, max_message_size)
     collective = TestCollective(gpus, 1, 1)
 
     # Initialize MSCCLPP program context with Simple protocol
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "copy_packets_test",
         collective,
         gpus,

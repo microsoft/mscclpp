@@ -20,7 +20,7 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
-from mscclpp.language.pipeline import *
+from mscclpp.language.loop import *
 
 
 def pipeline_test(num_threads_per_block, min_message_size, max_message_size):
@@ -29,7 +29,7 @@ def pipeline_test(num_threads_per_block, min_message_size, max_message_size):
     collective = TestCollective(gpus, 1, 1)
 
     # Initialize MSCCLPP program context with Simple protocol
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "barrier_test",
         collective,
         gpus,

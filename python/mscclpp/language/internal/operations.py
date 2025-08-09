@@ -100,7 +100,7 @@ class LocalChunk:
     index: int
     size: int
 
-    def to_json(self):
+    def to_dict(self):
         return {"type": self.type.value, "index": self.index, "size": self.size}
 
 
@@ -108,7 +108,7 @@ class LocalChunk:
 class RemoteChunk(LocalChunk):
     buffer_id: int
 
-    def to_json(self):
+    def to_dict(self):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
@@ -129,7 +129,7 @@ class SyncOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         return result
 
@@ -174,14 +174,14 @@ class CopyOperation(BaseOperation):
         for chunk in self.dst_buff:
             chunk.index = replication_function(chunk.index, instance, num_instances)
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
-            result["src_buff"].append(chunk.to_json())
+            result["src_buff"].append(chunk.to_dict())
         result["dst_buff"] = []
         for chunk in self.dst_buff:
-            result["dst_buff"].append(chunk.to_json())
+            result["dst_buff"].append(chunk.to_dict())
         return result
 
 
@@ -212,7 +212,7 @@ class SemaphoreAcquireOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["semaphore_ids"] = list(self.semaphore_ids)
         return result
@@ -245,7 +245,7 @@ class SemaphoreReleaseOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["semaphore_ids"] = list(self.semaphore_ids)
         return result
@@ -291,7 +291,7 @@ class SignalOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
@@ -338,7 +338,7 @@ class WaitOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
@@ -374,7 +374,7 @@ class BarrierOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["barrier_id"] = self.barrier_id
         result["num_threadblocks"] = len(self.barrier_info.tb_list)
@@ -417,7 +417,7 @@ class FlushOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["channel_ids"] = list(self.channel_ids)
         result["channel_type"] = self.channel_type.value
@@ -468,14 +468,14 @@ class GetOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
-            result["src_buff"].append(chunk.to_json())
+            result["src_buff"].append(chunk.to_dict())
         result["dst_buff"] = []
         for chunk in self.dst_buff:
-            result["dst_buff"].append(chunk.to_json())
+            result["dst_buff"].append(chunk.to_dict())
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
@@ -559,14 +559,14 @@ class PutOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.src_buff:
-            result["src_buff"].append(chunk.to_json())
+            result["src_buff"].append(chunk.to_dict())
         result["dst_buff"] = []
         for chunk in self.dst_buff:
-            result["dst_buff"].append(chunk.to_json())
+            result["dst_buff"].append(chunk.to_dict())
         if self.channel_ids == ChannelType.port:
             result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
@@ -711,21 +711,21 @@ class ReduceOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for chunk in self.local_src_buff:
-            result["src_buff"].append(chunk.to_json())
+            result["src_buff"].append(chunk.to_dict())
         result["dst_buff"] = []
         for chunk in self.local_dst_buff:
-            result["dst_buff"].append(chunk.to_json())
+            result["dst_buff"].append(chunk.to_dict())
 
         if len(self.remote_src_buff) > 0:
             for chunk in self.remote_src_buff:
-                result["src_buff"].append(chunk.to_json())
+                result["src_buff"].append(chunk.to_dict())
         if len(self.remote_dst_buff) > 0:
             for chunk in self.remote_dst_buff:
-                result["dst_buff"].append(chunk.to_json())
+                result["dst_buff"].append(chunk.to_dict())
 
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
@@ -780,12 +780,12 @@ class GroupLoadReduce(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["buffer_type"] = self.buffer_type.value
         result["buffer_offset"] = self.buffer_offset
         result["size"] = self.size
-        result["dst_chunk"] = self.dst_chunk.to_json()
+        result["dst_chunk"] = self.dst_chunk.to_dict()
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
@@ -815,9 +815,9 @@ class GroupStore(BaseOperation):
         self.buffer_offset = replication_function(self.buffer_offset, instance, num_instances)
         self.src_chunk.index = replication_function(self.src_chunk.index, instance, num_instances)
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
-        result["src_chunk"] = self.src_chunk.to_json()
+        result["src_chunk"] = self.src_chunk.to_dict()
         result["buffer_type"] = self.buffer_type.value
         result["buffer_offset"] = self.buffer_offset
         result["size"] = self.size
@@ -853,7 +853,7 @@ class GroupLoadReduceStore(BaseOperation):
         for i in range(len(self.dst_index)):
             self.dst_index[i] = replication_function(self.dst_index[i], instance, num_instances)
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["src_buff"] = []
         for i in range(len(self.src_index)):
@@ -920,12 +920,12 @@ class PipelineOperation(BaseOperation):
 
         return fused_operation
 
-    def to_json(self):
+    def to_dict(self):
         result = {"name": self.name.value}
         result["iter_context"] = {"unit_size": self.unit_size, "num_chunks": self.num_chunks}
         result["ops"] = []
         for operation in self.operations:
-            result["ops"].append(operation.to_json())
+            result["ops"].append(operation.to_dict())
         return result
 
 

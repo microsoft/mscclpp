@@ -13,7 +13,7 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
     gpu_size = 2
     chunksperloop = 1
     collective = AllGather(gpu_size, chunksperloop, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,

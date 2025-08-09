@@ -28,7 +28,7 @@ def switch_reduce_test(num_threads_per_block, min_message_size, max_message_size
     collective = TestCollective(gpus, 1, 1)
 
     # Initialize MSCCLPP program context with Simple protocol
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         "switch_reduce_test",
         collective,
         gpus,
