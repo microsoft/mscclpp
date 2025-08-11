@@ -68,8 +68,6 @@ std::shared_ptr<GpuStreamPool> gpuStreamPool() {
 
 namespace detail {
 
-CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-
 /// set memory access permission to read-write
 /// @param base Base memory pointer.
 /// @param size Size of the memory.
@@ -165,7 +163,6 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   } else {
     MSCCLPP_CUTHROW(result);
   }
-  nvlsCompatibleMemHandleType = (CUmemAllocationHandleType)requestedHandleTypes;
 
   if (align == 0) {
     align = getMulticastGranularity(nbytes, CU_MULTICAST_GRANULARITY_MINIMUM);

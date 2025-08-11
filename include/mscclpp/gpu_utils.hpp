@@ -134,7 +134,6 @@ void* gpuCallocHost(size_t bytes, unsigned int flags);
 void* gpuCallocUncached(size_t bytes);
 #endif  // defined(__HIP_PLATFORM_AMD__)
 #if (CUDA_NVLS_API_AVAILABLE)
-extern CUmemAllocationHandleType nvlsCompatibleMemHandleType;
 void* gpuCallocPhysical(size_t bytes, size_t gran = 0, size_t align = 0);
 #endif  // CUDA_NVLS_API_AVAILABLE
 
