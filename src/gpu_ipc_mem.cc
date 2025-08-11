@@ -50,12 +50,16 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   // Runtime IPC handle
   if (cudaIpcGetMemHandle(&handle->runtimeIpc.handle, (void*)basePtr) == cudaSuccess) {
     handle->typeFlags |= GpuIpcMemHandle::Type::RuntimeIpc;
+  } else {
+    cudaGetLastError();
   }
 
   CUmemGenericAllocationHandle allocHandle;
   CUresult res = cuMemRetainAllocationHandle(&allocHandle, (void*)basePtr);
-  if (res == CUDA_ERROR_NOT_SUPPORTED) return handle;  // Not supported on this platform
-  if (res == CUDA_ERROR_INVALID_VALUE) return handle;  // Not mapped by cuMem API
+  if (res == CUDA_ERROR_NOT_SUPPORTED || res == CUDA_ERROR_INVALID_VALUE) {
+    // Not supported on this platform or not mapped by cuMem API
+    return handle;
+  }
   MSCCLPP_CUTHROW(res);
 
   // POSIX FD handle
@@ -102,6 +106,8 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle) {
       dataSize_ = handle_.baseSize - handle_.offsetFromBase;
       type_ = GpuIpcMemHandle::Type::RuntimeIpc;
       return;
+    } else {
+      cudaGetLastError();
     }
   }
   if (type_ == GpuIpcMemHandle::Type::None) {
@@ -140,7 +146,8 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle) {
 
 GpuIpcMem::~GpuIpcMem() {
   if (type_ == GpuIpcMemHandle::Type::RuntimeIpc) {
-    cudaError_t err = cudaIpcCloseMemHandle(basePtr_);
+    cudaIpcCloseMemHandle(basePtr_);
+    cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
       WARN("Failed to close CUDA IPC handle at pointer %p: %s", basePtr_, cudaGetErrorString(err));
     }
