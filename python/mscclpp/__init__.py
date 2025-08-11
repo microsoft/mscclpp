@@ -1,6 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+"""MSCCL++ Python API."""
+
 import os
 import warnings
 from functools import wraps
