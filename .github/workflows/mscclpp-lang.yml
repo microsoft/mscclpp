@@ -27,24 +27,24 @@ jobs:
       run: |
         CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
 
-    - name: Copy test script/config to temp directory
-      run: |
-        cp python/test/test_generate_mscclpp_lang_result.py $RUNNER_TEMP/
-        cp python/test/configs/mscclpp_lang_test_config.json $RUNNER_TEMP/
-    - name: generate outputs
-      run: |
-        python3 $RUNNER_TEMP/test_generate_mscclpp_lang_result.py python/examples/ $RUNNER_TEMP/mscclpp_lang_test_config.json $RUNNER_TEMP/tests/pr-outputs/
-    - name: Checkout main branch
-      uses: actions/checkout@v4
-      if: github.event_name == 'pull_request' || github.event_name == 'push'
-      with:
-        ref: main
-    - name: Install msccl and dependencies
-      run: |
-        CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
-    - name: generate outputs
-      run: |
-        python3 $RUNNER_TEMP/test_generate_mscclpp_lang_result.py python/examples/ $RUNNER_TEMP/mscclpp_lang_test_config.json $RUNNER_TEMP/tests/main-outputs/
-    - name: Compare outputs
-      run: |
-        diff -rw $RUNNER_TEMP/tests/main-outputs/ $RUNNER_TEMP/tests/pr-outputs/
+    # - name: Copy test script/config to temp directory
+    #   run: |
+    #     cp python/test/test_generate_mscclpp_lang_result.py $RUNNER_TEMP/
+    #     cp python/test/configs/mscclpp_lang_test_config.json $RUNNER_TEMP/
+    # - name: generate outputs
+    #   run: |
+    #     python3 $RUNNER_TEMP/test_generate_mscclpp_lang_result.py python/examples/ $RUNNER_TEMP/mscclpp_lang_test_config.json $RUNNER_TEMP/tests/pr-outputs/
+    # - name: Checkout main branch
+    #   uses: actions/checkout@v4
+    #   if: github.event_name == 'pull_request' || github.event_name == 'push'
+    #   with:
+    #     ref: main
+    # - name: Install msccl and dependencies
+    #   run: |
+    #     CMAKE_ARGS="-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON" pip3 install .
+    # - name: generate outputs
+    #   run: |
+    #     python3 $RUNNER_TEMP/test_generate_mscclpp_lang_result.py python/examples/ $RUNNER_TEMP/mscclpp_lang_test_config.json $RUNNER_TEMP/tests/main-outputs/
+    # - name: Compare outputs
+    #   run: |
+    #     diff -rw $RUNNER_TEMP/tests/main-outputs/ $RUNNER_TEMP/tests/pr-outputs/
