@@ -687,9 +687,9 @@ class Semaphore {
   std::shared_ptr<Impl> pimpl_;
 };
 
+/// Deprecated.
 template <typename T>
-using NonblockingFuture [[deprecated("Use std::shared_future instead. This will be removed in a future release.")]] =
-    std::shared_future<T>;
+using NonblockingFuture = std::shared_future<T>;
 
 /// A class that sets up all registered memories and connections between processes.
 ///

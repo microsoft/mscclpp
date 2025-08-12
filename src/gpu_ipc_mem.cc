@@ -139,7 +139,7 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle) {
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = deviceId;
-  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&minGran, &prop, granFlag));
+  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&minGran, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
   size_t alignment = minGran;
   MSCCLPP_CUTHROW(cuMemAddressReserve(&base, handle_.baseSize, alignment, 0, 0));
