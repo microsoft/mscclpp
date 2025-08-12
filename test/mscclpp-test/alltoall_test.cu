@@ -114,7 +114,7 @@ __global__ void __launch_bounds__(1024)
         mscclpp::copy((char*)memoryChannels[peerId].dst_ + dstOffset + i * unit,
                       (char*)inputBuffer + startOffset + i * unit, size, wid * WARP_SIZE + lid,
                       nWarpForPut * WARP_SIZE);
-        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForPut * WARP_SIZE) : "memory");
+        asm volatile("bar.sync %0, %1;" ::"r"(15), "r"(nWarpForPut * WARP_SIZE) : "memory");
         if (tidInPut == 0) {
           memoryChannels[peerId].signal();
           sem.release();
@@ -131,7 +131,7 @@ __global__ void __launch_bounds__(1024)
           size = lastIterSize;
         }
         // barrier for n warp
-        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        asm volatile("bar.sync %0, %1;" ::"r"(14), "r"(nWarpForCopy * WARP_SIZE) : "memory");
         mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, size,
                       tidInCopy, nWarpForCopy * WARP_SIZE);
       }
@@ -182,7 +182,7 @@ __global__ void __launch_bounds__(1024)
         }
         mscclpp::copy((char*)scratchBuffer + startOffset + i * unit, (char*)inputBuffer + startOffset + i * unit, size,
                       tidInCopy, nWarpForCopy * WARP_SIZE);
-        asm volatile("bar.sync %0, %1;" ::"r"(0), "r"(nWarpForCopy * WARP_SIZE) : "memory");
+        asm volatile("bar.sync %0, %1;" ::"r"(15), "r"(nWarpForCopy * WARP_SIZE) : "memory");
         if (tidInCopy == 0) {
           memoryChannels[peerId].signal();
           sem.release();
@@ -199,7 +199,7 @@ __global__ void __launch_bounds__(1024)
           size = lastIterSize;
         }
         // barrier for n warp
-        asm volatile("bar.sync %0, %1;" ::"r"(1), "r"(nWarpForGet * WARP_SIZE) : "memory");
+        asm volatile("bar.sync %0, %1;" ::"r"(14), "r"(nWarpForGet * WARP_SIZE) : "memory");
         mscclpp::copy((char*)inputBuffer + startOffset + i * unit,
                       (char*)memoryChannels[peerId].dst_ + dstOffset + i * unit, size, tidInGet,
                       nWarpForGet * WARP_SIZE);
