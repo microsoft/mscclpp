@@ -3,6 +3,7 @@
 
 #include "gpu_ipc_mem.hpp"
 
+#include <linux/version.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -13,7 +14,7 @@
 
 namespace mscclpp {
 
-static int dupFdFromPid(pid_t pid, int targetFd) {
+static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetFd) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
   // Linux pidfd based cross-process fd duplication
   int pidfd = syscall(SYS_pidfd_open, pid, 0);
