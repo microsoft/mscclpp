@@ -69,6 +69,7 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
 
 __global__ void __launch_bounds__(1024)
     alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+#if defined(__CUDA_ARCH__)
   constexpr int nWarpForPut = 20;
   constexpr int nWarpForCopy = 12;
   constexpr int putStartWid = 0;
@@ -136,10 +137,12 @@ __global__ void __launch_bounds__(1024)
       }
     }
   }
+#endif
 }
 
 __global__ void __launch_bounds__(1024)
     alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+#if defined(__CUDA_ARCH__)
   constexpr int nWarpForCopy = 16;
   constexpr int nWarpForGet = 16;
   constexpr int copyStartWid = 0;
@@ -208,6 +211,7 @@ __global__ void __launch_bounds__(1024)
     memoryChannels[lid].relaxedSignal();
     memoryChannels[lid].relaxedWait();
   }
+#endif
 }
 
 
