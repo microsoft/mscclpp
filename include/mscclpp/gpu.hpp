@@ -42,12 +42,14 @@ constexpr auto CU_MEM_ALLOCATION_TYPE_PINNED = hipMemAllocationTypePinned;
 constexpr auto CU_MEM_LOCATION_TYPE_DEVICE = hipMemLocationTypeDevice;
 constexpr auto CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR = hipMemHandleTypePosixFileDescriptor;
 constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWrite;
+constexpr auto CU_MEM_ALLOC_GRANULARITY_MINIMUM = hipMemAllocGranularityMinimum;
 constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
 
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
 #endif  // CUDA_SUCCESS
 #define CUDA_ERROR_NOT_SUPPORTED hipErrorNotSupported
+#define CUDA_ERROR_INVALID_VALUE hipErrorInvalidValue
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
 #define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
@@ -95,6 +97,7 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define cuMemAddressReserve(...) hipMemAddressReserve(__VA_ARGS__)
 #define cuMemAddressFree(...) hipMemAddressFree(__VA_ARGS__)
 #define cuMemGetAddressRange(...) hipMemGetAddressRange(__VA_ARGS__)
+#define cuMemGetAllocationGranularity(...) hipMemGetAllocationGranularity(__VA_ARGS__)
 #define cuMemCreate(...) hipMemCreate(__VA_ARGS__)
 #define cuMemRelease(...) hipMemRelease(__VA_ARGS__)
 #define cuMemSetAccess(...) hipMemSetAccess(__VA_ARGS__)
@@ -122,7 +125,7 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #else  // defined(__HIP_PLATFORM_AMD__)
 #define CUDA_NVLS_API_AVAILABLE 0
 // NVLS is not supported on AMD platform, just to avoid compilation error
-#define CU_MEM_HANDLE_TYPE_FABRIC (0x8ULL)
+#define CU_MEM_HANDLE_TYPE_FABRIC ((hipMemAllocationHandleType)0x8ULL)
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 
 // GPU sync threads

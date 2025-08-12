@@ -14,6 +14,7 @@
 namespace mscclpp {
 
 static int dupFdFromPid(pid_t pid, int targetFd) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
   // Linux pidfd based cross-process fd duplication
   int pidfd = syscall(SYS_pidfd_open, pid, 0);
   if (pidfd < 0) {
@@ -26,6 +27,9 @@ static int dupFdFromPid(pid_t pid, int targetFd) {
   }
   close(pidfd);
   return dupfd;
+#else
+  return -1;
+#endif
 }
 
 void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
@@ -45,13 +49,13 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&basePtr, &sz, ptr));
   if (sz == 0) return handle;  // No valid memory range found
   handle->baseSize = sz;
-  handle->offsetFromBase = (size_t)(ptr - basePtr);
+  handle->offsetFromBase = size_t(ptr) - size_t(basePtr);
 
   // Runtime IPC handle
-  if (cudaIpcGetMemHandle(&handle->runtimeIpc.handle, (void*)basePtr) == cudaSuccess) {
+  cudaIpcGetMemHandle(&handle->runtimeIpc.handle, (void*)basePtr);
+  cudaError_t err = cudaGetLastError();
+  if (err == cudaSuccess) {
     handle->typeFlags |= GpuIpcMemHandle::Type::RuntimeIpc;
-  } else {
-    cudaGetLastError();
   }
 
   CUmemGenericAllocationHandle allocHandle;
@@ -100,14 +104,14 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle) {
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
-    if (cudaIpcOpenMemHandle(&basePtr_, handle_.runtimeIpc.handle, cudaIpcMemLazyEnablePeerAccess) == cudaSuccess) {
+    cudaIpcOpenMemHandle(&basePtr_, handle_.runtimeIpc.handle, cudaIpcMemLazyEnablePeerAccess);
+    cudaError_t err = cudaGetLastError();
+    if (err == cudaSuccess) {
       baseSize_ = handle_.baseSize;
       dataPtr_ = static_cast<void*>(static_cast<char*>(basePtr_) + handle_.offsetFromBase);
       dataSize_ = handle_.baseSize - handle_.offsetFromBase;
       type_ = GpuIpcMemHandle::Type::RuntimeIpc;
       return;
-    } else {
-      cudaGetLastError();
     }
   }
   if (type_ == GpuIpcMemHandle::Type::None) {
@@ -122,15 +126,26 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle) {
        << " that is not a multiple of the local host page size " << pageSize;
     throw Error(ss.str(), ErrorCode::InvalidUsage);
   }
+
+  int deviceId;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+
   CUdeviceptr base;
+#if (CUDA_NVLS_API_AVAILABLE)
   size_t minGran = detail::getMulticastGranularity(handle_.baseSize, CU_MULTICAST_GRANULARITY_MINIMUM);
+#else   // !(CUDA_NVLS_API_AVAILABLE)
+  size_t minGran;
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = deviceId;
+  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&minGran, &prop, granFlag));
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
   size_t alignment = minGran;
   MSCCLPP_CUTHROW(cuMemAddressReserve(&base, handle_.baseSize, alignment, 0, 0));
   MSCCLPP_CUTHROW(cuMemMap(base, handle_.baseSize, 0, allocHandle, 0));
 
   CUmemAccessDesc accessDesc = {};
-  int deviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
