@@ -180,7 +180,7 @@ GpuIpcMem::~GpuIpcMem() {
     int deviceId;
     res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, (CUdeviceptr)basePtr_);
     if (res != CUDA_SUCCESS) {
-      cuGetErrorString(res, &errStr);
+      (void)cuGetErrorString(res, &errStr);
       WARN("Failed to get device ordinal for pointer %p: %s", basePtr_, errStr);
       deviceId = -1;
     } else if (deviceId < 0) {
@@ -189,12 +189,12 @@ GpuIpcMem::~GpuIpcMem() {
     if (basePtr_) {
       res = cuMemUnmap((CUdeviceptr)basePtr_, baseSize_);
       if (res != CUDA_SUCCESS) {
-        cuGetErrorString(res, &errStr);
+        (void)cuGetErrorString(res, &errStr);
         WARN("Failed to unmap CUDA memory at pointer %p: %s", basePtr_, errStr);
       }
       res = cuMemAddressFree((CUdeviceptr)basePtr_, baseSize_);
       if (res != CUDA_SUCCESS) {
-        cuGetErrorString(res, &errStr);
+        (void)cuGetErrorString(res, &errStr);
         WARN("Failed to free CUDA memory at pointer %p: %s", basePtr_, errStr);
       }
     }
@@ -202,13 +202,13 @@ GpuIpcMem::~GpuIpcMem() {
     if (isMulticast_ && deviceId >= 0) {
       CUdevice device;
       if (cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
-        cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
+        (void)cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
       }
     }
 #endif  // (CUDA_NVLS_API_AVAILABLE)
     res = cuMemRelease(allocHandle_);
     if (res != CUDA_SUCCESS) {
-      cuGetErrorString(res, &errStr);
+      (void)cuGetErrorString(res, &errStr);
       WARN("Failed to release CUDA memory allocation handle: %s", errStr);
     }
   }
