@@ -85,7 +85,8 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   return handle;
 }
 
-UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast(size_t bufferSize, int numDevices) {
+UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t bufferSize,
+                                                       [[maybe_unused]] int numDevices) {
 #if (CUDA_NVLS_API_AVAILABLE)
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
 
@@ -195,11 +196,13 @@ GpuIpcMem::~GpuIpcMem() {
         WARN("Failed to free CUDA memory at pointer %p: %s", basePtr_, errStr);
       }
     }
+#if (CUDA_NVLS_API_AVAILABLE)
     if (isMulticast_ && deviceId >= 0) {
       CUdevice device;
       if (cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
         cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
       }
+#endif  // (CUDA_NVLS_API_AVAILABLE)
     }
     res = cuMemRelease(allocHandle_);
     if (res != CUDA_SUCCESS) {
@@ -209,7 +212,7 @@ GpuIpcMem::~GpuIpcMem() {
   }
 }
 
-void *GpuIpcMem::map() {
+void* GpuIpcMem::map() {
   if (type_ == GpuIpcMemHandle::Type::None) {
     throw Error("GpuIpcMemHandle type is None, cannot map memory", ErrorCode::InvalidUsage);
   } else if (dataPtr_ != nullptr) {
@@ -251,7 +254,7 @@ void *GpuIpcMem::map() {
   return dataPtr_;
 }
 
-void *GpuIpcMem::mapMulticast(int numDevices, const CUdeviceptr devicePtr) {
+void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] const CUdeviceptr devicePtr) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (type_ != GpuIpcMemHandle::Type::PosixFd && type_ != GpuIpcMemHandle::Type::Fabric) {
     throw Error("GpuIpcMemHandle type is not PosixFd or Fabric, cannot map multicast memory", ErrorCode::InvalidUsage);
@@ -309,7 +312,7 @@ void *GpuIpcMem::mapMulticast(int numDevices, const CUdeviceptr devicePtr) {
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
 }
 
-void *GpuIpcMem::data() const {
+void* GpuIpcMem::data() const {
   if (!dataPtr_) {
     throw Error("GpuIpcMem data pointer is null. Call map() first.", ErrorCode::InvalidUsage);
   }

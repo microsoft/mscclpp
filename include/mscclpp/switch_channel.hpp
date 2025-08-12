@@ -33,7 +33,6 @@ class NvlsConnection {
   NvlsConnection() = delete;
   std::vector<char> serialize();
 
-  
   void bindMemory(CUdeviceptr devicePtr, size_t size);
 
   /// Bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
@@ -43,9 +42,9 @@ class NvlsConnection {
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
-  void *devicePtr() const;
+  void* devicePtr() const;
 
-  void *mcPtr() const;
+  void* mcPtr() const;
 
   size_t bufferSize() const;
 

@@ -3,8 +3,8 @@
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <set>
 
 #include "debug.h"

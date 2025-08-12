@@ -35,7 +35,7 @@ struct NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection
 };
 
 NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices)
-  : numDevices_(numDevices), gpuIpcMemHandle_(GpuIpcMemHandle::createMulticast(bufferSize, numDevices)) {}
+    : numDevices_(numDevices), gpuIpcMemHandle_(GpuIpcMemHandle::createMulticast(bufferSize, numDevices)) {}
 
 NvlsConnection::Impl::Impl(const std::vector<char>& data) : gpuIpcMemHandle_(nullptr, &GpuIpcMemHandle::deleter) {
   GpuIpcMemHandle hdl;
@@ -82,26 +82,18 @@ NvlsConnection::NvlsConnection(const std::vector<char>& data) : pimpl_(std::make
 
 std::vector<char> NvlsConnection::serialize() { return pimpl_->serialize(); }
 
-void NvlsConnection::bindMemory(CUdeviceptr devicePtr, size_t size) {
-  pimpl_->bindMemory(devicePtr, size);
-}
+void NvlsConnection::bindMemory(CUdeviceptr devicePtr, size_t size) { pimpl_->bindMemory(devicePtr, size); }
 
 SwitchChannel NvlsConnection::bindAllocatedMemory(CUdeviceptr devicePtr, size_t size) {
   pimpl_->bindMemory(devicePtr, size);
   return SwitchChannel(std::shared_ptr<NvlsConnection>(this));
 }
 
-void *NvlsConnection::devicePtr() const {
-  return pimpl_->gpuIpcMem_->multicastBuffer();
-}
+void* NvlsConnection::devicePtr() const { return pimpl_->gpuIpcMem_->multicastBuffer(); }
 
-void *NvlsConnection::mcPtr() const {
-  return pimpl_->gpuIpcMem_->data();
-}
+void* NvlsConnection::mcPtr() const { return pimpl_->gpuIpcMem_->data(); }
 
-size_t NvlsConnection::bufferSize() const {
-  return pimpl_->gpuIpcMem_->size();
-}
+size_t NvlsConnection::bufferSize() const { return pimpl_->gpuIpcMem_->size(); }
 
 SwitchChannel::SwitchChannel(std::shared_ptr<NvlsConnection> conn) {
   devicePtr_ = conn->devicePtr();
@@ -147,7 +139,6 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
     bootstrap->recv(data, rootRank, 0);
     conn = std::make_shared<NvlsConnection>(data);
   }
-
 
   // sync here to make sure all ranks have added their devices
   bootstrap->groupBarrier(allRanks);

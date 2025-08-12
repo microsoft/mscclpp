@@ -40,11 +40,12 @@ struct GpuIpcMemHandle {
   // We make GpuIpcMemHandle trivially copyable for easy serialization,
   // and thus it cannot have explicit destructors.
   // We use a custom deleter for unique_ptr to handle cleanup without a destructor.
-  static std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)> create(const CUdeviceptr ptr);
-  static std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)> createMulticast(size_t bufferSize, int numDevices);
+  using UniquePtr = std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)>;
+  static UniquePtr create(const CUdeviceptr ptr);
+  static UniquePtr createMulticast(size_t bufferSize, int numDevices);
 };
 
-using UniqueGpuIpcMemHandle = std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)>;
+using UniqueGpuIpcMemHandle = GpuIpcMemHandle::UniquePtr;
 
 static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 
