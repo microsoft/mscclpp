@@ -106,6 +106,7 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define cuMemRetainAllocationHandle(...) hipMemRetainAllocationHandle(__VA_ARGS__)
 #define cuMemExportToShareableHandle(...) hipMemExportToShareableHandle(__VA_ARGS__)
 #define cuMemImportFromShareableHandle(...) hipMemImportFromShareableHandle(__VA_ARGS__)
+#define cuPointerGetAttribute(...) hipPointerGetAttribute(__VA_ARGS__)
 
 #else
 

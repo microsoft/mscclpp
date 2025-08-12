@@ -99,9 +99,14 @@ std::string to_string(const mscclpp::Transport& transport) {
   return TransportNames[static_cast<size_t>(transport)];
 }
 
+std::string to_string(const mscclpp::DeviceType& deviceType) {
+  static const std::string DeviceTypeNames[] = {"Unknown", "CPU", "GPU"};
+  return DeviceTypeNames[static_cast<size_t>(deviceType)];
+}
+
 std::string to_string(const mscclpp::Device& device) {
   std::stringstream ss;
-  ss << "Device(type=" << to_string(device.type) << ", id=" << device.id << ")";
+  ss << "Device(type=" << std::to_string(device.type) << ", id=" << device.id << ")";
   return ss.str();
 }
 

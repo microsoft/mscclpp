@@ -53,10 +53,11 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   handle->offsetFromBase = size_t(ptr) - size_t(basePtr);
 
   // Runtime IPC handle
-  cudaIpcGetMemHandle(&handle->runtimeIpc.handle, (void*)basePtr);
-  cudaError_t err = cudaGetLastError();
+  cudaError_t err = cudaIpcGetMemHandle(&handle->runtimeIpc.handle, (void*)basePtr);
   if (err == cudaSuccess) {
     handle->typeFlags |= GpuIpcMemHandle::Type::RuntimeIpc;
+  } else {
+    (void)cudaGetLastError();
   }
 
   CUmemGenericAllocationHandle allocHandle;
@@ -153,24 +154,25 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle), isMultica
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
-    cudaIpcOpenMemHandle(&basePtr_, handle_.runtimeIpc.handle, cudaIpcMemLazyEnablePeerAccess);
-    cudaError_t err = cudaGetLastError();
+    cudaError_t err = cudaIpcOpenMemHandle(&basePtr_, handle_.runtimeIpc.handle, cudaIpcMemLazyEnablePeerAccess);
     if (err == cudaSuccess) {
       baseSize_ = handle_.baseSize;
       dataPtr_ = static_cast<void*>(static_cast<char*>(basePtr_) + handle_.offsetFromBase);
       dataSize_ = handle_.baseSize - handle_.offsetFromBase;
       type_ = GpuIpcMemHandle::Type::RuntimeIpc;
       return;
+    } else {
+      (void)cudaGetLastError();
     }
   }
 }
 
 GpuIpcMem::~GpuIpcMem() {
   if (type_ == GpuIpcMemHandle::Type::RuntimeIpc) {
-    cudaIpcCloseMemHandle(basePtr_);
-    cudaError_t err = cudaGetLastError();
+    cudaError_t err = cudaIpcCloseMemHandle(basePtr_);
     if (err != cudaSuccess) {
       WARN("Failed to close CUDA IPC handle at pointer %p: %s", basePtr_, cudaGetErrorString(err));
+      (void)cudaGetLastError();
     }
   } else if (type_ == GpuIpcMemHandle::Type::PosixFd || type_ == GpuIpcMemHandle::Type::Fabric) {
     CUresult res;
@@ -202,8 +204,8 @@ GpuIpcMem::~GpuIpcMem() {
       if (cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
         cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
       }
-#endif  // (CUDA_NVLS_API_AVAILABLE)
     }
+#endif  // (CUDA_NVLS_API_AVAILABLE)
     res = cuMemRelease(allocHandle_);
     if (res != CUDA_SUCCESS) {
       cuGetErrorString(res, &errStr);

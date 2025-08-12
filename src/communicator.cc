@@ -110,7 +110,7 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
     std::promise<std::shared_ptr<Connection>> promise;
     promise.set_value(connection);
     pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
-    return std::shared_future<std::shared_ptr<Connection>>(std::move(promise.get_future()));
+    return std::shared_future<std::shared_ptr<Connection>>(promise.get_future());
   }
 
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
