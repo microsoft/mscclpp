@@ -41,6 +41,7 @@ struct GpuIpcMemHandle {
   // and thus it cannot have explicit destructors.
   // We use a custom deleter for unique_ptr to handle cleanup without a destructor.
   static std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)> create(const CUdeviceptr ptr);
+  static std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)> createMulticast(size_t bufferSize, int numDevices);
 };
 
 using UniqueGpuIpcMemHandle = std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)>;
@@ -50,12 +51,24 @@ static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 class GpuIpcMem {
  public:
   GpuIpcMem(const GpuIpcMemHandle &handle);
+
   ~GpuIpcMem();
 
-  void *data() const { return dataPtr_; }
+  void *map();
+
+  void *mapMulticast(int numDevices, const CUdeviceptr devicePtr = 0);
+
+  void *multicastBuffer() const { return isMulticast_ ? multicastBuffer_.get() : nullptr; }
+
+  void *data() const;
+
+  size_t size() const { return dataSize_; }
 
  private:
   GpuIpcMemHandle handle_;
+  CUmemGenericAllocationHandle allocHandle_;
+  std::shared_ptr<uint8_t> multicastBuffer_;
+  bool isMulticast_;
   uint8_t type_;
   void *basePtr_;
   size_t baseSize_;

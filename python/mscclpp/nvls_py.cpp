@@ -9,7 +9,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
@@ -29,8 +29,7 @@ void register_nvls(nb::module_& m) {
       });
 
   nb::class_<NvlsConnection>(m, "NvlsConnection")
-      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("devicePtr"), nb::arg("size"))
-      .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
+      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("devicePtr"), nb::arg("size"));
 
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("allRanks"),
         nb::arg("bufferSize"));

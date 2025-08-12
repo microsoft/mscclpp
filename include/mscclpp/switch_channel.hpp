@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_NVLS_HPP_
-#define MSCCLPP_NVLS_HPP_
+#ifndef MSCCLPP_SWITCH_CHANNEL_HPP_
+#define MSCCLPP_SWITCH_CHANNEL_HPP_
 
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/switch_channel_device.hpp>
@@ -11,16 +11,15 @@ namespace mscclpp {
 
 class NvlsConnection;
 
-struct SwitchChannel {
+class SwitchChannel {
  private:
   void* devicePtr_;
-  std::shared_ptr<char> mcPtr_;
+  void* mcPtr_;
   size_t bufferSize_;
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
-  SwitchChannel(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
-      : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
+  SwitchChannel(std::shared_ptr<NvlsConnection> conn);
   DeviceHandle deviceHandle() const;
   void* getDevicePtr();
 
@@ -34,9 +33,8 @@ class NvlsConnection {
   NvlsConnection() = delete;
   std::vector<char> serialize();
 
-  // Everyone needs to synchronize after creating a NVLS connection before adding devices
-  void addDevice();
-  void addDevice(int cudaDeviceId);
+  
+  void bindMemory(CUdeviceptr devicePtr, size_t size);
 
   /// Bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
   /// is undefined if the devicePtr is not allocated by mscclpp::GpuBuffer.
@@ -45,10 +43,14 @@ class NvlsConnection {
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
 
-  size_t getMultiCastMinGranularity();
+  void *devicePtr() const;
+
+  void *mcPtr() const;
+
+  size_t bufferSize() const;
 
  private:
-  class Impl;
+  struct Impl;
   std::shared_ptr<Impl> pimpl_;
 };
 
@@ -68,4 +70,4 @@ std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicat
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_NVLS_HPP_
+#endif  // MSCCLPP_SWITCH_CHANNEL_HPP_
