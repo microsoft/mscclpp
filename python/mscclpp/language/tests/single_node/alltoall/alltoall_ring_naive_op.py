@@ -7,13 +7,13 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
-from mscclpp.language.pipeline import *
+from mscclpp.language.loop import *
 
 
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllToAll(gpu_size, chunksperloop, False)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,
@@ -44,11 +44,11 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
             for peer in range(gpu_size):
                 dst_rank_id = peer
                 if src_rank_id != peer:
-                    sync_channels[dst_rank_id, src_rank_id].signal(tb=0)
+                    sync_channels[dst_rank_id, src_rank_id].signal(relaxed=True, tb=0)
             for peer in range(gpu_size):
                 dst_rank_id = peer
                 if src_rank_id != dst_rank_id:
-                    sync_channels[dst_rank_id, src_rank_id].wait(tb=0, data_sync=SyncType.after)
+                    sync_channels[dst_rank_id, src_rank_id].wait(tb=0, relaxed=True, data_sync=SyncType.after)
 
         # Copy Data to Scratch Buffer and Put Remote Rank
         for gpu in range(gpu_size):

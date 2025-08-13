@@ -7,17 +7,17 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
-from mscclpp.language.pipeline import *
+from mscclpp.language.loop import *
 
 
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllToAll(gpu_size, chunksperloop, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,
-        instances=4,
+        instances=2,
         protocol="Simple",
         reuse_resources=True,
         num_threads_per_block=num_threads_per_block,

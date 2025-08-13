@@ -7,16 +7,16 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
-from mscclpp.language.pipeline import *
+from mscclpp.language.loop import *
 
 
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     last_step_process = True
-    steps_pipeline = 2
+    steps_pipeline = 8
     chunks_per_step = 2
     chunksperloop = chunks_per_step * steps_pipeline
     collective = AllToAll(gpu_size, chunksperloop, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,

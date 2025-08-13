@@ -12,7 +12,7 @@ from mscclpp.language.collectives import *
 def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllToAll(gpu_size, chunksperloop, True)
-    with MSCCLPPProgram(
+    with CollectiveProgram(
         name,
         collective,
         gpu_size,
