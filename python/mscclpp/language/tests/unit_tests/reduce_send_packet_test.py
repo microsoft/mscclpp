@@ -2,27 +2,16 @@
 # Licensed under the MIT License.
 
 """
-<<<<<<< HEAD
-Reduce-Send-Packet Operation Test
-
-This file demonstrates the use of reduce and send operations in MSCCL++ with
-a focus on the packet format. The reduce-send-packet pattern combines local
-=======
 Reduce-Send-Packets Operation Test
 
 This file demonstrates the use of reduce and send operations in MSCCL++ with
 a focus on the packet format. The reduce-send-packets pattern combines local
->>>>>>> main
 reductions (where some chunks are already in packet format) with packet-based
 remote data transfers, ensuring reliable communication and data integrity
 between distributed GPUs through the packet format.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
-<<<<<<< HEAD
-operation (reduce-send-packet) and is NOT intended for production use. This test
-=======
 operation (reduce-send-packets) and is NOT intended for production use. This test
->>>>>>> main
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -34,15 +23,6 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-<<<<<<< HEAD
-def reduce_send_packet_test(num_threads_per_block, min_message_size, max_message_size):
-    # Set up 2 GPUs for reduce-send-packet operations
-    gpus = 2
-    collective = TestCollective(gpus, 0, 0)
-
-    with MSCCLPPProgram(
-        "reduce_send_packet_test",
-=======
 def reduce_send_packets_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up 2 GPUs for reduce-send-packets operations
     gpus = 2
@@ -50,7 +30,6 @@ def reduce_send_packets_test(num_threads_per_block, min_message_size, max_messag
 
     with CollectiveProgram(
         "reduce_send_packets_test",
->>>>>>> main
         collective,
         gpus,
         protocol="LL",
@@ -64,11 +43,7 @@ def reduce_send_packets_test(num_threads_per_block, min_message_size, max_messag
         for rank in range(gpus):
             scratch_buffers.append(Buffer(rank, 4))
 
-<<<<<<< HEAD
-        # Perform reduce-send-packet operations between all GPU pairs
-=======
         # Perform reduce-send-packets operations between all GPU pairs
->>>>>>> main
         for src_rank in range(gpus):
             rank = Rank(src_rank)
             for dst_rank in range(gpus):
@@ -86,11 +61,7 @@ def reduce_send_packets_test(num_threads_per_block, min_message_size, max_messag
                     )
 
                     # Send reduced result to destination GPU using packet format
-<<<<<<< HEAD
-                    ch.put_packet(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
-=======
                     ch.put_packets(scratch_buffers[dst_rank][3:4], scratch_buffers[src_rank][2:3], tb=0)
->>>>>>> main
 
         print(JSON())
 
@@ -103,8 +74,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-<<<<<<< HEAD
-reduce_send_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
-=======
 reduce_send_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
->>>>>>> main

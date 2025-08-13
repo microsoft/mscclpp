@@ -24,11 +24,7 @@ from mscclpp.language.collectives import *
 def put_with_signal_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 2, 0)
-<<<<<<< HEAD
-    with MSCCLPPProgram(
-=======
     with CollectiveProgram(
->>>>>>> main
         "put_with_signal_test",
         collective,
         gpus,

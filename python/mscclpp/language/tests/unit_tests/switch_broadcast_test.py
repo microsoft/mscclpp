@@ -28,11 +28,7 @@ def switch_broadcast_test(num_threads_per_block, min_message_size, max_message_s
     collective = TestCollective(gpus, 1, 1)
 
     # Initialize MSCCLPP program context with Simple protocol
-<<<<<<< HEAD
-    with MSCCLPPProgram(
-=======
     with CollectiveProgram(
->>>>>>> main
         "group_store_test",
         collective,
         gpus,
