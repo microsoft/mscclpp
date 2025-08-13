@@ -88,10 +88,10 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
-      this->ibMr = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
-      transportInfo.ibMr = this->ibMr.get();
+      this->ibMrMap[ibTransport] = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
+      transportInfo.ibMr = this->ibMrMap[ibTransport].get();
       transportInfo.ibLocal = true;
-      transportInfo.ibMrInfo = this->ibMr->getInfo();
+      transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
       this->transportInfos.push_back(transportInfo);
       INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
     };
