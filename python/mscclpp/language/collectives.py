@@ -35,7 +35,6 @@ class Collective:
 
 class TestCollective(Collective):
     """A test collective for validation and testing purposes.
-<<<<<<< HEAD
 
     TestCollective provides a simple collective implementation used for
     testing the DSL functionality with custom input and output buffer sizes.
@@ -218,31 +217,48 @@ class ReduceScatter(Collective):
             }
             rank_buffers.append(buffers)
         return rank_buffers
-=======
->>>>>>> main
+
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+from mscclpp.language.internal.types import BufferType
+from mscclpp.language.rank import BaseBuffer
+
+
+class Collective:
+    """Base class for defining collective communication patterns.
+
+    Collective serves as the foundation for implementing various collective
+    communication algorithms like AllGather, AllReduce, and ReduceScatter.
+    It defines the common interface and behavior that all collective operations
+    must implement.
+
+    Attributes:
+        num_ranks (int): The number of ranks participating in the collective.
+        chunk_factor (int): The chunk factor for data subdivision.
+        inplace (bool): Whether the collective operates in-place.
+        name (str): The name of the collective operation.
+    """
+
+    def __init__(self, num_ranks, chunk_factor, inplace):
+        self.num_ranks = num_ranks
+        self.chunk_factor = chunk_factor
+        self.inplace = inplace
+        self.name = "custom"
+
+    def init_buffers(self):
+        pass
+
+    def check(self, prog):
+        pass
+
+
+class TestCollective(Collective):
+    """A test collective for validation and testing purposes.
 
     TestCollective provides a simple collective implementation used for
     testing the DSL functionality with custom input and output buffer sizes.
 
-<<<<<<< HEAD
-class AllToAll(Collective):
-
-    def __init__(self, num_ranks, chunk_factor, inplace):
-        Collective.__init__(self, num_ranks, chunk_factor, inplace)
-        self.name = "alltoall"
-
-    def init_buffers(self):
-        rank_buffers = []
-        for rank in range(self.num_ranks):
-            input_buffer_size = self.num_ranks * self.chunk_factor
-            output_buffer_size = self.num_ranks * self.chunk_factor
-            buffers = {
-                BufferType.input: BaseBuffer(rank, BufferType.input, 0, input_buffer_size),
-                BufferType.output: BaseBuffer(rank, BufferType.output, 0, output_buffer_size),
-            }
-            rank_buffers.append(buffers)
-        return rank_buffers
-=======
     Attributes:
         input_size (int): The size of the input buffer.
         output_size (int): The size of the output buffer.
@@ -421,4 +437,3 @@ class ReduceScatter(Collective):
             }
             rank_buffers.append(buffers)
         return rank_buffers
->>>>>>> main

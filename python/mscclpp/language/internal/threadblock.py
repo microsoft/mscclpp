@@ -2,11 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.types import ChannelType, RemoteBuffer, BufferType
-<<<<<<< HEAD
-from mscclpp.language.internal.optmizer import *
-=======
 from mscclpp.language.internal.optimizer import *
->>>>>>> main
 from mscclpp.language.internal.buffer_access import *
 from dataclasses import dataclass, field
 from collections import OrderedDict
@@ -57,17 +53,10 @@ class ThreadBlock:
         self.ops.append(op)
 
     def optimize_operations(self):
-<<<<<<< HEAD
-        self.ops = fuse_instructions(self.ops)
-
-    def adding_data_sync(self):
-        self.ops = adding_data_sync(self.ops)
-=======
         self.ops = fuse_operations(self.ops)
 
     def adding_data_sync(self):
         self.ops = add_data_sync(self.ops)
->>>>>>> main
 
     def resolve_data_dependency(self):
         interval_map = BuffersAccess()
@@ -86,15 +75,6 @@ class ThreadBlock:
         for op in self.ops:
             op.shift_ids(instance, num_instances, replication_function)
 
-<<<<<<< HEAD
-    def to_json(self) -> dict:
-        return {
-            "id": self.id,
-            "ops": [op.to_json() for op in self.ops],
-            "channels": [ch.to_json() for ch in self._channels.values() if len(ch.channel_ids) > 0],
-            "remote_buffer_refs": (
-                [rb.to_json() for rb in self._remote_buffers.values()] if self._remote_buffers else []
-=======
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -102,7 +82,6 @@ class ThreadBlock:
             "channels": [ch.to_dict() for ch in self._channels.values() if len(ch.channel_ids) > 0],
             "remote_buffer_refs": (
                 [rb.to_dict() for rb in self._remote_buffers.values()] if self._remote_buffers else []
->>>>>>> main
             ),
         }
 
@@ -111,11 +90,7 @@ class ThreadBlock:
         channel_type: ChannelType
         channel_ids: list[int] = field(default_factory=list)
 
-<<<<<<< HEAD
-        def to_json(self) -> dict:
-=======
         def to_dict(self) -> dict:
->>>>>>> main
             return {"channel_type": self.channel_type.value, "channel_ids": self.channel_ids}
 
     @dataclass
@@ -123,11 +98,7 @@ class ThreadBlock:
         access_channel_type: ChannelType
         remote_buffer_ids: list[int] = field(default_factory=list)
 
-<<<<<<< HEAD
-        def to_json(self) -> dict:
-=======
         def to_dict(self) -> dict:
->>>>>>> main
             return {
                 "access_channel_type": self.access_channel_type.value,
                 "remote_buffer_ids": self.remote_buffer_ids,

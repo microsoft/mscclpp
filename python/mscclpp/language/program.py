@@ -9,17 +9,11 @@ from typing import List
 import json
 
 
-<<<<<<< HEAD
-class MSCCLPPProgram:
-    """A program definition for MSCCL++ collective communication operations.
 
-    MSCCLPPProgram serves as the main container for defining and executing
-=======
 class CollectiveProgram:
     """A program definition for MSCCL++ collective communication operations.
 
     CollectiveProgram serves as the main container for defining and executing
->>>>>>> main
     collective communication programs using the MSCCL++ DSL. It manages
     GPU resources, channels, operations, and provides serialization to JSON
     format for execution.
@@ -60,11 +54,7 @@ class CollectiveProgram:
         min_message_size: int = 0,
         max_message_size: int = 2**64 - 1,
     ):
-<<<<<<< HEAD
-        """Initialize a new MSCCLPPProgram.
-=======
         """Initialize a new CollectiveProgram.
->>>>>>> main
 
         Args:
             name (str): The name identifier for this program.
@@ -91,11 +81,7 @@ class CollectiveProgram:
         Example:
             >>> from mscclpp.language.collectives import AllReduce
             >>> collective = AllReduce(num_ranks=4, chunk_factor=1, inplace=False)
-<<<<<<< HEAD
-            >>> with MSCCLPPProgram("allreduce_4", collective, 4) as prog:
-=======
             >>> with CollectiveProgram("allreduce_4", collective, 4) as prog:
->>>>>>> main
             ...     # Define communication operations
             ...     pass
         """
@@ -181,11 +167,7 @@ class CollectiveProgram:
 
     def get_buffer_replication_policy_function(self):
         if self.replication_policy == ReplicationPolicy.interleaved:
-<<<<<<< HEAD
             return lambda value, size, instance, num_instances: value * num_instances + instance * size
-=======
-            return lambda value, instance, num_instances: value * num_instances + instance
->>>>>>> main
         else:
             return lambda value, instance, num_instances: value
 
@@ -201,11 +183,7 @@ class CollectiveProgram:
             "protocol": self.protocol,
             "inplace": self.collective.inplace,
             "reuse_resources": self.reuse_resources,
-<<<<<<< HEAD
-            "gpus": [gpu.to_json() for gpu in self.gpus],
-=======
             "gpus": [gpu.to_dict() for gpu in self.gpus],
->>>>>>> main
             "num_threads_per_block": self.num_threads_per_block,
             "use_double_scratch_buffer": self.use_double_scratch_buffer,
             "buffer_alignment": self.buffer_alignment,

@@ -89,11 +89,7 @@ class Gpu:
                     new_channels[ChannelType.memory].append(rank)
             self._channels[ChannelType.memory].connected_to = new_channels[ChannelType.memory]
         if ChannelType.port in self._channels:
-<<<<<<< HEAD
-            for rank in self._channels[ChannelType.memory].connected_to:
-=======
             for rank in self._channels[ChannelType.port].connected_to:
->>>>>>> main
                 for _ in range(instances):
                     new_channels[ChannelType.port].append(rank)
             self._channels[ChannelType.port].connected_to = new_channels[ChannelType.port]
@@ -120,27 +116,16 @@ class Gpu:
 
         self.threadblocks = threadblocks
 
-<<<<<<< HEAD
-    def to_json(self) -> dict:
-=======
     def to_dict(self) -> dict:
->>>>>>> main
         return {
             "id": self.id,
             "input_chunks": self.input_chunks,
             "output_chunks": self.output_chunks,
             "scratch_chunks": self.scratch_chunks,
-<<<<<<< HEAD
-            "threadblocks": [tb.to_json() for tb in self.threadblocks],
-            "channels": [ch.to_json() for ch in self._channels.values()] + [ch.to_json() for ch in self._nvls_channels],
-            "remote_buffers": [rb[1].to_json() for rb in self.remote_buffers.values()],
-            "semaphores": [sm.to_json() for sm in self.semaphores],
-=======
             "threadblocks": [tb.to_dict() for tb in self.threadblocks],
             "channels": [ch.to_dict() for ch in self._channels.values()] + [ch.to_dict() for ch in self._nvls_channels],
             "remote_buffers": [rb[1].to_dict() for rb in self.remote_buffers.values()],
             "semaphores": [sm.to_dict() for sm in self.semaphores],
->>>>>>> main
         }
 
     @dataclass
@@ -148,11 +133,7 @@ class Gpu:
         channel_type: ChannelType
         connected_to: List[int] = field(default_factory=list)
 
-<<<<<<< HEAD
-        def to_json(self):
-=======
         def to_dict(self):
->>>>>>> main
             return {"channel_type": self.channel_type.value, "connected_to": self.connected_to}
 
     @dataclass
@@ -161,28 +142,16 @@ class Gpu:
         channel_type: ChannelType = ChannelType.switch
         rank_groups: List[RankGroup] = field(default_factory=list)
 
-<<<<<<< HEAD
-        def to_json(self):
-            return {
-                "channel_type": self.channel_type.value,
-                "buffer_type": self.buffer_type.value,
-                "rank_groups": [rg.to_json() for rg in self.rank_groups],
-=======
         def to_dict(self):
             return {
                 "channel_type": self.channel_type.value,
                 "buffer_type": self.buffer_type.value,
                 "rank_groups": [rg.to_dict() for rg in self.rank_groups],
->>>>>>> main
             }
 
     @dataclass
     class Semaphore:
         init_value: int
 
-<<<<<<< HEAD
-        def to_json(self):
-=======
         def to_dict(self):
->>>>>>> main
             return {"init_value": self.init_value}

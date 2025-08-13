@@ -117,11 +117,7 @@ class Chunk:
     def __hash__(self):
         return hash((self.rank, self.buffer, self.index, self.size))
 
-<<<<<<< HEAD
-    def to_json(self):
-=======
     def to_dict(self):
->>>>>>> main
         return {"rank": self.rank, "type": self.buffer.value, "index": self.index, "size": self.size}
 
 
@@ -135,11 +131,7 @@ class RemoteBuffer:
         self.type: int = type
         self.channel_access: Set[ChannelType] = {channel_access}
 
-<<<<<<< HEAD
-    def to_json(self):
-=======
     def to_dict(self):
->>>>>>> main
         return {
             "rank": self.remote_rank,
             "type": self.type.value,
@@ -155,11 +147,7 @@ class RankGroup:
     size: int
     ranks: List[int]
 
-<<<<<<< HEAD
-    def to_json(self):
-=======
     def to_dict(self):
->>>>>>> main
         return {
             "size": self.size,
             "ranks": self.ranks,
