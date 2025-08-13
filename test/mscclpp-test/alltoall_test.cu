@@ -19,14 +19,7 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
-__device__ mscclpp::DeviceSemaphore deviceSemaphore[64];
-__device__ int peerMap[] = {1, 0, 3, 2, 5, 4, 7, 6 /*first */,
-                            2, 3, 0, 1, 6, 7, 4, 5 /* second */,
-                            3, 2, 1, 0, 7, 6, 5, 4 /*third*/,
-                            4, 5, 6, 7, 0, 1, 2, 3 /*forth*/,
-                            5, 4, 7, 6, 1, 0, 3, 2 /*fifth*/,
-                            6, 7, 4, 5, 2, 3, 0, 1 /*sixth*/,
-                            7, 6, 5, 4, 3, 2, 1, 0 /*seventh*/};
+__device__ mscclpp::DeviceSemaphore deviceSemaphore[128];
 
 static void* localRecvBuff;
 static void* localSendBuff;
@@ -68,17 +61,15 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
 }
 
 __global__ void __launch_bounds__(1024)
-    alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+    alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer, void* resultBuffer) {
 #if defined(__CUDA_ARCH__)
-  constexpr int nWarpForPut = 20;
-  constexpr int nWarpForCopy = 12;
+  constexpr int nWarpForPut = 16;
+  constexpr int nWarpForCopy = 16;
   constexpr int putStartWid = 0;
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
   constexpr size_t unit = 1 << 18; // 256K
-
-  assert(nRanksPerNode == 8);
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
@@ -92,17 +83,21 @@ __global__ void __launch_bounds__(1024)
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
-  auto& sem = deviceSemaphore[blockIdx.x];
   if (wid == 0 && lid < nRanksPerNode - 1) {
     memoryChannels[lid].relaxedSignal();
     memoryChannels[lid].relaxedWait();
   }
   __syncthreads();
   size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
+  mscclpp::copy((char*)resultBuffer + rank * totalCount, (char*)inputBuffer + rank * totalCount, totalCount,
+                threadIdx.x + blockIdx.x * blockDim.x, gridDim.x * blockDim.x);
   for (int step = 0; step < nRanksPerNode - 1; step++) {
-    int peer = peerMap[step * nRanksPerNode + rank];
+    int peer = (rank + step + 1) % nRanksPerNode;
+    int peerToCopy = (rank - (step + 1) + nRanksPerNode) % nRanksPerNode;
     int peerId = peer < rank ? peer : peer - 1;
+    int peerIdForCopy = peerToCopy < rank ? peerToCopy : peerToCopy - 1;
     size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t startCopyOffset = peerToCopy * totalCount + blockIdx.x * nBytesPerBlock;
     size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
     size_t size = unit;
     if (wid >= putStartWid && wid < putEndWid) {
@@ -117,23 +112,21 @@ __global__ void __launch_bounds__(1024)
         asm volatile("bar.sync %0, %1;" ::"r"(15), "r"(nWarpForPut * WARP_SIZE) : "memory");
         if (tidInPut == 0) {
           memoryChannels[peerId].signal();
-          sem.release();
         }
       }
     } else if (wid >= copyStartWid && wid < copyEndWid) {
       int tidInCopy = wid * WARP_SIZE + lid - copyStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
         if (tidInCopy == 0) {
-          sem.acquire();
-          memoryChannels[peerId].wait();
+          memoryChannels[peerIdForCopy].wait();
         }
         if (i == nIters - 1) {
           size = lastIterSize;
         }
         // barrier for n warp
         asm volatile("bar.sync %0, %1;" ::"r"(14), "r"(nWarpForCopy * WARP_SIZE) : "memory");
-        mscclpp::copy((char*)inputBuffer + startOffset + i * unit, (char*)scratchBuffer + startOffset + i * unit, size,
-                      tidInCopy, nWarpForCopy * WARP_SIZE);
+        mscclpp::copy((char*)resultBuffer + startCopyOffset + i * unit,
+                      (char*)scratchBuffer + startCopyOffset + i * unit, size, tidInCopy, nWarpForCopy * WARP_SIZE);
       }
     }
   }
@@ -141,7 +134,7 @@ __global__ void __launch_bounds__(1024)
 }
 
 __global__ void __launch_bounds__(1024)
-    alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer) {
+    alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer, void* resultBuffer) {
 #if defined(__CUDA_ARCH__)
   constexpr int nWarpForCopy = 16;
   constexpr int nWarpForGet = 16;
@@ -150,8 +143,6 @@ __global__ void __launch_bounds__(1024)
   constexpr int getStartWid = copyEndWid;
   constexpr int getEndWid = getStartWid + nWarpForGet;
   constexpr size_t unit = 1 << 18; // 256K
-
-  assert(nRanksPerNode == 8);
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
@@ -166,12 +157,16 @@ __global__ void __launch_bounds__(1024)
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
-  auto& sem = deviceSemaphore[blockIdx.x];
   size_t lastIterSize = totalBytesForCurrentBlock - (nIters - 1) * unit;
+  mscclpp::copy((char*)resultBuffer + rank * totalCount, (char*)inputBuffer + rank * totalCount, totalCount,
+                threadIdx.x + blockIdx.x * blockDim.x, gridDim.x * blockDim.x);
   for (int step = 0; step < nRanksPerNode - 1; step++) {
-    int peer = peerMap[step * nRanksPerNode + rank];
+    int peer = (rank + step + 1) % nRanksPerNode;
+    int peerToGet = (rank - (step + 1) + nRanksPerNode) % nRanksPerNode;
     int peerId = peer < rank ? peer : peer - 1;
+    int peerIdForGet = peerToGet < rank ? peerToGet : peerToGet - 1;
     size_t startOffset = peer * totalCount + blockIdx.x * nBytesPerBlock;
+    size_t startOffsetForGet = peerToGet * totalCount + blockIdx.x * nBytesPerBlock;
     size_t dstOffset = rank * totalCount + blockIdx.x * nBytesPerBlock;
     size_t size = unit;
     if (wid >= copyStartWid && wid < copyEndWid) {
@@ -185,23 +180,21 @@ __global__ void __launch_bounds__(1024)
         asm volatile("bar.sync %0, %1;" ::"r"(15), "r"(nWarpForCopy * WARP_SIZE) : "memory");
         if (tidInCopy == 0) {
           memoryChannels[peerId].signal();
-          sem.release();
         }
       }
     } else if (wid >= getStartWid && wid < getEndWid) {
       int tidInGet = wid * WARP_SIZE + lid - getStartWid * WARP_SIZE;
       for (size_t i = 0; i < nIters; i++) {
         if (tidInGet == 0) {
-          sem.acquire();
-          memoryChannels[peerId].wait();
+          memoryChannels[peerIdForGet].wait();
         }
         if (i == nIters - 1) {
           size = lastIterSize;
         }
         // barrier for n warp
         asm volatile("bar.sync %0, %1;" ::"r"(14), "r"(nWarpForGet * WARP_SIZE) : "memory");
-        mscclpp::copy((char*)inputBuffer + startOffset + i * unit,
-                      (char*)memoryChannels[peerId].dst_ + dstOffset + i * unit, size, tidInGet,
+        mscclpp::copy((char*)resultBuffer + startOffsetForGet + i * unit,
+                      (char*)memoryChannels[peerIdForGet].dst_ + dstOffset + i * unit, size, tidInGet,
                       nWarpForGet * WARP_SIZE);
       }
     }
@@ -233,8 +226,8 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
   const int nRanksPerNode = args.nRanksPerNode;
-  auto isInPlaceKernel = [kernelNum]() { return kernelNum == 2 || kernelNum == 3; };
-  if (!isInPlaceKernel()) {
+  auto isNeedCopyKernel = [kernelNum]() { return kernelNum == 2 || kernelNum == 3; };
+  if (!isNeedCopyKernel()) {
     CUDATHROW(cudaMemcpyAsync((int*)localRecvBuff + paramCount_ * rank, (int*)localSendBuff + paramCount_ * rank,
                               paramCount_ * sizeof(int), cudaMemcpyDeviceToDevice, stream));
   }
@@ -243,9 +236,9 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   } else if (kernelNum == 1) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   } else if (kernelNum == 2) {
-    alltoall2<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
+    alltoall2<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff, localRecvBuff);
   } else if (kernelNum == 3) {
-    alltoall3<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff);
+    alltoall3<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff, localRecvBuff);
   }
 }
 
@@ -317,13 +310,9 @@ class AllToAllTestEngine : public BaseTestEngine {
   std::vector<mscclpp::MemoryChannel> memoryChannels;
 };
 
-bool AllToAllTestEngine::isInPlace() const {
-  return (args_.kernelNum == 2 || args_.kernelNum == 3);
-}
+bool AllToAllTestEngine::isInPlace() const { return false; }
 
-AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") {
-  inPlace_ = isInPlace();
-}
+AllToAllTestEngine::AllToAllTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoall") { inPlace_ = false; }
 
 void AllToAllTestEngine::allocateBuffer() {
   sendBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
