@@ -242,7 +242,7 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
 }
 
 void AllToAllTestColl::initData(const TestArgs& args, std::vector<void*> sendBuff, void* expectedBuff) {
-  if (sendBuff.size() != 1) std::runtime_error("unexpected error");
+  if (sendBuff.size() != 1) throw std::runtime_error("unexpected error");
   const int rank = args.rank;
   std::vector<int> dataHost(recvCount_, 0);
   // For rank 0, the data is 0, 1, 2 ... recvCount_ - 1, for rank 1, the data is recvCount_, recvCount_ + 1, ...
@@ -332,14 +332,14 @@ void AllToAllTestEngine::setupConnections() {
                        ChannelSemantic::PUT, 64);
 
   if (portChannels.size() > sizeof(constPortChans) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
-    std::runtime_error("unexpected error");
+    throw std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constPortChans, portChannels.data(),
                                sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
   std::transform(this->memoryChannels.begin(), this->memoryChannels.end(), std::back_inserter(memoryChannelHandles),
                  [](const mscclpp::MemoryChannel& channel) { return mscclpp::deviceHandle(channel); });
   if (memoryChannelHandles.size() > sizeof(constMemChans) / sizeof(DeviceHandle<mscclpp::MemoryChannel>)) {
-    std::runtime_error("unexpected error");
+    throw std::runtime_error("unexpected error");
   }
   CUDATHROW(cudaMemcpyToSymbol(constMemChans, memoryChannelHandles.data(),
                                sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size()));
