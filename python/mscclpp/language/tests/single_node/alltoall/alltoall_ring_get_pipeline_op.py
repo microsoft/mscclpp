@@ -54,12 +54,12 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                     )
                     channels[dst_rank_id, src_rank_id].signal(tb=0, data_sync=SyncType.before)
                 else:
-                     src_rank.copy(
+                    src_rank.copy(
                         output_buffer[dst_rank_id : dst_rank_id + 1],
                         input_buffer[dst_rank_id : dst_rank_id + 1],
                         tb=0,
                     )
-                     
+
         # Perform AlltoAll
         for gpu in range(gpu_size):
             src_rank_id = gpu

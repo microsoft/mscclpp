@@ -85,10 +85,10 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                         )
                     else:
                         src_rank.copy(
-                        output_buffer[src_rank_id : src_rank_id + 1],
-                        input_buffer[src_rank_id : src_rank_id + 1],
-                        tb=0,
-                    )
+                            output_buffer[src_rank_id : src_rank_id + 1],
+                            input_buffer[src_rank_id : src_rank_id + 1],
+                            tb=0,
+                        )
 
         print(JSON())
 

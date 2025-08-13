@@ -929,7 +929,7 @@ class PipelineOperation(BaseOperation):
         result["iter_context"] = {"unit_size": self.unit_size, "num_chunks": self.num_chunks}
         result["ops"] = []
         for operation in self.operations:
-            result["ops"].append(operation.to_dict())                          
+            result["ops"].append(operation.to_dict())
         return result
 
 
@@ -941,6 +941,7 @@ def check_data_sync_op(operation):
         or isinstance(operation, WaitOperation)
         or isinstance(operation, FlushOperation)
     )
+
 
 def add_data_sync(operations):
     result_operations = []

@@ -89,7 +89,6 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                         tb=0,
                     )
 
-
         print(JSON())
 
 

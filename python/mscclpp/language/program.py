@@ -9,7 +9,6 @@ from typing import List
 import json
 
 
-
 class CollectiveProgram:
     """A program definition for MSCCL++ collective communication operations.
 

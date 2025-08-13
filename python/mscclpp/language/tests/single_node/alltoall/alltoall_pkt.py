@@ -81,4 +81,6 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-alltoall_packet_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)
+alltoall_packet_example(
+    args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size
+)
