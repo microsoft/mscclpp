@@ -101,7 +101,8 @@ void worker(int gpuId) {
   std::function<void(size_t)> kernels[1];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle *>(devHandle), copyBytes, myRank);
+    bidirPutKernel<<<1, 1, 0, stream>>>(reinterpret_cast<mscclpp::PortChannelDeviceHandle *>(devHandle), copyBytes,
+                                        myRank);
   };
 
   cudaEvent_t start, end;
