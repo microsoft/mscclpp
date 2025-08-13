@@ -10,25 +10,23 @@ from mscclpp.language.collectives import *
 from mscclpp.language.pipeline import *
 
 
-def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
+def alltoall_packet_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllToAll(gpu_size, chunksperloop, True)
     with MSCCLPPProgram(
         name,
         collective,
         gpu_size,
-        instances=16,
-        protocol="Simple",
+        instances=2,
+        protocol="LL",
         reuse_resources=True,
         num_threads_per_block=num_threads_per_block,
-        use_double_scratch_buffer=False,
+        use_double_scratch_buffer=True,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
         # Creating Channels and Scratch Buffer
         channels = {}
-        sync_channels = {}
-        semaphores = {}
         scratch_buffer = {}
         for gpu in range(gpu_size):
             src_rank_id = gpu
@@ -37,53 +35,37 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 dst_rank_id = peer
                 if src_rank_id != dst_rank_id:
                     channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
-                    sync_channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
-                    semaphores[src_rank_id, dst_rank_id] = Semaphore(src_rank_id, initial_value=0)
-
-        # Initial Synchronization
-        for gpus in range(gpu_size):
-            src_rank_id = gpus
-            for peer in range(gpu_size):
-                dst_rank_id = peer
-                if src_rank_id != peer:
-                    sync_channels[dst_rank_id, src_rank_id].signal(tb=0, relaxed=True)
-            for peer in range(gpu_size):
-                dst_rank_id = peer
-                if src_rank_id != dst_rank_id:
-                    sync_channels[dst_rank_id, src_rank_id].wait(tb=0, relaxed=True, data_sync=SyncType.after)
 
         # Copy Data to Scratch Buffer and Put Remote Rank
         for gpu in range(gpu_size):
             src_rank_id = gpu
             src_rank = Rank(src_rank_id)
             input_buffer = src_rank.get_input_buffer()
-            for peer in range(1, gpu_size):
-                dst_rank_id = (src_rank_id + peer) % gpu_size
+            for peer in range(gpu_size):
+                dst_rank_id = peer
                 if dst_rank_id != src_rank_id:
                     remote_index = src_rank_id if src_rank_id < dst_rank_id else src_rank_id - 1
-                    channels[dst_rank_id, src_rank_id].put(
+                    tb = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
+                    channels[dst_rank_id, src_rank_id].put_packet(
                         scratch_buffer[dst_rank_id][remote_index : remote_index + 1],
                         input_buffer[dst_rank_id : dst_rank_id + 1],
-                        tb=0,
+                        tb=tb,
                     )
-                    channels[dst_rank_id, src_rank_id].signal(tb=0, data_sync=SyncType.before)
-                    semaphores[src_rank_id, dst_rank_id].release(tb=0)
 
         # Copy Data From Scratch Buffer
         for gpu in range(gpu_size):
             src_rank_id = gpu
             src_rank = Rank(src_rank_id)
             input_buffer = src_rank.get_input_buffer()
-            for peer in range(1, gpu_size):
-                dst_rank_id = (src_rank_id - peer) % gpu_size
+            for peer in range(gpu_size):
+                dst_rank_id = peer
                 if dst_rank_id != src_rank_id:
                     index = dst_rank_id if dst_rank_id < src_rank_id else dst_rank_id - 1
-                    semaphores[src_rank_id, dst_rank_id].acquire(tb=1)
-                    channels[dst_rank_id, src_rank_id].wait(tb=1, data_sync=SyncType.after)
-                    src_rank.copy(
+                    tb = index
+                    src_rank.unpack_packet(
                         input_buffer[dst_rank_id : dst_rank_id + 1],
                         scratch_buffer[src_rank_id][index : index + 1],
-                        tb=1,
+                        tb=tb,
                     )
 
         print(JSON())
@@ -99,4 +81,4 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
-alltoall_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)
+alltoall_packet_example(args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size)
