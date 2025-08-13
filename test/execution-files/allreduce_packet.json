@@ -111,7 +111,7 @@
               "channel_type": "memory",
               "reduce_op": "sum"
             },
-            { 
+            {
               "name": "upkt",
               "src_buff": [
                 {
