@@ -19,7 +19,6 @@ using DeviceHandle = mscclpp::DeviceHandle<T>;
 __constant__ DeviceHandle<mscclpp::PortChannel> constPortChans[16];
 __constant__ DeviceHandle<mscclpp::MemoryChannel> constMemChans[512];
 __device__ mscclpp::DeviceSyncer deviceSyncer;
-__device__ mscclpp::DeviceSemaphore deviceSemaphore[128];
 
 static void* localRecvBuff;
 static void* localSendBuff;
