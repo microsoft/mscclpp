@@ -7,13 +7,21 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
+<<<<<<< HEAD
 from mscclpp.language.pipeline import *
+=======
+from mscclpp.language.loop import *
+>>>>>>> main
 
 
 def allreduce_example(name, num_threads_per_block, min_message_size, max_message_size):
     nranks = 2
     collective = AllReduce(nranks, 1, True)
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         name,
         collective,
         nranks,

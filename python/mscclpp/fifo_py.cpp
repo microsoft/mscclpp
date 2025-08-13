@@ -9,7 +9,7 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_fifo(nb::module_& m) {
-  nb::class_<ProxyTrigger>(m, "ProxyTrigger").def_rw("fst", &ProxyTrigger::fst).def_rw("snd", &ProxyTrigger::snd);
+  nb::class_<ProxyTrigger>(m, "ProxyTrigger");
 
   nb::class_<FifoDeviceHandle>(m, "FifoDeviceHandle")
       .def_rw("triggers", &FifoDeviceHandle::triggers)

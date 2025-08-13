@@ -27,7 +27,11 @@ def relaxed_signal_wait_test(num_threads_per_block, min_message_size, max_messag
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
 
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         "relaxed_signal_wait_test",
         collective,
         gpus,

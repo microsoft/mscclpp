@@ -27,7 +27,11 @@ def signal_wait_test(num_threads_per_block, min_message_size, max_message_size):
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
 
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         "signal_wait_test",
         collective,
         gpus,

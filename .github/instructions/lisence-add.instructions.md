@@ -1,5 +1,5 @@
 ---
-applyTo: '**/*.cc, **/*.hpp, **/*.py'
+applyTo: '**/*.cc, **/*.cu, **/*.hpp, **/*.py'
 ---
 
 # Instructions for License Addition

@@ -3,10 +3,17 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
-            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8"
+            "BASE_IMAGE": "ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9",
+            "USERNAME": "devuser",
+            "SSH_PORT": "22345"
         }
     },
-    "remoteUser": "mscclpp",
+    "remoteUser": "devuser",
+    "containerEnv": {
+        "LC_ALL": "C",
+        "LANG": "C",
+        "LANGUAGE": "C"
+    },
     "customizations": {
         "vscode": {
             "extensions": [
@@ -15,18 +22,30 @@
                 "ms-python.vscode-pylance",
                 // C++
                 "ms-vscode.cpptools",
-                "ms-vscode.cpptools-extension-pack",
                 "ms-vscode.cmake-tools"
-            ]
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "bash",
+                "C_Cpp.default.includePath": [
+                    "${workspaceFolder}/**",
+                    "/usr/local/cuda/include",
+                    "/usr/include"
+                ],
+                "C_Cpp.default.cStandard": "c17",
+                "C_Cpp.default.cppStandard": "c++17"
+            }
         }
     },
     "privileged": true,
     "runArgs": [
+        "--cap-add=SYS_PTRACE",
         "--net=host",
         "--ipc=host",
-        "--gpus=all",
-        "--ulimit=memlock=-1:-1"
+        "--ulimit=memlock=-1:-1",
+        "--gpus=all"
     ],
-    "workspaceFolder": "/home/mscclpp/mscclpp",
-    "workspaceMount": "source=${localWorkspaceFolder},target=/home/mscclpp/mscclpp,type=bind,consistency=cached"
+    "workspaceFolder": "/home/devuser/mscclpp",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/home/devuser/mscclpp,type=bind,consistency=cached",
+    "postStartCommand": "sudo service ssh start",
+    "postCreateCommand": "bash /home/devuser/mscclpp/tools/install.sh nvidia /usr"
 }

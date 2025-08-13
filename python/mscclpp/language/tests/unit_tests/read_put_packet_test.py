@@ -2,16 +2,27 @@
 # Licensed under the MIT License.
 
 """
+<<<<<<< HEAD
 Read-Put-Packet Operation Test
 
 This file demonstrates the use of the read_put_packet operation in MSCCLPP.
 The read_put_packet operation combines a local read with a remote write in a single
+=======
+Read-Put-Packets Operation Test
+
+This file demonstrates the use of the read_put_packets operation in MSCCLPP.
+The read_put_packets operation combines a local read with a remote write in a single
+>>>>>>> main
 operation. It reads data from the source in packet format to ensure the data
 is ready, then transfers it in packet format to the destination, which is useful for
 certain communication patterns.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
+<<<<<<< HEAD
 operation (read_put_packet) and is NOT intended for production use. This test
+=======
+operation (read_put_packets) and is NOT intended for production use. This test
+>>>>>>> main
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -23,13 +34,22 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
+<<<<<<< HEAD
 def read_put_packet_test(num_threads_per_block, min_message_size, max_message_size):
+=======
+def read_put_packets_test(num_threads_per_block, min_message_size, max_message_size):
+>>>>>>> main
     gpus = 2
     collective = TestCollective(gpus, 0, 0)
 
     # Initialize MSCCLPP program context with LL (Low Latency) protocol
+<<<<<<< HEAD
     with MSCCLPPProgram(
         "read_put_packet_test",
+=======
+    with CollectiveProgram(
+        "read_put_packets_test",
+>>>>>>> main
         collective,
         gpus,
         protocol="LL",
@@ -43,19 +63,31 @@ def read_put_packet_test(num_threads_per_block, min_message_size, max_message_si
         for rank in range(gpus):
             scratch_buffers.append(Buffer(rank, 2))
 
+<<<<<<< HEAD
         # Perform read_put_packet operations
+=======
+        # Perform read_put_packets operations
+>>>>>>> main
         for src_rank in range(gpus):
             for dst_rank in range(gpus):
                 if src_rank != dst_rank:
                     ch = MemoryChannel(dst_rank, src_rank)
 
+<<<<<<< HEAD
                     # Perform read_put_packet operation:
+=======
+                    # Perform read_put_packets operation:
+>>>>>>> main
                     # - Reads from src_rank's buffer[0:1]
                     # - Writes to dst_rank's buffer[1:2]
                     # - Uses threadblock 0 for the operation
                     # Note: Both source and destination chunks must use scratch buffers
                     # because the data is in LL (Low Latency) format
+<<<<<<< HEAD
                     ch.read_put_packet(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
+=======
+                    ch.read_put_packets(scratch_buffers[dst_rank][1:2], scratch_buffers[src_rank][0:1], tb=0)
+>>>>>>> main
 
         print(JSON())
 
@@ -68,4 +100,8 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
+<<<<<<< HEAD
 read_put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+=======
+read_put_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+>>>>>>> main

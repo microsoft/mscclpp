@@ -26,7 +26,11 @@ def read_reduce_send_test(num_threads_per_block, min_message_size, max_message_s
     gpus = 2
     collective = TestCollective(gpus, 2, 2)
 
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         "read_reduce_send_test",
         collective,
         gpus,

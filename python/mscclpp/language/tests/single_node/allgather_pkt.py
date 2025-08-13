@@ -12,7 +12,11 @@ from mscclpp.language.collectives import *
 def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllGather(gpu_size, chunksperloop, True)
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         name,
         collective,
         gpu_size,
@@ -27,7 +31,11 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
         for gpu in range(gpu_size):
             scratch_buffer.append(Buffer(gpu, gpu_size))
 
+<<<<<<< HEAD
         # Putting packet in the remote scratch buffer
+=======
+        # Putting packets in the remote scratch buffer
+>>>>>>> main
         for gpu in range(gpu_size):
             rank = Rank(gpu)
             output_buffer = rank.get_output_buffer()
@@ -35,15 +43,25 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
                 dst_rank = (gpu + peer) % gpu_size
                 ch = MemoryChannel(dst_rank, gpu)
                 tb = peer - 1
+<<<<<<< HEAD
                 ch.put_packet(scratch_buffer[dst_rank][gpu : gpu + 1], output_buffer[gpu : gpu + 1], tb)
 
         # Copying packet from local scratch buffer to local buffer
+=======
+                ch.put_packets(scratch_buffer[dst_rank][gpu : gpu + 1], output_buffer[gpu : gpu + 1], tb)
+
+        # Copying packets from local scratch buffer to local buffer
+>>>>>>> main
         for gpu in range(gpu_size):
             rank = Rank(gpu)
             output_buffer = rank.get_output_buffer()
             for peer in range(1, gpu_size):
                 dst_rank = (gpu + peer) % gpu_size
+<<<<<<< HEAD
                 rank.unpack_packet(
+=======
+                rank.unpack_packets(
+>>>>>>> main
                     output_buffer[dst_rank : dst_rank + 1],
                     scratch_buffer[gpu][dst_rank : dst_rank + 1],
                     tb=gpu_size + peer - 2,

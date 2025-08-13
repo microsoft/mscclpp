@@ -2,15 +2,26 @@
 # Licensed under the MIT License.
 
 """
+<<<<<<< HEAD
 Put-Packet Operation Test
 
 This file demonstrates the use of the put_packet operation in MSCCLPP.
 The put_packet operation writes data from a source buffer to a destination buffer
+=======
+Put-Packets Operation Test
+
+This file demonstrates the use of the put_packets operation in MSCCLPP.
+The put_packets operation writes data from a source buffer to a destination buffer
+>>>>>>> main
 in packet format, which is useful for efficient data transfer in distributed
 GPU communication patterns.
 
 WARNING: This algorithm is designed solely for demonstrating the use of a single
+<<<<<<< HEAD
 operation (put_packet) and is NOT intended for production use. This test
+=======
+operation (put_packets) and is NOT intended for production use. This test
+>>>>>>> main
 may not work correctly in the MSCCLPP executor.
 """
 
@@ -22,13 +33,22 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
+<<<<<<< HEAD
 def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
+=======
+def put_packets_test(num_threads_per_block, min_message_size, max_message_size):
+>>>>>>> main
     gpus = 2
     collective = TestCollective(gpus, 1, 0)
 
     # Initialize MSCCLPP program context with LL (Low Latency) protocol
+<<<<<<< HEAD
     with MSCCLPPProgram(
         "put_packet_test",
+=======
+    with CollectiveProgram(
+        "put_packets_test",
+>>>>>>> main
         collective,
         gpus,
         protocol="LL",
@@ -48,11 +68,19 @@ def put_packet_test(num_threads_per_block, min_message_size, max_message_size):
                     # Establish a memory channel from source to destination GPU
                     ch = MemoryChannel(dst_rank, src_rank)
 
+<<<<<<< HEAD
                     # Perform put_packet operation:
                     # - Transfers data from src_buff[0:1] to dst_buff[0:1]
                     # - Uses threadblock 0 for the operation
                     # - Data is transferred in packet format for efficient communication
                     ch.put_packet(dst_buff[0:1], src_buff[0:1], tb=0)
+=======
+                    # Perform put_packets operation:
+                    # - Transfers data from src_buff[0:1] to dst_buff[0:1]
+                    # - Uses threadblock 0 for the operation
+                    # - Data is transferred in packet format for efficient communication
+                    ch.put_packets(dst_buff[0:1], src_buff[0:1], tb=0)
+>>>>>>> main
 
         print(JSON())
 
@@ -65,4 +93,8 @@ parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="max
 
 args = parser.parse_args()
 
+<<<<<<< HEAD
 put_packet_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+=======
+put_packets_test(args.num_threads_per_block, args.min_message_size, args.max_message_size)
+>>>>>>> main

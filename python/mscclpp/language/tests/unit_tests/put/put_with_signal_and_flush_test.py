@@ -26,7 +26,11 @@ def put_with_signal_and_flush_test(num_threads_per_block, min_message_size, max_
     gpus = 2
     collective = TestCollective(gpus, 2, 0)
 
+<<<<<<< HEAD
     with MSCCLPPProgram(
+=======
+    with CollectiveProgram(
+>>>>>>> main
         "put_with_signal_and_flush_test",
         collective,
         gpus,
