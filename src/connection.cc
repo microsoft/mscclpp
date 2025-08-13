@@ -168,7 +168,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
   if (maxWriteQueueSize_ == -1) {
-    maxWriteQueueSize_ = EndpointConfig::DefaultMaxCqSize;
+    maxWriteQueueSize_ = EndpointConfig::Ib::DefaultMaxCqSize;
   }
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);

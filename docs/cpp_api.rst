@@ -231,8 +231,6 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle
    :members:
 
-.. doxygenunion:: mscclpp::ChannelTrigger
-
 .. doxygenunion:: mscclpp::LL16Packet
 
 .. doxygenunion:: mscclpp::LL8Packet

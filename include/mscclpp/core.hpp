@@ -378,41 +378,53 @@ struct Device {
   int id;
 };
 
-/// Used to configure an endpoint.
+/// Configuration for creating communication endpoints.
 struct EndpointConfig {
-  static const int DefaultMaxCqSize = 1024;
-  static const int DefaultMaxCqPollNum = 1;
-  static const int DefaultMaxSendWr = 8192;
-  static const int DefaultMaxWrPerSend = 64;
+  /// InfiniBand-specific configuration options that control queue pair behavior and performance characteristics.
+  /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
+  /// transports.
+  struct Ib {
+    static const int DefaultMaxCqSize = 1024;
+    static const int DefaultMaxCqPollNum = 1;
+    static const int DefaultMaxSendWr = 8192;
+    static const int DefaultMaxWrPerSend = 64;
 
+    /// Maximum size of the completion queue.
+    int maxCqSize;
+    /// Maximum number of completion queue polls per operation.
+    int maxCqPollNum;
+    /// Maximum number of outstanding send work requests.
+    int maxSendWr;
+    /// Maximum number of work requests per send operation.
+    int maxWrPerSend;
+
+    /// Constructs InfiniBand configuration with specified or default values.
+    /// @param maxCqSize Maximum completion queue size.
+    /// @param maxCqPollNum Maximum completion queue poll count.
+    /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxWrPerSend Maximum work requests per send operation.
+    Ib(int maxCqSize = DefaultMaxCqSize, int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr,
+       int maxWrPerSend = DefaultMaxWrPerSend)
+        : maxCqSize(maxCqSize), maxCqPollNum(maxCqPollNum), maxSendWr(maxSendWr), maxWrPerSend(maxWrPerSend) {}
+  };
+
+  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
   Transport transport;
+  /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
-  int ibMaxCqSize;
-  int ibMaxCqPollNum;
-  int ibMaxSendWr;
-  int ibMaxWrPerSend;
+  /// InfiniBand-specific options (used only when transport is an IB type).
+  Ib ib;
+  /// Maximum number of write requests that can be queued (-1 for default).
   int maxWriteQueueSize;
 
-  /// Constructor that takes a transport and sets the other fields to their default values.
-  ///
-  /// @param transport The transport to use.
-  /// @param device The device to use.
-  /// @param ibMaxCqSize The maximum completion queue size.
-  /// @param ibMaxCqPollNum The maximum completion queue poll number.
-  /// @param ibMaxSendWr The maximum send work requests.
-  /// @param ibMaxWrPerSend The maximum work requests per send.
-  /// @param maxWriteQueueSize The maximum write queue size.
-  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
-                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
-                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
+  /// Constructs endpoint configuration with specified transport, device, and optional settings.
+  /// @param transport Communication transport to use.
+  /// @param device Target device for the endpoint.
+  /// @param ib InfiniBand-specific configuration (ignored for non-IB transports).
+  /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, Ib ib = {},
                  int maxWriteQueueSize = -1)
-      : transport(transport),
-        device(device),
-        ibMaxCqSize(ibMaxCqSize),
-        ibMaxCqPollNum(ibMaxCqPollNum),
-        ibMaxSendWr(ibMaxSendWr),
-        ibMaxWrPerSend(ibMaxWrPerSend),
-        maxWriteQueueSize(maxWriteQueueSize) {}
+      : transport(transport), device(device), ib(ib), maxWriteQueueSize(maxWriteQueueSize) {}
 };
 
 class Context;

@@ -124,6 +124,17 @@ void register_core(nb::module_& m) {
       .def_rw("id", &Device::id)
       .def("__str__", [](const Device& self) { return std::to_string(self); });
 
+  nb::class_<EndpointConfig::Ib>(m, "EndpointConfigIb")
+      .def(nb::init<>())
+      .def(nb::init<int, int, int, int>(), nb::arg("maxCqSize") = EndpointConfig::Ib::DefaultMaxCqSize,
+           nb::arg("maxCqPollNum") = EndpointConfig::Ib::DefaultMaxCqPollNum,
+           nb::arg("maxSendWr") = EndpointConfig::Ib::DefaultMaxSendWr,
+           nb::arg("maxWrPerSend") = EndpointConfig::Ib::DefaultMaxWrPerSend)
+      .def_rw("max_cq_size", &EndpointConfig::Ib::maxCqSize)
+      .def_rw("max_cq_poll_num", &EndpointConfig::Ib::maxCqPollNum)
+      .def_rw("max_send_wr", &EndpointConfig::Ib::maxSendWr)
+      .def_rw("max_wr_per_send", &EndpointConfig::Ib::maxWrPerSend);
+
   nb::class_<RegisteredMemory>(m, "RegisteredMemory")
       .def(nb::init<>())
       .def("data", [](RegisteredMemory& self) { return reinterpret_cast<uintptr_t>(self.data()); })
@@ -158,17 +169,23 @@ void register_core(nb::module_& m) {
   nb::class_<EndpointConfig>(m, "EndpointConfig")
       .def(nb::init<>())
       .def(nb::init_implicit<Transport>(), nb::arg("transport"))
-      .def(nb::init<Transport, Device, int, int, int, int, int>(), nb::arg("transport"), nb::arg("device"),
-           nb::arg("ibMaxCqSize") = EndpointConfig::DefaultMaxCqSize,
-           nb::arg("ibMaxCqPollNum") = EndpointConfig::DefaultMaxCqPollNum,
-           nb::arg("ibMaxSendWr") = EndpointConfig::DefaultMaxSendWr,
-           nb::arg("ibMaxWrPerSend") = EndpointConfig::DefaultMaxWrPerSend, nb::arg("maxWriteQueueSize") = -1)
+      .def(nb::init<Transport, Device, EndpointConfig::Ib, int>(), nb::arg("transport"), nb::arg("device"),
+           nb::arg("ib") = EndpointConfig::Ib{}, nb::arg("maxWriteQueueSize") = -1)
       .def_rw("transport", &EndpointConfig::transport)
       .def_rw("device", &EndpointConfig::device)
-      .def_rw("ib_max_cq_size", &EndpointConfig::ibMaxCqSize)
-      .def_rw("ib_max_cq_poll_num", &EndpointConfig::ibMaxCqPollNum)
-      .def_rw("ib_max_send_wr", &EndpointConfig::ibMaxSendWr)
-      .def_rw("ib_max_wr_per_send", &EndpointConfig::ibMaxWrPerSend)
+      .def_rw("ib", &EndpointConfig::ib)
+      .def_prop_rw(
+          "ib_max_cq_size", [](EndpointConfig& self) { return self.ib.maxCqSize; },
+          [](EndpointConfig& self, int v) { self.ib.maxCqSize = v; })
+      .def_prop_rw(
+          "ib_max_cq_poll_num", [](EndpointConfig& self) { return self.ib.maxCqPollNum; },
+          [](EndpointConfig& self, int v) { self.ib.maxCqPollNum = v; })
+      .def_prop_rw(
+          "ib_max_send_wr", [](EndpointConfig& self) { return self.ib.maxSendWr; },
+          [](EndpointConfig& self, int v) { self.ib.maxSendWr = v; })
+      .def_prop_rw(
+          "ib_max_wr_per_send", [](EndpointConfig& self) { return self.ib.maxWrPerSend; },
+          [](EndpointConfig& self, int v) { self.ib.maxWrPerSend = v; })
       .def_rw("max_write_queue_size", &EndpointConfig::maxWriteQueueSize);
 
   nb::class_<Context>(m, "Context")
