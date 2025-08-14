@@ -201,6 +201,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
   }
 
   // Next decide how to set this->data
+  this->data = nullptr;
   if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
@@ -209,6 +210,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
+      // TODO: only open handle if in same MNNVL domain
 #if (CUDA_NVLS_API_AVAILABLE)
       CUmemGenericAllocationHandle handle;
       if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
@@ -240,14 +242,13 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       throw Error("CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
                   ErrorCode::InvalidUsage);
 #endif
-    } else {
+    } else if (getHostHash() == this->hostHash){
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
     }
+  }
+  if (this->data != nullptr) {
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
-  } else {
-    // No valid data pointer can be set
-    this->data = nullptr;
   }
 }
 
