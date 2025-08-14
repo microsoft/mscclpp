@@ -18,6 +18,7 @@ def init_dist():
     dist.init_process_group("nccl")
     return rank, world, local
 
+
 class SimpleModel(nn.Module):
     def __init__(self, DIN, DH, DOUT):
         super().__init__()
@@ -48,8 +49,9 @@ class SimpleModel(nn.Module):
         out_bf16.copy_(out)
         return out
 
+
 def main():
-    rank, world, local = init_dist()
+    rank, _, local = init_dist()
     device = torch.device("cuda", local)
     torch.set_grad_enabled(False)
 
@@ -64,7 +66,7 @@ def main():
     model = SimpleModel(DIN, DH, DOUT).to(device).to(dtype)
 
     # Static I/O buffers for capture (stable addresses)
-    x_bf16   = torch.empty(B, DIN,  dtype=dtype, device=device)
+    x_bf16 = torch.empty(B, DIN, dtype=dtype, device=device)
     out_bf16 = torch.empty(B, DOUT, dtype=dtype, device=device)
 
     # Eager warmup
@@ -83,6 +85,7 @@ def main():
             print(f"[step {step}] out_mean={out_bf16.float().mean().item():.6f}")
 
     dist.destroy_process_group()
+
 
 if __name__ == "__main__":
     main()
