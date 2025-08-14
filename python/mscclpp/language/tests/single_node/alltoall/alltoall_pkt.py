@@ -36,7 +36,7 @@ def alltoall_packet_example(name, gpu_size, num_threads_per_block, min_message_s
                 if src_rank_id != dst_rank_id:
                     channels[dst_rank_id, src_rank_id] = MemoryChannel(dst_rank_id, src_rank_id)
 
-        # Copy Data to Scratch Buffer and Put Remote Rank
+        # Put Data in the Remote Rank
         for gpu in range(gpu_size):
             src_rank_id = gpu
             src_rank = Rank(src_rank_id)

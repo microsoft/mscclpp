@@ -50,7 +50,7 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
                 if src_rank_id != dst_rank_id:
                     sync_channels[dst_rank_id, src_rank_id].wait(tb=0, relaxed=True, data_sync=SyncType.after)
 
-        # Copy Data to Scratch Buffer and Put Remote Rank
+        # Put Data in the Remote Rank
         for gpu in range(gpu_size):
             src_rank_id = gpu
             src_rank = Rank(src_rank_id)
