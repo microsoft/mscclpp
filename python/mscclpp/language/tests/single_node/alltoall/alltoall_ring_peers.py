@@ -40,7 +40,7 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
         name,
         collective,
         gpu_size,
-        instances=32,
+        instances=16,
         protocol="Simple",
         reuse_resources=True,
         num_threads_per_block=num_threads_per_block,
