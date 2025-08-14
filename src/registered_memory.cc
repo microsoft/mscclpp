@@ -218,6 +218,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         if (err != CUDA_SUCCESS) {
           INFO(MSCCLPP_P2P, "Failed to import shareable handle from host: %ld, may not be in the same MNNVL domain",
                hostHash);
+          return;
         }
       } else {
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
