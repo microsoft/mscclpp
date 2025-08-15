@@ -216,7 +216,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         // TODO: only open handle if in same MNNVL domain
         CUresult err = cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType());
         if (err != CUDA_SUCCESS) {
-          INFO(MSCCLPP_P2P, "Failed to import shareable handle from host: %ld, may not be in the same MNNVL domain",
+          INFO(MSCCLPP_P2P, "Failed to import shareable handle from host: 0x%lx, may not be in the same MNNVL domain",
                hostHash);
           return;
         }
