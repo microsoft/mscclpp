@@ -19,7 +19,6 @@ def alltoall_example(name, gpu_size, num_threads_per_block, min_message_size, ma
         gpu_size,
         instances=16,
         protocol="Simple",
-        reuse_resources=True,
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
