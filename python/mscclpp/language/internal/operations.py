@@ -567,7 +567,7 @@ class PutOperation(BaseOperation):
         result["dst_buff"] = []
         for chunk in self.dst_buff:
             result["dst_buff"].append(chunk.to_dict())
-        if self.channel_ids == ChannelType.port:
+        if self.channel_type == ChannelType.port:
             result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         return result
