@@ -414,8 +414,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Port
   mscclpp::RegisteredMemory& localRegMemory = (outputBuff) ? outputBufRegMem : inputBufRegMem;
 
   // store memory to keep resource alive
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
   if (setupChannel != nullptr) {
@@ -446,8 +446,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   mscclpp::RegisteredMemory& localRegMemory =
       (outputBuff && semantic == ChannelSemantic::PUT) ? outputBufRegMem : inputBufRegMem;
   // store memory to keep resource alive
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
   std::unordered_map<size_t, std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>> memorySemaphores;
@@ -498,8 +498,8 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
       (getPacketBuff) ? getPacketBufRegMem : ((outputBuff) ? outputBufRegMem : inputBufRegMem);
   // store memory to keep resource alive
   scratchMemory_ = getPacketBufRegMem;
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
 
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
