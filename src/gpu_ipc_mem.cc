@@ -12,6 +12,29 @@
 
 #include "debug.h"
 
+namespace std {
+
+std::string to_string(const mscclpp::GpuIpcMemHandle::TypeFlags& typeFlags) {
+  std::stringstream ss;
+  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::RuntimeIpc) {
+    ss << "RuntimeIpc|";
+  }
+  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::PosixFd) {
+    ss << "PosixFd|";
+  }
+  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::Fabric) {
+    ss << "Fabric|";
+  }
+  std::string ret = ss.str();
+  if (!ret.empty()) {
+    ret.pop_back();  // Remove the trailing '|'
+    return ret;
+  }
+  return "None";
+}
+
+}  // namespace std
+
 namespace mscclpp {
 
 static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetFd) {
@@ -60,6 +83,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
     (void)cudaGetLastError();
   }
 
+#if !defined(MSCCLPP_DEVICE_HIP)  // Remove when HIP fully supports virtual memory management APIs
   CUmemGenericAllocationHandle allocHandle;
   CUresult res = cuMemRetainAllocationHandle(&allocHandle, (void*)basePtr);
   if (res == CUDA_ERROR_NOT_SUPPORTED || res == CUDA_ERROR_INVALID_VALUE) {
@@ -82,6 +106,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   }
 
   MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 
   return handle;
 }
@@ -126,17 +151,23 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   }
   return handle;
 #else   // !(CUDA_NVLS_API_AVAILABLE)
-  throw Error("NVLS is not supported on this CUDA version (< 12.3) or kernel version (< 5.6.0)",
+  throw Error("NVLS is not supported on this device (requires CUDA version >= 12.3 and Linux kernel version >= 5.6.0)",
               ErrorCode::InvalidUsage);
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
 }
 
-GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle), isMulticast_(false) {
-  type_ = GpuIpcMemHandle::Type::None;
-  basePtr_ = nullptr;
-  baseSize_ = 0;
-  dataPtr_ = nullptr;
-  dataSize_ = 0;
+GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
+    : handle_(handle),
+      isMulticast_(false),
+      multicastBindedAddr_(0),
+      type_(GpuIpcMemHandle::Type::None),
+      basePtr_(nullptr),
+      baseSize_(0),
+      dataPtr_(nullptr),
+      dataSize_(0) {
+  if (handle_.typeFlags == GpuIpcMemHandle::Type::None) {
+    throw Error("GpuIpcMemHandle type is None, cannot create GpuIpcMem", ErrorCode::InvalidUsage);
+  }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
     if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
         CUDA_SUCCESS) {
@@ -165,6 +196,11 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle) : handle_(handle), isMultica
       (void)cudaGetLastError();
     }
   }
+  if (type_ == GpuIpcMemHandle::Type::None) {
+    std::stringstream ss;
+    ss << "Failed to open GpuIpcMemHandle (type: " << std::to_string(handle_.typeFlags) << ")";
+    throw Error(ss.str(), ErrorCode::Aborted);
+  }
 }
 
 GpuIpcMem::~GpuIpcMem() {
@@ -177,15 +213,6 @@ GpuIpcMem::~GpuIpcMem() {
   } else if (type_ == GpuIpcMemHandle::Type::PosixFd || type_ == GpuIpcMemHandle::Type::Fabric) {
     CUresult res;
     const char* errStr;
-    int deviceId;
-    res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, (CUdeviceptr)basePtr_);
-    if (res != CUDA_SUCCESS) {
-      (void)cuGetErrorString(res, &errStr);
-      WARN("Failed to get device ordinal for pointer %p: %s", basePtr_, errStr);
-      deviceId = -1;
-    } else if (deviceId < 0) {
-      WARN("Invalid device ordinal %d for pointer %p", deviceId, basePtr_);
-    }
     if (basePtr_) {
       res = cuMemUnmap((CUdeviceptr)basePtr_, baseSize_);
       if (res != CUDA_SUCCESS) {
@@ -199,7 +226,16 @@ GpuIpcMem::~GpuIpcMem() {
       }
     }
 #if (CUDA_NVLS_API_AVAILABLE)
-    if (isMulticast_ && deviceId >= 0) {
+    if (isMulticast_ && multicastBindedAddr_) {
+      int deviceId;
+      res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, multicastBindedAddr_);
+      if (res != CUDA_SUCCESS) {
+        (void)cuGetErrorString(res, &errStr);
+        WARN("Failed to get device ordinal for pointer %p: %s", (void*)multicastBindedAddr_, errStr);
+        deviceId = -1;
+      } else if (deviceId < 0) {
+        WARN("Invalid device ordinal %d for pointer %p", deviceId, (void*)multicastBindedAddr_);
+      }
       CUdevice device;
       if (cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
         (void)cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
@@ -256,7 +292,8 @@ void* GpuIpcMem::map() {
   return dataPtr_;
 }
 
-void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] const CUdeviceptr devicePtr) {
+void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] const CUdeviceptr bufferAddr,
+                              [[maybe_unused]] size_t bufferSize) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (type_ != GpuIpcMemHandle::Type::PosixFd && type_ != GpuIpcMemHandle::Type::Fabric) {
     throw Error("GpuIpcMemHandle type is not PosixFd or Fabric, cannot map multicast memory", ErrorCode::InvalidUsage);
@@ -274,42 +311,47 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran, &prop, CU_MULTICAST_GRANULARITY_MINIMUM));
 
   CUdeviceptr bufferPtr;
-  if (devicePtr != 0) {
-    if (!isCuMemMapAllocated((void*)devicePtr)) {
+  if (bufferAddr != 0) {
+    if (!isCuMemMapAllocated((void*)bufferAddr)) {
       throw Error("This NVLS connection tried to bind a buffer that was not allocated with cuMemMap",
                   ErrorCode::InvalidUsage);
     }
-    if ((uintptr_t)devicePtr % minMcGran != 0) {
+    if ((uintptr_t)bufferAddr % minMcGran != 0) {
       throw Error("This NVLS connection tried to bind a buffer that is not aligned to the minimum granularity",
                   ErrorCode::InvalidUsage);
     }
-    bufferPtr = devicePtr;
+    if (bufferSize == 0) {
+      throw Error("NVLS buffer size should be larger than zero.", ErrorCode::InvalidUsage);
+    }
+    bufferPtr = bufferAddr;
   } else {
     multicastBuffer_ = GpuBuffer<uint8_t>(handle_.baseSize).memory();
     bufferPtr = (CUdeviceptr)(multicastBuffer_.get());
+    bufferSize = handle_.baseSize;
   }
 
   // will block until all devices call cuMulticastAddDevice()
-  MSCCLPP_CUTHROW(cuMulticastBindAddr(allocHandle_, 0, bufferPtr, handle_.baseSize, 0));
+  MSCCLPP_CUTHROW(cuMulticastBindAddr(allocHandle_, 0, bufferPtr, bufferSize, 0));
+  multicastBindedAddr_ = bufferPtr;
 
   CUdeviceptr mcPtr;
-  MSCCLPP_CUTHROW(cuMemAddressReserve(&mcPtr, handle_.baseSize, minMcGran, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap(mcPtr, handle_.baseSize, 0, allocHandle_, 0));
+  MSCCLPP_CUTHROW(cuMemAddressReserve(&mcPtr, bufferSize, minMcGran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap(mcPtr, bufferSize, 0, allocHandle_, 0));
 
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  MSCCLPP_CUTHROW(cuMemSetAccess(mcPtr, handle_.baseSize, &accessDesc, 1));
+  MSCCLPP_CUTHROW(cuMemSetAccess(mcPtr, bufferSize, &accessDesc, 1));
 
   basePtr_ = (void*)mcPtr;
   baseSize_ = handle_.baseSize;
   dataPtr_ = basePtr_;
-  dataSize_ = baseSize_;
+  dataSize_ = bufferSize;
   isMulticast_ = true;
   return dataPtr_;
 #else   // !(CUDA_NVLS_API_AVAILABLE)
-  throw Error("NVLS is not supported on this CUDA version (< 12.3) or kernel version (< 5.6.0)",
+  throw Error("NVLS is not supported on this device (requires CUDA version >= 12.3 and Linux kernel version >= 5.6.0)",
               ErrorCode::InvalidUsage);
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
 }

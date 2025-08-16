@@ -36,7 +36,7 @@ struct NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection
 NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices)
     : numDevices_(numDevices), gpuIpcMemHandle_(GpuIpcMemHandle::createMulticast(bufferSize, numDevices)) {}
 
-NvlsConnection::Impl::Impl(const std::vector<char>& data) : gpuIpcMemHandle_(nullptr, &GpuIpcMemHandle::deleter) {
+NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   GpuIpcMemHandle hdl;
   detail::deserialize(data.begin(), hdl);
   gpuIpcMem_ = std::make_unique<GpuIpcMem>(hdl);

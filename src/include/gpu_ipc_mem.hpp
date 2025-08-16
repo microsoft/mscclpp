@@ -18,7 +18,9 @@ struct GpuIpcMemHandle {
     static constexpr uint8_t Fabric = 4;
   };
 
-  uint8_t typeFlags;
+  using TypeFlags = uint8_t;
+
+  TypeFlags typeFlags;
   size_t baseSize;
   size_t offsetFromBase;
 
@@ -40,7 +42,19 @@ struct GpuIpcMemHandle {
   // We make GpuIpcMemHandle trivially copyable for easy serialization,
   // and thus it cannot have explicit destructors.
   // We use a custom deleter for unique_ptr to handle cleanup without a destructor.
-  using UniquePtr = std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)>;
+  struct UniquePtr : public std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)> {
+    using Base = std::unique_ptr<GpuIpcMemHandle, decltype(&GpuIpcMemHandle::deleter)>;
+
+    // Default constructor
+    UniquePtr() : Base(nullptr, &GpuIpcMemHandle::deleter) {}
+
+    // Inherit other constructors
+    using Base::Base;
+
+    // Allow implicit conversion from Base
+    UniquePtr(Base &&other) : Base(std::move(other)) {}
+  };
+
   static UniquePtr create(const CUdeviceptr ptr);
   static UniquePtr createMulticast(size_t bufferSize, int numDevices);
 };
@@ -57,7 +71,7 @@ class GpuIpcMem {
 
   void *map();
 
-  void *mapMulticast(int numDevices, const CUdeviceptr devicePtr = 0);
+  void *mapMulticast(int numDevices, const CUdeviceptr bufferAddr = 0, size_t bufferSize = 0);
 
   void *multicastBuffer() const { return isMulticast_ ? multicastBuffer_.get() : nullptr; }
 
@@ -70,6 +84,7 @@ class GpuIpcMem {
   CUmemGenericAllocationHandle allocHandle_;
   std::shared_ptr<uint8_t> multicastBuffer_;
   bool isMulticast_;
+  [[maybe_unused]] CUdeviceptr multicastBindedAddr_;
   uint8_t type_;
   void *basePtr_;
   size_t baseSize_;
