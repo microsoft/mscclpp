@@ -5,7 +5,7 @@
 [![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
 [![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yaml/badge.svg)](https://microsoft.github.io/mscclpp/)
 
-| Pipelines                | Build Status      |
+| Testing Pipelines        | Build Status      |
 |--------------------------|-------------------|
 | Unit Tests (CUDA)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
 | Integration Tests (CUDA) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398479&branchName=main) |
@@ -13,9 +13,11 @@
 
 A GPU-driven communication stack for scalable AI applications.
 
-See [Quick Start](https://microsoft.github.io/mscclpp/getting-started/quickstart.html) to quickly get started.
-
-Check our [paper](https://arxiv.org/abs/2504.09014) to know more about MSCCL++.
+| [Quick Start](https://microsoft.github.io/mscclpp/quickstart.html)
+| [Tutorials](https://microsoft.github.io/mscclpp/tutorials.html)
+| [API Reference](https://microsoft.github.io/mscclpp/cpp_api.html)
+| [Paper](https://arxiv.org/abs/2504.09014)
+|
 
 ## Overview
 
@@ -170,6 +172,7 @@ MSCCL++ is being used in many amazing projects to power their communication need
 - ROCm Communication Collectives Library (RCCL) [![GitHub stars](https://img.shields.io/github/stars/ROCm/rccl?style=social)]( https://github.com/ROCm/rccl)
 - Splitwise: Efficient generative LLM inference using phase splitting [[Paper link](https://arxiv.org/abs/2311.18677)], Accepted at ISCA 2024, Best Paper Nominee
 - TVM: Open deep learning compiler stack for cpu, gpu and specialized accelerators [![GitHub stars](https://img.shields.io/github/stars/apache/tvm?style=social)](https://github.com/apache/tvm)
+- SGLang: A fast serving framework for large language models and vision language models. [![GitHub stars](https://img.shields.io/github/stars/sgl-project/sglang?style=social)](https://github.com/sgl-project/sglang)
 
 ## Contributing
 

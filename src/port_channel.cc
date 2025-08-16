@@ -78,27 +78,25 @@ MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
-ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
-  ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
+ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
+  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger.fields.semaphoreId];
 
   int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();
   auto& numRequests = inflightRequests_[semaphore->connection()];
 
-  if (trigger->fields.type & TriggerData) {
-    RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
-    RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-    semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
-                                   trigger->fields.size);
+  if (trigger.fields.type & TriggerData) {
+    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    RegisteredMemory& src = memories_[trigger.fields.srcMemoryId];
+    semaphore->connection()->write(dst, trigger.fields.dstOffset, src, trigger.fields.srcOffset, trigger.fields.size);
     numRequests++;
   }
 
-  if (trigger->fields.type & TriggerFlag) {
+  if (trigger.fields.type & TriggerFlag) {
     semaphore->signal();
     numRequests++;
   }
 
-  if (((trigger->fields.type & TriggerSync) && numRequests > 0) ||
+  if (((trigger.fields.type & TriggerSync) && numRequests > 0) ||
       (maxWriteQueueSize != -1 && numRequests > maxWriteQueueSize)) {
     semaphore->connection()->flush();
     numRequests = 0;

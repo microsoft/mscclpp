@@ -19,27 +19,25 @@ jobs:
         sudo apt-get install -y clang-format
 
     - name: Run cpplint
-      run: |
-        CPPSOURCES=$(find ./src ./include ./python ./test ./apps -regextype posix-extended -regex '.*\.(c|cpp|h|hpp|cc|cxx|cu)')
-        clang-format -style=file --verbose --Werror --dry-run ${CPPSOURCES}
+      run: bash ./tools/lint.sh cpp dry
 
   pylint:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v4
-  
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3
+    - name: Check out Git repository
+      uses: actions/checkout@v4
 
-      - name: Install Python dependencies
-        run: python3 -m pip install black
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3
 
-      - name: Run black
-        run: python3 -m black --check --config pyproject.toml .
+    - name: Install Python dependencies
+      run: python3 -m pip install black
+
+    - name: Run black
+      run: bash ./tools/lint.sh py dry
 
   spelling:
     runs-on: ubuntu-22.04

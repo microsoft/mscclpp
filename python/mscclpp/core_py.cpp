@@ -77,7 +77,6 @@ void register_core(nb::module_& m) {
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)
       .value("CudaIpc", Transport::CudaIpc)
-      .value("Nvls", Transport::Nvls)
       .value("IB0", Transport::IB0)
       .value("IB1", Transport::IB1)
       .value("IB2", Transport::IB2)
@@ -127,7 +126,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<RegisteredMemory>(m, "RegisteredMemory")
       .def(nb::init<>())
-      .def("data", &RegisteredMemory::data)
+      .def("data", [](RegisteredMemory& self) { return reinterpret_cast<uintptr_t>(self.data()); })
       .def("size", &RegisteredMemory::size)
       .def("transports", &RegisteredMemory::transports)
       .def("serialize", &RegisteredMemory::serialize)

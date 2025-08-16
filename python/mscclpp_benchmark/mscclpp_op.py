@@ -117,7 +117,10 @@ class MscclppAllReduce2:
 
         self.scratch = GpuBuffer(self.memory.size * 8, dtype=self.memory.dtype)
         # create a memory_channel for each remote neighbor
-        self.memory_channels = self.group.make_memory_channels_with_scratch(self.memory, self.scratch, self.connections)
+        self.registered_scratch = self.group.register_local_memory(self.scratch, self.connections)
+        self.memory_channels = self.group.make_memory_channels_with_scratch(
+            self.memory, self.registered_scratch, self.connections
+        )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu", kernel_name="allreduce2", file_dir=file_dir, macro_dict={"TYPE": type_str}
@@ -182,8 +185,9 @@ class MscclppAllReduce3:
         self.scratch = GpuBuffer(self.memory.size, dtype=self.memory.dtype)
 
         # create a memory_channel for each remote neighbor
+        self.registered_scratch = self.group.register_local_memory(self.scratch, self.connections)
         self.fst_round_port_chans = self.group.make_port_channels_with_scratch(
-            self.proxy_service, self.memory, self.scratch, self.connections
+            self.proxy_service, self.memory, self.registered_scratch, self.connections
         )
         self.snd_round_port_chans = self.group.make_port_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -263,8 +267,9 @@ class MscclppAllReduce4:
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         # create a memory_channel for each remote neighbor
         self.memory_channels = self.group.make_memory_channels(self.memory, same_node_connections)
+        self.registered_scratch = self.group.register_local_memory(self.scratch, self.connections)
         self.reduce_scatter_port_channels = self.group.make_port_channels_with_scratch(
-            self.proxy_service, self.memory, self.scratch, self.connections
+            self.proxy_service, self.memory, self.registered_scratch, self.connections
         )
         self.all_gather_port_channels = self.group.make_port_channels(self.proxy_service, self.memory, self.connections)
         file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -365,11 +370,12 @@ class MscclppAllReduce5:
         same_node_connections = {rank: conn for rank, conn in self.connections.items() if in_same_node(rank)}
         across_node_connections = {rank: conn for rank, conn in self.connections.items() if not in_same_node(rank)}
         # create a memory_channel for each remote neighbor
+        self.registered_scratch = self.group.register_local_memory(self.scratch, self.connections)
         self.memory_channels = self.group.make_memory_channels_with_scratch(
-            self.memory, self.scratch, same_node_connections
+            self.memory, self.registered_scratch, same_node_connections
         )
         self.port_channels = self.group.make_port_channels_with_scratch(
-            self.proxy_service, self.put_buff, self.scratch, across_node_connections
+            self.proxy_service, self.put_buff, self.registered_scratch, across_node_connections
         )
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
@@ -440,7 +446,7 @@ class MscclppAllReduce6:
         self.group.barrier()
         # create a connection for each remote neighbor
         self.nvlink_connections = self.group.make_connection(remote_nghrs, Transport.CudaIpc)
-        self.nvls_connection = group.make_connection(all_ranks, Transport.Nvls)
+        self.nvls_connection = group.make_connection(all_ranks, Transport.CudaIpc, use_switch=True)
         self.memory = GpuBuffer(nelem, memory_dtype)
         self.nvls_mem_handle = self.nvls_connection.bind_allocated_memory(
             self.memory.data.ptr, self.memory.data.mem.size

@@ -184,7 +184,7 @@ void SendRecvTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles(2);
   for (int i : {0, 1}) {
     // We assume ranks in the same node
-    memoryChannels_.emplace_back(semaphores[i], futureRemoteMemory[i].get(), (void*)localMemories[i].data());
+    memoryChannels_.emplace_back(semaphores[i], futureRemoteMemory[i].get(), localMemories[i]);
   }
   std::transform(memoryChannels_.begin(), memoryChannels_.end(), memoryChannelHandles.begin(),
                  [](const mscclpp::MemoryChannel& memoryChannel) { return memoryChannel.deviceHandle(); });

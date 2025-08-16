@@ -9,6 +9,7 @@
 #include <hip/hip_runtime.h>
 
 using cudaError_t = hipError_t;
+using cudaEvent_t = hipEvent_t;
 using cudaGraph_t = hipGraph_t;
 using cudaGraphExec_t = hipGraphExec_t;
 using cudaDeviceProp = hipDeviceProp_t;
@@ -24,6 +25,7 @@ using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
 using CUmemAllocationHandleType = hipMemAllocationHandleType;
 
+constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
@@ -45,6 +47,12 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define CUDA_SUCCESS hipSuccess
 #endif  // CUDA_SUCCESS
 
+#define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
+#define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
+#define cudaEventDestroy(...) hipEventDestroy(__VA_ARGS__)
+#define cudaEventRecord(...) hipEventRecord(__VA_ARGS__)
+#define cudaEventSynchronize(...) hipEventSynchronize(__VA_ARGS__)
+#define cudaEventElapsedTime(...) hipEventElapsedTime(__VA_ARGS__)
 #define cudaGetErrorString(...) hipGetErrorString(__VA_ARGS__)
 #define cudaGetDevice(...) hipGetDevice(__VA_ARGS__)
 #define cudaGetDeviceCount(...) hipGetDeviceCount(__VA_ARGS__)
@@ -53,6 +61,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaSetDevice(...) hipSetDevice(__VA_ARGS__)
 #define cudaDeviceSynchronize(...) hipDeviceSynchronize(__VA_ARGS__)
 #define cudaDeviceGetPCIBusId(...) hipDeviceGetPCIBusId(__VA_ARGS__)
+#define cudaDeviceCanAccessPeer(...) hipDeviceCanAccessPeer(__VA_ARGS__)
+#define cudaDeviceEnablePeerAccess(...) hipDeviceEnablePeerAccess(__VA_ARGS__)
 #define cudaHostAlloc(...) hipHostMalloc(__VA_ARGS__)
 #define cudaMalloc(...) hipMalloc(__VA_ARGS__)
 #define cudaFree(...) hipFree(__VA_ARGS__)
@@ -69,6 +79,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
 #define cudaStreamEndCapture(...) hipStreamEndCapture(__VA_ARGS__)
 #define cudaStreamDestroy(...) hipStreamDestroy(__VA_ARGS__)
+#define cudaGraphCreate(...) hipGraphCreate(__VA_ARGS__)
 #define cudaGraphInstantiate(...) hipGraphInstantiate(__VA_ARGS__)
 #define cudaGraphLaunch(...) hipGraphLaunch(__VA_ARGS__)
 #define cudaGraphDestroy(...) hipGraphDestroy(__VA_ARGS__)

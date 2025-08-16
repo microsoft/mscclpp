@@ -117,17 +117,21 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  IbQp* createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend, int port = -1);
-  const IbMr* registerMr(void* buff, std::size_t size);
+  std::shared_ptr<IbQp> createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
+                                 int port = -1);
+  std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
 
-  IbQp* createQp([[maybe_unused]] int maxCqSize, [[maybe_unused]] int maxCqPollNum, [[maybe_unused]] int maxSendWr,
-                 [[maybe_unused]] int maxRecvWr, [[maybe_unused]] int maxWrPerSend, [[maybe_unused]] int port = -1) {
+  std::shared_ptr<IbQp> createQp([[maybe_unused]] int maxCqSize, [[maybe_unused]] int maxCqPollNum,
+                                 [[maybe_unused]] int maxSendWr, [[maybe_unused]] int maxRecvWr,
+                                 [[maybe_unused]] int maxWrPerSend, [[maybe_unused]] int port = -1) {
     return nullptr;
   }
-  const IbMr* registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) { return nullptr; }
+  std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
+    return nullptr;
+  }
 #endif
 
   const std::string& getDevName() const { return this->devName; };
@@ -139,8 +143,6 @@ class IbCtx {
   const std::string devName;
   ibv_context* ctx;
   ibv_pd* pd;
-  std::list<std::unique_ptr<IbQp>> qps;
-  std::list<std::unique_ptr<IbMr>> mrs;
 };
 
 }  // namespace mscclpp

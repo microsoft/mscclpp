@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <mscclpp/semaphore.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
 #include "atomic.hpp"
@@ -26,6 +27,11 @@ struct SemaphoreStub::Impl {
 };
 
 static std::shared_ptr<uint64_t> gpuCallocToken() {
+#if (CUDA_NVLS_API_AVAILABLE)
+  if (isNvlsSupported()) {
+    return detail::gpuCallocPhysicalShared<uint64_t>(1, 0);
+  }
+#endif  // CUDA_NVLS_API_AVAILABLE
 #if defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocUncachedShared<uint64_t>();
 #else   // !defined(MSCCLPP_DEVICE_HIP)

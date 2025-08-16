@@ -58,7 +58,7 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
     }
     auto sema = communicator->buildSemaphore(connectionFutures[r].get(), r).get();
 
-    memoryChannels.emplace_back(sema, remoteMemFutures[r].get(), inputBufRegMem.data(),
+    memoryChannels.emplace_back(sema, remoteMemFutures[r].get(), inputBufRegMem,
                                 (isInPlace ? nullptr : outputBufRegMem.data()));
   }
 }
