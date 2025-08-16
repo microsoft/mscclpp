@@ -44,7 +44,7 @@ struct RegisteredMemory::Impl {
   std::unique_ptr<GpuIpcMem> remoteGpuIpcMem;
 
   // Only used for IB transport
-  std::unique_ptr<const IbMr> ibMr;
+  std::unordered_map<Transport, std::unique_ptr<const IbMr>> ibMrMap;
 
   Impl(void* data, size_t size, TransportFlags transports, Context::Impl& contextImpl);
   Impl(const std::vector<char>::const_iterator& begin, const std::vector<char>::const_iterator& end);

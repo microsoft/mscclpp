@@ -47,10 +47,10 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
-      this->ibMr = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
-      transportInfo.ibMr = this->ibMr.get();
+      this->ibMrMap[ibTransport] = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
+      transportInfo.ibMr = this->ibMrMap[ibTransport].get();
       transportInfo.ibLocal = true;
-      transportInfo.ibMrInfo = this->ibMr->getInfo();
+      transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
       this->transportInfos.push_back(transportInfo);
       INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
     };
@@ -134,6 +134,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
   }
 
   // Next decide how to set this->data
+  this->data = nullptr;
   if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
@@ -142,9 +143,6 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     this->remoteGpuIpcMem = std::make_unique<GpuIpcMem>(entry.gpuIpcMemHandle);
     this->data = this->remoteGpuIpcMem->map();
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
-  } else {
-    // No valid data pointer can be set
-    this->data = nullptr;
   }
 }
 
