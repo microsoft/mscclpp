@@ -45,8 +45,12 @@ if [ ! -d "$INSTALL_DIR" ]; then
     echo "Error: Install directory '$INSTALL_DIR' does not exist."
     exit 1
 fi
-
-trap 'rm -rf "$TMP_BUILD_DIR"' EXIT
+if [ "${DEBUG:-0}" -eq 1 ]; then
+    BUILD_TYPE="Debug"
+else
+    BUILD_TYPE="Release"
+    trap 'rm -rf "$TMP_BUILD_DIR"' EXIT
+fi
 
 pushd "$TMP_BUILD_DIR" || exit 1
 
@@ -61,7 +65,7 @@ else
 fi
 
 $CMAKE \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
     -DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF \
     -DMSCCLPP_BUILD_TESTS=OFF \

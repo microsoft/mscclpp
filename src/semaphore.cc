@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/semaphore.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/semaphore.hpp>
 
 #include "api.h"
 #include "atomic.hpp"

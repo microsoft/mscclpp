@@ -24,8 +24,11 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
   }
   if (AllIBTransports.has(transport_)) {
     ibLocal_ = true;
+    if (maxWriteQueueSize_ <= 0) {
+      maxWriteQueueSize_ = config.ib.maxCqSize;
+    }
     ibQp_ = contextImpl.getIbContext(transport_)
-                ->createQp(config.ibMaxCqSize, config.ibMaxCqPollNum, config.ibMaxSendWr, 0, config.ibMaxWrPerSend);
+                ->createQp(config.ib.maxCqSize, config.ib.maxCqPollNum, config.ib.maxSendWr, 0, config.ib.maxWrPerSend);
     ibQpInfo_ = ibQp_->getInfo();
   } else if (transport_ == Transport::Ethernet) {
     // Configuring Ethernet Interfaces

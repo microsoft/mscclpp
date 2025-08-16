@@ -27,10 +27,10 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 void CudaStreamWithFlags::set(unsigned int flags) {
   if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
   int originalDeviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId)); // Save the current device
+  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));  // Save the current device
   MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
-  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId)); // Restore the original device
+  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));  // Restore the original device
 }
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
@@ -67,8 +67,6 @@ std::shared_ptr<GpuStreamPool> gpuStreamPool() {
 }
 
 namespace detail {
-
-CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 
 /// set memory access permission to read-write
 /// @param base Base memory pointer.
@@ -165,7 +163,6 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   } else {
     MSCCLPP_CUTHROW(result);
   }
-  nvlsCompatibleMemHandleType = (CUmemAllocationHandleType)requestedHandleTypes;
 
   if (align == 0) {
     align = getMulticastGranularity(nbytes, CU_MULTICAST_GRANULARITY_MINIMUM);

@@ -44,7 +44,7 @@ if $LINT_CPP; then
     files=$(git -C "$PROJECT_ROOT" ls-files --cached | grep -E '\.(c|h|cpp|hpp|cc|cu|cuh)$' | sed "s|^|$PROJECT_ROOT/|")
     if [ -n "$files" ]; then
         if $DRY_RUN; then
-            clang-format -style=file --dry-run $files
+            clang-format -style=file --dry-run --Werror $files
         else
             clang-format -style=file -i $files
         fi
