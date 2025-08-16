@@ -28,6 +28,8 @@ class CudaIpcStream {
 
   void memcpyH2D(void *dst, const void *src, size_t nbytes);
 
+  void launch(const void *func, dim3 gridDim, dim3 blockDim, void **args, size_t sharedMem);
+
   void sync();
 
   operator cudaStream_t() const { return *stream_; }

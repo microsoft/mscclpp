@@ -288,3 +288,96 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   ASSERT_TRUE(testWriteCorrectness());
   communicator->bootstrap()->barrier();
 }
+
+TEST_F(CommunicatorTest, ConcurrentAtomicAdd) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  mscclpp::TransportFlags cudaIpcOrIb = mscclpp::AllIBTransports | mscclpp::Transport::CudaIpc;
+
+  // Check if any connections support atomicAdd
+  bool hasAtomicAddSupport = false;
+  int numAtomicAddConnections = 0;
+  for (auto& entry : connections) {
+    auto& conn = entry.second;
+    if (cudaIpcOrIb.has(conn->transport())) {
+      hasAtomicAddSupport = true;
+      if (entry.first == 0) {  // Only count connections to rank 0
+        numAtomicAddConnections++;
+      }
+    }
+  }
+
+  if (!hasAtomicAddSupport) {
+    GTEST_SKIP() << "No connections support atomicAdd in this configuration";
+    return;
+  }
+
+  // Initialize device buffers with zeros for atomic add test
+  size_t dataCount = deviceBufferSize / sizeof(uint64_t);
+  for (int n = 0; n < (int)devicePtr.size(); n++) {
+    std::vector<uint64_t> hostBuffer(dataCount, 0);
+    mscclpp::gpuMemcpy<uint64_t>(reinterpret_cast<uint64_t*>(devicePtr[n].get()), hostBuffer.data(), dataCount,
+                                 cudaMemcpyHostToDevice);
+  }
+  communicator->bootstrap()->barrier();
+
+  // All ranks (except rank 0) atomic add to offset 0 in rank 0's memory
+  if (gEnv->rank != 0) {
+    auto it = connections.find(0);
+    if (it != connections.end()) {
+      auto& conn = it->second;
+      auto& rank0Memory = remoteMemory[0].at(0);
+
+      // Check if connection to rank 0 supports atomicAdd
+      if (cudaIpcOrIb.has(conn->transport())) {
+        try {
+          // Each rank adds its rank value to offset 0 in rank 0's memory
+          uint64_t valueToAdd = gEnv->rank;
+          conn->atomicAdd(rank0Memory, 0, valueToAdd);
+          conn->flush();
+        } catch (const mscclpp::Error& e) {
+          if (e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage) {
+            // Connection doesn't support atomicAdd, skip
+          } else {
+            throw;
+          }
+        }
+      }
+    }
+  }
+  communicator->bootstrap()->barrier();
+
+  // Only rank 0 checks the result
+  if (gEnv->rank == 0) {
+    // Calculate expected sum: sum of ranks that successfully added (excluding rank 0)
+    uint64_t expectedSum = 0;
+    for (int i = 1; i < gEnv->worldSize; i++) {
+      auto it = connections.find(i);
+      if (it != connections.end()) {
+        auto& conn = it->second;
+        if (cudaIpcOrIb.has(conn->transport())) {
+          expectedSum += i;  // Each rank i adds its rank value
+        }
+      }
+    }
+
+    // Poll until the atomic additions are complete
+    bool ready = false;
+    int niter = 0;
+    do {
+      std::vector<uint64_t> hostBuffer(dataCount, 0);
+      mscclpp::gpuMemcpy<uint64_t>(hostBuffer.data(), reinterpret_cast<uint64_t*>(devicePtr[0].get()), dataCount,
+                                   cudaMemcpyDeviceToHost);
+
+      uint64_t actualSum = hostBuffer[0];
+      ready = (actualSum == expectedSum);
+
+      niter++;
+      if (niter == 10000) {
+        FAIL() << "Polling is stuck. Expected sum: " << expectedSum << ", Actual sum: " << actualSum;
+      }
+    } while (!ready);
+  }
+
+  communicator->bootstrap()->barrier();
+}

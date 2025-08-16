@@ -148,6 +148,7 @@ void register_core(nb::module_& m) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
           nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
+      .def("atomic_add", &Connection::atomicAdd, nb::arg("dst"), nb::arg("dstOffset"), nb::arg("value"))
       .def("flush", &Connection::flush, nb::call_guard<nb::gil_scoped_release>(), nb::arg("timeoutUsec") = (int64_t)3e7)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport)
