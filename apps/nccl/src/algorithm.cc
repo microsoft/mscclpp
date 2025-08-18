@@ -13,7 +13,7 @@ class AlgorithmImpl {
         kernelLaunchFunc(kernelFunc),
         contextInitFunc(contextInitFunc),
         contextKeyGenFunc(contextKeyGenFunc) {}
-  cudaError_t launch(void* input, void* output, size_t count, uint32_t dtype, cudaStream_t stream);
+  ncclResult_t launch(void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream);
 
  private:
   std::shared_ptr<mscclpp::Communicator> comm;
@@ -24,27 +24,27 @@ class AlgorithmImpl {
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts;
 };
 
-cudaError_t AlgorithmImpl::launch(void* input, void* output, size_t count, uint32_t dtype, cudaStream_t stream) {
+ncclResult_t AlgorithmImpl::launch(void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream) {
   AlgorithmCtxKey ctxKey = contextKeyGenFunc(input, output, count, dtype);
   auto it = contexts.find(ctxKey);
   if (it == contexts.end()) {
     auto ctx = contextInitFunc(comm);
     contexts[ctxKey] = ctx;
   }
-  return kernelLaunchFunc(contexts[ctxKey], stream);
+  return kernelLaunchFunc(contexts[ctxKey], input, output, count, dtype, stream);
 }
 
 Algorithm::Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
                      ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc)
     : name(name), impl(std::make_shared<AlgorithmImpl>(comm, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
 
-void Algorithm::launch(void* input, void* output, size_t count, uint32_t dtype, cudaStream_t stream) {
-  this->impl->launch(input, output, count, dtype, stream);
+ncclResult_t Algorithm::launch(void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream) {
+  return this->impl->launch(input, output, count, dtype, stream);
 }
 
-void AlgorithmFactory::registerAlgorithm(const std::string algoName, const std::string collective,
+void AlgorithmFactory::registerAlgorithm(const std::string collective, const std::string algoName,
                                          Algorithm algorithm) {
-  AlgorithmKey key = {algoName, collective};
+  AlgorithmKey key = {collective, algoName};
   getInstance()->algoMap.insert({key, algorithm});
 }
 

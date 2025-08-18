@@ -4,10 +4,12 @@
 #ifndef MSCCLPP_ALGORITHM_HPP_
 #define MSCCLPP_ALGORITHM_HPP_
 
+#include <mscclpp/nccl.h>
+
 #include <memory>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/port_channel.hpp>
 #include <mscclpp/nvls.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <vector>
 
 namespace mscclpp {
@@ -17,11 +19,15 @@ class AlgorithmCtx {
  public:
   int rank;
   int workSize;
+  int nRanksPerNode;
 
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
   std::vector<mscclpp::MemoryChannel> memoryChannels;
   std::vector<mscclpp::SwitchChannel> switchChannels;
   std::vector<mscclpp::PortChannel> portChannels;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> switchChannelDeviceHandles;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
   std::shared_ptr<char> scratchBuffer;
   std::vector<AlgorithmFeature> supportFeatures;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
@@ -40,11 +46,9 @@ struct AlgorithmCtxKey {
   }
 };
 
-AlgorithmCtxKey NoAlgorithmCtxKey = {nullptr, nullptr, 0, 0, 0};
-
 struct AlgorithmKey {
-  std::string name;
   std::string collective;
+  std::string name;
   bool operator==(const AlgorithmKey& other) const { return name == other.name && collective == other.collective; }
 };
 
@@ -52,9 +56,11 @@ class AlgorithmImpl;
 
 class Algorithm {
  public:
-  using KernelFunc = std::function<cudaError_t(const std::shared_ptr<AlgorithmCtx>, cudaStream_t)>;
+  using KernelFunc = std::function<ncclResult_t(const std::shared_ptr<AlgorithmCtx>, void*, void*, size_t,
+                                                ncclDataType_t, cudaStream_t)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>)>;
-  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(void* input, void* output, size_t count, uint32_t dtype)>;
+  using ContextKeyGenFunc =
+      std::function<AlgorithmCtxKey(void* input, void* output, size_t count, ncclDataType_t dtype)>;
   Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
             ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
 
@@ -67,7 +73,7 @@ class Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  void launch(void* input, void* output, size_t count, uint32_t dtype, cudaStream_t stream);
+  ncclResult_t launch(void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream);
 
  private:
   /// The algorithm name.
@@ -114,7 +120,7 @@ namespace mscclpp {
 
 class AlgorithmFactory {
  public:
-  static void registerAlgorithm(const std::string algoName, const std::string collective, Algorithm algorithm);
+  static void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
   static Algorithm getAlgorithm(const AlgorithmKey& algoKey);
 
