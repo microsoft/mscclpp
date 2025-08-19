@@ -302,17 +302,20 @@ struct Executor::Impl {
 
   void setupChannels(ExecutionContext& context, const ExecutionPlan& plan) {
     const auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT};
+    std::vector<std::shared_future<Semaphore>> futureMemorySemaphores;
+    std::vector<std::shared_future<Semaphore>> futureProxySemaphores;
     std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
     std::vector<mscclpp::SemaphoreId> proxySemaphores;
     auto processChannelInfos = [&](std::vector<ChannelInfo>& channelInfos) {
       for (ChannelInfo& info : channelInfos) {
         for (int peer : info.connectedPeers) {
+          auto connection = context.connections.at(peer);
           if (info.channelType == ChannelType::MEMORY) {
-            memorySemaphores.push_back(
-                std::make_shared<MemoryDevice2DeviceSemaphore>(*this->comm, context.connections.at(peer)));
+            futureMemorySemaphores.push_back(this->comm->buildSemaphore(
+                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
           } else if (info.channelType == ChannelType::PORT) {
-            proxySemaphores.push_back(
-                context.proxyService->buildAndAddSemaphore(*this->comm, context.connections.at(peer)));
+            futureProxySemaphores.push_back(this->comm->buildSemaphore(
+                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
           }
         }
       }
@@ -327,6 +330,14 @@ struct Executor::Impl {
       channelInfos = plan.impl_->getUnpairedChannelInfos(nranks, channelType);
       processChannelInfos(channelInfos);
     }
+
+    for (auto sem : futureMemorySemaphores) {
+      memorySemaphores.push_back(std::make_shared<MemoryDevice2DeviceSemaphore>(sem.get()));
+    }
+    for (auto sem : futureProxySemaphores) {
+      proxySemaphores.push_back(context.proxyService->addSemaphore(sem.get()));
+    }
+
     context.memorySemaphores = std::move(memorySemaphores);
     context.proxySemaphores = std::move(proxySemaphores);
 
