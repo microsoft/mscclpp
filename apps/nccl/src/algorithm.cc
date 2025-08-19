@@ -76,4 +76,10 @@ void AlgorithmFactory::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelec
 
 bool AlgorithmFactory::hasAlgorithmSelector() const { return algoSelector != nullptr; }
 
+void AlgorithmFactory::destroy() {
+  algoMap.clear();
+  algoMapByCollective.clear();
+  algoSelector = nullptr;
+}
+
 }  // namespace mscclpp

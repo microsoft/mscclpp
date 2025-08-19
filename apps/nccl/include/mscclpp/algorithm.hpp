@@ -143,6 +143,7 @@ class AlgorithmFactory {
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input, void* output);
   void setAlgorithmSelector(AlgoSelectFunc selector);
   bool hasAlgorithmSelector() const;
+  void destroy();
  private:
   AlgorithmFactory() = default;
   std::unordered_map<AlgorithmKey, Algorithm> algoMap;

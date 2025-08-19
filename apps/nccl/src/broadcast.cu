@@ -17,11 +17,11 @@ ncclResult_t BroadcastAlgo0::broadcastKernelFunc(const std::shared_ptr<mscclpp::
   if (input == output) {
     err = broadcast<false>((int*)input, (int*)ctx->scratchBuffer.get(), (int*)output,
                            ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                           count / sizeof(int), stream);
+                           count, stream);
   } else {
     err = broadcast<true>((int*)input, (int*)ctx->scratchBuffer.get(), (int*)output,
                           ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                          count / sizeof(int), stream);
+                          count, stream);
   }
   if (err != cudaSuccess) {
     return ncclInternalError;

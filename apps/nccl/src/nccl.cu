@@ -664,10 +664,7 @@ static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::vector<mscclpp::Algorithm>>& algoMapByCollective, std::string collective,
     size_t messageSizes, const void* input, void* output) {
   if (collective == "broadcast") {
-    if (input != output) {
-      return algoMapByCollective.at(collective).front();
-    }
-    return mscclpp::Algorithm();
+    return algoMapByCollective.at(collective).front();
   }
   throw mscclpp::Error("No suitable algorithm found", mscclpp::ErrorCode::InvalidUsage);
 }
@@ -784,6 +781,7 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
 
+  comm->algorithmFactory->destroy();
   delete comm;
   return ncclSuccess;
 }
