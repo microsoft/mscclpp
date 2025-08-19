@@ -79,18 +79,17 @@ bool mscclppNcclDlopenSharedLib = false;
 
 static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
+  if (mscclpp::env()->ncclSharedLibPath.empty()) {
+#if defined(__HIP_PLATFORM_AMD__)
+    ncclLibPath = "librccl.so";  // Default RCCL library name
+#else
+    ncclLibPath = "libnccl.so";  // Default NCCL library name
+#endif
+  }
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
       WARN("The value of the environment variable %s is a directory", ncclLibPath);
       return dlopenError;
-    }
-
-    if (mscclpp::env()->ncclSharedLibPath.empty()) {
-#if defined(__HIP_PLATFORM_AMD__)
-      ncclLibPath = "librccl.so";  // Default RCCL library name
-#else
-      ncclLibPath = "libnccl.so";  // Default NCCL library name
-#endif
     }
 
     mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
@@ -323,6 +322,34 @@ static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std
   std::string collective = plan->collective();
   planKey key{plan->minMessageSize(), plan->maxMessageSize(), plan->isInPlace()};
   return std::make_pair(collective, executionPlanInstance{key, plan});
+}
+
+static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor, int rank, ncclDataType_t datatype,
+                                    const void* sendbuff, void* recvbuff, size_t sendBytes, size_t recvBytes,
+                                    std::shared_ptr<mscclpp::ExecutionPlan> plan, cudaStream_t stream) {
+  switch (datatype) {
+    case ncclFloat16:
+      executor->execute(rank, (half*)sendbuff, (half*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::FLOAT16, *plan,
+                        stream);
+      break;
+    case ncclFloat32:
+      executor->execute(rank, (float*)sendbuff, (float*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::FLOAT32,
+                        *plan, stream);
+      break;
+    case ncclBfloat16:
+      executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, sendBytes, recvBytes,
+                        mscclpp::DataType::BFLOAT16, *plan, stream);
+      break;
+    case ncclInt32:
+    case ncclUint32:
+      executor->execute(rank, (int*)sendbuff, (int*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT32, *plan,
+                        stream);
+      break;
+    default:
+      WARN("datatype is invalid");
+      return ncclInvalidArgument;
+  }
+  return ncclSuccess;
 }
 
 static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
@@ -660,17 +687,34 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
-  BroadcastAlgo0 algo0;
-  algo0.registerBroadcastAlgorithm(comm);
+  BroadcastAlgo6 broadcastAlgo6;
+  broadcastAlgo6.registerBroadcastAlgorithm(comm);
+
+  AllgatherAlgo6 allgatherAlgo6;
+  // AllgatherAlgo8 allgatherAlgo8;
+  allgatherAlgo6.registerAllgatherAlgorithm(comm);
+  // allgatherAlgo8.registerAllgatherAlgorithm(comm);
 }
 
 static mscclpp::Algorithm algoSelector(
-    const std::unordered_map<std::string, std::vector<mscclpp::Algorithm>>& algoMapByCollective, std::string collective,
-    size_t messageSizes, const void* input, void* output) {
+    const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
+    std::string collective, size_t messageSizes, const void* input, void* output) {
   if (collective == "broadcast") {
-    return algoMapByCollective.at(collective).front();
+    return algoMapByCollective.at(collective).at("default_broadcast6");
   }
-  throw mscclpp::Error("No suitable algorithm found", mscclpp::ErrorCode::InvalidUsage);
+  if (collective == "allgather") {
+    if (messageSizes <= 32 * (1 << 20)) {
+      return algoMapByCollective.at(collective).at("default_allgather6");
+    } else {
+#if defined(__HIP_PLATFORM_AMD__)
+      return algoMapByCollective.at(collective).at("default_allgather6");
+#else
+      return algoMapByCollective.at(collective).at("default_allgather8");
+#endif
+    }
+  }
+  WARN("Failed to get algo from customized kernel, fallback to nccl");
+  return mscclpp::Algorithm();
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
@@ -933,10 +977,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
-    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
-                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  }
+  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
+  //   return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  // }
 
   int rank = comm->comm->bootstrap()->getRank();
 
@@ -951,29 +995,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   if (plan != nullptr) {
-    switch (datatype) {
-      case ncclFloat16:
-        comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
-                                stream);
-        break;
-      case ncclFloat32:
-        comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32,
-                                *plan, stream);
-        break;
-      case ncclBfloat16:
-        comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
-                                mscclpp::DataType::BFLOAT16, *plan, stream);
-        break;
-      case ncclInt32:
-      case ncclUint32:
-        comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, *plan,
-                                stream);
-        break;
-      default:
-        WARN("datatype is invalid");
-        return ncclInvalidArgument;
-    }
-    return ncclSuccess;
+    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
   auto algo =
       comm->algorithmFactory->selectAlgorithm("broadcast", count * ncclTypeSize(datatype), sendbuff, recvbuff);
@@ -1080,36 +1102,18 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
       break;
     }
   }
-  // TODO: Fallback code for ReduceScatter
-  if (plan == nullptr) {
-    WARN("No FallBack code for ReduceScatter");
-    return ncclInternalError;
+
+  if (plan != nullptr) {
+    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, totalBytes, bytes, plan, stream);
   }
 
-  switch (datatype) {
-    case ncclFloat16:
-      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, totalBytes, bytes, mscclpp::DataType::FLOAT16,
-                              *plan, stream);
-      break;
-    case ncclFloat32:
-      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, totalBytes, bytes, mscclpp::DataType::FLOAT32,
-                              *plan, stream);
-      break;
-    case ncclBfloat16:
-      comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, totalBytes, bytes,
-                              mscclpp::DataType::BFLOAT16, *plan, stream);
-      break;
-    case ncclInt32:
-    case ncclUint32:
-      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, totalBytes, bytes, mscclpp::DataType::UINT32, *plan,
-                              stream);
-      break;
-    default:
-      WARN("datatype is invalid");
-      return ncclInvalidArgument;
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
+                                        *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  return ncclSuccess;
+  WARN("No FallBack implementation for ReduceScatter");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
@@ -1123,10 +1127,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
-    return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
-                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  }
+  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
+  //   return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  // }
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
@@ -1142,32 +1146,23 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
       break;
     }
   }
-  if (plan == nullptr) return ncclAllGatherFallback(sendbuff, recvbuff, sendcount, datatype, comm, stream);
 
-  switch (datatype) {
-    case ncclFloat16:
-      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes * nRank, mscclpp::DataType::FLOAT16,
-                              *plan, stream);
-      break;
-    case ncclFloat32:
-      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes * nRank,
-                              mscclpp::DataType::FLOAT32, *plan, stream);
-      break;
-    case ncclBfloat16:
-      comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes * nRank,
-                              mscclpp::DataType::BFLOAT16, *plan, stream);
-      break;
-    case ncclInt32:
-    case ncclUint32:
-      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes * nRank, mscclpp::DataType::UINT32,
-                              *plan, stream);
-      break;
-    default:
-      WARN("datatype is invalid");
-      return ncclInvalidArgument;
+  if (plan != nullptr) {
+    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, totalBytes, plan, stream);
   }
 
-  return ncclSuccess;
+  auto algo = comm->algorithmFactory->selectAlgorithm("allgather", sendcount * ncclTypeSize(datatype), sendbuff, recvbuff);
+  if (!algo.isEmpty()) {
+    std::unordered_map<std::string, std::shared_ptr<void>> extras;
+    return algo.launch(sendbuff, recvbuff, sendcount, datatype, stream, extras);
+  }
+
+  // if (mscclppNcclDlopenSharedLib == true) {
+  //   return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  // }
+
+  return ncclInvalidUsage;
 }
 
 NCCL_API ncclResult_t ncclSend(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {

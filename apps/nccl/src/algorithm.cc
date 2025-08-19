@@ -50,19 +50,9 @@ bool Algorithm::isEmpty() { return !impl; }
 
 void AlgorithmFactory::registerAlgorithm(const std::string collective, const std::string algoName,
                                          Algorithm algorithm) {
-  AlgorithmKey key = {collective, algoName};
-  getInstance()->algoMap.insert({key, algorithm});
-  getInstance()->algoMapByCollective[collective].push_back(algorithm);
+  getInstance()->algoMapByCollective[collective][algoName] = algorithm;
 }
 
-Algorithm AlgorithmFactory::getAlgorithm(const AlgorithmKey& algoKey) {
-  auto it = getInstance()->algoMap.find(algoKey);
-  if (it != getInstance()->algoMap.end()) {
-    return it->second;
-  }
-  throw Error("Algorithm not found with name: " + algoKey.name + " for collective " + algoKey.collective,
-              ErrorCode::InvalidUsage);
-}
 
 Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input,
                                             void* output) {
@@ -77,7 +67,6 @@ void AlgorithmFactory::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelec
 bool AlgorithmFactory::hasAlgorithmSelector() const { return algoSelector != nullptr; }
 
 void AlgorithmFactory::destroy() {
-  algoMap.clear();
   algoMapByCollective.clear();
   algoSelector = nullptr;
 }

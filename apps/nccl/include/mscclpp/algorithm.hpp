@@ -13,7 +13,6 @@
 #include <vector>
 
 namespace mscclpp {
-enum class AlgorithmFeature { NonZeroCopy, NVLS };
 
 class AlgorithmCtx {
  public:
@@ -32,7 +31,8 @@ class AlgorithmCtx {
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> hostSemaphores;
   std::shared_ptr<char> scratchBuffer;
-  std::vector<AlgorithmFeature> supportFeatures;
+
+  std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 
 struct AlgorithmCtxKey {
@@ -46,12 +46,6 @@ struct AlgorithmCtxKey {
     return baseSendBuff == other.baseSendBuff && baseRecvBuff == other.baseRecvBuff &&
            baseSendSize == other.baseSendSize && baseRecvSize == other.baseRecvSize && tag == other.tag;
   }
-};
-
-struct AlgorithmKey {
-  std::string collective;
-  std::string name;
-  bool operator==(const AlgorithmKey& other) const { return name == other.name && collective == other.collective; }
 };
 
 class AlgorithmImpl;
@@ -100,16 +94,6 @@ inline void hash_combine(std::size_t& seed, const T& value) {
 }
 
 template <>
-struct hash<mscclpp::AlgorithmKey> {
-  std::size_t operator()(const mscclpp::AlgorithmKey& key) const {
-    std::size_t seed = 42;
-    hash_combine(seed, key.name);
-    hash_combine(seed, key.collective);
-    return seed;
-  }
-};
-
-template <>
 struct hash<mscclpp::AlgorithmCtxKey> {
   std::size_t operator()(const mscclpp::AlgorithmCtxKey& key) const {
     std::size_t seed = 42;
@@ -127,9 +111,9 @@ namespace mscclpp {
 
 class AlgorithmFactory {
  public:
-  using AlgoSelectFunc =
-      std::function<Algorithm(const std::unordered_map<std::string, std::vector<Algorithm>>& algoMapByCollective,
-                              std::string collective, size_t messageSizes, const void* input, void* output)>;
+  using AlgoSelectFunc = std::function<Algorithm(
+      const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
+      std::string collective, size_t messageSizes, const void* input, void* output)>;
 
   static std::shared_ptr<AlgorithmFactory> getInstance() {
     static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
@@ -138,16 +122,13 @@ class AlgorithmFactory {
 
   void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
-  Algorithm getAlgorithm(const AlgorithmKey& algoKey);
-
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input, void* output);
   void setAlgorithmSelector(AlgoSelectFunc selector);
   bool hasAlgorithmSelector() const;
   void destroy();
  private:
   AlgorithmFactory() = default;
-  std::unordered_map<AlgorithmKey, Algorithm> algoMap;
-  std::unordered_map<std::string, std::vector<Algorithm>> algoMapByCollective;
+  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective;
   AlgoSelectFunc algoSelector;
 };
 
