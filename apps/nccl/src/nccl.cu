@@ -85,6 +85,14 @@ static inline int mscclppNcclDlopenInit() {
       return dlopenError;
     }
 
+    if (mscclpp::env()->ncclSharedLibPath.empty()) {
+#if defined(__HIP_PLATFORM_AMD__)
+      ncclLibPath = "librccl.so";  // Default RCCL library name
+#else
+      ncclLibPath = "libnccl.so";  // Default NCCL library name
+#endif
+    }
+
     mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
     if (!mscclppNcclDlHandle) {
       WARN("Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
@@ -136,10 +144,6 @@ static inline int mscclppNcclInFallbackList(const char* collOps, const char* fal
   free(fallbackListCopy);
   return 0;
 }
-
-// static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
-//                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
-//                             mscclpp::Transport::IB6, mscclpp::Transport::IB7};
 
 // Declare the global map to store associations between raw pointer and shared pointer
 static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
@@ -218,7 +222,7 @@ struct ncclComm {
   void* mscclppNcclComm;
 };
 
-static size_t ncclTypeSize(ncclDataType_t type) {
+size_t ncclTypeSize(ncclDataType_t type) {
   switch (type) {
     case ncclInt8:
     case ncclUint8:
@@ -722,12 +726,14 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 #endif
 
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppEnableNcclFallback == true && mscclppNcclDlHandle == NULL) {
+  if (mscclppNcclDlHandle == NULL) {
     int dlopenStatus = mscclppNcclDlopenInit();
     if (dlopenStatus == dlopenSuccess) {
       mscclppNcclDlopenSharedLib = true;
     } else {
-      return ncclInternalError;
+      if (mscclppEnableNcclFallback == true) {
+        return ncclInternalError;
+      }
     }
   }
 
@@ -927,20 +933,18 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
-  //   return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
-  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  // }
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
+    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
   int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
-  void* basePtr = (char*)sendbuff;
-  bool inPlace = basePtr == recvbuff;
-  const size_t totalBytes = bytes;
+  bool inPlace = sendbuff == recvbuff;
   for (const auto& p : plans) {
-    if (totalBytes >= p.key.minMessageSize && totalBytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
+    if (bytes >= p.key.minMessageSize && bytes < p.key.maxMessageSize && inPlace == p.key.isInPlace) {
       plan = p.plan;
       break;
     }

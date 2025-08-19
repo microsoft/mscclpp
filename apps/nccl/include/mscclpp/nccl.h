@@ -216,6 +216,8 @@ typedef enum {
 #endif
 } ncclDataType_t;
 
+size_t ncclTypeSize(ncclDataType_t type);
+
 /* ncclScalarResidence_t: Location and dereferencing logic for scalar arguments. */
 typedef enum {
   /* ncclScalarDevice: The scalar is in device-visible memory and will be
