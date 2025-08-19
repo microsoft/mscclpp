@@ -159,4 +159,18 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   return cudaGetLastError();
 }
 
+class BroadcastAlgo0 {
+ public:
+  void registerBroadcastAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t);
+};
+
 #endif  // BROADCAST_HPP_

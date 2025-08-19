@@ -21,6 +21,7 @@
 #endif
 #include <dlfcn.h>
 #include <mscclpp/nccl.h>
+#include <mscclpp/algorithm.hpp>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
@@ -194,6 +195,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Executor> executor;
   std::unordered_map<std::string, std::vector<executionPlanInstance>> executionPlans;
 
+  std::shared_ptr<mscclpp::AlgorithmFactory> algorithmFactory;
+
   std::unordered_map<channelKey, ChannelInfo> channelInInfos;
   std::unordered_map<channelKey, ChannelInfo> channelOutInfos;
   std::unordered_map<channelKey, ChannelInfo> channelScratchInfos;
@@ -268,20 +271,6 @@ static Op getReduceOp(ncclRedOp_t op) {
   }
 }
 
-static std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
-                                                                  mscclpp::RegisteredMemory localMemory) {
-  std::vector<mscclpp::RegisteredMemory> remoteMemories;
-  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
-  for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
-    if (i == rank) continue;
-    remoteRegMemoryFutures.push_back(comm->recvMemory(i));
-    comm->sendMemory(localMemory, i);
-  }
-  std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
-                 [](const auto& future) { return future.get(); });
-  return remoteMemories;
-}
-
 static std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
     ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
     mscclpp::RegisteredMemory localMemory) {
@@ -330,19 +319,6 @@ static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std
   std::string collective = plan->collective();
   planKey key{plan->minMessageSize(), plan->maxMessageSize(), plan->isInPlace()};
   return std::make_pair(collective, executionPlanInstance{key, plan});
-}
-
-static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
-    const std::vector<mscclpp::MemoryChannel>& memoryChannels) {
-  std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
-  std::transform(memoryChannels.begin(), memoryChannels.end(), std::back_inserter(memoryChannelDeviceHandles),
-                 [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> ptr =
-      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
-          memoryChannelDeviceHandles.size());
-  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
-      ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
-  return ptr;
 }
 
 static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
@@ -679,6 +655,23 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
   return ncclCommInitRank(comm, nranks, commId, rank);
 }
 
+static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
+  BroadcastAlgo0 algo0;
+  algo0.registerBroadcastAlgorithm(comm);
+}
+
+static mscclpp::Algorithm algoSelector(
+    const std::unordered_map<std::string, std::vector<mscclpp::Algorithm>>& algoMapByCollective, std::string collective,
+    size_t messageSizes, const void* input, void* output) {
+  if (collective == "broadcast") {
+    if (input != output) {
+      return algoMapByCollective.at(collective).front();
+    }
+    return mscclpp::Algorithm();
+  }
+  throw mscclpp::Error("No suitable algorithm found", mscclpp::ErrorCode::InvalidUsage);
+}
+
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
   if (comm == nullptr) {
     WARN("comm is nullptr");
@@ -699,6 +692,11 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
 
+  commPtr->algorithmFactory = mscclpp::AlgorithmFactory::getInstance();
+  if (!commPtr->algorithmFactory->hasAlgorithmSelector()) {
+    commPtr->algorithmFactory->setAlgorithmSelector(algoSelector);
+  }
+
   // FallBack for single node
   if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
     ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
@@ -716,6 +714,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
       }
     }
   }
+
+  registerCustomizedAlgo(mscclppComm);
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
@@ -918,53 +918,6 @@ NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatyp
   return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
 }
 
-NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff, size_t sendcount,
-                                            ncclDataType_t datatype, int root, ncclComm_t comm, cudaStream_t stream) {
-  size_t bytes = sendcount * ncclTypeSize(datatype);
-  if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-        "or comm is nullptr.");
-    return ncclInvalidArgument;
-  }
-
-  // Declarating variables
-  size_t recvBytes;
-  CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
-  // size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
-  size_t offsetOut = 0;
-  // channelKey recvKey{(void*)recvBasePtr, recvBytes};
-  channelKey recvKey{(void*)0x0, 0};  // Just create the channel once.
-  int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
-  mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
-
-  auto it = comm->channelOutInfos.find(recvKey);
-  if (it == comm->channelOutInfos.end()) {
-    mscclpp::RegisteredMemory localMemory =
-        comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-    std::vector<mscclpp::MemoryChannel> channels =
-        setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
-    std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
-    std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
-                   [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
-    ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
-    it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
-  }
-
-  memoryChannels = it->second.memoryChannelDeviceHandles.get();
-  if ((char*)sendbuff == (char*)recvbuff) {
-    CUDACHECK(broadcast<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                               rank, comm->nRanksPerNode, root, nRank, bytes / sizeof(int), stream));
-  } else {
-    CUDACHECK(broadcast<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                              rank, comm->nRanksPerNode, root, nRank, bytes / sizeof(int), stream));
-  }
-
-  return ncclSuccess;
-}
-
 NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     int root, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = count * ncclTypeSize(datatype);
@@ -976,10 +929,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
-    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
-                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  }
+  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
+  //   return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  // }
 
   int rank = comm->comm->bootstrap()->getRank();
 
@@ -995,32 +948,45 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr) return ncclBroadcastFallback(sendbuff, recvbuff, count, datatype, root, comm, stream);
-
-  switch (datatype) {
-    case ncclFloat16:
-      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
-                              stream);
-      break;
-    case ncclFloat32:
-      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32, *plan,
-                              stream);
-      break;
-    case ncclBfloat16:
-      comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
-                              mscclpp::DataType::BFLOAT16, *plan, stream);
-      break;
-    case ncclInt32:
-    case ncclUint32:
-      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, *plan,
-                              stream);
-      break;
-    default:
-      WARN("datatype is invalid");
-      return ncclInvalidArgument;
+  if (plan != nullptr) {
+    switch (datatype) {
+      case ncclFloat16:
+        comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
+                                stream);
+        break;
+      case ncclFloat32:
+        comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32,
+                                *plan, stream);
+        break;
+      case ncclBfloat16:
+        comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
+                                mscclpp::DataType::BFLOAT16, *plan, stream);
+        break;
+      case ncclInt32:
+      case ncclUint32:
+        comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, *plan,
+                                stream);
+        break;
+      default:
+        WARN("datatype is invalid");
+        return ncclInvalidArgument;
+    }
+    return ncclSuccess;
+  }
+  auto algo =
+      comm->algorithmFactory->selectAlgorithm("broadcast", count * ncclTypeSize(datatype), sendbuff, recvbuff);
+  if (!algo.isEmpty()) {
+    std::unordered_map<std::string, std::shared_ptr<void>> extras;
+    extras.insert({"root", std::make_shared<int>(root)});
+    return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
   }
 
-  return ncclSuccess;
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
+
+  return ncclInvalidUsage;
 }
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,

@@ -5,7 +5,9 @@
 #define NCCL_COMMON_HPP_
 
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
+#include <vector>
 
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
@@ -24,5 +26,23 @@ static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
 
 __device__ mscclpp::DeviceSyncer deviceSyncer;
 __constant__ mscclpp::DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
+
+std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
+                                                           mscclpp::RegisteredMemory localMemory);
+
+std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
+    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
+    int nChannelsPerConnection);
+
+std::vector<std::shared_ptr<mscclpp::Connection>> setupConnections(std::shared_ptr<mscclpp::Communicator> comm);
+
+std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
+    std::shared_ptr<mscclpp::Communicator> comm, const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    int nChannelsPerConnection);
+
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
+    const std::vector<mscclpp::MemoryChannel>& memoryChannels);
 
 #endif  // NCCL_COMMON_HPP_

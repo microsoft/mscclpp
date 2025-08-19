@@ -25,12 +25,14 @@ class AlgorithmCtx {
   std::vector<mscclpp::MemoryChannel> memoryChannels;
   std::vector<mscclpp::SwitchChannel> switchChannels;
   std::vector<mscclpp::PortChannel> portChannels;
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> switchChannelDeviceHandles;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> hostSemaphores;
   std::shared_ptr<char> scratchBuffer;
   std::vector<AlgorithmFeature> supportFeatures;
-  std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 
 struct AlgorithmCtxKey {
@@ -56,13 +58,16 @@ class AlgorithmImpl;
 
 class Algorithm {
  public:
-  using KernelFunc = std::function<ncclResult_t(const std::shared_ptr<AlgorithmCtx>, void*, void*, size_t,
-                                                ncclDataType_t, cudaStream_t)>;
-  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>)>;
+  using KernelFunc =
+      std::function<ncclResult_t(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, ncclDataType_t,
+                                 cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
+  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>, const void*,
+                                                                      void*, size_t, ncclDataType_t)>;
   using ContextKeyGenFunc =
-      std::function<AlgorithmCtxKey(void* input, void* output, size_t count, ncclDataType_t dtype)>;
+      std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, ncclDataType_t dtype)>;
   Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
             ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
+  Algorithm() = default;
 
   /// @brief Launch the algorithm.
   /// @param input The input buffer.
@@ -73,7 +78,9 @@ class Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  ncclResult_t launch(void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream);
+  ncclResult_t launch(const void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                      std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  bool isEmpty();
 
  private:
   /// The algorithm name.
@@ -120,18 +127,27 @@ namespace mscclpp {
 
 class AlgorithmFactory {
  public:
-  static void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
-
-  static Algorithm getAlgorithm(const AlgorithmKey& algoKey);
+  using AlgoSelectFunc =
+      std::function<Algorithm(const std::unordered_map<std::string, std::vector<Algorithm>>& algoMapByCollective,
+                              std::string collective, size_t messageSizes, const void* input, void* output)>;
 
   static std::shared_ptr<AlgorithmFactory> getInstance() {
     static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
     return instance;
   }
 
+  void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
+
+  Algorithm getAlgorithm(const AlgorithmKey& algoKey);
+
+  Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input, void* output);
+  void setAlgorithmSelector(AlgoSelectFunc selector);
+  bool hasAlgorithmSelector() const;
  private:
   AlgorithmFactory() = default;
   std::unordered_map<AlgorithmKey, Algorithm> algoMap;
+  std::unordered_map<std::string, std::vector<Algorithm>> algoMapByCollective;
+  AlgoSelectFunc algoSelector;
 };
 
 }  // namespace mscclpp

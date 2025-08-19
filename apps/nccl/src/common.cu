@@ -1,0 +1,76 @@
+#include <algorithm>
+#include <mscclpp/core.hpp>
+#include <mscclpp/memory_channel.hpp>
+
+#include "common.hpp"
+
+std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
+                                                           mscclpp::RegisteredMemory localMemory) {
+  std::vector<mscclpp::RegisteredMemory> remoteMemories;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemoryFutures;
+  for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
+    if (i == rank) continue;
+    remoteRegMemoryFutures.push_back(comm->recvMemory(i));
+    comm->sendMemory(localMemory, i);
+  }
+  std::transform(remoteRegMemoryFutures.begin(), remoteRegMemoryFutures.end(), std::back_inserter(remoteMemories),
+                 [](const auto& future) { return future.get(); });
+  return remoteMemories;
+}
+
+std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
+    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
+    int nChannelsPerConnection) {
+  std::vector<mscclpp::MemoryChannel> channels;
+  size_t nConnections = connections.size();
+  for (int idx = 0; idx < nChannelsPerConnection; ++idx) {
+    for (size_t cid = 0; cid < nConnections; ++cid) {
+      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], localMemory, nullptr);
+      }
+    }
+  }
+  return channels;
+}
+
+std::vector<std::shared_ptr<mscclpp::Connection>> setupConnections(std::shared_ptr<mscclpp::Communicator> comm) {
+  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  for (int i = 0; i < comm->bootstrap()->getNranks(); i++) {
+    if (i == comm->bootstrap()->getRank()) continue;
+    connectionFutures.push_back(comm->connect(mscclpp::Transport::CudaIpc, i));
+  }
+  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+                 [](const auto& future) { return future.get(); });
+  return connections;
+}
+
+std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
+    std::shared_ptr<mscclpp::Communicator> comm, const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    int nChannelsPerConnection) {
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  for (int idx = 0; idx < nChannelsPerConnection; ++idx) {
+    for (size_t cid = 0; cid < connections.size(); ++cid) {
+      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+        memorySemaphores.emplace_back(
+            std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*(comm), connections[cid]));
+      }
+    }
+  }
+  return memorySemaphores;
+}
+
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
+    const std::vector<mscclpp::MemoryChannel>& memoryChannels) {
+  std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
+  std::transform(memoryChannels.begin(), memoryChannels.end(), std::back_inserter(memoryChannelDeviceHandles),
+                 [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> ptr =
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
+          memoryChannelDeviceHandles.size());
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
+      ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
+  return ptr;
+}
