@@ -75,18 +75,19 @@ mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-void BroadcastAlgo6::registerBroadcastAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
+void BroadcastAlgo6::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
+  auto self = shared_from_this();
   mscclpp::Algorithm broadcastAlgo(
       comm, "broadcast",
-      [this](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
              ncclDataType_t dtype, cudaStream_t stream,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-        return broadcastKernelFunc(ctx, input, output, count, dtype, stream, extras);
+        return self->broadcastKernelFunc(ctx, input, output, count, dtype, stream, extras);
       },
-      [this](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-             ncclDataType_t dtype) { return initBroadcastContext(comm, input, output, count, dtype); },
-      [this](const void* input, void* output, size_t count, ncclDataType_t dtype) {
-        return generateBroadcastContextKey(input, output, count, dtype);
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+             ncclDataType_t dtype) { return self->initBroadcastContext(comm, input, output, count, dtype); },
+      [self](const void* input, void* output, size_t count, ncclDataType_t dtype) {
+        return self->generateBroadcastContextKey(input, output, count, dtype);
       });
   mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("broadcast", "default_broadcast6", broadcastAlgo);
 }

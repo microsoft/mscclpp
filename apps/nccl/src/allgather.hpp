@@ -236,10 +236,10 @@ cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* 
   return cudaGetLastError();
 }
 
-class AllgatherAlgo6 {
+class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
  public:
   AllgatherAlgo6();
-  void registerAllgatherAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
 
  private:
   bool disableChannelCache_;
@@ -253,9 +253,9 @@ class AllgatherAlgo6 {
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
 };
 
-class AllgatherAlgo8 {
+class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
  public:
-  void registerAllgatherAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
 
  private:
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
@@ -266,7 +266,5 @@ class AllgatherAlgo8 {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
 };
-
-
 
 #endif  // ALLGATHER_HPP_

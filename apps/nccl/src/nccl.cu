@@ -526,90 +526,6 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   return ncclSuccess;
 }
 
-static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, size_t sendcount,
-                                          ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream) {
-  // FallBack for single node
-  if (comm->comm->bootstrap()->getNranks() != comm->comm->bootstrap()->getNranksPerNode()) {
-    WARN("ncclAllGatherFallback is currently unavailable for multi-node");
-    return ncclInvalidUsage;
-  }
-
-  // Checking if the parameters are valids
-  size_t bytes = sendcount * ncclTypeSize(datatype);
-  if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-        "or comm is nullptr.");
-    return ncclInvalidArgument;
-  }
-
-  size_t sendBytes, recvBytes;
-  CUdeviceptr sendBasePtr, recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)recvbuff));
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)sendbuff));
-  size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
-  channelKey recvKey{(void*)recvBasePtr, recvBytes};
-  [[maybe_unused]] channelKey sendKey{(void*)comm->scratchBuff.get(), SCRATCH_SIZE};
-  int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
-  mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = nullptr;
-  std::vector<mscclpp::RegisteredMemory> remoteMemories;
-
-  auto setupOutputChan = [&]() {
-    auto it = comm->channelOutInfos.find(recvKey);
-    if (mscclppDisableChannelCache == true || it == comm->channelOutInfos.end()) {
-      if (mscclppDisableChannelCache == true) {
-        recvBytes = bytes;
-        recvBasePtr = (CUdeviceptr)recvbuff;
-        offsetOut = 0;
-      }
-      mscclpp::RegisteredMemory localMemory =
-          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
-      std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(comm, remoteMemories, localMemory);
-      std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
-      std::transform(channels.begin(), channels.end(), std::back_inserter(memoryChannelDeviceHandles),
-                     [](const mscclpp::MemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
-      ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
-      it = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
-      if (mscclppDisableChannelCache == true) {
-        comm->channelInfos.push_back(channelInfo);
-      }
-    }
-    memoryChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
-                                                        : it->second.memoryChannelDeviceHandles.get();
-  };
-
-  if (bytes <= 32 * (1 << 20)) {
-    setupOutputChan();
-  } else {
-#if defined(__HIP_PLATFORM_AMD__)
-    setupOutputChan();
-#else
-    auto sendIt = comm->channelInInfos.find(sendKey);
-    if (sendIt == comm->channelInInfos.end()) {
-      mscclpp::RegisteredMemory localMemory =
-          comm->comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
-      std::vector<mscclpp::MemoryChannel> channels =
-          setupMemoryChannels(comm, comm->remoteScratchRegMemories, localMemory);
-      ChannelInfo channelInfo{channels, setupMemoryChannelDeviceHandles(channels)};
-      sendIt = comm->channelInInfos.emplace(sendKey, channelInfo).first;
-    }
-    memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
-#endif
-  }
-
-  if ((char*)sendbuff == (char*)recvbuff + rank * sendcount) {
-    CUDACHECK(allgather<false>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                               rank, comm->nRanksPerNode, nRank, bytes / sizeof(int), stream));
-  } else {
-    CUDACHECK(allgather<true>((int*)sendbuff, (int*)comm->scratchBuff.get(), (int*)recvbuff, memoryChannels, offsetOut,
-                              rank, comm->nRanksPerNode, nRank, bytes / sizeof(int), stream));
-  }
-
-  return ncclSuccess;
-}
-
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
   if (mscclpp::isNvlsSupported()) {
@@ -687,13 +603,13 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
-  BroadcastAlgo6 broadcastAlgo6;
-  broadcastAlgo6.registerBroadcastAlgorithm(comm);
+  std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
+  broadcastAlgo6->registerAlgorithm(comm);
 
-  AllgatherAlgo6 allgatherAlgo6;
-  // AllgatherAlgo8 allgatherAlgo8;
-  allgatherAlgo6.registerAllgatherAlgorithm(comm);
-  // allgatherAlgo8.registerAllgatherAlgorithm(comm);
+  std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
+  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
+  allgatherAlgo6->registerAlgorithm(comm);
+  allgatherAlgo8->registerAlgorithm(comm);
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -977,10 +893,11 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
-  //   return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
-  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  // }
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
+    return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
   int rank = comm->comm->bootstrap()->getRank();
 
@@ -1083,7 +1000,8 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
     return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
                                         *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -1127,10 +1045,11 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  // if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
-  //   return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
-  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  // }
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
+    return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
@@ -1157,10 +1076,10 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return algo.launch(sendbuff, recvbuff, sendcount, datatype, stream, extras);
   }
 
-  // if (mscclppNcclDlopenSharedLib == true) {
-  //   return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
-  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  // }
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
   return ncclInvalidUsage;
 }
