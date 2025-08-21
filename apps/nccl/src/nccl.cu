@@ -594,6 +594,9 @@ static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) 
   std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
   allgatherAlgo6->registerAlgorithm(comm);
   allgatherAlgo8->registerAlgorithm(comm);
+
+  std::shared_ptr<AllreduceAllpair> allreduceAllpairAlgo = std::make_shared<AllreduceAllpair>();
+  allreduceAllpairAlgo->registerAlgorithm(comm);
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -611,6 +614,11 @@ static mscclpp::Algorithm algoSelector(
 #else
       return algoMapByCollective.at(collective).at("default_allgather8");
 #endif
+    }
+  }
+  if (collective == "allreduce") {
+    if (messageSizes <= (1 << 14)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allpair");
     }
   }
   WARN("Failed to get algo from customized kernel, fallback to nccl");
@@ -641,10 +649,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   if (!commPtr->algorithmFactory->hasAlgorithmSelector()) {
     commPtr->algorithmFactory->setAlgorithmSelector(algoSelector);
   }
-
-  // FallBack for single node
-  // if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
-  //   ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
@@ -925,7 +929,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allreduce", fallbackList)) {
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback && mscclppNcclInFallbackList("allreduce", fallbackList)) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -944,33 +949,22 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr)
-    return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
-
-  switch (datatype) {
-    case ncclFloat16:
-      comm->executor->execute(rank, (half*)sendbuff, (half*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT16, *plan,
-                              stream, mscclpp::PacketType::LL8);
-      break;
-    case ncclFloat32:
-      comm->executor->execute(rank, (float*)sendbuff, (float*)recvbuff, bytes, bytes, mscclpp::DataType::FLOAT32, *plan,
-                              stream, mscclpp::PacketType::LL8);
-      break;
-    case ncclBfloat16:
-      comm->executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, bytes, bytes,
-                              mscclpp::DataType::BFLOAT16, *plan, stream, mscclpp::PacketType::LL8);
-      break;
-    case ncclInt32:
-    case ncclUint32:
-      comm->executor->execute(rank, (int*)sendbuff, (int*)recvbuff, bytes, bytes, mscclpp::DataType::UINT32, *plan,
-                              stream, mscclpp::PacketType::LL8);
-      break;
-    default:
-      WARN("datatype is invalid");
-      return ncclInvalidArgument;
+  if (plan != nullptr) {
+    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
 
-  return ncclSuccess;
+  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype), sendbuff, recvbuff);
+  if (!algo.isEmpty()) {
+    std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
+    return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
+  }
+
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
+
+  return ncclInvalidUsage;
 }
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,

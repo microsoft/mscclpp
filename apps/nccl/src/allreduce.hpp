@@ -168,7 +168,7 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 template <Op OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
                                   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                                  size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode,
+                                  size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
                                   int worldSize, size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
@@ -177,8 +177,8 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
 
   uint32_t flag = deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
-  channelScratchOffset = scratchBaseOffset;
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
+  size_t channelScratchOffset = scratchBaseOffset;
 
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -790,14 +790,14 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
     int nBlocks = nPeers;
     int nThreadsPerBlock = 32;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag7, numScratchBuff);
+        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, SCRATCH_SIZE, rank, nRanksPerNode,
+        worldSize, nelems, deviceFlag7, numScratchBuff);
   } else if (sizeof(T) * nelems <= (1 << 14)) {
     int nBlocks = nPeers * 4;
     int nThreadsPerBlock = 512;
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
+        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, SCRATCH_SIZE, rank, nRanksPerNode,
+        worldSize, nelems, deviceFlag28, numScratchBuff);
   } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
     int nBlocks = (nRanksPerNode - 1) * 4;
     int nThreadsPerBlock = 1024;
@@ -863,11 +863,14 @@ class AllreduceAllpair : public std::enable_shared_from_this<AllreduceAllpair> {
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
-  template <Op OpType, typename T>
-  cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
-                        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelInOffset,
-                        size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
-                        cudaStream_t stream, uint32_t* deviceFlag7, uint32_t numScratchBuff);
+
+  uint32_t flag_;
+  mscclpp::GpuBuffer<char> scratchBuffer_;
+  const int nSegmentsForScratchBuffer_ = 2;
+
+  std::shared_ptr<uint32_t> deviceFlag7_;
+  std::shared_ptr<uint32_t> deviceFlag28_;
+  std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
 };
 
 #endif  // ALLREDUCE_KERNEL_H

@@ -26,20 +26,20 @@ struct AllpairAdapter {
                           mscclpp::DeviceHandle<mscclpp::MemoryChannel>*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t channelInOffset, size_t,
-                          size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
+                          size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t nelems,
                           cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28, uint32_t*,
                           uint32_t numScratchBuff) {
     if (sizeof(T) * nelems < worldSize * sizeof(int)) {
       int nBlocks = worldSize - 1;
       int nThreadsPerBlock = 32;
       allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
+          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, scratchBufferSize, rank,
           nRanksPerNode, worldSize, nelems, deviceFlag7, numScratchBuff);
     } else if (sizeof(T) * nelems <= (1 << 14)) {
       int nBlocks = (worldSize - 1) * 4;
       int nThreadsPerBlock = 512;
       allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
+          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, scratchBufferSize, rank,
           nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
     }
     return cudaGetLastError();
@@ -49,32 +49,31 @@ struct AllpairAdapter {
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
   Op reduceOp = getReduceOp(op);
-  AllreduceFunc allreduceFunc;
   if (reduceOp == SUM) {
     if (dtype == ncclFloat16) {
-      allreduceFunc = Adapter<SUM, half>::call;
+      return Adapter<SUM, half>::call;
     } else if (dtype == ncclFloat32) {
-      allreduceFunc = Adapter<SUM, float>::call;
+      return Adapter<SUM, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == ncclBfloat16) {
-      allreduceFunc = Adapter<SUM, __bfloat16>::call;
+      return Adapter<SUM, __bfloat16>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
-      allreduceFunc = Adapter<SUM, int>::call;
+      return Adapter<SUM, int>::call;
     } else {
       return nullptr;
     }
   } else if (reduceOp == MIN) {
     if (dtype == ncclFloat16) {
-      allreduceFunc = Adapter<MIN, half>::call;
+      return Adapter<MIN, half>::call;
     } else if (dtype == ncclFloat32) {
-      allreduceFunc = Adapter<MIN, float>::call;
+      return Adapter<MIN, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == ncclBfloat16) {
-      allreduceFunc = Adapter<MIN, __bfloat16>::call;
+      return Adapter<MIN, __bfloat16>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
-      allreduceFunc = Adapter<MIN, int>::call;
+      return Adapter<MIN, int>::call;
     } else {
       return nullptr;
     }
@@ -95,6 +94,20 @@ enum Op getReduceOp(ncclRedOp_t op) {
   }
 }
 
+AllreduceAllpair::AllreduceAllpair()
+    : flag_(0),
+      scratchBuffer_(mscclpp::GpuBuffer<char>(1 << 20)),
+      deviceFlag7_(mscclpp::detail::gpuCallocShared<uint32_t>(7)),
+      deviceFlag28_(mscclpp::detail::gpuCallocShared<uint32_t>(28)),
+      ctx_(nullptr) {
+  std::vector<uint32_t> initFlag(56);
+  for (int i = 0; i < 56; ++i) {
+    initFlag[i] = 1;
+  }
+  mscclpp::gpuMemcpy<uint32_t>(deviceFlag7_.get(), initFlag.data(), 7, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(deviceFlag28_.get(), initFlag.data(), 28, cudaMemcpyHostToDevice);
+}
+
 ncclResult_t AllreduceAllpair::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                    void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,
                                                    cudaStream_t stream,
@@ -102,14 +115,21 @@ ncclResult_t AllreduceAllpair::allreduceKernelFunc(const std::shared_ptr<mscclpp
   const size_t bytes = count * ncclTypeSize(dtype);
   const int worldSize = ctx->workSize;
   ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op").get());
+
+  size_t sendBytes;
+  CUdeviceptr sendBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
+  size_t channelInOffset = (char*)input - (char*)sendBasePtr;
+
   AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, dtype);
     return ncclInvalidArgument;
   }
-  cudaError_t error = allreduce(input, ctx->scratchBuffer.get(), output, ctx->memoryChannelDeviceHandles.get(), nullptr,
-                                nullptr, nullptr, 0, 0, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, count, stream,
-                                nullptr, nullptr, nullptr, 0U);
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_.data(), output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr,
+                nullptr, channelInOffset, 0, this->scratchBuffer_.bytes(), ctx->rank, ctx->nRanksPerNode, ctx->workSize,
+                count, stream, deviceFlag7_.get(), deviceFlag28_.get(), nullptr, this->nSegmentsForScratchBuffer_);
   if (error != cudaSuccess) {
     WARN("AllreduceAllpair failed with error: %s", cudaGetErrorString(error));
     return ncclUnhandledCudaError;
@@ -118,11 +138,53 @@ ncclResult_t AllreduceAllpair::allreduceKernelFunc(const std::shared_ptr<mscclpp
 }
 
 std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceAllpair::initAllreduceContext(
-    std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output, size_t, ncclDataType_t) {
-      return nullptr;
-    }
-mscclpp::AlgorithmCtxKey AllreduceAllpair::generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t) {
-  return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
+    std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t, ncclDataType_t) {
+  auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+  const int nChannelsPerConnection = 28;
+  ctx->rank = comm->bootstrap()->getRank();
+  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  if (this->ctx_ == nullptr) {
+    // setup connections
+    ctx->connections = std::move(setupConnections(comm));
+    // setup semaphores
+    ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, ctx->connections, nChannelsPerConnection));
+    // setup registered memories
+    mscclpp::RegisteredMemory scratchMemory =
+        comm->registerMemory(this->scratchBuffer_.data(), this->scratchBuffer_.bytes(), mscclpp::Transport::CudaIpc);
+    std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, scratchMemory);
+    ctx->registeredMemories = std::move(remoteMemories);
+    ctx->registeredMemories.push_back(scratchMemory);
+  } else {
+    ctx->connections = ctx_->connections;
+    ctx->memorySemaphores = ctx_->memorySemaphores;
+    ctx->registeredMemories = ctx_->registeredMemories;
+    ctx->registeredMemories.pop_back(); // remove the local memory from previous context
+  }
+
+  size_t sendBytes;
+  CUdeviceptr sendBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
+  mscclpp::RegisteredMemory localMemory =
+      comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
+
+  // setup channels
+  ctx->memoryChannels = std::move(setupMemoryChannels(ctx->connections, ctx->memorySemaphores, ctx->registeredMemories,
+                                                      localMemory, nChannelsPerConnection));
+  ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
+  ctx->registeredMemories.emplace_back(localMemory);
+
+  this->ctx_ = ctx;
+
+  return ctx;
+}
+
+mscclpp::AlgorithmCtxKey AllreduceAllpair::generateAllreduceContextKey(const void* input, void*, size_t,
+                                                                       ncclDataType_t) {
+  size_t sendBytes;
+  CUdeviceptr sendBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
+  return mscclpp::AlgorithmCtxKey{(void*)sendBasePtr, nullptr, sendBytes, 0, 0};
 }
 
 void AllreduceAllpair::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
