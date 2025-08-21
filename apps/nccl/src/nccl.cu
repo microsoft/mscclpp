@@ -254,25 +254,9 @@ size_t ncclTypeSize(ncclDataType_t type) {
 }
 
 static mscclpp::Transport getTransport(int, int) {
-  // if (rank / nRanksPerNode == peerRank / nRanksPerNode) {
-  //   return mscclpp::Transport::CudaIpc;
-  // } else {
-  //   return IBs[rank % nRanksPerNode];
-  // }
   return mscclpp::Transport::CudaIpc;
 }
 
-static Op getReduceOp(ncclRedOp_t op) {
-  switch (op) {
-    case ncclSum:
-      return SUM;
-    case ncclMin:
-      return MIN;
-    default:
-      WARN("op is invalid, op: %d", op);
-      throw mscclpp::Error("Invalid operation", mscclpp::ErrorCode::InternalError);
-  }
-}
 
 static std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
     ncclComm_t comm, const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
@@ -659,8 +643,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 
   // FallBack for single node
-  if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
-    ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
+  // if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
+  //   ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {

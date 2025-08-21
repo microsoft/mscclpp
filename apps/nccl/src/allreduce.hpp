@@ -847,4 +847,27 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
   return cudaGetLastError();
 }
 
+
+enum Op getReduceOp(ncclRedOp_t op);
+
+class AllreduceAllpair : public std::enable_shared_from_this<AllreduceAllpair> {
+ public:
+  AllreduceAllpair();
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+  template <Op OpType, typename T>
+  cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
+                        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelInOffset,
+                        size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems,
+                        cudaStream_t stream, uint32_t* deviceFlag7, uint32_t numScratchBuff);
+};
+
 #endif  // ALLREDUCE_KERNEL_H

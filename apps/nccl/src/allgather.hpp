@@ -206,36 +206,6 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <bool IsOutOfPlace, typename T>
-cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, int rank,
-                      int nRanksPerNode, [[maybe_unused]] int worldSize, size_t nelems, cudaStream_t stream) {
-  int nBlocks = 28;
-  if (nelems * sizeof(T) <= 32 * (1 << 20)) {
-    if (nelems <= 4096) {
-      nBlocks = 7;
-    } else if (nelems <= 32768) {
-      nBlocks = 14;
-    } else if (nelems >= 2097152) {
-      nBlocks = 35;
-    }
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-  } else {
-#if defined(__HIP_PLATFORM_AMD__)
-    nBlocks = 35;
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-#else
-    nBlocks = 56;
-    allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
-                                                           memoryChannels, rank, nRanksPerNode, worldSize,
-                                                           nelems * sizeof(T) / sizeof(int));
-#endif
-  }
-  return cudaGetLastError();
-}
-
 class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
  public:
   AllgatherAlgo6();

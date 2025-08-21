@@ -6,6 +6,7 @@
 #define NCCL_H_
 
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 
 #ifdef __cplusplus
 extern "C" {
