@@ -90,6 +90,8 @@ void mscclppDebugInit() {
         mask = MSCCLPP_CALL;
       } else if (strcasecmp(subsys, "MSCCLPP_EXECUTOR") == 0) {
         mask = MSCCLPP_EXECUTOR;
+      } else if (strcasecmp(subsys, "MSCCLPP_NCCL") == 0) {
+        mask = MSCCLPP_NCCL;
       } else if (strcasecmp(subsys, "ALL") == 0) {
         mask = MSCCLPP_ALL;
       }

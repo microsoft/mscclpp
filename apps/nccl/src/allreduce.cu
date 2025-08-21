@@ -27,7 +27,7 @@ struct AllpairAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t channelInOffset, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t nelems,
-                          cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28, uint32_t*,
+                          cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28, uint32_t* deviceFlag56,
                           uint32_t numScratchBuff) {
     if (sizeof(T) * nelems < worldSize * sizeof(int)) {
       int nBlocks = worldSize - 1;
@@ -41,6 +41,26 @@ struct AllpairAdapter {
       allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
           (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, scratchBufferSize, rank,
           nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
+    } else if (sizeof(T) * nelems <= (1 << 20)) {
+      int nBlocks = (nRanksPerNode - 1) * 4;
+      int nThreadsPerBlock = 1024;
+      uint32_t* deviceFlag = deviceFlag28;
+      if (nelems >= 8192) {
+        nBlocks = (worldSize - 1) * 8;
+        nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
+        deviceFlag = deviceFlag56;
+      }
+#if defined(ENABLE_NPKIT)
+      size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
+      allreduce7<OpType><<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
+          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, scratchBufferSize, rank,
+          nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
+          NpKit::GetCpuTimestamp());
+#else
+      allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+          (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, scratchBufferSize, rank,
+          nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
+#endif
     }
     return cudaGetLastError();
   }
@@ -95,10 +115,10 @@ enum Op getReduceOp(ncclRedOp_t op) {
 }
 
 AllreduceAllpair::AllreduceAllpair()
-    : flag_(0),
-      scratchBuffer_(mscclpp::GpuBuffer<char>(1 << 20)),
+    : scratchBuffer_(mscclpp::GpuBuffer<char>(1 << 25)),
       deviceFlag7_(mscclpp::detail::gpuCallocShared<uint32_t>(7)),
       deviceFlag28_(mscclpp::detail::gpuCallocShared<uint32_t>(28)),
+      deviceFlag56_(mscclpp::detail::gpuCallocShared<uint32_t>(56)),
       ctx_(nullptr) {
   std::vector<uint32_t> initFlag(56);
   for (int i = 0; i < 56; ++i) {
@@ -106,6 +126,7 @@ AllreduceAllpair::AllreduceAllpair()
   }
   mscclpp::gpuMemcpy<uint32_t>(deviceFlag7_.get(), initFlag.data(), 7, cudaMemcpyHostToDevice);
   mscclpp::gpuMemcpy<uint32_t>(deviceFlag28_.get(), initFlag.data(), 28, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(deviceFlag56_.get(), initFlag.data(), 56, cudaMemcpyHostToDevice);
 }
 
 ncclResult_t AllreduceAllpair::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
@@ -126,10 +147,10 @@ ncclResult_t AllreduceAllpair::allreduceKernelFunc(const std::shared_ptr<mscclpp
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, dtype);
     return ncclInvalidArgument;
   }
-  cudaError_t error =
-      allreduce(input, this->scratchBuffer_.data(), output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr,
-                nullptr, channelInOffset, 0, this->scratchBuffer_.bytes(), ctx->rank, ctx->nRanksPerNode, ctx->workSize,
-                count, stream, deviceFlag7_.get(), deviceFlag28_.get(), nullptr, this->nSegmentsForScratchBuffer_);
+  cudaError_t error = allreduce(input, this->scratchBuffer_.data(), output, ctx->memoryChannelDeviceHandles.get(),
+                                nullptr, nullptr, nullptr, channelInOffset, 0, this->scratchBuffer_.bytes(), ctx->rank,
+                                ctx->nRanksPerNode, ctx->workSize, count, stream, deviceFlag7_.get(),
+                                deviceFlag28_.get(), deviceFlag56_.get(), this->nSegmentsForScratchBuffer_);
   if (error != cudaSuccess) {
     WARN("AllreduceAllpair failed with error: %s", cudaGetErrorString(error));
     return ncclUnhandledCudaError;
@@ -201,5 +222,5 @@ void AllreduceAllpair::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> 
       [self](const void* input, void* output, size_t count, ncclDataType_t dtype) {
         return self->generateAllreduceContextKey(input, output, count, dtype);
       });
-  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_allpair", allgatherAlgo);
+  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_packet", allgatherAlgo);
 }

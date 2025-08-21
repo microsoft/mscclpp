@@ -214,7 +214,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
 template <Op OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-               size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+               size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize,
                size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff
 #if defined(ENABLE_NPKIT)
                ,
@@ -260,8 +260,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   uint32_t flag = (uint32_t)deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
-  channelScratchOffset = scratchBaseOffset;
+  size_t channelScratchOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
 
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
@@ -810,13 +809,12 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
 #if defined(ENABLE_NPKIT)
     size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
     allreduce7<OpType><<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
-        NpKit::GetCpuTimestamp());
+        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, SCRATCH_SIZE, rank, nRanksPerNode,
+        worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
-    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
+    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels,
+                                                                 channelInOffset, SCRATCH_SIZE, rank, nRanksPerNode,
+                                                                 worldSize, nelems, deviceFlag, numScratchBuff);
 #endif
   } else if (useNvlsWithZeroCopy) {
     int nBlocks = nRanksPerNode;
@@ -864,13 +862,14 @@ class AllreduceAllpair : public std::enable_shared_from_this<AllreduceAllpair> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  uint32_t flag_;
   mscclpp::GpuBuffer<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
 
   std::shared_ptr<uint32_t> deviceFlag7_;
   std::shared_ptr<uint32_t> deviceFlag28_;
+  std::shared_ptr<uint32_t> deviceFlag56_;
   std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
 };
+
 
 #endif  // ALLREDUCE_KERNEL_H

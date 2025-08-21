@@ -25,8 +25,8 @@ class Env {
   /// Env name: `MSCCLPP_DEBUG_SUBSYS`. The debug subsystem, a comma-separated list of subsystems to enable
   /// debug logging for.
   /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
-  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, ALL.
-  /// Unset by default.
+  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, MSCCLPP_NCCL,
+  /// ALL. Unset by default.
   const std::string debugSubsys;
 
   /// Env name: `MSCCLPP_DEBUG_FILE`. A file path to write debug logs to. Unset by default.

@@ -617,11 +617,11 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
-    if (messageSizes <= (1 << 14)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_allpair");
+    if (messageSizes <= (1 << 20)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_packet");
     }
   }
-  WARN("Failed to get algo from customized kernel, fallback to nccl");
+  INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl");
   return mscclpp::Algorithm();
 }
 
