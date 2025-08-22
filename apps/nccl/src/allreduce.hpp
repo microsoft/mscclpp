@@ -480,7 +480,7 @@ __global__ void __launch_bounds__(512, 1)
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <class T>
-MSCCLPP_DEVICE_INLINE constexpr std::size_t nElements() {
+MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
   using U = std::remove_cv_t<std::remove_reference_t<T>>;
   if constexpr (std::is_same_v<U, std::int32_t> || std::is_same_v<U, std::uint32_t>) {
     return 1;
@@ -495,7 +495,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
                                                       int tid, int nThreads) {
   // nvls can only handle 4 bytes alignment
   MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
-  constexpr size_t nElem = nElements<T>();
+  constexpr size_t nElem = calcVectorSize<T>();
   using vectorType = mscclpp::VectorType<T, nElem>;
   const size_t nVec = size / sizeof(vectorType);
   const size_t srcOffset4 = srcOffset / sizeof(vectorType);
