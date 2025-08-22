@@ -520,7 +520,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOut,
                [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
@@ -538,7 +538,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nRanksPerNode - 1) {
     channels[lid] = memoryChans[lid];
@@ -834,9 +834,9 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
   } else if (useNvlsWithZeroCopy) {
     int nBlocks = nRanksPerNode;
     int nThreadsPerBlock = 1024;
-    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(memoryChannels, nvlsChannels, nvlsOutChannels,
-                                                            channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-                                                            nRanksPerNode);
+    // allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(memoryChannels, nvlsChannels, nvlsOutChannels,
+    //                                                         channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
+    //                                                         nRanksPerNode);
   } else if (mscclpp::isNvlsSupported()) {
     if (sizeof(T) * nelems < (1 << 24)) {
       int nBlocks = nRanksPerNode * 4;

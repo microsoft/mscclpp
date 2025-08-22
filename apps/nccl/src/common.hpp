@@ -51,8 +51,8 @@ std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::
 std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
                                                       void* buffer, size_t bufferSize, int nSwitchChannels);
 
-// std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
-//     const std::vector<mscclpp::SwitchChannel>& nvlsChannels);
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
+    const std::vector<mscclpp::SwitchChannel>& nvlsChannels);
 
 std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
     const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,

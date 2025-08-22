@@ -74,13 +74,9 @@ struct NvlsAdapter {
     using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
     int nBlocks = nRanksPerNode;
     int nThreadsPerBlock = 1024;
-    // printf(
-    //     "in call nvlsChannels %p, nvlsOutChannels %p, channelInOffset %ld, channelOutOffset %ld, nelems %ld, rank %d, "
-    //     "nRanksPerNode %d\n",
-    //     nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, nelems, rank, nRanksPerNode);
-    // allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
-    //                                                         channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-    //                                                         nRanksPerNode);
+    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
+                                                            channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
+                                                            nRanksPerNode);
     return cudaGetLastError();
   }
 };
@@ -325,7 +321,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvls::initAllreduceContext(std::
     ctx->switchChannels.insert(ctx->switchChannels.end(), outChannels.begin(), outChannels.end());
   }
 
-  // ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
+  ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
 

@@ -336,18 +336,6 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
   return ncclSuccess;
 }
 
-static std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
-    const std::vector<mscclpp::SwitchChannel>& nvlsChannels) {
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> ptr =
-      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(nvlsChannels.size());
-  std::vector<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> nvlsChannelDeviceHandles;
-  std::transform(nvlsChannels.begin(), nvlsChannels.end(), std::back_inserter(nvlsChannelDeviceHandles),
-                 [](const mscclpp::SwitchChannel& nvlsChannel) { return mscclpp::deviceHandle(nvlsChannel); });
-  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(
-      ptr.get(), nvlsChannelDeviceHandles.data(), nvlsChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
-  return ptr;
-}
-
 static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                           ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   // FallBack for single node
@@ -707,7 +695,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId,
                                 rank);
   }
-  ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   return ncclSuccess;
 }
@@ -960,20 +947,18 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
 
-  return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype), sendbuff, recvbuff);
+  if (!algo.isEmpty()) {
+    std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
+    return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
+  }
 
-  // auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype), sendbuff, recvbuff);
-  // if (!algo.isEmpty()) {
-  //   std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
-  //   return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
-  // }
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
-  // if (mscclppNcclDlopenSharedLib == true) {
-  //   return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
-  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  // }
-
-  // return ncclInvalidUsage;
+  return ncclInvalidUsage;
 }
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
