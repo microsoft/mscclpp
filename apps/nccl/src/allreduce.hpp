@@ -482,8 +482,7 @@ __global__ void __launch_bounds__(512, 1)
 template <class T>
 MSCCLPP_DEVICE_INLINE constexpr std::size_t nElements() {
   using U = std::remove_cv_t<std::remove_reference_t<T>>;
-  if constexpr (std::is_same_v<U, int> || std::is_same_v<U, unsigned int> || std::is_same_v<U, std::int32_t> ||
-                std::is_same_v<U, std::uint32_t>) {
+  if constexpr (std::is_same_v<U, std::int32_t> || std::is_same_v<U, std::uint32_t>) {
     return 1;
   } else {
     static_assert(16 % sizeof(U) == 0, "nElements: 16 bytes must be divisible by sizeof(T).");
@@ -512,7 +511,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
   constexpr size_t nRestElem = 4 / sizeof(T);
   using restVectorType = mscclpp::VectorType<T, nRestElem>;
   const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
-  const size_t endIdx = (dstOffset + size) / sizeof(restVectorType);
+  const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
   for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
     auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((restVectorType*)src + idx);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
