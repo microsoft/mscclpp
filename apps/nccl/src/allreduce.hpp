@@ -479,27 +479,43 @@ __global__ void __launch_bounds__(512, 1)
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <class T>
+MSCCLPP_DEVICE_INLINE constexpr std::size_t nElements() {
+  using U = std::remove_cv_t<std::remove_reference_t<T>>;
+  if constexpr (std::is_same_v<U, int> || std::is_same_v<U, unsigned int> || std::is_same_v<U, std::int32_t> ||
+                std::is_same_v<U, std::uint32_t>) {
+    return 1;
+  } else {
+    static_assert(16 % sizeof(U) == 0, "nElements: 16 bytes must be divisible by sizeof(T).");
+    return 16 / sizeof(U);
+  }
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
                                                       int tid, int nThreads) {
   // nvls can only handle 4 bytes alignment
   MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
-  const size_t n16B = size / sizeof(mscclpp::f16x8);
-  const size_t srcOffset4 = srcOffset / sizeof(mscclpp::f16x8);
-  const size_t dstOffset4 = dstOffset / sizeof(mscclpp::f16x8);
-  mscclpp::f16x8* src4 = (mscclpp::f16x8*)src;
-  mscclpp::f16x8* dst4 = (mscclpp::f16x8*)dst;
-  for (size_t idx = tid; idx < n16B; idx += nThreads) {
+  constexpr size_t nElem = nElements<T>();
+  using vectorType = mscclpp::VectorType<T, nElem>;
+  const size_t nVec = size / sizeof(vectorType);
+  const size_t srcOffset4 = srcOffset / sizeof(vectorType);
+  const size_t dstOffset4 = dstOffset / sizeof(vectorType);
+  vectorType* src4 = (vectorType*)src;
+  vectorType* dst4 = (vectorType*)dst;
+  for (size_t idx = tid; idx < nVec; idx += nThreads) {
     auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(src4 + srcOffset4 + idx);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
   }
   // handle rest of data
-  size_t processed = n16B * sizeof(mscclpp::f16x8);
-  const size_t startIdx = (srcOffset + processed) / sizeof(mscclpp::f16x2);
-  const size_t endIdx = (dstOffset + size) / sizeof(mscclpp::f16x2);
+  size_t processed = nVec * sizeof(vectorType);
+  constexpr size_t nRestElem = 4 / sizeof(T);
+  using restVectorType = mscclpp::VectorType<T, nRestElem>;
+  const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
+  const size_t endIdx = (dstOffset + size) / sizeof(restVectorType);
   for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
-    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((mscclpp::f16x2*)src + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (mscclpp::f16x2*)dst + idx);
+    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((restVectorType*)src + idx);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
   }
 }
 #endif
