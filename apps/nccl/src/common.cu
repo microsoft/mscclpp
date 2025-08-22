@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/nvls.hpp>
 
 #include "common.hpp"
 
@@ -71,6 +72,75 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChanne
       mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
           memoryChannelDeviceHandles.size());
   mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>(
+      ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
+  return ptr;
+}
+
+std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::shared_ptr<mscclpp::Communicator> comm,
+                                                                           size_t size, int numConnections) {
+  // for nvls connection
+  std::vector<std::shared_ptr<mscclpp::NvlsConnection>> nvlsConnections;
+  int nRanks = comm->bootstrap()->getNranks();
+  std::vector<int> ranks;
+  for (int i = 0; i < nRanks; i++) {
+    ranks.push_back(i);
+  }
+  for (int i = 0; i < numConnections; i++) {
+    std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, size);
+    nvlsConnections.push_back(nvlsConnection);
+  }
+  return nvlsConnections;
+}
+
+std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
+                                                      void* buffer, size_t bufferSize, int nSwitchChannels) {
+  std::vector<mscclpp::SwitchChannel> channels;
+
+  for (size_t idx = 0; idx < nSwitchChannels; ++idx) {
+    std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
+    mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
+    channels.push_back(SwitchChannel);
+  }
+  return channels;
+}
+
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
+    const std::vector<mscclpp::SwitchChannel>& nvlsChannels) {
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> ptr =
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(nvlsChannels.size());
+  std::vector<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> nvlsChannelDeviceHandles;
+  std::transform(nvlsChannels.begin(), nvlsChannels.end(), std::back_inserter(nvlsChannelDeviceHandles),
+                 [](const mscclpp::SwitchChannel& nvlsChannel) { return mscclpp::deviceHandle(nvlsChannel); });
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::SwitchChannel>>(
+      ptr.get(), nvlsChannelDeviceHandles.data(), nvlsChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
+  return ptr;
+}
+
+std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
+    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    int nChannelsPerConnection) {
+  std::vector<mscclpp::BaseMemoryChannel> channels;
+  size_t nConnections = connections.size();
+  for (int idx = 0; idx < nChannelsPerConnection; ++idx) {
+    for (size_t cid = 0; cid < nConnections; ++cid) {
+      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+        channels.emplace_back(memorySemaphores[idx * nConnections + cid]);
+      }
+    }
+  }
+  return channels;
+}
+
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
+    const std::vector<mscclpp::BaseMemoryChannel>& baseMemoryChannels) {
+  std::vector<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelDeviceHandles;
+  std::transform(baseMemoryChannels.begin(), baseMemoryChannels.end(), std::back_inserter(memoryChannelDeviceHandles),
+                 [](const mscclpp::BaseMemoryChannel& memoryChannel) { return mscclpp::deviceHandle(memoryChannel); });
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> ptr =
+      mscclpp::detail::gpuCallocShared<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>>(
+          memoryChannelDeviceHandles.size());
+  mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>>(
       ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }

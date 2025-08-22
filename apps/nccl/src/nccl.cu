@@ -595,13 +595,17 @@ static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) 
   allgatherAlgo6->registerAlgorithm(comm);
   allgatherAlgo8->registerAlgorithm(comm);
 
-  std::shared_ptr<AllreduceAllpair> allreduceAllpairAlgo = std::make_shared<AllreduceAllpair>();
+  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>();
+  std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>(comm);
   allreduceAllpairAlgo->registerAlgorithm(comm);
+  allreduceNvlsAlgo->registerAlgorithm(comm);
 }
 
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
     std::string collective, size_t messageSizes, const void* input, void* output) {
+  bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
   if (collective == "broadcast") {
     return algoMapByCollective.at(collective).at("default_broadcast6");
   }
@@ -617,9 +621,11 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
-    if (messageSizes <= (1 << 20)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    }
+    // if (messageSizes <= (1 << 16) || (messageSizes <= (1 << 20) && !useNvlsWithZeroCopy)) {
+    //   return algoMapByCollective.at(collective).at("default_allreduce_packet");
+    // } else if (useNvlsWithZeroCopy) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
+    // }
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl");
   return mscclpp::Algorithm();
@@ -701,6 +707,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId,
                                 rank);
   }
+  ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   return ncclSuccess;
 }
@@ -953,18 +960,20 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype), sendbuff, recvbuff);
-  if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
-    return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
-  }
+  return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
 
-  if (mscclppNcclDlopenSharedLib == true) {
-    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
-                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
-  }
+  // auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype), sendbuff, recvbuff);
+  // if (!algo.isEmpty()) {
+  //   std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
+  //   return algo.launch(sendbuff, recvbuff, count, datatype, stream, extras);
+  // }
 
-  return ncclInvalidUsage;
+  // if (mscclppNcclDlopenSharedLib == true) {
+  //   return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+  //                                   *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  // }
+
+  // return ncclInvalidUsage;
 }
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,

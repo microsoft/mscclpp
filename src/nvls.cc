@@ -211,7 +211,8 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
   detail::setReadWriteMemoryAccess(mcPtr, devBuffSize);
-  INFO(MSCCLPP_COLL, "NVLS connection bound memory at offset %ld, size %ld", offset, devBuffSize);
+  INFO(MSCCLPP_COLL, "NVLS connection bound memory %p to %p at offset %ld, size %ld", devicePtr, mcPtr, offset,
+       devBuffSize);
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
     int deviceId;

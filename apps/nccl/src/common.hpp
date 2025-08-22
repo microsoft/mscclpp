@@ -45,4 +45,21 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<mscclpp::MemoryChannel>& memoryChannels);
 
+std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::shared_ptr<mscclpp::Communicator> comm,
+                                                                           size_t size, int numConnections);
+
+std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
+                                                      void* buffer, size_t bufferSize, int nSwitchChannels);
+
+// std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
+//     const std::vector<mscclpp::SwitchChannel>& nvlsChannels);
+
+std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
+    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    int nChannelsPerConnection);
+
+std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
+    const std::vector<mscclpp::BaseMemoryChannel>& baseMemoryChannels);
+
 #endif  // NCCL_COMMON_HPP_

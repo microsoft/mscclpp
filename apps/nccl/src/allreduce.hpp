@@ -848,14 +848,14 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
 
 enum Op getReduceOp(ncclRedOp_t op);
 
-class AllreduceAllpair : public std::enable_shared_from_this<AllreduceAllpair> {
+class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
  public:
-  AllreduceAllpair();
+  AllreducePacket();
   void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
 
  private:
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
@@ -871,5 +871,25 @@ class AllreduceAllpair : public std::enable_shared_from_this<AllreduceAllpair> {
   std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
 };
 
+class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
+ public:
+  AllreduceNvls(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  const size_t nvlsBufferSize_ = (1 << 30);
+  uint32_t nSwitchChannel_;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+};
 
 #endif  // ALLREDUCE_KERNEL_H
