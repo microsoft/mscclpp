@@ -621,11 +621,11 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
-    // if (messageSizes <= (1 << 16) || (messageSizes <= (1 << 20) && !useNvlsWithZeroCopy)) {
-    //   return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    // } else if (useNvlsWithZeroCopy) {
+    if (messageSizes <= (1 << 16) || (messageSizes <= (1 << 20) && !useNvlsWithZeroCopy)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_packet");
+    } else if (useNvlsWithZeroCopy) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls");
-    // }
+    }
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl");
   return mscclpp::Algorithm();
