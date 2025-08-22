@@ -564,9 +564,9 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
-                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast, [[maybe_unused]] size_t size,
-                [[maybe_unused]] int rank, int nRanksPerNode) {
+                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank, int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
@@ -574,7 +574,7 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
-  size_t scratchSizePerRank = SCRATCH_SIZE / nRanksPerNode;
+  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
   const size_t maxSizePerBlock = ((sizePerRank + nBlocks - 1) / nBlocks + alignment - 1) / alignment * alignment;
   size_t start = bid * maxSizePerBlock;
   size_t end = min(start + maxSizePerBlock, sizePerRank);
@@ -603,7 +603,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x * 2;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
+  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nPeers * 2) {
     channels[lid] = memoryChans[lid];
@@ -660,16 +660,17 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce11([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
-                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* switchChannels,
-                [[maybe_unused]] size_t size, [[maybe_unused]] int rank, int nRanksPerNode) {
+                [[maybe_unused]] size_t size, [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
+                int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
   int nBlocksForCopy = nRanksPerNode * 2;
   int nBlocksForReduce = nRanksPerNode;
   int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
-  size_t scratchSizePerRank = SCRATCH_SIZE / nRanksPerNode;
+  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
   size_t sizePerRank = size / nRanksPerNode;
   assert(sizePerRank % alignment == 0);
   uint32_t sizePerBlock =
@@ -720,7 +721,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       if (tid < nPeers) {
         int chanId = bid * nPeers + tid;
-        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
+        mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
       }
@@ -762,7 +763,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       if (tid < nPeers) {
         int chanId = (bid - nBlocksForReduce) * nPeers + tid;
-        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
+        mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
       }
@@ -841,13 +842,13 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
     if (sizeof(T) * nelems < (1 << 24)) {
       int nBlocks = nRanksPerNode * 4;
       int nThreadsPerBlock = 1024;
-      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
-                                                               nelems * sizeof(T), rank, nRanksPerNode);
+      // allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+      //                                                          nelems * sizeof(T), rank, nRanksPerNode);
     } else {
       int nBlocks = nRanksPerNode * 5;
       int nThreadsPerBlock = 1024;
-      allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
-                                                               nelems * sizeof(T), rank, nRanksPerNode);
+      // allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
+      //                                                          nelems * sizeof(T), rank, nRanksPerNode);
     }
   } else {
     int nBlocks = nPeers * 5;
@@ -901,7 +902,29 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
   const size_t nvlsBufferSize_ = (1 << 30);
-  uint32_t nSwitchChannel_;
+  uint32_t nSwitchChannels_;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+};
+
+class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsWithCopy> {
+ public:
+  AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  const size_t nvlsBufferSize_ = (1 << 30);
+  const size_t scratchBufferSize_ = (1 << 26);
+  uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
