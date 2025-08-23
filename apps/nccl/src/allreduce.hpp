@@ -796,7 +796,7 @@ enum Op getReduceOp(ncclRedOp_t op);
 
 class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
  public:
-  AllreducePacket();
+  AllreducePacket(std::shared_ptr<mscclpp::Communicator> comm);
   void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
 
  private:
@@ -810,6 +810,7 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
 
   mscclpp::GpuBuffer<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
   std::shared_ptr<uint32_t> deviceFlag7_;
   std::shared_ptr<uint32_t> deviceFlag28_;

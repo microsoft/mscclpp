@@ -146,13 +146,6 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
-  // if (nelems <= 4096) {
-  //   nBlocks = 7;
-  // } else if (nelems <= 32768) {
-  //   nBlocks = 14;
-  // } else if (nelems >= 2097152) {
-  //   nBlocks = 35;
-  // }
   broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, memoryChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
@@ -161,6 +154,7 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 
 class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
  public:
+  BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
   void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
 
  private:
@@ -171,6 +165,8 @@ class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
   std::shared_ptr<mscclpp::AlgorithmCtx> initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 };
 
 #endif  // BROADCAST_HPP_

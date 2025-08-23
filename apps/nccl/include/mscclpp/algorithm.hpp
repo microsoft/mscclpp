@@ -24,7 +24,6 @@ class AlgorithmCtx {
   std::vector<mscclpp::MemoryChannel> memoryChannels;
   std::vector<mscclpp::SwitchChannel> switchChannels;
   std::vector<mscclpp::PortChannel> portChannels;
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
   std::vector<std::shared_ptr<mscclpp::NvlsConnection>> nvlsConnections;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> switchChannelDeviceHandles;

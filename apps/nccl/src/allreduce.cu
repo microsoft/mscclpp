@@ -171,7 +171,7 @@ enum Op getReduceOp(ncclRedOp_t op) {
   }
 }
 
-AllreducePacket::AllreducePacket()
+AllreducePacket::AllreducePacket(std::shared_ptr<mscclpp::Communicator> comm)
     : scratchBuffer_(mscclpp::GpuBuffer<char>(1 << 25)),
       deviceFlag7_(mscclpp::detail::gpuCallocShared<uint32_t>(7)),
       deviceFlag28_(mscclpp::detail::gpuCallocShared<uint32_t>(28)),
@@ -184,6 +184,7 @@ AllreducePacket::AllreducePacket()
   mscclpp::gpuMemcpy<uint32_t>(deviceFlag7_.get(), initFlag.data(), 7, cudaMemcpyHostToDevice);
   mscclpp::gpuMemcpy<uint32_t>(deviceFlag28_.get(), initFlag.data(), 28, cudaMemcpyHostToDevice);
   mscclpp::gpuMemcpy<uint32_t>(deviceFlag56_.get(), initFlag.data(), 56, cudaMemcpyHostToDevice);
+  conns_ = setupConnections(comm);
 }
 
 ncclResult_t AllreducePacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
@@ -223,10 +224,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreducePacket::initAllreduceContext(
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
   if (this->ctx_ == nullptr) {
-    // setup connections
-    ctx->connections = std::move(setupConnections(comm));
     // setup semaphores
-    ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, ctx->connections, nChannelsPerConnection));
+    ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
     // setup registered memories
     mscclpp::RegisteredMemory scratchMemory =
         comm->registerMemory(this->scratchBuffer_.data(), this->scratchBuffer_.bytes(), mscclpp::Transport::CudaIpc);
@@ -234,7 +233,6 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreducePacket::initAllreduceContext(
     ctx->registeredMemories = std::move(remoteMemories);
     ctx->registeredMemories.push_back(scratchMemory);
   } else {
-    ctx->connections = ctx_->connections;
     ctx->memorySemaphores = ctx_->memorySemaphores;
     ctx->registeredMemories = ctx_->registeredMemories;
     ctx->registeredMemories.pop_back();  // remove the local memory from previous context
@@ -247,7 +245,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreducePacket::initAllreduceContext(
       comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
 
   // setup channels
-  ctx->memoryChannels = std::move(setupMemoryChannels(ctx->connections, ctx->memorySemaphores, ctx->registeredMemories,
+  ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories,
                                                       localMemory, nChannelsPerConnection));
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
   ctx->registeredMemories.emplace_back(localMemory);

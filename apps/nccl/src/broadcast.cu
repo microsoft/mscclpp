@@ -8,6 +8,10 @@
 
 #include "broadcast.hpp"
 
+BroadcastAlgo6::BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm) {
+  this->conns_ = setupConnections(comm);
+}
+
 ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,
                                                  cudaStream_t stream,
@@ -39,10 +43,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
-  // setup connections
-  ctx->connections = std::move(setupConnections(comm));
   // setup semaphores
-  ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, ctx->connections, nChannelsPerConnection));
+  ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
 
   // setup registered memories
   constexpr size_t scratchMemSize = 1 << 26;  // 64MB
@@ -58,7 +60,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   mscclpp::RegisteredMemory localScratchMemory =
       comm->registerMemory(ctx->scratchBuffer.get(), scratchMemSize, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, localScratchMemory);
-  ctx->memoryChannels = std::move(setupMemoryChannels(ctx->connections, ctx->memorySemaphores, remoteMemories,
+  ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories,
                                                       localMemory, nChannelsPerConnection));
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
