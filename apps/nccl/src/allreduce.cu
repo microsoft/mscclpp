@@ -112,7 +112,7 @@ struct Allreduce8Adapter {
                           void* memoryOutChannels, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t channelOutOffset, size_t,
                           int rank, int nRanksPerNode, int worldSize, size_t nelems, cudaStream_t stream, uint32_t*,
-                          uint32_t*, uint32_t*, uint32_t numScratchBuff) {
+                          uint32_t*, uint32_t*, uint32_t) {
     using ChannelType = mscclpp::DeviceHandle<mscclpp::MemoryChannel>;
     int nBlocks = (nRanksPerNode - 1) * 5;
     int nThreadsPerBlock = 512;
@@ -415,7 +415,7 @@ mscclpp::AlgorithmCtxKey AllreduceNvlsWithCopy::generateAllreduceContextKey(cons
 }
 
 std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsWithCopy::initAllreduceContext(
-    std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t, ncclDataType_t) {
+    std::shared_ptr<mscclpp::Communicator> comm, const void*, void*, size_t, ncclDataType_t) {
   auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();

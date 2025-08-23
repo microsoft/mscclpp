@@ -285,7 +285,7 @@ static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) 
 
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, size_t messageSizes, const void* input, void* output) {
+    std::string collective, size_t messageSizes, [[maybe_unused]] const void* input, [[maybe_unused]] void* output) {
   bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
   if (collective == "broadcast") {
