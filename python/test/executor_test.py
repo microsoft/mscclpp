@@ -75,8 +75,10 @@ def bench_correctness(
         coll = "all_gather"
     elif "reducescatter" in collective:
         coll = "reduce_scatter"
-    else:
+    elif "allreduce" in collective:
         coll = "all_reduce"
+    else:
+        coll = "all_to_all"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
