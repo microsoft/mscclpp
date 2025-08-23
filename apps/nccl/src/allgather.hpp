@@ -239,6 +239,9 @@ class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  const size_t scratchBufferSize_ = 1 << 24;  // 16 MB scratch buffer
+  mscclpp::GpuBuffer<char> scratchBuffer_{scratchBufferSize_};
 };
 
 #endif  // ALLGATHER_HPP_

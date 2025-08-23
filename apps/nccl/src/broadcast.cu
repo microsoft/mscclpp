@@ -19,11 +19,11 @@ ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::
   int root = *(int*)extras.at("root").get();
   cudaError_t err;
   if (input == output) {
-    err = broadcast<false>((int*)input, (int*)ctx->scratchBuffer.get(), (int*)output,
+    err = broadcast<false>((int*)input, (int*)this->scratchBuffer_.data(), (int*)output,
                            ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
                            count * ncclTypeSize(dtype) / sizeof(int), stream);
   } else {
-    err = broadcast<true>((int*)input, (int*)ctx->scratchBuffer.get(), (int*)output,
+    err = broadcast<true>((int*)input, (int*)this->scratchBuffer_.data(), (int*)output,
                           ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
                           count * ncclTypeSize(dtype) / sizeof(int), stream);
   }
@@ -45,11 +45,6 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
 
   // setup semaphores
   ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
-
-  // setup registered memories
-  constexpr size_t scratchMemSize = 1 << 26;  // 64MB
-  ctx->scratchBuffer = mscclpp::GpuBuffer(scratchMemSize).memory();
-
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
@@ -58,7 +53,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   mscclpp::RegisteredMemory localMemory =
       comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
   mscclpp::RegisteredMemory localScratchMemory =
-      comm->registerMemory(ctx->scratchBuffer.get(), scratchMemSize, mscclpp::Transport::CudaIpc);
+      comm->registerMemory(this->scratchBuffer_.data(), scratchMemSize_, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, localScratchMemory);
   ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories,
                                                       localMemory, nChannelsPerConnection));

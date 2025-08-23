@@ -855,6 +855,7 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
 
   const size_t nvlsBufferSize_ = (1 << 30);
   const size_t scratchBufferSize_ = (1 << 26);
+  mscclpp::GpuBuffer<char> scratchBuffer_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;

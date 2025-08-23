@@ -167,6 +167,8 @@ class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
   mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t);
 
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  const size_t scratchMemSize_ = 1 << 26;  // 64MB
+  mscclpp::GpuBuffer<char> scratchBuffer_{scratchMemSize_};
 };
 
 #endif  // BROADCAST_HPP_

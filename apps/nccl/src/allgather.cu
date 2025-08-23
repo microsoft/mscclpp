@@ -133,11 +133,11 @@ ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::
   const size_t bytes = count * ncclTypeSize(dtype);
   const size_t nElem = bytes / sizeof(int);
   if ((char*)input == (char*)output + rank * bytes) {
-    allgather8<false><<<56, 1024, 0, stream>>>((void*)input, (void*)ctx->scratchBuffer.get(), (void*)output,
+    allgather8<false><<<56, 1024, 0, stream>>>((void*)input, this->scratchBuffer_.data(), (void*)output,
                                                ctx->memoryChannelDeviceHandles.get(), rank, ctx->nRanksPerNode,
                                                ctx->workSize, nElem);
   } else {
-    allgather8<true><<<56, 1024, 0, stream>>>((void*)input, (void*)ctx->scratchBuffer.get(), (void*)output,
+    allgather8<true><<<56, 1024, 0, stream>>>((void*)input, this->scratchBuffer_.data(), (void*)output,
                                               ctx->memoryChannelDeviceHandles.get(), rank, ctx->nRanksPerNode,
                                               ctx->workSize, nElem);
   }
@@ -150,8 +150,8 @@ ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::
 }
 
 std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo8::initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
-                                                                            const void* input, void* output,
-                                                                            size_t count, ncclDataType_t dtype) {
+                                                                            const void* input, void*, size_t count,
+                                                                            ncclDataType_t dtype) {
   constexpr int nChannelsPerConnection = 56;
   constexpr int scratchBufferSize = 1 << 24;  // 16 MB scratch buffer
 
@@ -166,9 +166,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo8::initAllgatherContext(std:
   size_t bytes = count * ncclTypeSize(dtype);
   // register the memory for the broadcast operation
   mscclpp::RegisteredMemory localMemory = comm->registerMemory((void*)input, bytes, mscclpp::Transport::CudaIpc);
-  ctx->scratchBuffer = mscclpp::GpuBuffer(scratchBufferSize).memory();
   mscclpp::RegisteredMemory scratchMemory =
-      comm->registerMemory((void*)ctx->scratchBuffer.get(), scratchBufferSize, mscclpp::Transport::CudaIpc);
+      comm->registerMemory(this->scratchBuffer_.data(), scratchBufferSize, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, scratchMemory);
 
   // setup channels

@@ -30,7 +30,6 @@ class AlgorithmCtx {
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> hostSemaphores;
-  std::shared_ptr<char> scratchBuffer;
 
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };

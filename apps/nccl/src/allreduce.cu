@@ -375,8 +375,8 @@ void AllreduceNvls::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> com
   mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_nvls", allgatherAlgo);
 }
 
-
-AllreduceNvlsWithCopy::AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicator> comm) {
+AllreduceNvlsWithCopy::AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicator> comm)
+    : scratchBuffer_(scratchBufferSize_) {
   nSwitchChannels_ = 8;
   int nBaseChannels = 64;
   this->conns_ = std::move(setupConnections(comm));
@@ -397,7 +397,7 @@ ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<ms
     return ncclInvalidArgument;
   }
   cudaError_t error =
-      allreduce(input, ctx->scratchBuffer.get(), output, this->memoryChannelsDeviceHandle_.get(), nullptr,
+      allreduce(input, this->scratchBuffer_.data(), output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_, ctx->rank,
                 ctx->nRanksPerNode, ctx->workSize, count, stream, nullptr, nullptr, nullptr, 0);
   if (error != cudaSuccess) {
@@ -418,12 +418,11 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsWithCopy::initAllreduceConte
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
-  ctx->scratchBuffer = mscclpp::GpuBuffer<char>(scratchBufferSize_).memory();
 
   // setup channels
   ctx->nvlsConnections = std::move(setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_));
   ctx->switchChannels = std::move(
-      setupNvlsChannels(ctx->nvlsConnections, (void*)ctx->scratchBuffer.get(), scratchBufferSize_, nSwitchChannels_));
+      setupNvlsChannels(ctx->nvlsConnections, this->scratchBuffer_.data(), scratchBufferSize_, nSwitchChannels_));
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
