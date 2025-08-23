@@ -460,6 +460,9 @@ __global__ void __launch_bounds__(512, 1)
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = cal_vectors<T, OpType>(val, data);
       }
+      // if (threadIdx.x == 0 && blockIdx.x == 0) {
+      //   printf("offset is %ld\n", nInt4PerRank * rank + idx + offsetOfThisBlock);
+      // }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -928,6 +931,33 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+};
+
+class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
+ public:
+  Allreduce8(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  const size_t scratchBufferSize_ = (70 * (1 << 20));
+  std::shared_ptr<mscclpp::Communicator> comm_;
+  int nChannelsPerConnection_;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  mscclpp::GpuBuffer<char> scratchBuffer_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> deviceSemaphores_;
+  std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
+  mscclpp::RegisteredMemory localScratchMemory_;
+  std::unordered_map<const void*, std::pair<std::vector<mscclpp::MemoryChannel>,
+                                      std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>>>
+      memoryChannelsMap_;
 };
 
 #endif  // ALLREDUCE_KERNEL_H
