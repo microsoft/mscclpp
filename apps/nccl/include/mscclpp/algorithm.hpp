@@ -112,7 +112,7 @@ class AlgorithmFactory {
  public:
   using AlgoSelectFunc = std::function<Algorithm(
       const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-      std::string collective, size_t messageSizes, const void* input, void* output)>;
+      std::string collective, size_t messageSizes, int nRanksPerNode, int worldSize)>;
 
   static std::shared_ptr<AlgorithmFactory> getInstance() {
     static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
@@ -121,7 +121,7 @@ class AlgorithmFactory {
 
   void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
-  Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input, void* output);
+  Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, int nRanksPerNode, int worldSize);
   void addAlgorithmSelector(AlgoSelectFunc selector);
   void destroy();
  private:
