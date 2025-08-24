@@ -265,7 +265,6 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
-  // TODO(binyli): remove broadcast algo, use nccl by default
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>(comm);
   broadcastAlgo6->registerAlgorithm(comm);
 
@@ -290,6 +289,11 @@ static mscclpp::Algorithm algoSelector(
     std::string collective, size_t messageSizes, [[maybe_unused]] const void* input, [[maybe_unused]] void* output) {
   bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
+  if (collective == "broadcast") {
+#if defined(__HIP_PLATFORM_AMD__)
+    return algoMapByCollective.at(collective).at("default_broadcast6");
+#endif
+  }
   if (collective == "allgather") {
     if (messageSizes <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
