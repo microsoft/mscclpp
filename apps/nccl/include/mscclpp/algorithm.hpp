@@ -54,8 +54,8 @@ class Algorithm {
   using KernelFunc =
       std::function<ncclResult_t(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, ncclDataType_t,
                                  cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
-  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>, const void*,
-                                                                      void*, size_t, ncclDataType_t)>;
+  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
+                                                                      const void*, void*, size_t, ncclDataType_t)>;
   using ContextKeyGenFunc =
       std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, ncclDataType_t dtype)>;
   Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
@@ -81,7 +81,7 @@ class Algorithm {
 
   std::shared_ptr<AlgorithmImpl> impl;
 };
-}
+}  // namespace mscclpp
 
 namespace std {
 
@@ -112,7 +112,7 @@ class AlgorithmFactory {
  public:
   using AlgoSelectFunc = std::function<Algorithm(
       const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-      std::string collective, size_t messageSizes, int nRanksPerNode, int worldSize)>;
+      std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
 
   static std::shared_ptr<AlgorithmFactory> getInstance() {
     static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
@@ -121,9 +121,10 @@ class AlgorithmFactory {
 
   void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
-  Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, int nRanksPerNode, int worldSize);
+  Algorithm selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode, int worldSize);
   void addAlgorithmSelector(AlgoSelectFunc selector);
   void destroy();
+
  private:
   AlgorithmFactory() = default;
   std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective;

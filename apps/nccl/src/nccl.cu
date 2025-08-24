@@ -286,7 +286,7 @@ static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) 
 
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, size_t messageSizes, int nRanksPerNode, int worldSize) {
+    std::string collective, size_t messageSize, int nRanksPerNode, int worldSize) {
   if (nRanksPerNode != worldSize) {
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
@@ -299,7 +299,7 @@ static mscclpp::Algorithm algoSelector(
 #endif
   }
   if (collective == "allgather") {
-    if (messageSizes <= 32 * (1 << 20)) {
+    if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
     } else {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -308,7 +308,7 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
-    if (messageSizes <= (1 << 16) || (messageSizes <= (1 << 20) && !useNvlsWithZeroCopy)) {
+    if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
     } else if (useNvlsWithZeroCopy) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls");
