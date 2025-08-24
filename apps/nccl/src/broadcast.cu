@@ -8,9 +8,7 @@
 
 #include "broadcast.hpp"
 
-BroadcastAlgo6::BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm) {
-  this->conns_ = setupConnections(comm);
-}
+BroadcastAlgo6::BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm) { this->conns_ = setupConnections(comm); }
 
 ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,

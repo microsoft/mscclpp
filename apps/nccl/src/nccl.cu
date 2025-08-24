@@ -21,6 +21,7 @@
 #endif
 #include <dlfcn.h>
 #include <mscclpp/nccl.h>
+
 #include <mscclpp/algorithm.hpp>
 
 #include "allgather.hpp"
@@ -38,7 +39,6 @@
       exit(EXIT_FAILURE);                                                                   \
     }                                                                                       \
   } while (0)
-
 
 typedef enum mscclppNcclDlopenErr {
   dlopenSuccess = 0,
@@ -101,18 +101,18 @@ static inline int mscclppNcclDlopenInit() {
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
-             ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
+             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t (*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t (*)(ncclComm_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t (*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllGather,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Broadcast,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
 
   return dlopenSuccess;
 }
@@ -306,8 +306,7 @@ static mscclpp::Algorithm algoSelector(
       return algoMapByCollective.at(collective).at("default_allreduce_nvls");
     } else if (mscclpp::isNvlsSupported()) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
-    } 
-    else {
+    } else {
 #if defined(__HIP_PLATFORM_AMD__)
       return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
 #endif
@@ -591,8 +590,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (plan != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
-  auto algo =
-      comm->algorithmFactory->selectAlgorithm("broadcast", count * ncclTypeSize(datatype), sendbuff, recvbuff);
+  auto algo = comm->algorithmFactory->selectAlgorithm("broadcast", count * ncclTypeSize(datatype), sendbuff, recvbuff);
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras;
     extras.insert({"root", std::make_shared<int>(root)});

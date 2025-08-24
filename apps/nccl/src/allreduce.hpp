@@ -572,7 +572,8 @@ __global__ void __launch_bounds__(1024, 1)
     allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast, [[maybe_unused]] size_t size,
-                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
+                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
+                [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
@@ -888,7 +889,7 @@ class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
   std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
   mscclpp::RegisteredMemory localScratchMemory_;
   std::unordered_map<const void*, std::pair<std::vector<mscclpp::MemoryChannel>,
-                                      std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>>>
+                                            std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>>>
       memoryChannelsMap_;
 };
 

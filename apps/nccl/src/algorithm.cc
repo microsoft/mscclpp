@@ -42,7 +42,7 @@ Algorithm::Algorithm(std::shared_ptr<Communicator> comm, std::string name, Kerne
     : name(name), impl(std::make_shared<AlgorithmImpl>(comm, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
 
 ncclResult_t Algorithm::launch(const void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
-                                std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                               std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   return this->impl->launch(input, output, count, dtype, stream, extras);
 }
 
