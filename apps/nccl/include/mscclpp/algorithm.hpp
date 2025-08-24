@@ -122,13 +122,12 @@ class AlgorithmFactory {
   void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input, void* output);
-  void setAlgorithmSelector(AlgoSelectFunc selector);
-  bool hasAlgorithmSelector() const;
+  void addAlgorithmSelector(AlgoSelectFunc selector);
   void destroy();
  private:
   AlgorithmFactory() = default;
   std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective;
-  AlgoSelectFunc algoSelector;
+  std::vector<AlgoSelectFunc> algoSelectors;
 };
 
 }  // namespace mscclpp

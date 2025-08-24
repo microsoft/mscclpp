@@ -53,22 +53,22 @@ void AlgorithmFactory::registerAlgorithm(const std::string collective, const std
   getInstance()->algoMapByCollective[collective][algoName] = algorithm;
 }
 
-
 Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, size_t messageSizes, const void* input,
                                             void* output) {
-  if (algoSelector) {
-    return algoSelector(this->algoMapByCollective, collective, messageSizes, input, output);
+  for (const auto& selector : algoSelectors) {
+    Algorithm algo = selector(algoMapByCollective, collective, messageSizes, input, output);
+    if (!algo.isEmpty()) {
+      return algo;
+    }
   }
-  throw Error("No algorithm selector set", ErrorCode::InvalidUsage);
+  return Algorithm();
 }
 
-void AlgorithmFactory::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector = selector; }
-
-bool AlgorithmFactory::hasAlgorithmSelector() const { return algoSelector != nullptr; }
+void AlgorithmFactory::addAlgorithmSelector(AlgoSelectFunc selector) { algoSelectors.push_back(selector); }
 
 void AlgorithmFactory::destroy() {
   algoMapByCollective.clear();
-  algoSelector = nullptr;
+  algoSelectors.clear();
 }
 
 }  // namespace mscclpp

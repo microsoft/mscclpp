@@ -124,7 +124,9 @@ void AllgatherAlgo6::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> co
   mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allgather", "default_allgather6", allgatherAlgo);
 }
 
-AllgatherAlgo8::AllgatherAlgo8(std::shared_ptr<mscclpp::Communicator> comm) { this->conns_ = setupConnections(comm); }
+AllgatherAlgo8::AllgatherAlgo8(std::shared_ptr<mscclpp::Communicator> comm) : scratchBuffer_(scratchBufferSize_) {
+  this->conns_ = setupConnections(comm);
+}
 
 ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
@@ -153,7 +155,6 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo8::initAllgatherContext(std:
                                                                             const void* input, void*, size_t count,
                                                                             ncclDataType_t dtype) {
   constexpr int nChannelsPerConnection = 56;
-  constexpr int scratchBufferSize = 1 << 24;  // 16 MB scratch buffer
 
   auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
@@ -167,7 +168,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo8::initAllgatherContext(std:
   // register the memory for the broadcast operation
   mscclpp::RegisteredMemory localMemory = comm->registerMemory((void*)input, bytes, mscclpp::Transport::CudaIpc);
   mscclpp::RegisteredMemory scratchMemory =
-      comm->registerMemory(this->scratchBuffer_.data(), scratchBufferSize, mscclpp::Transport::CudaIpc);
+      comm->registerMemory(this->scratchBuffer_.data(), scratchBufferSize_, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, scratchMemory);
 
   // setup channels

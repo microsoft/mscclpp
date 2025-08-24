@@ -265,12 +265,14 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
+  // TODO(binyli): remove broadcast algo, use nccl by default
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>(comm);
   broadcastAlgo6->registerAlgorithm(comm);
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>(comm);
   std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>(comm);
   allgatherAlgo6->registerAlgorithm(comm);
+  // TODO(binyli): remove allgather8 algo, use nccl by default
   allgatherAlgo8->registerAlgorithm(comm);
 
   std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>(comm);
@@ -288,17 +290,12 @@ static mscclpp::Algorithm algoSelector(
     std::string collective, size_t messageSizes, [[maybe_unused]] const void* input, [[maybe_unused]] void* output) {
   bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
-  if (collective == "broadcast") {
-    return algoMapByCollective.at(collective).at("default_broadcast6");
-  }
   if (collective == "allgather") {
     if (messageSizes <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
     } else {
 #if defined(__HIP_PLATFORM_AMD__)
       return algoMapByCollective.at(collective).at("default_allgather6");
-#else
-      return algoMapByCollective.at(collective).at("default_allgather8");
 #endif
     }
   }
@@ -340,9 +337,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
 
   commPtr->algorithmFactory = mscclpp::AlgorithmFactory::getInstance();
-  if (!commPtr->algorithmFactory->hasAlgorithmSelector()) {
-    commPtr->algorithmFactory->setAlgorithmSelector(algoSelector);
-  }
+  commPtr->algorithmFactory->addAlgorithmSelector(algoSelector);
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
@@ -742,7 +737,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, totalBytes, plan, stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm("allgather", sendcount * ncclTypeSize(datatype), sendbuff, recvbuff);
+  auto algo = comm->algorithmFactory->selectAlgorithm("allgather", nRank * sendcount * ncclTypeSize(datatype), sendbuff,
+                                                      recvbuff);
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras;
     return algo.launch(sendbuff, recvbuff, sendcount, datatype, stream, extras);
