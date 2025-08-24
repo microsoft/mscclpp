@@ -376,6 +376,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
       mscclppNcclDlopenSharedLib = true;
     } else {
       if (mscclppEnableNcclFallback == true) {
+        WARN("Failed to load the shared library for nccl/rccl");
         return ncclInternalError;
       }
     }
@@ -612,6 +613,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  WARN("No FallBack implementation for broadcast");
   return ncclInvalidUsage;
 }
 
@@ -663,6 +665,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  WARN("No FallBack implementation for AllReduce");
   return ncclInvalidUsage;
 }
 
@@ -760,6 +763,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  WARN("No FallBack implementation for AllGather");
   return ncclInvalidUsage;
 }
 

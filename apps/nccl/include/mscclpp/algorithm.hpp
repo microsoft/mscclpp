@@ -119,9 +119,22 @@ class AlgorithmFactory {
     return instance;
   }
 
+  /// @brief Register a new algorithm.
+  /// @param collective The collective operation name.
+  /// @param algoName The algorithm name.
+  /// @param algorithm The algorithm implementation.
   void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
 
+  /// @brief Select an algorithm based on the collective operation name and message size.
+  /// @param collective The collective operation name.
+  /// @param messageSize The message size.
+  /// @param nRanksPerNode The number of ranks per node.
+  /// @param worldSize The total number of ranks.
+  /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode, int worldSize);
+
+  /// @brief Add a new algorithm selection function.
+  /// @param selector The algorithm selection function.
   void addAlgorithmSelector(AlgoSelectFunc selector);
   void destroy();
 

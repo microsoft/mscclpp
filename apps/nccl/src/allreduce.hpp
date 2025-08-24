@@ -463,9 +463,6 @@ __global__ void __launch_bounds__(512, 1)
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
         data = cal_vectors<T, OpType>(val, data);
       }
-      // if (threadIdx.x == 0 && blockIdx.x == 0) {
-      //   printf("offset is %ld\n", nInt4PerRank * rank + idx + offsetOfThisBlock);
-      // }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
