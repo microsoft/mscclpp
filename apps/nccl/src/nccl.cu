@@ -577,6 +577,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  INFO(MSCCLPP_NCCL, "Broadcast count: %ld, datatype: %d, root: %d, messageSize: %ld", count, datatype, root, bytes);
+
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
   if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
@@ -626,6 +628,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
         "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
+  INFO(MSCCLPP_NCCL, "AllReduce count: %ld, datatype: %d, op: %d, messageSize: %ld", count, datatype,
+       reductionOperation, count * ncclTypeSize(datatype));
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
@@ -679,6 +683,9 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
     return ncclInvalidArgument;
   }
 
+  INFO(MSCCLPP_NCCL, "ReduceScatter recvcount: %ld, datatype: %d, op: %d, messageSize: %ld", recvcount, datatype, op,
+       bytes * comm->comm->bootstrap()->getNranks());
+
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
   if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
@@ -724,6 +731,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  INFO(MSCCLPP_NCCL, "AllGather count: %ld, datatype: %d, messageSize: %ld", sendcount, datatype,
+       bytes * comm->comm->bootstrap()->getNranks());
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
   if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
