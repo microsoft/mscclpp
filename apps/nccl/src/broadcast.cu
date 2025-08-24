@@ -44,7 +44,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
-  ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
+  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
@@ -55,8 +55,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   mscclpp::RegisteredMemory localScratchMemory =
       comm->registerMemory(this->scratchBuffer_.data(), scratchMemSize_, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, localScratchMemory);
-  ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories,
-                                                      localMemory, nChannelsPerConnection));
+  ctx->memoryChannels =
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference

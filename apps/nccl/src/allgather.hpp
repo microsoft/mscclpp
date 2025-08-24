@@ -4,6 +4,9 @@
 #ifndef ALLGATHER_HPP_
 #define ALLGATHER_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>

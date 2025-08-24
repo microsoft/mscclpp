@@ -7,6 +7,8 @@
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
+#include <mscclpp/memory_channel.hpp>
+#include <mscclpp/nvls.hpp>
 #include <vector>
 
 #if defined(__HIP_PLATFORM_AMD__)

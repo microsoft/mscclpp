@@ -191,8 +191,6 @@ ncclResult_t AllreducePacket::allreduceKernelFunc(const std::shared_ptr<mscclpp:
                                                   void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,
                                                   cudaStream_t stream,
                                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  const size_t bytes = count * ncclTypeSize(dtype);
-  const int worldSize = ctx->workSize;
   ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op").get());
 
   size_t sendBytes;
@@ -225,7 +223,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreducePacket::initAllreduceContext(
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
   if (this->ctx_ == nullptr) {
     // setup semaphores
-    ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
+    ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
     // setup registered memories
     mscclpp::RegisteredMemory scratchMemory =
         comm->registerMemory(this->scratchBuffer_.data(), this->scratchBuffer_.bytes(), mscclpp::Transport::CudaIpc);
@@ -245,8 +243,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreducePacket::initAllreduceContext(
       comm->registerMemory((void*)sendBasePtr, sendBytes, mscclpp::Transport::CudaIpc);
 
   // setup channels
-  ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories,
-                                                      localMemory, nChannelsPerConnection));
+  ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories,
+                                                      localMemory, nChannelsPerConnection);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
   ctx->registeredMemories.emplace_back(localMemory);
 
@@ -282,10 +280,10 @@ void AllreducePacket::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> c
 
 AllreduceNvls::AllreduceNvls(std::shared_ptr<mscclpp::Communicator> comm) {
   nSwitchChannels_ = 8;
-  this->conns_ = std::move(setupConnections(comm));
+  this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
-      std::move(setupMemorySemaphores(comm, this->conns_, nSwitchChannels_));
+      setupMemorySemaphores(comm, this->conns_, nSwitchChannels_);
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nSwitchChannels_);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
@@ -343,11 +341,11 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvls::initAllreduceContext(std::
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // setup channels
-  ctx->nvlsConnections = std::move(setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_));
+  ctx->nvlsConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
   ctx->switchChannels =
-      std::move(setupNvlsChannels(ctx->nvlsConnections, (void*)sendBasePtr, sendBytes, nSwitchChannels_));
+      setupNvlsChannels(ctx->nvlsConnections, (void*)sendBasePtr, sendBytes, nSwitchChannels_);
   if (input != output) {
-    auto nvlsOutConnections = std::move(setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_));
+    auto nvlsOutConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
     std::vector<mscclpp::SwitchChannel> outChannels =
         setupNvlsChannels(nvlsOutConnections, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
     ctx->nvlsConnections.insert(ctx->nvlsConnections.end(), nvlsOutConnections.begin(), nvlsOutConnections.end());
@@ -379,10 +377,10 @@ AllreduceNvlsWithCopy::AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicat
     : scratchBuffer_(scratchBufferSize_) {
   nSwitchChannels_ = 8;
   int nBaseChannels = 64;
-  this->conns_ = std::move(setupConnections(comm));
+  this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
-      std::move(setupMemorySemaphores(comm, this->conns_, nBaseChannels));
+      setupMemorySemaphores(comm, this->conns_, nBaseChannels);
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
@@ -420,9 +418,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsWithCopy::initAllreduceConte
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup channels
-  ctx->nvlsConnections = std::move(setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_));
-  ctx->switchChannels = std::move(
-      setupNvlsChannels(ctx->nvlsConnections, this->scratchBuffer_.data(), scratchBufferSize_, nSwitchChannels_));
+  ctx->nvlsConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
+  ctx->switchChannels = setupNvlsChannels(ctx->nvlsConnections, this->scratchBuffer_.data(), scratchBufferSize_, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
@@ -446,14 +443,14 @@ void AllreduceNvlsWithCopy::registerAlgorithm(std::shared_ptr<mscclpp::Communica
 }
 
 Allreduce8::Allreduce8(std::shared_ptr<mscclpp::Communicator> comm) : scratchBuffer_(scratchBufferSize_) {
-  this->conns_ = std::move(setupConnections(comm));
+  this->conns_ = setupConnections(comm);
   nChannelsPerConnection_ = 64;
   comm_ = comm;
   // setup semaphores
-  this->deviceSemaphores_ = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_));
+  this->deviceSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
   mscclpp::RegisteredMemory localMemory =
       comm->registerMemory(scratchBuffer_.data(), scratchBuffer_.bytes(), mscclpp::Transport::CudaIpc);
-  this->remoteScratchMemories_ = std::move(setupRemoteMemories(comm, comm->bootstrap()->getRank(), localMemory));
+  this->remoteScratchMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), localMemory);
   localScratchMemory_ = std::move(localMemory);
 }
 
@@ -461,7 +458,6 @@ ncclResult_t Allreduce8::allreduceKernelFunc(const std::shared_ptr<mscclpp::Algo
                                              void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                              std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   const size_t bytes = count * ncclTypeSize(dtype);
-  const int worldSize = ctx->workSize;
   ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op").get());
 
   size_t recvBytes;
@@ -474,8 +470,8 @@ ncclResult_t Allreduce8::allreduceKernelFunc(const std::shared_ptr<mscclpp::Algo
   } else {
     mscclpp::RegisteredMemory localMemory =
         comm_->registerMemory(const_cast<void*>(input), bytes, mscclpp::Transport::CudaIpc);
-    std::vector<mscclpp::MemoryChannel> channels = std::move(setupMemoryChannels(
-        this->conns_, this->deviceSemaphores_, this->remoteScratchMemories_, localMemory, nChannelsPerConnection_));
+    std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(
+        this->conns_, this->deviceSemaphores_, this->remoteScratchMemories_, localMemory, nChannelsPerConnection_);
     this->memoryChannelsMap_[input] = std::make_pair(channels, setupMemoryChannelDeviceHandles(channels));
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
@@ -516,16 +512,16 @@ std::shared_ptr<mscclpp::AlgorithmCtx> Allreduce8::initAllreduceContext(std::sha
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
-  ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_));
+  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
   // setup memories and channels
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
   mscclpp::RegisteredMemory localMemory =
       comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-  ctx->registeredMemories = std::move(setupRemoteMemories(comm, ctx->rank, localMemory));
-  ctx->memoryChannels = std::move(setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories,
-                                                      localMemory, nChannelsPerConnection_));
+  ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
+  ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories,
+                                            localMemory, nChannelsPerConnection_);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
   return ctx;
 }

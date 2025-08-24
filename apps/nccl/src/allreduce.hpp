@@ -4,6 +4,9 @@
 #ifndef ALLREDUCE_HPP_
 #define ALLREDUCE_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
@@ -527,7 +530,7 @@ __global__ void __launch_bounds__(1024, 1)
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOut,
                [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
-               [[maybe_unused]] size_t size, [[maybe_unused]] int rank, int nRanksPerNode) {
+               [[maybe_unused]] size_t size, [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nPeers = nRanksPerNode - 1;
   int nBlocks = gridDim.x;
@@ -569,7 +572,7 @@ __global__ void __launch_bounds__(1024, 1)
     allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast, [[maybe_unused]] size_t size,
-                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank, int nRanksPerNode) {
+                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
@@ -666,7 +669,7 @@ __global__ void __launch_bounds__(1024, 1)
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* switchChannels,
                 [[maybe_unused]] size_t size, [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
-                int nRanksPerNode) {
+                [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
