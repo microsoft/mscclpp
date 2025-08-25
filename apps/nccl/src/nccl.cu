@@ -10,7 +10,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/utils.hpp>
 #include <queue>
 #include <sstream>

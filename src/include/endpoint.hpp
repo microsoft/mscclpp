@@ -7,6 +7,7 @@
 #include <mscclpp/core.hpp>
 #include <vector>
 
+#include "gpu_ipc_mem.hpp"
 #include "ib.hpp"
 #include "socket.h"
 
@@ -15,14 +16,12 @@
 namespace mscclpp {
 
 struct Endpoint::Impl {
-  Impl(EndpointConfig config, Context::Impl& contextImpl);
+  Impl(const EndpointConfig& config, Context::Impl& contextImpl);
   Impl(const std::vector<char>& serialization);
 
-  Transport transport_;
-  Device device_;
+  EndpointConfig config_;
   uint64_t hostHash_;
   uint64_t pidHash_;
-  int maxWriteQueueSize_;
 
   // The following are only used for IB and are undefined for other transports.
   bool ibLocal_;
