@@ -7,7 +7,6 @@
 
 #include "common.hpp"
 
-
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
 #else
@@ -59,8 +58,8 @@ __global__ void __launch_bounds__(1024) alltoall1(int rank, int nRanksPerNode, s
   localAlltoall(rank, nRanksPerNode, nElements);
 }
 
-__global__ void __launch_bounds__(1024)
-    alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer, void* resultBuffer) {
+__global__ void __launch_bounds__(1024) alltoall2(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer,
+                                                  void* scratchBuffer, void* resultBuffer) {
 #if defined(__CUDA_ARCH__)
   constexpr int nWarpForPut = 16;
   constexpr int nWarpForCopy = 16;
@@ -68,17 +67,17 @@ __global__ void __launch_bounds__(1024)
   constexpr int putEndWid = putStartWid + nWarpForPut;
   constexpr int copyStartWid = putEndWid;
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
-  constexpr size_t unit = 1 << 18; // 256K
+  constexpr size_t unit = 1 << 18;  // 256K
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
-  nBytesPerBlock = nBytesPerBlock / 16 * 16; // alignment
+  nBytesPerBlock = nBytesPerBlock / 16 * 16;  // alignment
   size_t nBytesForLastBlock = totalCount - (nBytesPerBlock * (gridDim.x - 1));
   size_t totalBytesForCurrentBlock = nBytesPerBlock;
   if (blockIdx.x == gridDim.x - 1) {
     totalBytesForCurrentBlock = nBytesForLastBlock;
   }
-  size_t nIters = (totalBytesForCurrentBlock  + unit - 1) / unit;
+  size_t nIters = (totalBytesForCurrentBlock + unit - 1) / unit;
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
@@ -132,8 +131,8 @@ __global__ void __launch_bounds__(1024)
 #endif
 }
 
-__global__ void __launch_bounds__(1024)
-    alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer, void* scratchBuffer, void* resultBuffer) {
+__global__ void __launch_bounds__(1024) alltoall3(int rank, int nRanksPerNode, size_t nElements, void* inputBuffer,
+                                                  void* scratchBuffer, void* resultBuffer) {
 #if defined(__CUDA_ARCH__)
   constexpr int nWarpForCopy = 16;
   constexpr int nWarpForGet = 16;
@@ -141,18 +140,18 @@ __global__ void __launch_bounds__(1024)
   constexpr int copyEndWid = copyStartWid + nWarpForCopy;
   constexpr int getStartWid = copyEndWid;
   constexpr int getEndWid = getStartWid + nWarpForGet;
-  constexpr size_t unit = 1 << 18; // 256K
+  constexpr size_t unit = 1 << 18;  // 256K
 
   size_t totalCount = nElements * sizeof(int);
   size_t nBytesPerBlock = (totalCount + (gridDim.x - 1)) / gridDim.x;
-  nBytesPerBlock = nBytesPerBlock / 16 * 16; // alignment
+  nBytesPerBlock = nBytesPerBlock / 16 * 16;  // alignment
   size_t nBytesForLastBlock = totalCount - (nBytesPerBlock * (gridDim.x - 1));
   size_t totalBytesForCurrentBlock = nBytesPerBlock;
   if (blockIdx.x == gridDim.x - 1) {
     totalBytesForCurrentBlock = nBytesForLastBlock;
   }
 
-  size_t nIters = (totalBytesForCurrentBlock  + unit - 1) / unit;
+  size_t nIters = (totalBytesForCurrentBlock + unit - 1) / unit;
   int wid = threadIdx.x / WARP_SIZE;
   int lid = threadIdx.x % WARP_SIZE;
   DeviceHandle<mscclpp::MemoryChannel>* memoryChannels = constMemChans + blockIdx.x * (nRanksPerNode - 1);
@@ -206,8 +205,6 @@ __global__ void __launch_bounds__(1024)
 #endif
 }
 
-
-
 class AllToAllTestColl : public BaseTestColl {
  public:
   AllToAllTestColl() = default;
@@ -235,9 +232,11 @@ void AllToAllTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   } else if (kernelNum == 1) {
     alltoall1<<<worldSize - 1, 32, 0, stream>>>(rank, nRanksPerNode, paramCount_);
   } else if (kernelNum == 2) {
-    alltoall2<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff, localRecvBuff);
+    alltoall2<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff,
+                                       localRecvBuff);
   } else if (kernelNum == 3) {
-    alltoall3<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff, localRecvBuff);
+    alltoall3<<<64, 1024, 0, stream>>>(rank, nRanksPerNode, paramCount_, localSendBuff, localScratchBuff,
+                                       localRecvBuff);
   }
 }
 
