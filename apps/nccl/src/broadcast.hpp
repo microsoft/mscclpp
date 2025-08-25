@@ -4,6 +4,9 @@
 #ifndef BROADCAST_HPP_
 #define BROADCAST_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
@@ -146,17 +149,29 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
-  // if (nelems <= 4096) {
-  //   nBlocks = 7;
-  // } else if (nelems <= 32768) {
-  //   nBlocks = 14;
-  // } else if (nelems >= 2097152) {
-  //   nBlocks = 35;
-  // }
   broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, memoryChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();
 }
+
+class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
+ public:
+  BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  const size_t scratchMemSize_ = 1 << 26;  // 64MB
+  mscclpp::GpuBuffer<char> scratchBuffer_{scratchMemSize_};
+};
 
 #endif  // BROADCAST_HPP_

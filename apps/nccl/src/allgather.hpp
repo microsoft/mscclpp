@@ -4,6 +4,9 @@
 #ifndef ALLGATHER_HPP_
 #define ALLGATHER_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
@@ -206,34 +209,42 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <bool IsOutOfPlace, typename T>
-cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, int rank,
-                      int nRanksPerNode, [[maybe_unused]] int worldSize, size_t nelems, cudaStream_t stream) {
-  int nBlocks = 28;
-  if (nelems * sizeof(T) <= 32 * (1 << 20)) {
-    if (nelems <= 4096) {
-      nBlocks = 7;
-    } else if (nelems <= 32768) {
-      nBlocks = 14;
-    } else if (nelems >= 2097152) {
-      nBlocks = 35;
-    }
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-  } else {
-#if defined(__HIP_PLATFORM_AMD__)
-    nBlocks = 35;
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-#else
-    nBlocks = 56;
-    allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
-                                                           memoryChannels, rank, nRanksPerNode, worldSize,
-                                                           nelems * sizeof(T) / sizeof(int));
-#endif
-  }
-  return cudaGetLastError();
-}
+class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
+ public:
+  AllgatherAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  bool disableChannelCache_;
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+
+  ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
+};
+
+class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
+ public:
+  AllgatherAlgo8(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+
+ private:
+  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+
+  ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, ncclDataType_t);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
+
+  const size_t scratchBufferSize_ = 28 * (1 << 20);  // 28 MB scratch buffer
+  mscclpp::GpuBuffer<char> scratchBuffer_;
+};
 
 #endif  // ALLGATHER_HPP_

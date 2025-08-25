@@ -6,6 +6,7 @@
 #define NCCL_H_
 
 #include <mscclpp/gpu.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 
 #ifdef __cplusplus
 extern "C" {
@@ -215,6 +216,8 @@ typedef enum {
   ncclNumTypes = 9
 #endif
 } ncclDataType_t;
+
+size_t ncclTypeSize(ncclDataType_t type);
 
 /* ncclScalarResidence_t: Location and dereferencing logic for scalar arguments. */
 typedef enum {
