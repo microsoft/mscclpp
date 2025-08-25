@@ -96,7 +96,7 @@ std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_pt
                                                       void* buffer, size_t bufferSize, int nSwitchChannels) {
   std::vector<mscclpp::SwitchChannel> channels;
 
-  for (size_t idx = 0; idx < nSwitchChannels; ++idx) {
+  for (int idx = 0; idx < nSwitchChannels; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
     mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
     channels.push_back(SwitchChannel);
