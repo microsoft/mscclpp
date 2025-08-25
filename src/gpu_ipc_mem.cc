@@ -323,6 +323,12 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
     if (bufferSize == 0) {
       throw Error("NVLS buffer size should be larger than zero.", ErrorCode::InvalidUsage);
     }
+    if (bufferSize % minMcGran != 0) {
+      std::stringstream ss;
+      ss << "Tried to bind a multicast buffer that is not aligned to the minimum granularity " << minMcGran
+         << ", buffer size: " << bufferSize;
+      throw Error(ss.str(), ErrorCode::InvalidUsage);
+    }
     bufferPtr = bufferAddr;
   } else {
     multicastBuffer_ = GpuBuffer<uint8_t>(handle_.baseSize).memory();

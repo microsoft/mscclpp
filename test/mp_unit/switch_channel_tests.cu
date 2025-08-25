@@ -39,12 +39,12 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
     ranks.push_back(i);
   }
 
-  auto buffer = mscclpp::GpuBuffer<float>(1024);
+  auto buffer = mscclpp::GpuBuffer<float>(1024 * 1024);
   float data = gEnv->rank + 1.0f;
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice));
 
-  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, 1024);
-  nvlsConnection->bindMemory(CUdeviceptr(buffer.data()), 1024);
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, buffer.bytes());
+  nvlsConnection->bindMemory(CUdeviceptr(buffer.data()), buffer.bytes());
   mscclpp::SwitchChannel switchChannel(nvlsConnection);
   auto deviceHandle = switchChannel.deviceHandle();
 

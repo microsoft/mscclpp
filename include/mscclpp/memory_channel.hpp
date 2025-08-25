@@ -4,11 +4,10 @@
 #ifndef MSCCLPP_MEMORY_CHANNEL_HPP_
 #define MSCCLPP_MEMORY_CHANNEL_HPP_
 
+#include <mscclpp/core.hpp>
+#include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/semaphore.hpp>
 #include <type_traits>
-
-#include "core.hpp"
-#include "memory_channel_device.hpp"
-#include "semaphore.hpp"
 
 namespace mscclpp {
 

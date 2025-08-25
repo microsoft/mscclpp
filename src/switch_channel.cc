@@ -38,13 +38,18 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices)
 
 NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   GpuIpcMemHandle hdl;
-  detail::deserialize(data.begin(), hdl);
+  auto it = detail::deserialize(data.begin(), hdl);
   gpuIpcMem_ = std::make_unique<GpuIpcMem>(hdl);
+  it = detail::deserialize(it, numDevices_);
+  if (it != data.end()) {
+    throw std::runtime_error("Failed to deserialize NvlsConnection");
+  }
 }
 
 std::vector<char> NvlsConnection::Impl::serialize() {
   std::vector<char> result;
   detail::serialize(result, *gpuIpcMemHandle_);
+  detail::serialize(result, numDevices_);
   return result;
 }
 
@@ -52,7 +57,7 @@ void NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, size_t devBuffSize)
   if (!gpuIpcMem_) {
     gpuIpcMem_ = std::make_unique<GpuIpcMem>(*gpuIpcMemHandle_);
   }
-  gpuIpcMem_->mapMulticast(numDevices_, devicePtr);
+  gpuIpcMem_->mapMulticast(numDevices_, devicePtr, devBuffSize);
 }
 
 NvlsConnection::NvlsConnection(size_t bufferSize, int numDevices)

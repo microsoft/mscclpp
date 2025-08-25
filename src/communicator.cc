@@ -99,13 +99,11 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
   return shared_future;
 }
 
-MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(EndpointConfig localConfig,
+MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(const Endpoint& localEndpoint,
                                                                                       int remoteRank, int tag) {
-  auto localEndpoint = context()->createEndpoint(localConfig);
-
   if (remoteRank == bootstrap()->getRank()) {
     // Connection to self
-    auto remoteEndpoint = context()->createEndpoint(localConfig);
+    auto remoteEndpoint = context()->createEndpoint(localEndpoint.config());
     auto connection = context()->connect(localEndpoint, remoteEndpoint);
     std::promise<std::shared_ptr<Connection>> promise;
     promise.set_value(connection);
@@ -134,14 +132,19 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
   return shared_future;
 }
 
+MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(const EndpointConfig& localConfig,
+                                                                                      int remoteRank, int tag) {
+  auto localEndpoint = context()->createEndpoint(localConfig);
+  return connect(localEndpoint, remoteRank, tag);
+}
+
 MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
                                                                                       EndpointConfig localConfig) {
   return connect(localConfig, remoteRank, tag);
 }
 
-MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::shared_ptr<Connection> connection,
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const SemaphoreStub& localStub,
                                                                            int remoteRank, int tag) {
-  SemaphoreStub localStub(connection);
   bootstrap()->send(localStub.serialize(), remoteRank, tag);
 
   auto future =
@@ -159,6 +162,11 @@ MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::
   auto shared_future = std::shared_future<Semaphore>(std::move(future));
   pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Semaphore>>(shared_future));
   return shared_future;
+}
+
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::shared_ptr<Connection> connection,
+                                                                           int remoteRank, int tag) {
+  return buildSemaphore(SemaphoreStub(connection), remoteRank, tag);
 }
 
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {

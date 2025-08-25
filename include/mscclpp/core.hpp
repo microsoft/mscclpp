@@ -398,7 +398,7 @@ struct EndpointConfig {
     /// Maximum number of work requests per send operation.
     int maxWrPerSend;
 
-    /// Constructs InfiniBand configuration with specified or default values.
+    /// Constructor.
     /// @param maxCqSize Maximum completion queue size.
     /// @param maxCqPollNum Maximum completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
@@ -412,19 +412,19 @@ struct EndpointConfig {
   Transport transport;
   /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
-  /// InfiniBand-specific options (used only when transport is an IB type).
-  Ib ib;
   /// Maximum number of write requests that can be queued (-1 for default).
   int maxWriteQueueSize;
+  /// InfiniBand-specific options (used only for Transport::IBx).
+  Ib ib;
 
   /// Constructs endpoint configuration with specified transport, device, and optional settings.
   /// @param transport Communication transport to use.
   /// @param device Target device for the endpoint.
-  /// @param ib InfiniBand-specific configuration (ignored for non-IB transports).
   /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
-  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, Ib ib = {},
-                 int maxWriteQueueSize = -1)
-      : transport(transport), device(device), ib(ib), maxWriteQueueSize(maxWriteQueueSize) {}
+  /// @param ib IB-specific configuration.
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, int maxWriteQueueSize = -1,
+                 Ib ib = {})
+      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib) {}
 };
 
 class Context;
@@ -437,6 +437,10 @@ class Endpoint {
  public:
   /// Constructor.
   Endpoint() = default;
+
+  /// Get the configuration used.
+  /// @return The configuration used.
+  const EndpointConfig& config() const;
 
   /// Get the transport used.
   /// @return The transport used.
@@ -867,12 +871,20 @@ class Communicator {
   /// on the last future, it will start receiving the five RegisteredMemory or Connection objects in order,
   /// back to back.
   ///
-  /// @param localConfig The configuration for the local endpoint.
+  /// @param localEndpoint The local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
   /// @return A future of shared pointer to the connection.
   ///
-  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0);
+  std::shared_future<std::shared_ptr<Connection>> connect(const Endpoint& localEndpoint, int remoteRank, int tag = 0);
+
+  /// Connect to a remote rank. Wrapper of `connect(localEndpoint, remoteRank, tag)`.
+  /// @param localConfig The configuration for the local endpoint.
+  /// @param remoteRank The rank of the remote process.
+  /// @param tag The tag to use for identifying the send and receive.
+  /// @return A future of shared pointer to the connection.
+  std::shared_future<std::shared_ptr<Connection>> connect(const EndpointConfig& localConfig, int remoteRank,
+                                                          int tag = 0);
 
   [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
       shared_future<std::shared_ptr<Connection>>
@@ -885,6 +897,13 @@ class Communicator {
   }
 
   /// Build a semaphore for cross-process synchronization.
+  /// @param localStub The SemaphoreStub to be the local end of the semaphore.
+  /// @param remoteRank The rank of the remote process.
+  /// @param tag The tag to use for identifying the operation.
+  /// @return A future of the built semaphore.
+  std::shared_future<Semaphore> buildSemaphore(const SemaphoreStub& localStub, int remoteRank, int tag = 0);
+
+  /// Build a semaphore for cross-process synchronization. Wrapper of `buildSemaphore(localStub, remoteRank, tag)`.
   /// @param connection The connection associated with this semaphore.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the operation.
