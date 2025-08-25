@@ -485,7 +485,7 @@ MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
   if constexpr (std::is_same_v<U, std::int32_t> || std::is_same_v<U, std::uint32_t>) {
     return 1;
   } else {
-    static_assert(16 % sizeof(U) == 0, "nElements: 16 bytes must be divisible by sizeof(T).");
+    static_assert(16 % sizeof(U) == 0, "16 bytes must be divisible by sizeof(T).");
     return 16 / sizeof(U);
   }
 }
