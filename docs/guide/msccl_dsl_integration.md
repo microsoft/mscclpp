@@ -11,7 +11,7 @@ Author a collective algorithm in the Python DSL (or reuse presets), JIT‑compil
 def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
     chunksperloop = 1
     collective = AllReduce(gpu_size, chunksperloop, True)
-    with CollectiveProgram as program (
+    with CollectiveProgram (
         name,
         collective,
         gpu_size,
@@ -20,7 +20,7 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
         num_threads_per_block=num_threads_per_block,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
-    ):
+    ) as program:
         # Creating Channels
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
         channels = {}
@@ -151,8 +151,7 @@ jit.compile(
     min_msg_size = 0,
     max_msg_size = 1<<32,
     nranks_per_node: int,
-    tags: set[str] | None = None,
-    num_threads_per_block: int | None = None,
+    tags: set[str] | None = None
     rebuild: bool = False,
 ) -> PlanHandle
 ```
