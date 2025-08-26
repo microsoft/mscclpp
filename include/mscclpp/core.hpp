@@ -408,6 +408,20 @@ struct EndpointConfig {
         : maxCqSize(maxCqSize), maxCqPollNum(maxCqPollNum), maxSendWr(maxSendWr), maxWrPerSend(maxWrPerSend) {}
   };
 
+  /// NVLS-specific configuration options.
+  struct Nvls {
+    int numDevices;
+    size_t bufferSize;
+    bool isRoot;
+
+    /// Constructor.
+    /// @param numDevices Number of devices to enroll. Should be positive when using NVLS transport.
+    /// @param bufferSize NVLS buffer size. Should be positive when using NVLS transport.
+    /// @param isRoot Whether this is the root device in the NVLS group.
+    Nvls(int numDevices = -1, size_t bufferSize = 0, bool isRoot = false)
+        : numDevices(numDevices), bufferSize(bufferSize), isRoot(isRoot) {}
+  };
+
   /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
   Transport transport;
   /// Target device for the endpoint (GPU or CPU with optional device ID).
@@ -416,15 +430,18 @@ struct EndpointConfig {
   int maxWriteQueueSize;
   /// InfiniBand-specific options (used only for Transport::IBx).
   Ib ib;
+  /// NVLS-specific options (used only for Transport::Nvls).
+  Nvls nvls;
 
   /// Constructs endpoint configuration with specified transport, device, and optional settings.
   /// @param transport Communication transport to use.
   /// @param device Target device for the endpoint.
   /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
   /// @param ib IB-specific configuration.
+  /// @param nvls NVLS-specific configuration.
   EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, int maxWriteQueueSize = -1,
-                 Ib ib = {})
-      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib) {}
+                 Ib ib = {}, Nvls nvls = {})
+      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib), nvls(nvls) {}
 };
 
 class Context;

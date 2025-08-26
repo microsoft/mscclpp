@@ -142,7 +142,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     auto entry = getTransportInfo(Transport::CudaIpc);
     this->remoteGpuIpcMem = std::make_unique<GpuIpcMem>(entry.gpuIpcMemHandle);
     this->data = this->remoteGpuIpcMem->map();
-    INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
+    INFO(MSCCLPP_P2P, "Opened GpuIpcMemHandle at pointer %p", this->data);
   }
 }
 

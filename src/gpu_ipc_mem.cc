@@ -56,6 +56,44 @@ static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetF
 #endif
 }
 
+static bool isFabricMemHandleAvailable() {
+#if (CUDA_NVLS_API_AVAILABLE)
+  CUdevice currentDevice;
+  int isFabricSupported;
+  MSCCLPP_CUTHROW(cuCtxGetDevice(&currentDevice));
+  MSCCLPP_CUTHROW(
+      cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, currentDevice));
+  if (isFabricSupported == 0) {
+    return false;
+  }
+
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = currentDevice;
+  prop.requestedHandleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+
+  size_t minGran;
+  MSCCLPP_CUTHROW(cuMemGetAllocationGranularity(&minGran, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+
+  // try allocating minimal amount of memory
+  CUmemGenericAllocationHandle memHandle;
+  CUresult result = cuMemCreate(&memHandle, minGran, &prop, 0);
+  if (result == CUDA_ERROR_NOT_PERMITTED || result == CUDA_ERROR_NOT_SUPPORTED) {
+    // unprivileged user or old kernel version
+    return false;
+  } else {
+    MSCCLPP_CUTHROW(result);
+  }
+
+  // it worked; cleanup now
+  MSCCLPP_CUTHROW(cuMemRelease(memHandle));
+  return true;
+#else   // !(CUDA_NVLS_API_AVAILABLE)
+  return false;
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
+}
+
 void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
   if (handle) {
     if (handle->typeFlags & GpuIpcMemHandle::Type::PosixFd) {
@@ -114,28 +152,36 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
 UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t bufferSize,
                                                        [[maybe_unused]] int numDevices) {
 #if (CUDA_NVLS_API_AVAILABLE)
+  if (bufferSize == 0) {
+    throw Error("Multicasting buffer size should be positive", ErrorCode::InvalidUsage);
+  }
+  if (numDevices < 1) {
+    throw Error("Multicasting number of devices should be positive", ErrorCode::InvalidUsage);
+  }
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
 
+  bool isFabricAvailable = isFabricMemHandleAvailable();
+
+  // get granularity
+  size_t recMcGran;
   CUmulticastObjectProp prop;
   prop.size = bufferSize;
   prop.numDevices = numDevices;
-  prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-
-  size_t minMcGran;
-  size_t recMcGran;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran, &prop, CU_MULTICAST_GRANULARITY_MINIMUM));
+  if (isFabricAvailable) {
+    prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC;
+  } else {
+    prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+  }
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&recMcGran, &prop, CU_MULTICAST_GRANULARITY_RECOMMENDED));
 
-  // update bufferSize
-  bufferSize = ((bufferSize + recMcGran - 1) / recMcGran) * recMcGran;
-
-  handle->typeFlags = GpuIpcMemHandle::Type::None;
-  handle->baseSize = bufferSize;
-  handle->offsetFromBase = 0;
-
   CUmemGenericAllocationHandle allocHandle;
-  prop.size = bufferSize;
+  size_t baseSize = ((bufferSize + recMcGran - 1) / recMcGran) * recMcGran;
+  prop.size = baseSize;
   MSCCLPP_CUTHROW(cuMulticastCreate(&allocHandle, &prop));
+
+  handle->baseSize = baseSize;
+  handle->offsetFromBase = 0;
+  handle->typeFlags = GpuIpcMemHandle::Type::None;
 
   // POSIX FD handle
   if (cuMemExportToShareableHandle(&(handle->posixFd.fd), allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
@@ -145,9 +191,13 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   }
 
   // FABRIC handle
-  if (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle, CU_MEM_HANDLE_TYPE_FABRIC, 0) ==
-      CUDA_SUCCESS) {
+  if (isFabricAvailable && (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle,
+                                                         CU_MEM_HANDLE_TYPE_FABRIC, 0) == CUDA_SUCCESS)) {
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
+  }
+
+  if (handle->typeFlags == GpuIpcMemHandle::Type::None) {
+    throw Error("createMulticast failed: neither POSIX FD nor FABRIC handle was created", ErrorCode::SystemError);
   }
   return handle;
 #else   // !(CUDA_NVLS_API_AVAILABLE)

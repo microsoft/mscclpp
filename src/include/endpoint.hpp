@@ -33,6 +33,9 @@ struct Endpoint::Impl {
   SocketAddress socketAddress_;
   volatile uint32_t* abortFlag_;
   char netIfName_[MAX_IF_NAME_SIZE + 1];
+
+  // Only for NVLS transport.
+  UniqueGpuIpcMemHandle nvlsHandle_;
 };
 
 }  // namespace mscclpp

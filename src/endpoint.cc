@@ -18,7 +18,11 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
   if (config_.device.type == DeviceType::GPU && config_.device.id < 0) {
     MSCCLPP_CUDATHROW(cudaGetDevice(&(config_.device.id)));
   }
-  if (AllIBTransports.has(config_.transport)) {
+  if (config_.transport == Transport::CudaIpc) {
+    if (config_.nvls.isRoot) {
+      nvlsHandle_ = GpuIpcMemHandle::createMulticast(config_.nvls.bufferSize, config_.nvls.numDevices);
+    }
+  } else if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = true;
     if (config_.maxWriteQueueSize <= 0) {
       config_.maxWriteQueueSize = config_.ib.maxCqSize;
@@ -45,11 +49,19 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   it = detail::deserialize(it, config_);
   it = detail::deserialize(it, hostHash_);
   it = detail::deserialize(it, pidHash_);
-  if (AllIBTransports.has(config_.transport)) {
+  if (config_.transport == Transport::CudaIpc) {
+    if (config_.nvls.isRoot) {
+      nvlsHandle_.reset(new GpuIpcMemHandle());
+      it = detail::deserialize(it, *nvlsHandle_);
+    }
+  } else if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
+  }
+  if (it != serialization.end()) {
+    throw Error("Endpoint deserialization failed", ErrorCode::Aborted);
   }
 }
 
@@ -72,7 +84,14 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->config_);
   detail::serialize(data, pimpl_->hostHash_);
   detail::serialize(data, pimpl_->pidHash_);
-  if (AllIBTransports.has(pimpl_->config_.transport)) {
+  if (pimpl_->config_.transport == Transport::CudaIpc) {
+    if (pimpl_->config_.nvls.isRoot) {
+      if (!(pimpl_->nvlsHandle_)) {
+        throw Error("NVLS handle is not initialized", ErrorCode::InternalError);
+      }
+      detail::serialize(data, *(pimpl_->nvlsHandle_));
+    }
+  } else if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);

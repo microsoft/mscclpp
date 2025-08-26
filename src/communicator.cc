@@ -115,7 +115,7 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
 
   auto future =
       std::async(std::launch::deferred, [this, remoteRank, tag, lastRecvItem = pimpl_->getLastRecvItem(remoteRank, tag),
-                                         localEndpoint = std::move(localEndpoint)]() mutable {
+                                         localEndpoint = localEndpoint]() mutable {
         if (lastRecvItem) {
           // Recursive call to the previous receive items
           lastRecvItem->wait();

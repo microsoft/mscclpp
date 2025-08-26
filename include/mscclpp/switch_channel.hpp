@@ -20,6 +20,7 @@ class SwitchChannel {
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
   SwitchChannel(std::shared_ptr<NvlsConnection> conn);
+  SwitchChannel(std::shared_ptr<Connection> conn, void* data, size_t bytes);
   DeviceHandle deviceHandle() const;
   void* getDevicePtr();
 

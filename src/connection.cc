@@ -94,6 +94,31 @@ CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const End
   }
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
   stream_ = ctxImpl.ipcStreams_.back();
+
+  const auto& localCfg = localEndpoint.config();
+  const auto& remoteCfg = remoteEndpoint.config();
+  if (localCfg.nvls.numDevices > 0 && localCfg.nvls.bufferSize > 0 && remoteCfg.nvls.numDevices > 0 &&
+      remoteCfg.nvls.bufferSize > 0) {
+    if (!localCfg.nvls.isRoot && !remoteCfg.nvls.isRoot) {
+      throw Error("Failed to enable NVLS: one endpoint should be the root, but both endpoints are non-root",
+                  ErrorCode::InvalidUsage);
+    } else if (localCfg.nvls.isRoot && remoteCfg.nvls.isRoot) {
+      throw Error("Failed to enable NVLS: only one endpoint should be a root, but both endpoints are root",
+                  ErrorCode::InvalidUsage);
+    }
+    if (localCfg.nvls.numDevices != remoteCfg.nvls.numDevices ||
+        localCfg.nvls.bufferSize != remoteCfg.nvls.bufferSize) {
+      throw Error("Failed to enable NVLS: endpoint configurations do not match", ErrorCode::InvalidUsage);
+    }
+    if (remoteCfg.nvls.isRoot) {
+      auto& rootNvlsHandle = getImpl(remoteEndpoint).nvlsHandle_;
+      if (!rootNvlsHandle) {
+        throw Error("Root's NVLS handle is empty", ErrorCode::InternalError);
+      }
+      nvlsMem_ = std::make_shared<GpuIpcMem>(*rootNvlsHandle);
+      nvlsNumDevs_ = remoteCfg.nvls.numDevices;
+    }
+  }
 }
 
 Transport CudaIpcConnection::transport() const { return Transport::CudaIpc; }

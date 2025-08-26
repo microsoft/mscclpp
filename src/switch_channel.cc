@@ -10,6 +10,7 @@
 #include <mscclpp/utils.hpp>
 
 #include "api.h"
+#include "connection.hpp"
 #include "debug.h"
 #include "endpoint.hpp"
 #include "gpu_ipc_mem.hpp"
@@ -84,6 +85,23 @@ SwitchChannel::SwitchChannel(std::shared_ptr<NvlsConnection> conn) {
   devicePtr_ = conn->devicePtr();
   mcPtr_ = conn->mcPtr();
   bufferSize_ = conn->bufferSize();
+}
+
+SwitchChannel::SwitchChannel(std::shared_ptr<Connection> conn, void* data, size_t bytes) {
+  CudaIpcConnection* connection = dynamic_cast<CudaIpcConnection*>(conn.get());
+  if (!connection) {
+    throw std::runtime_error("Invalid connection type");
+  }
+  if (!(connection->nvlsMem_)) {
+    std::abort();
+  }
+  (void)connection->nvlsMem_->mapMulticast(connection->nvlsNumDevs_, CUdeviceptr(data), bytes);
+  devicePtr_ = data ? data : connection->nvlsMem_->multicastBuffer();
+  if (!devicePtr_) {
+    std::abort();
+  }
+  mcPtr_ = connection->nvlsMem_->data();
+  bufferSize_ = connection->nvlsMem_->size();
 }
 
 SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
