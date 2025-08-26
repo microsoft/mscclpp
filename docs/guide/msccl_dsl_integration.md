@@ -189,9 +189,7 @@ class Request:
     nranks_per_node: int
     hints: dict
 
-Selector = Callable[[dist[str, PlanHandle], Request], PlanHandle | str]
-
-
+Selector = Callable[[Dict[str, PlanHandle], Request], PlanHandle | str]
 mscclpp.plan.set_selector(selector: Selector) -> None
 mscclpp.plan.clear_selector() -> None
 ```
