@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_ALGORITHM_HPP_
 #define MSCCLPP_ALGORITHM_HPP_
 
-#include <mscclpp/nccl.h>
-
 #include <memory>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/nvls.hpp>
@@ -51,13 +49,11 @@ class AlgorithmImpl;
 
 class Algorithm {
  public:
-  using KernelFunc =
-      std::function<ncclResult_t(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, ncclDataType_t,
-                                 cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
+  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, int,
+                                       cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
-                                                                      const void*, void*, size_t, ncclDataType_t)>;
-  using ContextKeyGenFunc =
-      std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, ncclDataType_t dtype)>;
+                                                                      const void*, void*, size_t, int)>;
+  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, int dtype)>;
   Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
             ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
   Algorithm() = default;
@@ -71,8 +67,8 @@ class Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  ncclResult_t launch(const void* input, void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
-                      std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  int launch(const void* input, void* output, size_t count, int dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   bool isEmpty();
 
  private:
