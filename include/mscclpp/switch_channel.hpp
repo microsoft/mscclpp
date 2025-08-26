@@ -9,7 +9,11 @@
 
 namespace mscclpp {
 
-class NvlsConnection;
+struct NvlsConnection {
+  std::vector<std::shared_ptr<Connection>> rootPeerConnections;
+  std::shared_ptr<Connection> rootSelfConnection;
+  std::shared_ptr<Connection> connection;
+};
 
 class SwitchChannel {
  private:
@@ -19,39 +23,9 @@ class SwitchChannel {
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
-  SwitchChannel(std::shared_ptr<NvlsConnection> conn);
-  SwitchChannel(std::shared_ptr<Connection> conn, void* data, size_t bytes);
+  SwitchChannel(std::shared_ptr<NvlsConnection> conn, void* data, size_t bytes);
   DeviceHandle deviceHandle() const;
   void* getDevicePtr();
-
-  friend class NvlsConnection;
-};
-
-class NvlsConnection {
- public:
-  NvlsConnection(size_t bufferSize, int numDevices);
-  NvlsConnection(const std::vector<char>& data);
-  NvlsConnection() = delete;
-  std::vector<char> serialize();
-
-  void bindMemory(CUdeviceptr devicePtr, size_t size);
-
-  /// Bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
-  /// is undefined if the devicePtr is not allocated by mscclpp::GpuBuffer.
-  /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
-  /// @param size The bytes of the memory to bind to the multicast handle.
-  /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
-  SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
-
-  void* devicePtr() const;
-
-  void* mcPtr() const;
-
-  size_t bufferSize() const;
-
- private:
-  struct Impl;
-  std::shared_ptr<Impl> pimpl_;
 };
 
 class Communicator;

@@ -364,8 +364,7 @@ struct Executor::Impl {
       NvlsInfo info = nvlsInfos[i];
       auto bufferInfo = getBufferInfo(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBuffSize,
                                       recvBuffSize, scratchBuffSize);
-      SwitchChannel switchChannel =
-          nvlsConnection->bindAllocatedMemory((CUdeviceptr)bufferInfo.first, bufferInfo.second);
+      SwitchChannel switchChannel(nvlsConnection, bufferInfo.first, bufferInfo.second);
       context.nvlsChannels.push_back(switchChannel);
     }
   }

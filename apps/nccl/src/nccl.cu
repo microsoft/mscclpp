@@ -319,7 +319,7 @@ static std::vector<mscclpp::SwitchChannel> setupNvlsChannels(
 
   for (size_t idx = 0; idx < NUM_NVLS_CONNECTION; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
-    mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
+    mscclpp::SwitchChannel SwitchChannel(nvlsConnection, buffer, bufferSize);
     channels.push_back(SwitchChannel);
   }
   return channels;

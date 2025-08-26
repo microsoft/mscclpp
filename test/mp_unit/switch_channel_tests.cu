@@ -43,34 +43,8 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
   float data = gEnv->rank + 1.0f;
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice));
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> rootConns;
-  std::shared_ptr<mscclpp::Connection> myConn;
-
-  mscclpp::EndpointConfig cfg;
-  cfg.transport = mscclpp::Transport::CudaIpc;
-  cfg.device = mscclpp::DeviceType::GPU;
-  cfg.nvls.numDevices = numRanksToUse;
-  cfg.nvls.bufferSize = buffer.bytes();
-  if (communicator->bootstrap()->getRank() == 0) {
-    cfg.nvls.isRoot = true;
-    auto rootEndpoint = communicator->context()->createEndpoint(cfg);
-    for (int peer = 1; peer < numRanksToUse; ++peer) {
-      rootConns.emplace_back(communicator->connect(rootEndpoint, peer).get());
-    }
-    cfg.nvls.isRoot = false;
-    auto endpoint = communicator->context()->createEndpoint(cfg);
-    auto rootSelfConn = communicator->context()->connect(rootEndpoint, endpoint);
-    myConn = communicator->context()->connect(endpoint, rootEndpoint);
-  } else {
-    cfg.nvls.isRoot = false;
-    auto endpoint = communicator->context()->createEndpoint(cfg);
-    myConn = communicator->connect(endpoint, 0).get();
-  }
-
-  // auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, buffer.bytes());
-  // nvlsConnection->bindMemory(CUdeviceptr(buffer.data()), buffer.bytes());
-  // mscclpp::SwitchChannel switchChannel(nvlsConnection);
-  mscclpp::SwitchChannel switchChannel(myConn, buffer.data(), buffer.bytes());
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, buffer.bytes());
+  mscclpp::SwitchChannel switchChannel(nvlsConnection, buffer.data(), buffer.bytes());
   auto deviceHandle = switchChannel.deviceHandle();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
