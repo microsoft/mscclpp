@@ -129,15 +129,23 @@ class AlgorithmFactory {
   /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode, int worldSize);
 
-  /// @brief Add a new algorithm selection function.
+  /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.
-  void addAlgorithmSelector(AlgoSelectFunc selector);
+  void setAlgorithmSelector(AlgoSelectFunc selector);
+
+  /// @brief Set a fallback algorithm selection function.
+  /// @param selector The fallback algorithm selection function.
+  /// @details The fallback selector will be used if the primary selector returns an empty algorithm. MSCCL++ will
+  /// assign a predefined selector as the fallback selector.
+  void setFallbackAlgorithmSelector(AlgoSelectFunc selector);
+
   void destroy();
 
  private:
   AlgorithmFactory() = default;
-  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective;
-  std::vector<AlgoSelectFunc> algoSelectors;
+  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective_;
+  AlgoSelectFunc algoSelector_ = nullptr;
+  AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 };
 
 }  // namespace mscclpp

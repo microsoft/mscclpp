@@ -344,7 +344,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
 
   commPtr->algorithmFactory = mscclpp::AlgorithmFactory::getInstance();
-  commPtr->algorithmFactory->addAlgorithmSelector(algoSelector);
+  commPtr->algorithmFactory->setFallbackAlgorithmSelector(algoSelector);
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {

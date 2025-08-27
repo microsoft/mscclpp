@@ -49,25 +49,29 @@ bool Algorithm::isEmpty() { return !impl; }
 
 void AlgorithmFactory::registerAlgorithm(const std::string collective, const std::string algoName,
                                          Algorithm algorithm) {
-  getInstance()->algoMapByCollective[collective][algoName] = algorithm;
+  getInstance()->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
 Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode,
                                             int worldSize) {
-  for (const auto& selector : algoSelectors) {
-    Algorithm algo = selector(algoMapByCollective, collective, messageSize, nRanksPerNode, worldSize);
-    if (!algo.isEmpty()) {
-      return algo;
-    }
+  Algorithm algo;
+  if (algoSelector_) {
+    algo = algoSelector_(algoMapByCollective_, collective, messageSize, nRanksPerNode, worldSize);
   }
-  return Algorithm();
+  if (algo.isEmpty()) {
+    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, messageSize, nRanksPerNode, worldSize);
+  }
+  return algo;
 }
 
-void AlgorithmFactory::addAlgorithmSelector(AlgoSelectFunc selector) { algoSelectors.push_back(selector); }
+void AlgorithmFactory::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
+
+void AlgorithmFactory::setFallbackAlgorithmSelector(AlgoSelectFunc selector) { fallbackAlgoSelector_ = selector; }
 
 void AlgorithmFactory::destroy() {
-  algoMapByCollective.clear();
-  algoSelectors.clear();
+  algoMapByCollective_.clear();
+  algoSelector_ = nullptr;
+  fallbackAlgoSelector_ = nullptr;
 }
 
 }  // namespace mscclpp
