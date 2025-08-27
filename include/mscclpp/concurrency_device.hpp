@@ -118,7 +118,7 @@ struct DeviceSemaphore {
   MSCCLPP_DEVICE_INLINE void acquire([[maybe_unused]] int maxSpinCount = -1) {
     int oldVal = atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire);
     if (oldVal <= 0) {
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) != oldVal), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < oldVal), maxSpinCount);
     }
   }
 

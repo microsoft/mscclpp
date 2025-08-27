@@ -492,7 +492,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     } else if (datatype == ncclBfloat16) {
       allreduceFunc = allreduce<SUM, __bfloat16>;
     } else if (datatype == ncclInt32 || datatype == ncclUint32) {
-      allreduceFunc = allreduce<SUM, int>;
+      allreduceFunc = allreduce<SUM, int32_t>;
     } else {
       WARN("datatype is invalid, datatype: %d", datatype);
       return ncclInvalidArgument;
@@ -505,7 +505,7 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     } else if (datatype == ncclBfloat16) {
       allreduceFunc = allreduce<MIN, __bfloat16>;
     } else if (datatype == ncclInt32 || datatype == ncclUint32) {
-      allreduceFunc = allreduce<MIN, int>;
+      allreduceFunc = allreduce<MIN, int32_t>;
     } else {
       WARN("datatype is invalid, datatype: %d", datatype);
       return ncclInvalidArgument;

@@ -132,8 +132,8 @@ class BaseTestEngine {
   std::shared_ptr<mscclpp::Communicator> comm_;
   std::shared_ptr<mscclpp::BaseProxyService> chanService_;
   mscclpp::RegisteredMemory scratchMemory_;
-  mscclpp::RegisteredMemory inputMemory_;
-  mscclpp::RegisteredMemory outputMemory_;
+  std::vector<mscclpp::RegisteredMemory> inputMemories_;
+  std::vector<mscclpp::RegisteredMemory> outputMemories_;
   cudaStream_t stream_;
   int error_;
 };
