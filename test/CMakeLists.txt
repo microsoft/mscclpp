@@ -27,10 +27,24 @@ function(add_test_executable name sources)
     add_test(NAME ${name} COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.sh ${name} 2)
 endfunction()
 
+# Function for non-MPI test executables (like group_example)
+function(add_simple_test_executable name sources)
+    add_executable(${name} ${sources})
+    target_link_libraries(${name} ${TEST_LIBS_COMMON})
+    if(IBVERBS_FOUND)
+        target_compile_definitions(${name} PRIVATE USE_IBVERBS)
+    endif()
+    target_include_directories(${name} ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
 add_test_executable(allgather_test_cpp allgather_test_cpp.cu)
 add_test_executable(allgather_test_host_offloading allgather_test_host_offloading.cu)
 add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
+
+# Add group management example as a simple test
+add_simple_test_executable(group_example group_example.cpp)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
