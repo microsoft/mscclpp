@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.types import RemoteBuffer, SyncType, ReduceOperationType, Chunk, RankGroup
+from mscclpp.language.thread_block_group import *
 from mscclpp.language.internal.globals import get_program
 from mscclpp.language.internal.operations import *
 from dataclasses import dataclass
@@ -94,7 +95,7 @@ class MemoryChannel:
         op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Retrieve data from remote memory to local memory.
 
         Performs a get operation to copy data from the destination rank's memory
@@ -121,24 +122,35 @@ class MemoryChannel:
             )
 
         remote_chunk = RemoteBuffer(dst_chunk.rank, src_chunk.rank, src_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
-        tb_channel_ids = get_program().setup_channel(tb, self)
 
-        op = GetOperation(
-            src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
-            dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-        )
+        if isinstance(tb, int):
+            tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
+            tb_channel_ids = get_program().setup_channel(tb, self)
 
-        get_program().add_operation(self.src_rank, tb, op)
+            op = GetOperation(
+                src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
+                dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+            )
 
-    def put(
-        self,
-        dst_chunk: Chunk,
-        src_chunk: Chunk,
-        tb: int,
-    ):
+            get_program().add_operation(self.src_rank, tb, op)
+        elif isinstance(tb, ThreadBlockGroup):
+            for tbg_tb in tb.tb_list:
+                tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tbg_tb, remote_chunk, self.channel_type)
+                tb_channel_ids = get_program().setup_channel(tbg_tb, self)
+
+                op = GetOperation(
+                    src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
+                    dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                    channel_ids=tb_channel_ids,
+                    channel_type=self.channel_type,
+                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
+                )
+
+                get_program().add_operation(self.src_rank, tbg_tb, op)
+
+    def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Send data from local memory to remote memory.
 
         Performs a put operation to copy data from the source rank's local memory
@@ -170,19 +182,37 @@ class MemoryChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
-        tb_channel_ids = get_program().setup_channel(tb, self)
 
-        op = PutOperation(
-            src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-        )
+        if isinstance(tb, int):
+            tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
+            tb_channel_ids = get_program().setup_channel(tb, self)
 
-        get_program().add_operation(self.src_rank, tb, op)
+            op = PutOperation(
+                src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+            )
 
-    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+            get_program().add_operation(self.src_rank, tb, op)
+        elif isinstance(tb, ThreadBlockGroup):
+            for tbg_tb in tb.tb_list:
+                tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tbg_tb, remote_chunk, self.channel_type)
+                tb_channel_ids = get_program().setup_channel(tbg_tb, self)
+
+                op = PutOperation(
+                    src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                    dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                    channel_ids=tb_channel_ids,
+                    channel_type=self.channel_type,
+                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
+                )
+
+                get_program().add_operation(self.src_rank, tbg_tb, op)
+        else:
+            raise RuntimeError("Thread Block inconsistent.")
+
+    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Transfer data in packet format from local to remote scratch buffer.
 
         Performs a specialized put operation that transfers data in packet format
@@ -219,21 +249,40 @@ class MemoryChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
-        tb_channel_ids = get_program().setup_channel(tb, self)
 
-        op = PutOperation(
-            src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-            from_packet=True,
-            to_packet=True,
-        )
+        if isinstance(tb, int):
+            tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
+            tb_channel_ids = get_program().setup_channel(tb, self)
 
-        get_program().add_operation(self.src_rank, tb, op)
+            op = PutOperation(
+                src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+                from_packet=True,
+                to_packet=True,
+            )
 
-    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+            get_program().add_operation(self.src_rank, tb, op)
+        elif isinstance(tb, ThreadBlockGroup):
+            for tbg_tb in tb.tb_list:
+                tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tbg_tb, remote_chunk, self.channel_type)
+                tb_channel_ids = get_program().setup_channel(tbg_tb, self)
+                op = PutOperation(
+                    src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                    dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                    channel_ids=tb_channel_ids,
+                    channel_type=self.channel_type,
+                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
+                    from_packet=True,
+                    to_packet=True,
+                )
+
+                get_program().add_operation(self.src_rank, tbg_tb, op)
+        else:
+            raise RuntimeError("Thread Block inconsistent.")
+
+    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Transfer data from local buffer to remote scratch buffer in packet format.
 
         Performs a put operation that transfers data from the source rank's buffer
@@ -268,25 +317,45 @@ class MemoryChannel:
             )
 
         remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
-        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
-        tb_channel_ids = get_program().setup_channel(tb, self)
 
-        op = PutOperation(
-            src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-            from_packet=False,
-            to_packet=True,
-        )
+        if isinstance(tb, int):
+            tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
+            tb_channel_ids = get_program().setup_channel(tb, self)
 
-        get_program().add_operation(self.src_rank, tb, op)
+            op = PutOperation(
+                src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+                from_packet=False,
+                to_packet=True,
+            )
+
+            get_program().add_operation(self.src_rank, tb, op)
+        elif isinstance(tb, ThreadBlockGroup):
+            for tbg_tb in tb.tb_list:
+                tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tbg_tb, remote_chunk, self.channel_type)
+                tb_channel_ids = get_program().setup_channel(tbg_tb, self)
+
+                op = PutOperation(
+                    src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                    dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+                    channel_ids=tb_channel_ids,
+                    channel_type=self.channel_type,
+                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
+                    from_packet=False,
+                    to_packet=True,
+                )
+
+                get_program().add_operation(self.src_rank, tbg_tb, op)
+        else:
+            raise RuntimeError("Thread Block inconsistent.")
 
     def reduce(
         self,
         local_src_chunk: Chunk,
         remote_src_chunks: List[Chunk],
-        tb: int,
+        tb: int | ThreadBlockGroup,
         local_dst_chunk: Chunk = None,
         reduce_op: ReduceOperation = ReduceOperationType.sum,
     ):
@@ -332,33 +401,66 @@ class MemoryChannel:
                     f"Source chunk size {chunk.size} does not match local source chunk size {local_src_chunk.size}."
                 )
 
-        remote_chunks = [
-            RemoteChunk(
-                chunk.buffer,
-                chunk.index,
-                chunk.size,
-                get_program().setup_remote_chunk(
-                    self.src_rank,
-                    tb,
-                    RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
-                    self.channel_type,
-                ),
+        if isinstance(tb, int):
+            remote_chunks = [
+                RemoteChunk(
+                    chunk.buffer,
+                    chunk.index,
+                    chunk.size,
+                    get_program().setup_remote_chunk(
+                        self.src_rank,
+                        tb,
+                        RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
+                        self.channel_type,
+                    ),
+                )
+                for chunk in remote_src_chunks
+            ]
+            tb_channel_ids = get_program().setup_channel(tb, self)
+
+            op = ReduceOperation(
+                local_src_buff=[LocalChunk(local_src_chunk.buffer, local_src_chunk.index, local_src_chunk.size)],
+                local_dst_buff=[LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
+                remote_src_buff=remote_chunks,
+                remote_dst_buff=[],
+                channel_ids=tb_channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=reduce_op,
             )
-            for chunk in remote_src_chunks
-        ]
-        tb_channel_ids = get_program().setup_channel(tb, self)
 
-        op = ReduceOperation(
-            local_src_buff=[LocalChunk(local_src_chunk.buffer, local_src_chunk.index, local_src_chunk.size)],
-            local_dst_buff=[LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
-            remote_src_buff=remote_chunks,
-            remote_dst_buff=[],
-            channel_ids=tb_channel_ids,
-            channel_type=self.channel_type,
-            reduce_operation=reduce_op,
-        )
+            get_program().add_operation(self.src_rank, tb, op)
+        elif isinstance(tb, ThreadBlockGroup):
+            for tbg_tb in tb.tb_list:
+                remote_chunks = [
+                    RemoteChunk(
+                        chunk.buffer,
+                        chunk.index,
+                        chunk.size,
+                        get_program().setup_remote_chunk(
+                            self.src_rank,
+                            tbg_tb,
+                            RemoteBuffer(local_src_chunk.rank, chunk.rank, chunk.buffer, self.channel_type),
+                            self.channel_type,
+                        ),
+                    )
+                    for chunk in remote_src_chunks
+                ]
+                tb_channel_ids = get_program().setup_channel(tbg_tb, self)
 
-        get_program().add_operation(self.src_rank, tb, op)
+                op = ReduceOperation(
+                    local_src_buff=[LocalChunk(local_src_chunk.buffer, local_src_chunk.index, local_src_chunk.size)],
+                    local_dst_buff=[LocalChunk(local_dst_chunk.buffer, local_dst_chunk.index, local_dst_chunk.size)],
+                    remote_src_buff=remote_chunks,
+                    remote_dst_buff=[],
+                    channel_ids=tb_channel_ids,
+                    channel_type=self.channel_type,
+                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
+                    reduce_operation=reduce_op,
+                )
+
+                get_program().add_operation(self.src_rank, tbg_tb, op)
+        else:
+            raise RuntimeError("Thread Block inconsistent.")
 
 
 @dataclass
