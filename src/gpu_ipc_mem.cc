@@ -56,7 +56,7 @@ static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetF
 #endif
 }
 
-static bool isFabricMemHandleAvailable() {
+[[maybe_unused]] static bool isFabricMemHandleAvailable() {
 #if (CUDA_NVLS_API_AVAILABLE)
   CUdevice currentDevice;
   int isFabricSupported;

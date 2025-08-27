@@ -60,7 +60,7 @@ MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::share
   if (comm->bootstrap()->getRank() == allRanks[0]) {
     cfg.nvls.isRoot = true;
     auto rootEndpoint = comm->context()->createEndpoint(cfg);
-    for (int peer = 1; peer < allRanks.size(); ++peer) {
+    for (int peer = 1; peer < static_cast<int>(allRanks.size()); ++peer) {
       nvlsConnection->rootPeerConnections.push_back(comm->connect(rootEndpoint, peer).get());
     }
     cfg.nvls.isRoot = false;
