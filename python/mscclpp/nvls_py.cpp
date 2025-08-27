@@ -9,13 +9,18 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_nvls(nb::module_& m) {
   nb::class_<SwitchChannel>(m, "SwitchChannel")
+      .def("__init__",
+           [](SwitchChannel* switchChannel, std::shared_ptr<NvlsConnection> nvlsConnection, uintptr_t buffer,
+              size_t bufferSize) {
+             new (switchChannel) SwitchChannel(nvlsConnection, reinterpret_cast<void*>(buffer), bufferSize);
+           })
       .def("get_device_ptr", [](SwitchChannel* self) { return (uintptr_t)self->getDevicePtr(); })
       .def("device_handle", &SwitchChannel::deviceHandle);
 
@@ -27,10 +32,6 @@ void register_nvls(nb::module_& m) {
       .def_prop_ro("raw", [](const SwitchChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
-
-  nb::class_<NvlsConnection>(m, "NvlsConnection")
-      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("devicePtr"), nb::arg("size"))
-      .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
 
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("allRanks"),
         nb::arg("bufferSize"));

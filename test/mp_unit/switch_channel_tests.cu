@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "mp_unit_tests.hpp"
@@ -39,12 +39,12 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
     ranks.push_back(i);
   }
 
-  auto buffer = mscclpp::GpuBuffer<float>(1024);
+  auto buffer = mscclpp::GpuBuffer<float>(1024 * 1024);
   float data = gEnv->rank + 1.0f;
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice));
 
-  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, 1024);
-  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 1024);
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, buffer.bytes());
+  mscclpp::SwitchChannel switchChannel(nvlsConnection, buffer.data(), buffer.bytes());
   auto deviceHandle = switchChannel.deviceHandle();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));

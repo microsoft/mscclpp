@@ -30,6 +30,7 @@ from mscclpp import (
     env,
     Device,
     DeviceType,
+    SwitchChannel,
 )
 import mscclpp.comm as mscclpp_comm
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
@@ -343,13 +344,13 @@ def test_nvls_connection(mpi_group: MpiGroup):
     memory1 = GpuBuffer(2**29, cp.int8)
     memory2 = GpuBuffer(2**29, cp.int8)
     memory3 = GpuBuffer(2**29, cp.int8)
-    mem_handle1 = nvls_connection.bind_allocated_memory(memory1.data.ptr, memory1.data.mem.size)
-    mem_handle2 = nvls_connection.bind_allocated_memory(memory2.data.ptr, memory2.data.mem.size)
+    chan1 = SwitchChannel(nvls_connection, memory1.data.ptr, memory1.data.mem.size)
+    chan2 = SwitchChannel(nvls_connection, memory2.data.ptr, memory2.data.mem.size)
     with pytest.raises(Exception):
-        mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
-    # the memory is freed on the destructor of mem_handle2
-    mem_handle2 = None
-    mem_handle3 = nvls_connection.bind_allocated_memory(memory3.data.ptr, memory3.data.mem.size)
+        chan3 = SwitchChannel(nvls_connection, memory3.data.ptr, memory3.data.mem.size)
+    # the memory is freed on the destructor of chan2
+    chan2 = None
+    chan3 = SwitchChannel(nvls_connection, memory3.data.ptr, memory3.data.mem.size)
 
 
 class MscclppKernel:

@@ -5,8 +5,8 @@
 #define MSCCLPP_EXECUTION_COMMON_HPP_
 
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 
 namespace mscclpp {
 

@@ -3,8 +3,8 @@
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <set>
 
 #include "debug.h"
@@ -364,8 +364,7 @@ struct Executor::Impl {
       NvlsInfo info = nvlsInfos[i];
       auto bufferInfo = getBufferInfo(info.bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBuffSize,
                                       recvBuffSize, scratchBuffSize);
-      SwitchChannel switchChannel =
-          nvlsConnection->bindAllocatedMemory((CUdeviceptr)bufferInfo.first, bufferInfo.second);
+      SwitchChannel switchChannel(nvlsConnection, bufferInfo.first, bufferInfo.second);
       context.nvlsChannels.push_back(switchChannel);
     }
   }

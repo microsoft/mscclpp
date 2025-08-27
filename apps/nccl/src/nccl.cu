@@ -10,7 +10,7 @@
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/utils.hpp>
 #include <queue>
 #include <sstream>
@@ -319,7 +319,7 @@ static std::vector<mscclpp::SwitchChannel> setupNvlsChannels(
 
   for (size_t idx = 0; idx < NUM_NVLS_CONNECTION; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
-    mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
+    mscclpp::SwitchChannel SwitchChannel(nvlsConnection, buffer, bufferSize);
     channels.push_back(SwitchChannel);
   }
   return channels;

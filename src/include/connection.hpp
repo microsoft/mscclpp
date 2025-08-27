@@ -15,9 +15,15 @@
 
 namespace mscclpp {
 
+class SwitchChannel;
+
 class CudaIpcConnection : public Connection {
  private:
   std::shared_ptr<CudaIpcStream> stream_;
+  std::shared_ptr<GpuIpcMem> nvlsMem_;
+  size_t nvlsNumDevs_;
+
+  friend class SwitchChannel;
 
  public:
   CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
