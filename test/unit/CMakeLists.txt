@@ -12,4 +12,6 @@ target_sources(unit_tests PRIVATE
     utils_internal_tests.cc
     compile_tests.cu
     local_channel_tests.cu
+    group_test.cpp
+    group_execution_plan_test.cpp
 )

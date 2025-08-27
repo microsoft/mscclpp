@@ -206,3 +206,195 @@ The group management system is designed with thread safety in mind:
 - Proper synchronization for shared resources
 
 This implementation provides a comprehensive group management system for MSCCLPP that enables significant performance optimizations while maintaining ease of use and robust error handling.
+
+# Execution Plan-Aware Group Management for All_to_Allv
+
+This extension to the MSCCLPP group management system adds support for variable chunk sizes obtained from execution plans, enabling efficient all_to_allv operations using the DSL.
+
+## Overview
+
+The execution plan-aware group management extends the existing group management system to:
+
+1. **Extract chunk size information** from JSON execution plans
+2. **Support variable-size operations** like all_to_allv with per-rank different data sizes
+3. **Integrate with DSL execution engine** for optimized collective operations
+4. **Maintain the same API patterns** as the original group management system
+
+## Key Components
+
+### ExecutionPlanAllToAllvOperation
+
+A specialized operation class that extracts variable chunk size information from execution plans and performs all_to_allv operations.
+
+```cpp
+// Create an all_to_allv operation based on execution plan
+auto operation = std::make_shared<ExecutionPlanAllToAllvOperation>(
+    comm, executionPlan, 
+    sendBuffer, recvBuffer,
+    inputSize, outputSize, tag);
+
+// Get chunk size information
+const auto& info = operation->getAllToAllvInfo();
+```
+
+### ExecutionPlanGroupManager
+
+Extended group manager with execution plan support:
+
+```cpp
+// Add execution plan-based all_to_allv to group
+auto operation = ExecutionPlanGroupManager::addExecutionPlanAllToAllv(
+    comm, plan, sendBuffer, recvBuffer, inputSize, outputSize, tag);
+
+// Add custom operation with execution plan context
+auto customOp = ExecutionPlanGroupManager::addExecutionPlanCustom(
+    comm, plan, executeFunc, isCompleteFunc, cancelFunc, tag);
+```
+
+### AllToAllvInfo Structure
+
+Contains extracted chunk size specifications:
+
+```cpp
+struct AllToAllvInfo {
+    std::vector<ChunkSizeSpec> chunkSpecs;  // Per-rank specifications
+    size_t totalSendSize;                   // Total send buffer size
+    size_t totalRecvSize;                   // Total receive buffer size
+    uint32_t maxChunks;                     // Maximum chunks
+    bool isVariable;                        // Whether sizes are variable
+};
+```
+
+### ChunkSizeSpec Structure
+
+Defines variable chunk sizes for each rank pair:
+
+```cpp
+struct ChunkSizeSpec {
+    int rank;           // Source rank
+    int destRank;       // Destination rank
+    size_t sendSize;    // Data size to send
+    size_t recvSize;    // Data size to receive
+    size_t sendOffset;  // Offset in send buffer
+    size_t recvOffset;  // Offset in receive buffer
+};
+```
+
+## Usage Examples
+
+### Basic All_to_Allv with Execution Plan
+
+```cpp
+#include <mscclpp/group_execution_plan.hpp>
+
+// Load execution plan with variable chunk sizes
+auto plan = std::make_shared<ExecutionPlan>("alltoallv_plan.json", rank);
+auto comm = std::make_shared<Communicator>();
+
+// Prepare buffers
+std::vector<char> sendBuffer(totalSendSize);
+std::vector<char> recvBuffer(totalRecvSize);
+
+// Use RAII group scope
+{
+    ExecutionPlanGroupScope scope(plan, true);
+    
+    auto operation = ExecutionPlanGroupManager::addExecutionPlanAllToAllv(
+        comm, plan, 
+        sendBuffer.data(), recvBuffer.data(),
+        sendBuffer.size(), recvBuffer.size(), 0);
+    
+    // Operation executes when scope ends
+}
+```
+
+### Multiple Operations with Different Plans
+
+```cpp
+// Multiple operations with different execution plans
+std::vector<std::tuple<std::shared_ptr<Communicator>, 
+                      std::shared_ptr<ExecutionPlan>, 
+                      void*, void*, size_t, size_t, int>> operations = {
+    {comm1, plan1, send1, recv1, size1, size1, 1},
+    {comm2, plan2, send2, recv2, size2, size2, 2}
+};
+
+auto results = groupExecutionPlanAllToAllv(operations, true);
+```
+
+### Custom Operation with Execution Plan Context
+
+```cpp
+{
+    ExecutionPlanGroupScope scope(plan, true);
+    
+    auto customOp = ExecutionPlanGroupManager::addExecutionPlanCustom(
+        comm, plan,
+        []() -> GroupResult {
+            // Custom logic using execution plan context
+            return GroupResult::Success;
+        },
+        []() -> bool { return true; },
+        nullptr, tag);
+}
+```
+
+## Utility Functions
+
+### Chunk Size Analysis
+
+```cpp
+// Extract all_to_allv information from execution plan
+AllToAllvInfo info = extractAllToAllvInfo(plan, inputSize, outputSize);
+
+// Check if plan supports variable chunk sizes
+bool supportsVariable = supportsVariableChunkSizes(plan);
+
+// Get maximum chunk size for buffer allocation
+size_t maxChunk = getMaxChunkSize(plan, inputSize, outputSize);
+
+// Calculate detailed chunk specifications
+auto specs = calculateChunkSizes(plan, inputSize, outputSize);
+```
+
+## Integration with DSL
+
+The execution plan-aware group management is designed to integrate with the MSCCLPP DSL for optimized execution:
+
+1. **JSON Execution Plans**: Plans contain variable chunk size specifications
+2. **Runtime Size Determination**: Chunk sizes are extracted at runtime from execution plans
+3. **DSL Integration**: Operations use DSL execution engine with variable chunk information
+4. **Placeholder Support**: Plans can contain placeholders that are replaced with actual sizes
+
+## Benefits
+
+1. **Variable Size Support**: Enables all_to_allv operations with per-rank variable data sizes
+2. **Execution Plan Integration**: Leverages DSL execution plans for optimized collective operations
+3. **Consistent API**: Maintains the same group management patterns as the base system
+4. **Performance**: Reduces synchronization overhead through batching
+5. **Flexibility**: Supports custom operations with execution plan context
+
+## Error Handling
+
+The system provides comprehensive error handling:
+
+- **Invalid execution plans**: Throws `std::invalid_argument` for null or invalid plans
+- **Buffer validation**: Ensures buffers are sufficient for the operation
+- **Group state**: Validates group state before adding operations
+- **Cancellation support**: Operations can be cancelled if needed
+
+## Thread Safety
+
+The execution plan-aware group management maintains the same thread safety guarantees as the base group management system, using thread-local storage for group state and execution plan information.
+
+## Testing
+
+Comprehensive unit tests are provided to verify:
+
+- Operation creation and validation
+- Group management with execution plans
+- Chunk size extraction and calculation
+- Error handling and edge cases
+- Integration with base group management functionality
+
+This extension enables MSCCLPP to support sophisticated all_to_allv operations with variable chunk sizes while maintaining the familiar group management API patterns.

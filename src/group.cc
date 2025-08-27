@@ -20,9 +20,10 @@ thread_local bool GroupManager::groupBlocking_ = true;
 ErrorCode groupResultToErrorCode(GroupResult result) {
   switch (result) {
     case GroupResult::Success:
-      // Since there's no Success in ErrorCode, we'll return the closest equivalent
+      // Since there's no Success in ErrorCode, we'll use a cast to represent success
       // In practice, successful operations shouldn't need to convert to ErrorCode
-      return static_cast<ErrorCode>(0);  // Assuming 0 represents success
+      // We'll use a special case where we return the first ErrorCode value
+      return static_cast<ErrorCode>(0);  // Cast to first enum value
     case GroupResult::InProgress:
       return ErrorCode::InternalError;  // Should not be exposed as exception
     case GroupResult::InvalidUsage:

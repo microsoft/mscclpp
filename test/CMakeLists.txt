@@ -46,6 +46,9 @@ add_test_executable(executor_test executor_test.cc)
 # Add group management example as a simple test
 add_simple_test_executable(group_example group_example.cpp)
 
+# Add execution plan group management example as a simple test
+add_simple_test_executable(group_execution_plan_example group_execution_plan_example.cpp)
+
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
 
 include(CTest)
