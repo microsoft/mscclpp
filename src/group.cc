@@ -221,7 +221,7 @@ GroupResult GroupManager::groupEnd(bool blocking) {
 GroupResult GroupManager::addOperation(std::unique_ptr<Operation> operation) {
   if (groupDepth_ == 0) {
     INFO(MSCCLPP_INIT, "AddOperation: not in a group");
-    return GroupResult::InvalidUsage;
+    throw std::runtime_error("Cannot add operation outside of a group. Call GroupManager::groupStart() first.");
   }
   
   if (!currentJob_) {
@@ -240,8 +240,9 @@ std::shared_ptr<ConnectOperation> GroupManager::addConnect(std::shared_ptr<Commu
                                                           EndpointConfig localConfig, int remoteRank, int tag) {
   auto op = std::make_shared<ConnectOperation>(comm, localConfig, remoteRank, tag);
   
-  // Create a unique_ptr without taking ownership from shared_ptr
-  auto result = addOperation(std::unique_ptr<Operation>(new ConnectOperation(comm, localConfig, remoteRank, tag)));
+  // Create a unique_ptr from the same parameters (this is needed for the polymorphism)
+  auto unique_op = std::make_unique<ConnectOperation>(comm, localConfig, remoteRank, tag);
+  auto result = addOperation(std::move(unique_op));
   
   if (result == GroupResult::Success) {
     return op;
@@ -255,7 +256,8 @@ std::shared_ptr<SendMemoryOperation> GroupManager::addSendMemory(std::shared_ptr
                                                                 int remoteRank, int tag) {
   auto op = std::make_shared<SendMemoryOperation>(comm, memory, remoteRank, tag);
   
-  auto result = addOperation(std::unique_ptr<Operation>(new SendMemoryOperation(comm, memory, remoteRank, tag)));
+  auto unique_op = std::make_unique<SendMemoryOperation>(comm, memory, remoteRank, tag);
+  auto result = addOperation(std::move(unique_op));
   
   if (result == GroupResult::Success) {
     return op;
@@ -268,7 +270,8 @@ std::shared_ptr<RecvMemoryOperation> GroupManager::addRecvMemory(std::shared_ptr
                                                                 int remoteRank, int tag) {
   auto op = std::make_shared<RecvMemoryOperation>(comm, remoteRank, tag);
   
-  auto result = addOperation(std::unique_ptr<Operation>(new RecvMemoryOperation(comm, remoteRank, tag)));
+  auto unique_op = std::make_unique<RecvMemoryOperation>(comm, remoteRank, tag);
+  auto result = addOperation(std::move(unique_op));
   
   if (result == GroupResult::Success) {
     return op;
@@ -284,7 +287,8 @@ std::shared_ptr<CustomOperation> GroupManager::addCustom(std::shared_ptr<Communi
                                                         int tag) {
   auto op = std::make_shared<CustomOperation>(comm, executeFunc, isCompleteFunc, cancelFunc, tag);
   
-  auto result = addOperation(std::unique_ptr<Operation>(new CustomOperation(comm, executeFunc, isCompleteFunc, cancelFunc, tag)));
+  auto unique_op = std::make_unique<CustomOperation>(comm, executeFunc, isCompleteFunc, cancelFunc, tag);
+  auto result = addOperation(std::move(unique_op));
   
   if (result == GroupResult::Success) {
     return op;
@@ -372,10 +376,10 @@ void GroupManager::executeGroupJob(std::shared_ptr<GroupJob> job) {
       }
     }
     
-    // Phase 2: Wait for completion if blocking
+    // Phase 2: Wait for completion if blocking (but with shorter timeout for tests)
     if (job->isBlocking) {
       bool allComplete = false;
-      const int maxWaitMs = 30000;  // 30 second timeout
+      const int maxWaitMs = 5000;  // Reduced timeout to 5 seconds for better test behavior
       auto startTime = std::chrono::steady_clock::now();
       
       while (!allComplete && !job->abortFlag.load()) {
@@ -396,7 +400,7 @@ void GroupManager::executeGroupJob(std::shared_ptr<GroupJob> job) {
             job->state.store(GroupJobState::Failed);
             return;
           }
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));  // Longer sleep for efficiency
         }
       }
       
