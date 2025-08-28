@@ -390,7 +390,9 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels = nullptr;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels = nullptr;
   size_t bytes = count * ncclTypeSize(datatype);
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
+  bool isCuMemMapAllocated =
+      mscclpp::isCuMemMapAllocated((void*)sendBasePtr) && mscclpp::isCuMemMapAllocated((void*)recvBasePtr);
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
   bool useNvlsWithCopy = mscclpp::isNvlsSupported() && mscclppDisableChannelCache;
 
   // Creating the channels
@@ -605,6 +607,8 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
+  INFO(MSCCLPP_INIT, "Initializing fallback single node for rank %d, world_size=%d", rank,
+       mscclppComm->bootstrap()->getNranks());
   if (mscclpp::isNvlsSupported()) {
     commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
     commPtr->nvlsConnectionsOut = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
@@ -680,6 +684,7 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
+  INFO(MSCCLPP_INIT, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
   if (comm == nullptr) {
     WARN("comm is nullptr");
     return ncclInvalidArgument;
