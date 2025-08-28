@@ -266,22 +266,22 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 
 static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>(comm);
-  broadcastAlgo6->registerAlgorithm(comm);
+  broadcastAlgo6->registerAlgorithm();
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>(comm);
   std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>(comm);
-  allgatherAlgo6->registerAlgorithm(comm);
+  allgatherAlgo6->registerAlgorithm();
   // TODO(binyli): remove allgather8 algo, use nccl by default
-  allgatherAlgo8->registerAlgorithm(comm);
+  allgatherAlgo8->registerAlgorithm();
 
   std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>(comm);
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>(comm);
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>(comm);
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>(comm);
-  allreduceAllpairAlgo->registerAlgorithm(comm);
-  allreduceNvlsAlgo->registerAlgorithm(comm);
-  allreduceNvlsWithCopyAlgo->registerAlgorithm(comm);
-  allreduceAllreduce8Algo->registerAlgorithm(comm);
+  allreduceAllpairAlgo->registerAlgorithm();
+  allreduceNvlsAlgo->registerAlgorithm();
+  allreduceNvlsWithCopyAlgo->registerAlgorithm();
+  allreduceAllreduce8Algo->registerAlgorithm();
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -607,7 +607,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras;
     extras.insert({"root", std::make_shared<int>(root)});
-    return static_cast<ncclResult_t>(algo.launch(sendbuff, recvbuff, count, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -661,7 +661,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
-    return static_cast<ncclResult_t>(algo.launch(sendbuff, recvbuff, count, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -764,7 +764,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras;
-    return static_cast<ncclResult_t>(algo.launch(sendbuff, recvbuff, sendcount, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, sendcount, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

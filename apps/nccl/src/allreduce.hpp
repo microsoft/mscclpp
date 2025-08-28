@@ -798,7 +798,7 @@ enum Op getReduceOp(ncclRedOp_t op);
 class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
  public:
   AllreducePacket(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
@@ -822,7 +822,7 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
 class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
  public:
   AllreduceNvls(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
@@ -843,7 +843,7 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
 class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsWithCopy> {
  public:
   AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
@@ -866,7 +866,7 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
 class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
  public:
   Allreduce8(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,

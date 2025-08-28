@@ -7,17 +7,13 @@ namespace mscclpp {
 
 class AlgorithmImpl {
  public:
-  AlgorithmImpl(std::shared_ptr<mscclpp::Communicator> comm, Algorithm::KernelFunc kernelFunc,
-                Algorithm::ContextInitFunc contextInitFunc, Algorithm::ContextKeyGenFunc contextKeyGenFunc)
-      : comm(comm),
-        kernelLaunchFunc(kernelFunc),
-        contextInitFunc(contextInitFunc),
-        contextKeyGenFunc(contextKeyGenFunc) {}
-  int launch(const void* input, void* output, size_t count, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  AlgorithmImpl(Algorithm::KernelFunc kernelFunc, Algorithm::ContextInitFunc contextInitFunc,
+                Algorithm::ContextKeyGenFunc contextKeyGenFunc)
+      : kernelLaunchFunc(kernelFunc), contextInitFunc(contextInitFunc), contextKeyGenFunc(contextKeyGenFunc) {}
+  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
+             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
  private:
-  std::shared_ptr<mscclpp::Communicator> comm;
   Algorithm::KernelFunc kernelLaunchFunc;
   Algorithm::ContextInitFunc contextInitFunc;
   Algorithm::ContextKeyGenFunc contextKeyGenFunc;
@@ -25,7 +21,8 @@ class AlgorithmImpl {
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts;
 };
 
-int AlgorithmImpl::launch(const void* input, void* output, size_t count, int dtype, cudaStream_t stream,
+int AlgorithmImpl::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+                          int dtype, cudaStream_t stream,
                           std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   AlgorithmCtxKey ctxKey = contextKeyGenFunc(input, output, count, dtype);
   auto it = contexts.find(ctxKey);
@@ -36,13 +33,13 @@ int AlgorithmImpl::launch(const void* input, void* output, size_t count, int dty
   return kernelLaunchFunc(contexts[ctxKey], input, output, count, dtype, stream, extras);
 }
 
-Algorithm::Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
-                     ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc)
-    : name(name), impl(std::make_shared<AlgorithmImpl>(comm, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
+Algorithm::Algorithm(std::string name, KernelFunc kernelFunc, ContextInitFunc contextInitFunc,
+                     ContextKeyGenFunc contextKeyGenFunc)
+    : name(name), impl(std::make_shared<AlgorithmImpl>(kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
 
-int Algorithm::launch(const void* input, void* output, size_t count, int dtype, cudaStream_t stream,
-                      std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  return this->impl->launch(input, output, count, dtype, stream, extras);
+int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+                      int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+  return this->impl->launch(comm, input, output, count, dtype, stream, extras);
 }
 
 bool Algorithm::isEmpty() { return !impl; }

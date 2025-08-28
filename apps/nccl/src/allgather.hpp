@@ -212,7 +212,7 @@ __global__ void __launch_bounds__(1024, 1)
 class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
  public:
   AllgatherAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   bool disableChannelCache_;
@@ -230,7 +230,7 @@ class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
 class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
  public:
   AllgatherAlgo8(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;

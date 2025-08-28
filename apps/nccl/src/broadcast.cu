@@ -70,10 +70,10 @@ mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-void BroadcastAlgo6::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
+void BroadcastAlgo6::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm broadcastAlgo(
-      comm, "broadcast",
+      "broadcast",
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->broadcastKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);

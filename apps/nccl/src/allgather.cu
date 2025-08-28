@@ -107,10 +107,10 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo6::generateAllgatherContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
-void AllgatherAlgo6::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
+void AllgatherAlgo6::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm allgatherAlgo(
-      comm, "allgather",
+      "allgather",
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
@@ -189,10 +189,10 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo8::generateAllgatherContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-void AllgatherAlgo8::registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm) {
+void AllgatherAlgo8::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm allgatherAlgo(
-      comm, "allgather",
+      "allgather",
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);

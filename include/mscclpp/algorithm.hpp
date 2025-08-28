@@ -54,11 +54,12 @@ class Algorithm {
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
                                                                       const void*, void*, size_t, int)>;
   using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, int dtype)>;
-  Algorithm(std::shared_ptr<Communicator> comm, std::string name, KernelFunc kernelFunc,
-            ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
+  Algorithm(std::string name, KernelFunc kernelFunc, ContextInitFunc contextInitFunc,
+            ContextKeyGenFunc contextKeyGenFunc);
   Algorithm() = default;
 
   /// @brief Launch the algorithm.
+  /// @brief comm The communicator.
   /// @param input The input buffer.
   /// @param output The output buffer.
   /// @param count The number of elements.
@@ -67,8 +68,8 @@ class Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  int launch(const void* input, void* output, size_t count, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
+             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   bool isEmpty();
 
  private:

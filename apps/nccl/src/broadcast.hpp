@@ -158,7 +158,7 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
  public:
   BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
-  void registerAlgorithm(std::shared_ptr<mscclpp::Communicator> comm);
+  void registerAlgorithm();
 
  private:
   ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
