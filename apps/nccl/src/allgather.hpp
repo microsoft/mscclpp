@@ -211,13 +211,14 @@ __global__ void __launch_bounds__(1024, 1)
 
 class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
  public:
-  AllgatherAlgo6(std::shared_ptr<mscclpp::Communicator> comm);
+  AllgatherAlgo6();
   void registerAlgorithm();
 
  private:
   bool disableChannelCache_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -229,12 +230,13 @@ class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
 
 class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
  public:
-  AllgatherAlgo8(std::shared_ptr<mscclpp::Communicator> comm);
+  AllgatherAlgo8();
   void registerAlgorithm();
 
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);

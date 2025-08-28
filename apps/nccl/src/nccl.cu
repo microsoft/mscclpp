@@ -264,20 +264,20 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
   return ncclCommInitRank(comm, nranks, commId, rank);
 }
 
-static void registerCustomizedAlgo(std::shared_ptr<mscclpp::Communicator> comm) {
-  std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>(comm);
+static void registerCustomizedAlgo() {
+  std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
   broadcastAlgo6->registerAlgorithm();
 
-  std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>(comm);
-  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>(comm);
+  std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
+  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
   allgatherAlgo6->registerAlgorithm();
   // TODO(binyli): remove allgather8 algo, use nccl by default
   allgatherAlgo8->registerAlgorithm();
 
-  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>(comm);
-  std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>(comm);
-  std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>(comm);
-  std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>(comm);
+  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>();
+  std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
+  std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
+  std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
   allreduceAllpairAlgo->registerAlgorithm();
   allreduceNvlsAlgo->registerAlgorithm();
   allreduceNvlsWithCopyAlgo->registerAlgorithm();
@@ -360,7 +360,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
   }
 
-  registerCustomizedAlgo(mscclppComm);
+  registerCustomizedAlgo();
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)

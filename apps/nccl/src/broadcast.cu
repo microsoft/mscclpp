@@ -8,7 +8,7 @@
 
 #include "broadcast.hpp"
 
-BroadcastAlgo6::BroadcastAlgo6(std::shared_ptr<mscclpp::Communicator> comm) { this->conns_ = setupConnections(comm); }
+void BroadcastAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm) { this->conns_ = setupConnections(comm); }
 
 ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,
@@ -73,7 +73,7 @@ mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*
 void BroadcastAlgo6::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm broadcastAlgo(
-      "broadcast",
+      "broadcast", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->broadcastKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);

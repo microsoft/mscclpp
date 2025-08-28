@@ -797,10 +797,11 @@ enum Op getReduceOp(ncclRedOp_t op);
 
 class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
  public:
-  AllreducePacket(std::shared_ptr<mscclpp::Communicator> comm);
+  AllreducePacket();
   void registerAlgorithm();
 
  private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -821,10 +822,11 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
 
 class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
  public:
-  AllreduceNvls(std::shared_ptr<mscclpp::Communicator> comm);
+  AllreduceNvls() = default;
   void registerAlgorithm();
 
  private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -842,10 +844,11 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
 
 class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsWithCopy> {
  public:
-  AllreduceNvlsWithCopy(std::shared_ptr<mscclpp::Communicator> comm);
+  AllreduceNvlsWithCopy();
   void registerAlgorithm();
 
  private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -865,10 +868,11 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
 
 class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
  public:
-  Allreduce8(std::shared_ptr<mscclpp::Communicator> comm);
+  Allreduce8();
   void registerAlgorithm();
 
  private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
