@@ -485,6 +485,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     throw Error("Invalid channel type", ErrorCode::ExecutorError);
   };
 
+  uint32_t tbId = 0;
+  uint32_t tbgSize = 1;
+
   operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
   if (op.contains("channel_type")) {
     operation.channelType = convertToChannelType(op["channel_type"]);
@@ -494,6 +497,10 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
       operation.channelIndexes[i] = op["channel_ids"][i];
     }
+  }
+  if (op.contains("tbg_info")) {
+    tbId = op["tbg_info"]["tb_id"];
+    tbgSize = op["tbg_info"]["tbg_size"];
   }
   if (op.contains("src_buff")) {
     operation.nInputs = op["src_buff"].size();
@@ -519,12 +526,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
-      if (buff.contains("tbg_info")){
-        uint32_t tbId = buff["tbg_info"]["tb_id"];
-        uint32_t tbgSize = buff["tbg_info"]["tbg_size"];
-        inputOffset += calcOffset(inputBufferSize, tbId, tbgSize);
-        inputBufferSize = calcSize(inputBufferSize, tbId, tbgSize);
-      }
+      inputOffset += calcOffset(inputBufferSize, tbId, tbgSize);
+      inputBufferSize = calcSize(inputBufferSize, tbId, tbgSize);
       operation.inputOffsets[i] = inputOffset;
       operation.inputBufferSizes[i] = inputBufferSize;
     }
@@ -553,12 +556,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsOutputBufferType = bufferType;
         operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
-      if (buff.contains("tbg_info")){
-        uint32_t tbId = buff["tbg_info"]["tb_id"];
-        uint32_t tbgSize = buff["tbg_info"]["tbg_size"];
-        outputOffset += calcOffset(outputBufferSize, tbId, tbgSize);
-        outputBufferSize = calcSize(outputBufferSize, tbId, tbgSize);
-      }
+      outputOffset += calcOffset(outputBufferSize, tbId, tbgSize);
+      outputBufferSize = calcSize(outputBufferSize, tbId, tbgSize);
       operation.outputOffsets[i] = outputOffset;
       operation.outputBufferSizes[i] = outputBufferSize;
     }
