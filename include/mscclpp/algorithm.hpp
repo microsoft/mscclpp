@@ -109,10 +109,7 @@ class AlgorithmFactory {
       const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
       std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
 
-  static std::shared_ptr<AlgorithmFactory> getInstance() {
-    static thread_local std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
-    return instance;
-  }
+  static std::shared_ptr<AlgorithmFactory> getInstance();
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.

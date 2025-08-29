@@ -55,6 +55,11 @@ int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* i
 
 bool Algorithm::isEmpty() { return !impl_; }
 
+std::shared_ptr<AlgorithmFactory> AlgorithmFactory::getInstance() {
+  static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
+  return instance;
+}
+
 void AlgorithmFactory::registerAlgorithm(const std::string collective, const std::string algoName,
                                          Algorithm algorithm) {
   getInstance()->algoMapByCollective_[collective][algoName] = algorithm;
