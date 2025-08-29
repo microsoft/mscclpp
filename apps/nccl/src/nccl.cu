@@ -171,38 +171,6 @@ struct ncclComm {
   void* mscclppNcclComm;
 };
 
-size_t ncclTypeSize(ncclDataType_t type) {
-  switch (type) {
-    case ncclInt8:
-    case ncclUint8:
-      return 1;
-    case ncclFloat16:
-      return 2;
-    case ncclInt32:
-    case ncclUint32:
-      return 4;
-    case ncclInt64:
-    case ncclUint64:
-      return 8;
-    case ncclFloat32:
-      return 4;
-    case ncclFloat64:
-      return 8;
-#if defined(__CUDA_BF16_TYPES_EXIST__)
-    case ncclBfloat16:
-      return 2;
-#endif  // defined(__CUDA_BF16_TYPES_EXIST__)
-#if defined(__CUDA_FP8_TYPES_EXIST__)
-    case ncclFp8E4M3:
-    case ncclFp8E5M2:
-      return 1;
-#endif  // defined(__CUDA_FP8_TYPES_EXIST__)
-    case ncclNumTypes:
-      return 0;
-  }
-  return 0;
-}
-
 static std::pair<std::string, executionPlanInstance> loadExecutionPlan(const std::string& filename, int rank) {
   std::shared_ptr<mscclpp::ExecutionPlan> plan = std::make_shared<mscclpp::ExecutionPlan>(filename, rank);
   std::string collective = plan->collective();

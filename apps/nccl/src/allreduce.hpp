@@ -797,7 +797,6 @@ enum Op getReduceOp(ncclRedOp_t op);
 
 class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
  public:
-  AllreducePacket();
   void registerAlgorithm();
 
  private:
@@ -810,7 +809,8 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  mscclpp::GpuBuffer<char> scratchBuffer_;
+  size_t scratchBufferSize_ = 1 << 25;  // 32MB
+  std::shared_ptr<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
@@ -844,7 +844,6 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
 
 class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsWithCopy> {
  public:
-  AllreduceNvlsWithCopy();
   void registerAlgorithm();
 
  private:
@@ -859,7 +858,7 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
 
   const size_t nvlsBufferSize_ = (1 << 30);
   const size_t scratchBufferSize_ = (1 << 26);
-  mscclpp::GpuBuffer<char> scratchBuffer_;
+  std::shared_ptr<char> scratchBuffer_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
@@ -868,7 +867,6 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
 
 class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
  public:
-  Allreduce8();
   void registerAlgorithm();
 
  private:
@@ -885,7 +883,7 @@ class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
   std::shared_ptr<mscclpp::Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
-  mscclpp::GpuBuffer<char> scratchBuffer_;
+  std::shared_ptr<char> scratchBuffer_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> deviceSemaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
   mscclpp::RegisteredMemory localScratchMemory_;

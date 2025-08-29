@@ -172,7 +172,7 @@ class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
 
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
   const size_t scratchMemSize_ = 1 << 26;  // 64MB
-  mscclpp::GpuBuffer<char> scratchBuffer_{scratchMemSize_};
+  std::shared_ptr<char> scratchBuffer_;
 };
 
 #endif  // BROADCAST_HPP_

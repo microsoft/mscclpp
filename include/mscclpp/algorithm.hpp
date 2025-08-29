@@ -110,7 +110,7 @@ class AlgorithmFactory {
       std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
 
   static std::shared_ptr<AlgorithmFactory> getInstance() {
-    static std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
+    static thread_local std::shared_ptr<AlgorithmFactory> instance(new AlgorithmFactory());
     return instance;
   }
 
