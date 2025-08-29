@@ -246,7 +246,8 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
     MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
     elapsedTimePerIter = elapsedTime / iter;
     gbps = float(size) * (worldSize - 1) * ncclTypeSize(ncclFloat) / elapsedTimePerIter * 1e-6f;
-    log("GPU ", rank, ": bytes ", size, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
+    log("GPU ", rank, ": bytes ", size * ncclTypeSize(ncclFloat), ", elapsed ", elapsedTimePerIter, " ms/iter, BW ",
+        gbps, " GB/s");
   }
 
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
