@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <memory>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
@@ -17,6 +18,36 @@
 #else
 #define WARP_SIZE 32
 #endif
+
+template <typename... Args>
+void log(Args&&... args) {
+  std::stringstream ss;
+  (ss << ... << args);
+  ss << std::endl;
+  std::cout << ss.str();
+}
+
+int spawn_process(std::function<void()> func) {
+  pid_t pid = fork();
+  if (pid < 0) return -1;
+  if (pid == 0) {
+    // Child process
+    func();
+    exit(0);
+  }
+  return pid;
+}
+
+int wait_process(int pid) {
+  int status;
+  if (waitpid(pid, &status, 0) < 0) {
+    return -1;
+  }
+  if (WIFEXITED(status)) {
+    return WEXITSTATUS(status);
+  }
+  return -1;
+}
 
 __global__ void __launch_bounds__(1024)
     allgather(mscclpp::DeviceHandle<mscclpp::PortChannel>* portChannels, int rank, size_t nbytesPerGPU) {
@@ -43,28 +74,6 @@ __global__ void __launch_bounds__(1024)
   if (threadIdx.x % WARP_SIZE == 0) {
     portChan.wait();
   }
-}
-
-int spawn_process(std::function<void()> func) {
-  pid_t pid = fork();
-  if (pid < 0) return -1;
-  if (pid == 0) {
-    // Child process
-    func();
-    exit(0);
-  }
-  return pid;
-}
-
-int wait_process(int pid) {
-  int status;
-  if (waitpid(pid, &status, 0) < 0) {
-    return -1;
-  }
-  if (WIFEXITED(status)) {
-    return WEXITSTATUS(status);
-  }
-  return -1;
 }
 
 class AllgatherAlgo : public std::enable_shared_from_this<AllgatherAlgo> {
@@ -179,11 +188,13 @@ class AllgatherAlgo : public std::enable_shared_from_this<AllgatherAlgo> {
 };
 
 void worker(int rank, int worldSize, ncclUniqueId id) {
-  constexpr int size = 1024 * 1024;
+  constexpr int size = 1024 * 1024 * 64;
+  const int iter = 100;
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
+
+  // register algorithm
   auto allgatherAlgo = std::make_shared<AllgatherAlgo>();
   allgatherAlgo->registerAlgorithm();
-
   auto algoFactory = mscclpp::AlgorithmFactory::getInstance();
   algoFactory->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>&
@@ -196,16 +207,49 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
       });
 
   float *sendbuff, *recvbuff;
-  cudaStream_t s;
+  cudaStream_t stream;
   MSCCLPP_CUDATHROW(cudaMalloc(&sendbuff, size * sizeof(float)));
   MSCCLPP_CUDATHROW(cudaMalloc(&recvbuff, size * sizeof(float) * worldSize));
-  MSCCLPP_CUDATHROW(cudaStreamCreate(&s));
+  MSCCLPP_CUDATHROW(cudaMemcpy(recvbuff + rank * size, sendbuff, size * sizeof(float), cudaMemcpyDeviceToDevice));
+  MSCCLPP_CUDATHROW(cudaStreamCreate(&stream));
 
   ncclComm_t comm;
-  ncclCommInitRank(&comm, worldSize, id, rank);
-  ncclAllGather(sendbuff, recvbuff, size, ncclFloat, comm, s);
+  cudaGraphExec_t graphExec;
+  cudaGraph_t graph;
+  MSCCLPP_CUDATHROW(cudaGraphCreate(&graph, 0));
 
-  MSCCLPP_CUDATHROW(cudaStreamSynchronize(s));
+  ncclCommInitRank(&comm, worldSize, id, rank);
+  MSCCLPP_CUDATHROW(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
+  for (int i = 0; i < iter; ++i) {
+    ncclAllGather(sendbuff, recvbuff, size, ncclFloat, comm, stream);
+  }
+  MSCCLPP_CUDATHROW(cudaStreamEndCapture(stream, &graph));
+  MSCCLPP_CUDATHROW(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
+
+  cudaEvent_t start, end;
+  if (rank == 0) {
+    MSCCLPP_CUDATHROW(cudaEventCreate(&start));
+    MSCCLPP_CUDATHROW(cudaEventCreate(&end));
+  }
+
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  if (rank == 0) {
+    MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
+  }
+  MSCCLPP_CUDATHROW(cudaGraphLaunch(graphExec, stream));
+  if (rank == 0) {
+    MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
+    MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
+    float elapsedTime;
+    float elapsedTimePerIter;
+    float gbps;
+    MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
+    elapsedTimePerIter = elapsedTime / iter;
+    gbps = float(size) * (worldSize - 1) * ncclTypeSize(ncclFloat) / elapsedTimePerIter * 1e-6f;
+    log("GPU ", rank, ": bytes ", size, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ", gbps, " GB/s");
+  }
+
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 
   MSCCLPP_CUDATHROW(cudaFree(sendbuff));
   MSCCLPP_CUDATHROW(cudaFree(recvbuff));
@@ -222,9 +266,20 @@ int main() {
   int pid2 = spawn_process([&]() { worker(2, 4, id); });
   int pid3 = spawn_process([&]() { worker(3, 4, id); });
 
-  wait_process(pid0);
-  wait_process(pid1);
-  wait_process(pid2);
-  wait_process(pid3);
+  if (pid0 < 0 || pid1 < 0 || pid2 < 0 || pid3 < 0) {
+    log("Fork failed!");
+    return -1;
+  }
+
+  int status0 = wait_process(pid0);
+  int status1 = wait_process(pid1);
+  int status2 = wait_process(pid2);
+  int status3 = wait_process(pid3);
+  if (status0 != 0 || status1 != 0 || status2 != 0 || status3 != 0) {
+    log("Worker failed!");
+    return -1;
+  }
+
+  log("Succeed!");
   return 0;
 }
