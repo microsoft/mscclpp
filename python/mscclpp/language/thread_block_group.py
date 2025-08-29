@@ -31,7 +31,7 @@ class ThreadBlockGroup:
             seen.add(tb)
             self._tb_id[tb] = i
 
-    def get_id(self, tb: Any) -> int:
+    def get_internal_id(self, tb: Any) -> int:
         """
         Get the ID of a thread block in this group.
 

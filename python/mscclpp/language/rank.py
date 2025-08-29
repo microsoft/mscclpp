@@ -78,7 +78,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
             from_packet (bool, optional): Whether to unpack from packet format. Defaults to False.
             to_packet (bool, optional): Whether to pack to packet format. Defaults to False.
 
@@ -100,27 +100,26 @@ class Rank:
             raise RuntimeError(f"Destination chunk must be of type scratch.")
 
         if isinstance(tb, int):
+            tb_list = [tb]
+        elif isinstance(tb, ThreadBlockGroup):
+            tb_list = tb.tb_list
+        else:
+            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
+
+        for tb_id in tb_list:
             op = CopyOperation(
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
+                    if isinstance(tb, ThreadBlockGroup)
+                    else None
+                ),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
 
-            get_program().add_operation(self.rank, tb, op)
-        elif isinstance(tb, ThreadBlockGroup):
-            for tbg_tb in tb.tb_list:
-                op = CopyOperation(
-                    src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-                    dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
-                    from_packet=from_packet,
-                    to_packet=to_packet,
-                )
-
-                get_program().add_operation(self.rank, tbg_tb, op)
-        else:
-            raise RuntimeError("Thread Block inconsistent.")
+            get_program().add_operation(self.rank, tb_id, op)
 
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Copy data from source chunk to destination chunk.
@@ -131,7 +130,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.copy(dst_chunk, src_chunk, tb=0)
@@ -147,7 +146,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy unpacked data to.
             src_chunk (Chunk): The source scratch chunk containing packed data.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.unpack_packet(dst_chunk, src_chunk, tb=0)
@@ -163,7 +162,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination scratch chunk to store packed data.
             src_chunk (Chunk): The source chunk containing data to pack.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.copy_packet(dst_chunk, src_chunk, tb=0)
@@ -187,7 +186,7 @@ class Rank:
         Args:
             src_chunk (Chunk): The primary source chunk to reduce.
             other_chunks (List[Chunk]): Additional chunks to include in the reduction.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
             dst_chunk (Chunk, optional): The destination chunk for the result.
                 If None, uses src_chunk. Defaults to None.
             reduce_op (ReduceOperationType, optional): The reduction operation to perform.
@@ -224,29 +223,27 @@ class Rank:
                 raise RuntimeError(f"Other chunk must be of type scratch.")
 
         if isinstance(tb, int):
+            tb_list = [tb]
+        elif isinstance(tb, ThreadBlockGroup):
+            tb_list = tb.tb_list
+        else:
+            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
+
+        for tb_id in tb_list:
             op = ReduceOperation(
                 [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
                 [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
+                    if isinstance(tb, ThreadBlockGroup)
+                    else None
+                ),
                 packet=packet,
             )
 
-            get_program().add_operation(self.rank, tb, op)
-        elif isinstance(tb, ThreadBlockGroup):
-            for tbg_tb in tb.tb_list:
-                op = ReduceOperation(
-                    [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
-                    + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
-                    [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                    reduce_operation=reduce_op,
-                    tbg_info=ThreadBlockGroupInfo(tb.get_id(tbg_tb), len(tb)),
-                    packet=packet,
-                )
-
-                get_program().add_operation(self.rank, tbg_tb, op)
-        else:
-            raise RuntimeError("Thread Block inconsistent.")
+            get_program().add_operation(self.rank, tb_id, op)
 
     def barrier(self, tb_list: List[int]):
         """Create a synchronization barrier between thread blocks.
