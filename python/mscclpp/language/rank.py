@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.types import BufferType, Chunk
+from mscclpp.language.thread_block_group import *
 from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.globals import get_program
 from dataclasses import dataclass
@@ -61,7 +62,14 @@ class Rank:
         """
         return get_program().buffers[self.rank][BufferType.output]
 
-    def _copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int, from_packet: bool = False, to_packet: bool = False):
+    def _copy(
+        self,
+        dst_chunk: Chunk,
+        src_chunk: Chunk,
+        tb: int | ThreadBlockGroup,
+        from_packet: bool = False,
+        to_packet: bool = False,
+    ):
         """Internal copy operation implementation.
 
         Performs a local copy operation between chunks on this rank with optional
@@ -70,7 +78,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
             from_packet (bool, optional): Whether to unpack from packet format. Defaults to False.
             to_packet (bool, optional): Whether to pack to packet format. Defaults to False.
 
@@ -91,16 +99,29 @@ class Rank:
         if to_packet and dst_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Destination chunk must be of type scratch.")
 
-        op = CopyOperation(
-            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
-            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-            from_packet,
-            to_packet,
-        )
+        if isinstance(tb, int):
+            tb_list = [tb]
+        elif isinstance(tb, ThreadBlockGroup):
+            tb_list = tb.tb_list
+        else:
+            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
 
-        get_program().add_operation(self.rank, tb, op)
+        for tb_id in tb_list:
+            op = CopyOperation(
+                src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+                dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
+                    if isinstance(tb, ThreadBlockGroup)
+                    else None
+                ),
+                from_packet=from_packet,
+                to_packet=to_packet,
+            )
 
-    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+            get_program().add_operation(self.rank, tb_id, op)
+
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Copy data from source chunk to destination chunk.
 
         Performs a simple local copy operation between two chunks on this rank
@@ -109,14 +130,14 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.copy(dst_chunk, src_chunk, tb=0)
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
 
-    def unpack_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def unpack_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Copy data from packet format to regular format.
 
         Unpacks data from packet format in the source scratch buffer and copies
@@ -125,14 +146,14 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy unpacked data to.
             src_chunk (Chunk): The source scratch chunk containing packed data.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.unpack_packet(dst_chunk, src_chunk, tb=0)
         """
         self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
 
-    def copy_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+    def copy_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Copy data from regular format to packet format.
 
         Packs data from the source chunk and copies it to the destination
@@ -141,7 +162,7 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination scratch chunk to store packed data.
             src_chunk (Chunk): The source chunk containing data to pack.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
 
         Example:
             >>> rank.copy_packet(dst_chunk, src_chunk, tb=0)
@@ -152,7 +173,7 @@ class Rank:
         self,
         src_chunk: Chunk,
         other_chunks: List[Chunk],
-        tb: int,
+        tb: int | ThreadBlockGroup,
         dst_chunk: Chunk = None,
         reduce_op: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
@@ -165,7 +186,7 @@ class Rank:
         Args:
             src_chunk (Chunk): The primary source chunk to reduce.
             other_chunks (List[Chunk]): Additional chunks to include in the reduction.
-            tb (int): The thread block ID that will execute this operation.
+            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
             dst_chunk (Chunk, optional): The destination chunk for the result.
                 If None, uses src_chunk. Defaults to None.
             reduce_op (ReduceOperationType, optional): The reduction operation to perform.
@@ -201,14 +222,28 @@ class Rank:
             if packet and chunk.buffer != BufferType.scratch:
                 raise RuntimeError(f"Other chunk must be of type scratch.")
 
-        op = ReduceOperation(
-            [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
-            + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
-            [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-            reduce_operation=reduce_op,
-            packet=packet,
-        )
-        get_program().add_operation(self.rank, tb, op)
+        if isinstance(tb, int):
+            tb_list = [tb]
+        elif isinstance(tb, ThreadBlockGroup):
+            tb_list = tb.tb_list
+        else:
+            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
+
+        for tb_id in tb_list:
+            op = ReduceOperation(
+                [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
+                + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
+                [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                reduce_operation=reduce_op,
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
+                    if isinstance(tb, ThreadBlockGroup)
+                    else None
+                ),
+                packet=packet,
+            )
+
+            get_program().add_operation(self.rank, tb_id, op)
 
     def barrier(self, tb_list: List[int]):
         """Create a synchronization barrier between thread blocks.

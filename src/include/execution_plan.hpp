@@ -122,6 +122,8 @@ struct ExecutionPlan::Impl {
 
  private:
   std::pair<size_t, uint32_t> getSizeAndChunks(size_t inputSize, size_t outputSize) const;
+  size_t calcOffset(size_t size, uint32_t index, uint32_t slices) const;
+  size_t calcSize(size_t size, uint32_t index, uint32_t slices) const;
   size_t getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
                    BufferType bufferType = BufferType::NONE) const;
   size_t getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
