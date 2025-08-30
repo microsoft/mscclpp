@@ -144,7 +144,7 @@ class MemoryChannel:
                     else None
                 ),
             )
-            get_program().add_operation(self.rank, tb_id, op)
+            get_program().add_operation(self.src_rank, tb_id, op)
 
     def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Send data from local memory to remote memory.
@@ -200,7 +200,7 @@ class MemoryChannel:
                     else None
                 ),
             )
-            get_program().add_operation(self.rank, tb_id, op)
+            get_program().add_operation(self.src_rank, tb_id, op)
 
     def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Transfer data in packet format from local to remote scratch buffer.
@@ -263,7 +263,7 @@ class MemoryChannel:
                 from_packet=True,
                 to_packet=True,
             )
-            get_program().add_operation(self.rank, tb_id, op)
+            get_program().add_operation(self.src_rank, tb_id, op)
 
     def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
         """Transfer data from local buffer to remote scratch buffer in packet format.
@@ -325,7 +325,7 @@ class MemoryChannel:
                 to_packet=True,
             )
 
-            get_program().add_operation(self.rank, tb_id, op)
+            get_program().add_operation(self.src_rank, tb_id, op)
 
     def reduce(
         self,
@@ -416,7 +416,7 @@ class MemoryChannel:
                 reduce_operation=reduce_op,
             )
 
-            get_program().add_operation(self.rank, tb_id, op)
+            get_program().add_operation(self.src_rank, tb_id, op)
 
 
 @dataclass
