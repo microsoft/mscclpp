@@ -830,6 +830,12 @@ NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclCom
   return ncclCommInitRankConfig(newcomm, groupSize, uniqueId, newRank, nullptr);
 }
 
+ncclResult_t ncclCommInitRankScalable(ncclComm_t* newcomm, int nranks, int myrank, int nId, ncclUniqueId* commIds,
+                                      ncclConfig_t* config) {
+  WARN("ncclCommInitRankScalable is currently unavailable");
+  return ncclInternalError;
+}
+
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
   switch (result) {
     case ncclSuccess:
@@ -897,6 +903,16 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
 
   *rank = comm->comm->bootstrap()->getRank();
   return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclCommWindowRegister(ncclComm_t comm, void* buff, size_t size, ncclWindow_t* win, int winFlags) {
+  WARN("ncclCommWindowRegister is currently unavailable");
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win) {
+  WARN("ncclCommWindowDeregister is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t*, void*, ncclDataType_t, ncclScalarResidence_t, ncclComm_t) {
@@ -1227,22 +1243,31 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
 
 NCCL_API ncclResult_t ncclGroupStart() {
   // Do nothing
-  return ncclSuccess;
+  WARN("ncclGroupStart is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclGroupEnd() {
   // Do nothing
-  return ncclSuccess;
+  WARN("ncclGroupEnd is currently unavailable");
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t*) {
+  // Do nothing
+  WARN("ncclGroupSimulateEnd is not implemented");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
   // TODO: Implementation
-  return ncclSuccess;
+  WARN("ncclCommRegister is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
   // TODO: Implementation
-  return ncclSuccess;
+  return ncclInternalError;
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {

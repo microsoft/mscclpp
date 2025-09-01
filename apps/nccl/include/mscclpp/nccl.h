@@ -14,6 +14,7 @@ extern "C" {
 #include <limits.h>
 /* Opaque handle to communicator */
 typedef struct ncclComm* ncclComm_t;
+typedef struct ncclWindow* ncclWindow_t;
 #define NCCL_COMM_NULL NULL
 
 #define NCCL_UNIQUE_ID_BYTES 128
@@ -56,18 +57,26 @@ typedef struct ncclConfig_v21700 {
 
 /* Config initializer must be assigned to initialize config structure when it is created.
  * Not initialized config will result in NCCL error. */
-#define NCCL_CONFIG_INITIALIZER                                                \
-  {                                                                            \
-    sizeof(ncclConfig_t),                                 /* size */           \
-        0xcafebeef,                                       /* magic */          \
-        NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
-        NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
-        NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
-        NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
-        NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
-        NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
-        NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
+#define NCCL_CONFIG_INITIALIZER                                              \
+  {                                                                          \
+      sizeof(ncclConfig_t),                             /* size */           \
+      0xcafebeef,                                       /* magic */          \
+      NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
+      NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
+      NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
+      NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
+      NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
+      NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
+      NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
   }
+
+/* This struct will be used by ncclGroupSimulateEnd() API to query information about simulation. */
+typedef struct ncclSimInfo_v22200 {
+  size_t size;
+  unsigned int magic;
+  unsigned int version;
+  float estimatedTime;
+} ncclSimInfo_t;
 
 /* NCCL malloc and free function for all types of NCCL optimizations
  * (e.g. user buffer registration). The actual allocated size might
@@ -141,6 +150,25 @@ ncclResult_t pncclCommAbort(ncclComm_t comm);
 ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, ncclConfig_t* config);
 ncclResult_t pncclCommSplit(ncclComm_t comm, int color, int key, ncclComm_t* newcomm, ncclConfig_t* config);
 
+/* Shrink existing communicator.
+ * Ranks in excludeRanksList will be removed form the existing communicator.
+ * Within the new communicator, ranks will be re-ordered to fill the gap of removed ones.
+ * If config is NULL, the new communicator will inherit the original communicator's configuration
+ * The flag enables NCCL to adapt to various states of the parent communicator, see NCCL_SHRINK flags.*/
+ncclResult_t ncclCommShrink(ncclComm_t comm, int* excludeRanksList, int excludeRanksCount, ncclComm_t* newcomm,
+                            ncclConfig_t* config, int shrinkFlags);
+ncclResult_t pncclCommShrink(ncclComm_t comm, int* excludeRanksList, int excludeRanksCount, ncclComm_t* newcomm,
+                             ncclConfig_t* config, int shrinkFlags);
+
+/* Creates a new communicator (multi thread/process version), similar to ncclCommInitRankConfig.
+ * Allows to use more than one ncclUniqueId (up to one per rank), indicated by nId, to accelerate the init operation.
+ * The number of ncclUniqueIds and their order must be the same for every rank.
+ */
+ncclResult_t ncclCommInitRankScalable(ncclComm_t* newcomm, int nranks, int myrank, int nId, ncclUniqueId* commIds,
+                                      ncclConfig_t* config);
+ncclResult_t pncclCommInitRankScalable(ncclComm_t* newcomm, int nranks, int myrank, int nId, ncclUniqueId* commIds,
+                                       ncclConfig_t* config);
+
 /* Returns a string for each error code. */
 const char* ncclGetErrorString(ncclResult_t result);
 const char* pncclGetErrorString(ncclResult_t result);
@@ -166,6 +194,22 @@ ncclResult_t pncclCommCuDevice(const ncclComm_t comm, int* device);
 /* Returns the user-ordered "rank" associated with the communicator. */
 ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank);
 ncclResult_t pncclCommUserRank(const ncclComm_t comm, int* rank);
+
+/* Register CUDA buffer for zero-copy operation */
+ncclResult_t ncclCommRegister(const ncclComm_t comm, void* buff, size_t size, void** handle);
+ncclResult_t pncclCommRegister(const ncclComm_t comm, void* buff, size_t size, void** handle);
+
+/* Deregister CUDA buffer */
+ncclResult_t ncclCommDeregister(const ncclComm_t comm, void* handle);
+ncclResult_t pncclCommDeregister(const ncclComm_t comm, void* handle);
+
+/* Register memory window  */
+ncclResult_t ncclCommWindowRegister(ncclComm_t comm, void* buff, size_t size, ncclWindow_t* win, int winFlags);
+ncclResult_t pncclCommWindowRegister(ncclComm_t comm, void* buff, size_t size, ncclWindow_t* win, int winFlags);
+
+/* Deregister symmetric memory */
+ncclResult_t ncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win);
+ncclResult_t pncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win);
 
 /* Reduction operation selector */
 typedef enum { ncclNumOps_dummy = 5 } ncclRedOp_dummy_t;
@@ -476,6 +520,14 @@ ncclResult_t pncclGroupStart();
  */
 ncclResult_t ncclGroupEnd();
 ncclResult_t pncclGroupEnd();
+
+/*
+ * Group Simulate End
+ *
+ * Simulate a ncclGroupEnd() call and return NCCL's simulation info in a struct.
+ */
+ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t* simInfo);
+ncclResult_t pncclGroupSimulateEnd(ncclSimInfo_t* simInfo);
 
 #ifdef __cplusplus
 }  // end extern "C"

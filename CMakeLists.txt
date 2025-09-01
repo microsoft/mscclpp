@@ -190,4 +190,5 @@ endif()
 # NCCL interfaces
 if(MSCCLPP_BUILD_APPS_NCCL)
     add_subdirectory(apps/nccl)
+    add_subdirectory(apps/nccl-audit-shim)
 endif()
