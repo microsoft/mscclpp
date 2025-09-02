@@ -21,7 +21,7 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         reuse_resources=False,
-        instances=4,
+        instances=1,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
@@ -31,7 +31,7 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         port_channels = {}
         scratch_buffer = []
         tbgs = []
-        tbg_size = 1
+        tbg_size = 4
         tb_offset = 1
         total_tb = gpus_per_node * tbg_size + tb_offset
         for node in range(nodes):
@@ -134,13 +134,13 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
                                 memory_channels[(dst_rank_id, src_rank_id, 0)].put(
                                     scratch_buffer[dst_rank_id][local_index : local_index + 1],
                                     input_buffer[0:1],
-                                    tb=tbgs[tbg_id],
+                                    tbg=tbgs[tbg_id],
                                 )
                             else:
                                 memory_channels[(dst_rank_id, src_rank_id, 0)].put(
                                     scratch_buffer[dst_rank_id][local_index : local_index + 1],
                                     scratch_buffer[src_rank_id][local_index : local_index + 1],
-                                    tb=tbgs[tbg_id],
+                                    tbg=tbgs[tbg_id],
                                 )
                             for i in range(len(tbgs[tbg_id])):
                                 tb = tbgs[tbg_id].tb_list[i]
@@ -149,17 +149,17 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
                             src_rank.copy(
                                 output_buffer[remote_index : remote_index + 1],
                                 scratch_buffer[src_rank_id][remote_index : remote_index + 1],
-                                tb=tbgs[tbg_id],
+                                tbg=tbgs[tbg_id],
                             )
                     if step == 0:
                         src_rank.copy(
-                            output_buffer[local_index : local_index + 1], input_buffer[0:1], tb=tbgs[gpus_per_node - 1]
+                            output_buffer[local_index : local_index + 1], input_buffer[0:1], tbg=tbgs[gpus_per_node - 1]
                         )
                     else:
                         src_rank.copy(
                             output_buffer[local_index : local_index + 1],
                             scratch_buffer[src_rank_id][local_index : local_index + 1],
-                            tb=tbgs[gpus_per_node - 1],
+                            tbg=tbgs[gpus_per_node - 1],
                         )
 
         print(JSON())

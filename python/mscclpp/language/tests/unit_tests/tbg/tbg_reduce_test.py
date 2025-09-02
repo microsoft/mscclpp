@@ -45,7 +45,7 @@ def reduce_test(num_threads_per_block, min_message_size, max_message_size):
         tbg = ThreadBlockGroup(tb_list=[0, 1, 2, 3])
 
         # Perform local reduce: combine input_buffer[0:1] and input_buffer[1:2] into output_buffer[0:1]
-        rank.reduce(input_buffer[0:1], [input_buffer[1:2]], tb=tbg, dst_chunk=output_buffer[0:1])
+        rank.reduce(input_buffer[0:1], [input_buffer[1:2]], tbg=tbg, dst_chunk=output_buffer[0:1])
 
         print(JSON())
 

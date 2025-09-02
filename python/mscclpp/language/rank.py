@@ -66,7 +66,8 @@ class Rank:
         self,
         dst_chunk: Chunk,
         src_chunk: Chunk,
-        tb: int | ThreadBlockGroup,
+        tb: int = None,
+        tbg: ThreadBlockGroup = None,
         from_packet: bool = False,
         to_packet: bool = False,
     ):
@@ -78,7 +79,8 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
+            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
             from_packet (bool, optional): Whether to unpack from packet format. Defaults to False.
             to_packet (bool, optional): Whether to pack to packet format. Defaults to False.
 
@@ -99,20 +101,20 @@ class Rank:
         if to_packet and dst_chunk.buffer != BufferType.scratch:
             raise RuntimeError(f"Destination chunk must be of type scratch.")
 
-        if isinstance(tb, int):
+        if tb is not None:
             tb_list = [tb]
-        elif isinstance(tb, ThreadBlockGroup):
-            tb_list = tb.tb_list
+        elif tbg is not None:
+            tb_list = tbg.tb_list
         else:
-            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
+            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
 
         for tb_id in tb_list:
             op = CopyOperation(
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 tbg_info=(
-                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
-                    if isinstance(tb, ThreadBlockGroup)
+                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
+                    if tbg is not None
                     else None
                 ),
                 from_packet=from_packet,
@@ -121,7 +123,7 @@ class Rank:
 
             get_program().add_operation(self.rank, tb_id, op)
 
-    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
+    def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
         """Copy data from source chunk to destination chunk.
 
         Performs a simple local copy operation between two chunks on this rank
@@ -130,14 +132,15 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy data to.
             src_chunk (Chunk): The source chunk to copy data from.
-            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
+            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
 
         Example:
             >>> rank.copy(dst_chunk, src_chunk, tb=0)
         """
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb)
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, tbg=tbg)
 
-    def unpack_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
+    def unpack_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
         """Copy data from packet format to regular format.
 
         Unpacks data from packet format in the source scratch buffer and copies
@@ -146,14 +149,15 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination chunk to copy unpacked data to.
             src_chunk (Chunk): The source scratch chunk containing packed data.
-            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
+            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
 
         Example:
             >>> rank.unpack_packet(dst_chunk, src_chunk, tb=0)
         """
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, from_packet=True)
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, tbg=tbg, from_packet=True)
 
-    def copy_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int | ThreadBlockGroup):
+    def copy_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
         """Copy data from regular format to packet format.
 
         Packs data from the source chunk and copies it to the destination
@@ -162,18 +166,20 @@ class Rank:
         Args:
             dst_chunk (Chunk): The destination scratch chunk to store packed data.
             src_chunk (Chunk): The source chunk containing data to pack.
-            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
+            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
 
         Example:
             >>> rank.copy_packet(dst_chunk, src_chunk, tb=0)
         """
-        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, to_packet=True)
+        self._copy(dst_chunk=dst_chunk, src_chunk=src_chunk, tb=tb, tbg=tbg, to_packet=True)
 
     def reduce(
         self,
         src_chunk: Chunk,
         other_chunks: List[Chunk],
-        tb: int | ThreadBlockGroup,
+        tb: int = None,
+        tbg: ThreadBlockGroup = None,
         dst_chunk: Chunk = None,
         reduce_op: ReduceOperationType = ReduceOperationType.sum,
         packet: bool = False,
@@ -186,7 +192,8 @@ class Rank:
         Args:
             src_chunk (Chunk): The primary source chunk to reduce.
             other_chunks (List[Chunk]): Additional chunks to include in the reduction.
-            tb (int | ThreadBlockGroup): The thread block ID or ThreadBlockGroup that will execute this operation.
+            tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
+            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
             dst_chunk (Chunk, optional): The destination chunk for the result.
                 If None, uses src_chunk. Defaults to None.
             reduce_op (ReduceOperationType, optional): The reduction operation to perform.
@@ -222,12 +229,12 @@ class Rank:
             if packet and chunk.buffer != BufferType.scratch:
                 raise RuntimeError(f"Other chunk must be of type scratch.")
 
-        if isinstance(tb, int):
+        if tb is not None:
             tb_list = [tb]
-        elif isinstance(tb, ThreadBlockGroup):
-            tb_list = tb.tb_list
+        elif tbg is not None:
+            tb_list = tbg.tb_list
         else:
-            raise RuntimeError(f"Invalid thread block type: {type(tb).__name__}. Expected int or ThreadBlockGroup.")
+            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
 
         for tb_id in tb_list:
             op = ReduceOperation(
@@ -236,8 +243,8 @@ class Rank:
                 [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
                 tbg_info=(
-                    ThreadBlockGroupInfo(tb.get_internal_id(tb_id), len(tb))
-                    if isinstance(tb, ThreadBlockGroup)
+                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
+                    if tbg is not None
                     else None
                 ),
                 packet=packet,
