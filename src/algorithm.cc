@@ -32,7 +32,7 @@ int AlgorithmImpl::launch(std::shared_ptr<mscclpp::Communicator> comm, const voi
                           int dtype, cudaStream_t stream,
                           std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   if (!initialized_) {
-    initFunc_(comm);
+    initFunc_(comm, extras);
     initialized_ = true;
   }
   AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, count, dtype);

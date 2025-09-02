@@ -167,6 +167,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Executor> executor;
   std::unordered_map<std::string, std::vector<executionPlanInstance>> executionPlans;
   std::shared_ptr<mscclpp::AlgorithmFactory> algorithmFactory;
+  std::shared_ptr<char> scratchBuffer_;
+  const size_t scratchBufferSize_ = (1 << 27);  // 128MB
 
   void* mscclppNcclComm;
 };
@@ -309,6 +311,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   ncclComm* commPtr = new ncclComm();
 
   commPtr->comm = mscclppComm;
+  commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
 
   commPtr->algorithmFactory = mscclpp::AlgorithmFactory::getInstance();
@@ -573,8 +576,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                                       comm->comm->bootstrap()->getNranksPerNode(),
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras;
-    extras.insert({"root", std::make_shared<int>(root)});
+    std::unordered_map<std::string, std::shared_ptr<void>> extras{
+        {"root", std::make_shared<int>(root)},
+        {"scratch", comm->scratchBuffer_},
+        {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
     return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
   }
 
@@ -628,7 +633,10 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                                       comm->comm->bootstrap()->getNranksPerNode(),
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras{{"op", std::make_shared<int>(reductionOperation)}};
+    std::unordered_map<std::string, std::shared_ptr<void>> extras{
+        {"op", std::make_shared<int>(reductionOperation)},
+        {"scratch", comm->scratchBuffer_},
+        {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
     return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
   }
 
@@ -731,7 +739,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                                       comm->comm->bootstrap()->getNranksPerNode(),
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras;
+    std::unordered_map<std::string, std::shared_ptr<void>> extras = {
+        {"scratch", comm->scratchBuffer_}, {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
     return static_cast<ncclResult_t>(algo.launch(comm->comm, sendbuff, recvbuff, sendcount, datatype, stream, extras));
   }
 

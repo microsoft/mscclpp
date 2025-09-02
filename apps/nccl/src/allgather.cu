@@ -16,7 +16,10 @@ AllgatherAlgo6::AllgatherAlgo6() : disableChannelCache_(false) {
   }
 }
 
-void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm) { this->conns_ = setupConnections(comm); }
+void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                                std::unordered_map<std::string, std::shared_ptr<void>>&) {
+  this->conns_ = setupConnections(comm);
+}
 
 ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
@@ -111,7 +114,9 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo6::generateAllgatherContextKey(const void*
 void AllgatherAlgo6::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm allgatherAlgo(
-      "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
+      "allgather",
+      [self](std::shared_ptr<mscclpp::Communicator> comm,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
@@ -125,9 +130,11 @@ void AllgatherAlgo6::registerAlgorithm() {
   mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allgather", "default_allgather6", allgatherAlgo);
 }
 
-void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
+void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                                std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   this->conns_ = setupConnections(comm);
-  this->scratchBuffer_ = mscclpp::GpuBuffer<char>(scratchBufferSize_).memory();
+  this->scratchBuffer_ = std::static_pointer_cast<char>(extras.at("scratch"));
+  this->scratchBufferSize_ = *(size_t*)(extras.at("scratch_size").get());
 }
 
 ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
@@ -194,7 +201,9 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo8::generateAllgatherContextKey(const void*
 void AllgatherAlgo8::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm allgatherAlgo(
-      "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
+      "allgather",
+      [self](std::shared_ptr<mscclpp::Communicator> comm,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);

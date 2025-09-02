@@ -31,7 +31,7 @@ make
 ```
 Run (inside container you may need root privileges depending on GPU access):
 ```bash
-LD_PRELOAD=<MSCCLOO_HOME>/build/apps/nccl/libmscclpp_nccl.so ./customized_allgather
+LD_PRELOAD=<MSCCLPP_INSTALL_DIR>/lib/libmscclpp_nccl.so ./customized_allgather
 ```
 Expected (abbreviated) output on success:
 ```

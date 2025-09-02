@@ -8,9 +8,11 @@
 
 #include "broadcast.hpp"
 
-void BroadcastAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
+void BroadcastAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                                std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   this->conns_ = setupConnections(comm);
-  this->scratchBuffer_ = mscclpp::GpuBuffer<char>(scratchMemSize_).memory();
+  this->scratchBuffer_ = std::static_pointer_cast<char>(extras.at("scratch"));
+  this->scratchMemSize_ = *(size_t*)(extras.at("scratch_size").get());
 }
 
 ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
@@ -76,7 +78,9 @@ mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*
 void BroadcastAlgo6::registerAlgorithm() {
   auto self = shared_from_this();
   mscclpp::Algorithm broadcastAlgo(
-      "broadcast", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
+      "broadcast",
+      [self](std::shared_ptr<mscclpp::Communicator> comm,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->broadcastKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);

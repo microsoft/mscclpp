@@ -800,7 +800,8 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
   void registerAlgorithm();
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -809,7 +810,7 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  size_t scratchBufferSize_ = 1 << 25;  // 32MB
+  size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
@@ -826,7 +827,7 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
   void registerAlgorithm();
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -847,7 +848,8 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
   void registerAlgorithm();
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -857,7 +859,7 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
   const size_t nvlsBufferSize_ = (1 << 30);
-  const size_t scratchBufferSize_ = (1 << 26);
+  size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
@@ -870,7 +872,8 @@ class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
   void registerAlgorithm();
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -879,7 +882,7 @@ class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  const size_t scratchBufferSize_ = (70 * (1 << 20));
+  size_t scratchBufferSize_;
   std::shared_ptr<mscclpp::Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;

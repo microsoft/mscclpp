@@ -158,10 +158,11 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
  public:
   BroadcastAlgo6() = default;
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   void registerAlgorithm();
 
  private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -171,7 +172,7 @@ class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
   mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t);
 
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
-  const size_t scratchMemSize_ = 1 << 26;  // 64MB
+  size_t scratchMemSize_;
   std::shared_ptr<char> scratchBuffer_;
 };
 

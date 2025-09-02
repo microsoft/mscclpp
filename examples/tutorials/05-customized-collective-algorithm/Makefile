@@ -13,13 +13,11 @@ endif
 
 TARGET = customized_allgather
 SRC = customized_allgather.cu
-INC = -I$(MSCCLPP_HOME)/include -I$(MSCCLPP_HOME)/apps/nccl/include
-LIB = -L$(MSCCLPP_HOME)/build
 
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(COMPILER) $(ARCH_FLAG) $(INC) $(LIB) -o $@ $< -lmscclpp -lnccl
+	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp -lnccl
 
 clean:
 	rm -f $(TARGET)

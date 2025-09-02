@@ -49,7 +49,8 @@ class AlgorithmImpl;
 
 class Algorithm {
  public:
-  using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>)>;
+  using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>,
+                                      std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, int,
                                        cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,

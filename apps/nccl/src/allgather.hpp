@@ -218,7 +218,7 @@ class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
   bool disableChannelCache_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -235,7 +235,8 @@ class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
@@ -244,7 +245,7 @@ class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  const size_t scratchBufferSize_ = 28 * (1 << 20);  // 28 MB scratch buffer
+  size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
 };
 
