@@ -106,17 +106,15 @@ class Rank:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             op = CopyOperation(
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
@@ -234,7 +232,9 @@ class Rank:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             op = ReduceOperation(
@@ -242,11 +242,7 @@ class Rank:
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
                 [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
                 packet=packet,
             )
 

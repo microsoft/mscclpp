@@ -129,7 +129,9 @@ class MemoryChannel:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb_id, remote_chunk, self.channel_type)
@@ -139,15 +141,11 @@ class MemoryChannel:
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
-    def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int= None, tbg: ThreadBlockGroup = None):
+    def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
         """Send data from local memory to remote memory.
 
         Performs a put operation to copy data from the source rank's local memory
@@ -186,7 +184,9 @@ class MemoryChannel:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb_id, remote_chunk, self.channel_type)
@@ -196,11 +196,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
@@ -248,7 +244,9 @@ class MemoryChannel:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb_id, remote_chunk, self.channel_type)
@@ -258,11 +256,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
                 from_packet=True,
                 to_packet=True,
             )
@@ -310,7 +304,9 @@ class MemoryChannel:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb_id, remote_chunk, self.channel_type)
@@ -320,11 +316,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
                 from_packet=False,
                 to_packet=True,
             )
@@ -388,7 +380,9 @@ class MemoryChannel:
         elif tbg is not None:
             tb_list = tbg.tb_list
         else:
-            raise RuntimeError("Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None.")
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+            )
 
         for tb_id in tb_list:
             remote_chunks = [
@@ -414,11 +408,7 @@ class MemoryChannel:
                 remote_dst_buff=[],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg))
-                    if tbg is not None
-                    else None
-                ),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
                 reduce_operation=reduce_op,
             )
 
