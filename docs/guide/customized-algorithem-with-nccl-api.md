@@ -1,7 +1,7 @@
 # Customized Collective Algorithm with NCCL API
 
 ```{note}
-This tutorial builds on concepts from the previous tutorials (e.g. Port Channel). Here we demonstrate how to plug a **custom collective algorithm** (an AllGather variant) into the MSCCL++ NCCL interposition / algorithm registration path and invoke it transparently via the standard NCCL API (`ncclAllGather`).
+This tutorial demonstrates how to plug a **custom collective algorithm** (an AllGather variant) into the MSCCL++ NCCL interposition / algorithm registration path and invoke it transparently via the standard NCCL API (`ncclAllGather`).
 ```
 
 ## Overview
@@ -35,6 +35,6 @@ LD_PRELOAD=<MSCCLPP_INSTALL_DIR>/lib/libmscclpp_nccl.so ./customized_allgather
 ```
 Expected (abbreviated) output on success:
 ```
-GPU 0: bytes 268435456, elapsed 6.25382 ms/iter, BW 128.77 GB/s
+GPU 0: bytes 268435456, elapsed 7.35012 ms/iter, BW 109.564 GB/s
 Succeed!
 ```
