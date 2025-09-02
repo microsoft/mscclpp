@@ -10,7 +10,7 @@ from mscclpp.language.collectives import *
 import mscclpp
 
 
-def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_message_size, max_message_size):
+def allgather_example(name, num_gpus, tbg_size, gpus_per_node, num_threads_per_block, min_message_size, max_message_size):
     nodes = num_gpus // gpus_per_node
     chunksperloop = 1
     collective = AllGather(num_gpus, chunksperloop, False)
@@ -21,7 +21,6 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         reuse_resources=False,
-        instances=1,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
@@ -31,7 +30,6 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         port_channels = {}
         scratch_buffer = []
         tbgs = []
-        tbg_size = 4
         tb_offset = 1
         total_tb = gpus_per_node * tbg_size + tb_offset
         for node in range(nodes):
@@ -170,6 +168,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--num_gpus", type=int, help="number of gpus")
 parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
+parser.add_argument("--tbg_size", type=int, help="number of thread blocks in the thread block group")
 parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
 parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
 parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
@@ -180,6 +179,7 @@ allgather_example(
     args.name,
     args.num_gpus,
     args.gpus_per_node,
+    args.tbg_size,
     args.num_threads_per_block,
     args.min_message_size,
     args.max_message_size,

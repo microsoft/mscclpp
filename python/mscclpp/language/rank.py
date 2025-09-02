@@ -114,7 +114,7 @@ class Rank:
             op = CopyOperation(
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
@@ -242,7 +242,7 @@ class Rank:
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
                 [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), len(tbg)) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
                 packet=packet,
             )
 

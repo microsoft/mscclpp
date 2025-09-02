@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import List, Dict, Any
+from typing import List, Dict
 
 
 class ThreadBlockGroup:
@@ -12,7 +12,7 @@ class ThreadBlockGroup:
     and providing efficient lookup of thread block IDs.
     """
 
-    def __init__(self, tb_list: List[Any]):
+    def __init__(self, tb_list: List[int]):
         """
         Initialize a ThreadBlockGroup with a list of thread blocks.
 
@@ -20,8 +20,8 @@ class ThreadBlockGroup:
             tb_list: List of thread block objects
         """
 
-        self.tb_list: List[Any] = tb_list
-        self._tb_id: Dict[Any, int] = {}
+        self.tb_list: List[int] = tb_list
+        self._tb_id: Dict[int, int] = {}
 
         # Check for duplicates and build ID mapping
         seen = set()
@@ -31,7 +31,7 @@ class ThreadBlockGroup:
             seen.add(tb)
             self._tb_id[tb] = i
 
-    def get_internal_id(self, tb: Any) -> int:
+    def get_internal_id(self, tb: int) -> int:
         """
         Get the ID of a thread block in this group.
 
@@ -48,6 +48,6 @@ class ThreadBlockGroup:
             raise ValueError(f"Thread block {tb} not found in thread block group")
         return self._tb_id[tb]
 
-    def __len__(self) -> int:
+    def numtb(self) -> int:
         """Return the number of thread blocks in the group."""
         return len(self.tb_list)
