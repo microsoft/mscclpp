@@ -21,7 +21,7 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         protocol="Simple",
         num_threads_per_block=num_threads_per_block,
         reuse_resources=False,
-        instances=4,
+        instances=1,
         use_double_scratch_buffer=False,
         min_message_size=min_message_size,
         max_message_size=max_message_size,
@@ -31,7 +31,7 @@ def allgather_example(name, num_gpus, gpus_per_node, num_threads_per_block, min_
         port_channels = {}
         scratch_buffer = []
         tbgs = []
-        tbg_size = 1
+        tbg_size = 4
         tb_offset = 1
         total_tb = gpus_per_node * tbg_size + tb_offset
         for node in range(nodes):
