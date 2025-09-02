@@ -10,7 +10,9 @@ from mscclpp.language.collectives import *
 import mscclpp
 
 
-def allgather_example(name, num_gpus, tbg_size, gpus_per_node, num_threads_per_block, min_message_size, max_message_size):
+def allgather_example(
+    name, num_gpus, tbg_size, gpus_per_node, num_threads_per_block, min_message_size, max_message_size
+):
     nodes = num_gpus // gpus_per_node
     chunksperloop = 1
     collective = AllGather(num_gpus, chunksperloop, False)
