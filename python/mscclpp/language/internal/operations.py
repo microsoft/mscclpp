@@ -112,6 +112,15 @@ class RemoteChunk(LocalChunk):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
+@dataclass
+class ThreadBlockGroupInfo:
+    tb_id: int
+    tbg_size: int
+
+    def to_dict(self):
+        return {"tb_id": self.tb_id, "tbg_size": self.tbg_size}
+
+
 class SyncOperation(BaseOperation):
     def __init__(self):
         super().__init__(Instruction.nop)
@@ -139,6 +148,7 @@ class CopyOperation(BaseOperation):
         self,
         src_buff: List[LocalChunk],
         dst_buff: List[LocalChunk],
+        tbg_info: ThreadBlockGroupInfo = None,
         from_packet: bool = False,
         to_packet: bool = False,
     ):
@@ -153,6 +163,7 @@ class CopyOperation(BaseOperation):
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
+        self.tbg_info = tbg_info
 
     def local_data_access(self, sync_purpose=True):
         data_access = []
@@ -182,6 +193,8 @@ class CopyOperation(BaseOperation):
         result["dst_buff"] = []
         for chunk in self.dst_buff:
             result["dst_buff"].append(chunk.to_dict())
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
@@ -431,12 +444,14 @@ class GetOperation(BaseOperation):
         dst_buff: List[LocalChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
+        tbg_info: ThreadBlockGroupInfo = None,
     ):
         super().__init__(Instruction.get)
         self.src_buff = src_buff
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+        self.tbg_info = tbg_info
 
     def local_data_access(self, sync_purpose=True):
         data_access = []
@@ -458,12 +473,14 @@ class GetOperation(BaseOperation):
             isinstance(other, GetOperation)
             and self.src_buff[0].size == other.src_buff[0].size
             and self.channel_type == other.channel_type
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = GetOperation(
                 src_buff=self.src_buff + other.src_buff,
                 dst_buff=self.dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
+                tbg_info=self.tbg_info,
             )
 
         return fused_operation
@@ -478,6 +495,8 @@ class GetOperation(BaseOperation):
             result["dst_buff"].append(chunk.to_dict())
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
@@ -488,6 +507,7 @@ class PutOperation(BaseOperation):
         dst_buff: List[RemoteChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
+        tbg_info: ThreadBlockGroupInfo = None,
         from_packet: bool = False,
         to_packet: bool = False,
         with_signal: bool = False,
@@ -517,6 +537,7 @@ class PutOperation(BaseOperation):
         self.to_packet = to_packet
         self.with_signal = with_signal
         self.with_signal_and_flush = with_signal_and_flush
+        self.tbg_info = tbg_info
 
     def local_data_access(self, sync_purpose=True):
         data_access = []
@@ -546,12 +567,14 @@ class PutOperation(BaseOperation):
             and self.name == other.name
             and self.src_buff[0].size == other.src_buff[0].size
             and self.channel_type == other.channel_type
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = PutOperation(
                 src_buff=self.src_buff + other.src_buff,
                 dst_buff=self.dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
+                tbg_info=self.tbg_info,
                 to_packet=self.to_packet,
                 with_signal=self.with_signal,
                 with_signal_and_flush=self.with_signal_and_flush,
@@ -570,6 +593,8 @@ class PutOperation(BaseOperation):
         if self.channel_type == ChannelType.port:
             result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
@@ -585,6 +610,7 @@ class ReduceOperation(BaseOperation):
         put_channel_ids: List[int] = None,
         channel_type: ChannelType = ChannelType.none,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+        tbg_info: ThreadBlockGroupInfo = None,
         packet: bool = False,
     ):
         remote_src_buff = remote_src_buff if remote_src_buff is not None else []
@@ -617,6 +643,7 @@ class ReduceOperation(BaseOperation):
         self.put_channel_ids = put_channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+        self.tbg_info = tbg_info
         self.packet = packet
 
     def local_data_access(self, sync_purpose=True):
@@ -657,6 +684,7 @@ class ReduceOperation(BaseOperation):
             and self.local_dst_buff == other.local_dst_buff
             and self.channel_type == other.channel_type
             and self.reduce_operation == other.reduce_operation
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = ReduceOperation(
                 self.local_src_buff + other.local_src_buff[1:],
@@ -665,6 +693,7 @@ class ReduceOperation(BaseOperation):
                 channel_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
                 packet=self.packet,
             )
         if (
@@ -678,6 +707,7 @@ class ReduceOperation(BaseOperation):
             and other.name == Instruction.put
             and self.local_dst_buff[0] == other.src_buff[0]
             and other.channel_type == ChannelType.memory
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = ReduceOperation(
                 self.local_src_buff,
@@ -688,6 +718,7 @@ class ReduceOperation(BaseOperation):
                 put_channel_ids=self.put_channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
                 packet=self.packet,
             )
         if (
@@ -696,6 +727,7 @@ class ReduceOperation(BaseOperation):
             and other.name == Instruction.put_packet
             and self.local_dst_buff[0] == other.src_buff[0]
             and other.channel_type == ChannelType.memory
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = ReduceOperation(
                 self.local_src_buff,
@@ -706,6 +738,7 @@ class ReduceOperation(BaseOperation):
                 put_channel_ids=self.put_channel_ids + other.channel_ids,
                 channel_type=other.channel_type,
                 reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
                 packet=self.packet,
             )
 
@@ -730,6 +763,8 @@ class ReduceOperation(BaseOperation):
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
