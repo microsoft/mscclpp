@@ -508,8 +508,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       auto& buff = op["src_buff"][i];
       size_t constOffset = 0;
       BufferType bufferType = BufferType::NONE;
-      size_t inputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
-      size_t inputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
       if (buff.contains("type")) {
         bufferType = convertToBufferType(buff["type"]);
         operation.inputBufferRefs[i].type = bufferType;
@@ -526,6 +524,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
+      size_t inputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t inputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
       inputOffset += calcOffset(inputBufferSize, tbId, tbgSize);
       inputBufferSize = calcSize(inputBufferSize, tbId, tbgSize);
       operation.inputOffsets[i] = inputOffset;
@@ -538,8 +538,6 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
       auto& buff = op["dst_buff"][i];
       size_t constOffset = 0;
       BufferType bufferType = BufferType::NONE;
-      size_t outputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
-      size_t outputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
       if (buff.contains("type")) {
         bufferType = convertToBufferType(buff["type"]);
         operation.outputBufferRefs[i].type = bufferType;
@@ -556,6 +554,8 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsOutputBufferType = bufferType;
         operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
+      size_t outputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t outputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
       outputOffset += calcOffset(outputBufferSize, tbId, tbgSize);
       outputBufferSize = calcSize(outputBufferSize, tbId, tbgSize);
       operation.outputOffsets[i] = outputOffset;
