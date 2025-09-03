@@ -1,0 +1,95 @@
+{
+  "name": "dynamic_alltoallv_plan",
+  "collective": "alltoallv",
+  "protocol": "dynamic",
+  "dynamic": true,
+  "min_message_size": 1024,
+  "max_message_size": 1048576,
+  "num_threads_per_block": 1024,
+  "dynamic_parameters": {
+    "max_thread_blocks": "32",
+    "block_size": "32768"
+  },
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
+      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
+      "scratch_chunks": 0,
+      "operations": [
+        {
+          "operation_template": {
+            "type": "put",
+            "inputChunk": "${chunk_id}",
+            "outputChunk": "${chunk_id}",
+            "peer": "${peer_rank}",
+            "channel": "0",
+            "threadblock_count": "${tb_count}",
+            "size": "${chunk_size}",
+            "step": "${step_id}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
+      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
+      "scratch_chunks": 0,
+      "operations": [
+        {
+          "operation_template": {
+            "type": "put",
+            "inputChunk": "${chunk_id}",
+            "outputChunk": "${chunk_id}",
+            "peer": "${peer_rank}",
+            "channel": "0",
+            "threadblock_count": "${tb_count}",
+            "size": "${chunk_size}",
+            "step": "${step_id}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
+      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
+      "scratch_chunks": 0,
+      "operations": [
+        {
+          "operation_template": {
+            "type": "put",
+            "inputChunk": "${chunk_id}",
+            "outputChunk": "${chunk_id}",
+            "peer": "${peer_rank}",
+            "channel": "0",
+            "threadblock_count": "${tb_count}",
+            "size": "${chunk_size}",
+            "step": "${step_id}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
+      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
+      "scratch_chunks": 0,
+      "operations": [
+        {
+          "operation_template": {
+            "type": "put",
+            "inputChunk": "${chunk_id}",
+            "outputChunk": "${chunk_id}",
+            "peer": "${peer_rank}",
+            "channel": "0",
+            "threadblock_count": "${tb_count}",
+            "size": "${chunk_size}",
+            "step": "${step_id}"
+          }
+        }
+      ]
+    }
+  ]
+}
