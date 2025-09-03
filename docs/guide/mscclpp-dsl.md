@@ -228,7 +228,7 @@ For example:
 # Create a Thread Block Group with 4 thread blocks
 tbg = ThreadBlockGroup(tb_list=[0, 1, 2, 3])
 # Use the Thread Block Group to perform the copy operation
-rank.copy(output_buffer[0:1], input_buffer[0:1], tbg=tbg)
+rank.copy(output_buffer[0:1], input_buffer[0:1], tb_group=tbg)
 ```
 
 ## Execution plan

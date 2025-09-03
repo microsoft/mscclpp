@@ -252,7 +252,7 @@ class MemoryChannel:
         elif tb_group is not None:
             tb_list = tb_group.tb_list
         else:
-            raise RuntimeError(
+            raise ValueError(
                 "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 

@@ -56,7 +56,7 @@ def allgather_example(name, num_threads_per_block, min_message_size, max_message
                     src_rank.barrier(tb_list=tbg.tb_list)
                     # Transfer data from source chunk to destination chunk using the memory channel
                     # The ThreadBlockGroup (tbg) coordinates which thread blocks participate in the transfer
-                    ch.put(dst_chunk, src_chunk, tb=tbg)
+                    ch.put(dst_chunk, src_chunk, tb_group=tbg)
                     # Post-transfer barrier ensures all thread blocks complete the put operation
                     # before proceeding to the next step
                     src_rank.barrier(tb_list=tbg.tb_list)
