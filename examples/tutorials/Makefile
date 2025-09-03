@@ -1,4 +1,4 @@
-TUTORIAL_DIRS := 01-basic-concepts 02-bootstrap 03-memory-channel 04-port-channel 05-customized-collective-algorithm
+TUTORIAL_DIRS := 01-basic-concepts 02-bootstrap 03-memory-channel 04-port-channel
 
 .PHONY: all clean help $(TUTORIAL_DIRS) clean-%
 

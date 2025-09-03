@@ -19,14 +19,14 @@ The example shows how to:
 ## Location
 Example source directory:
 ```
-examples/tutorials/05-customized-collective-algorithm/
+examples/customized-collective-algorithm/
 ```
 Key file: `customized_allgather.cu`.
 
 ## Build and Run
 From the repository root:
 ```bash
-cd examples/tutorials/05-customized-collective-algorithm
+cd examples/customized-collective-algorithm
 make
 ```
 Run (inside container you may need root privileges depending on GPU access):
