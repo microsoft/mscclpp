@@ -153,7 +153,9 @@ def allgather_example(
                             )
                     if step == 0:
                         src_rank.copy(
-                            output_buffer[local_index : local_index + 1], input_buffer[0:1], tb_group=tbgs[gpus_per_node - 1]
+                            output_buffer[local_index : local_index + 1],
+                            input_buffer[0:1],
+                            tb_group=tbgs[gpus_per_node - 1],
                         )
                     else:
                         src_rank.copy(

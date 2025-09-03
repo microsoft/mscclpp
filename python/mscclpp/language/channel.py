@@ -141,7 +141,11 @@ class MemoryChannel:
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
@@ -196,7 +200,11 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
@@ -256,7 +264,11 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
                 from_packet=True,
                 to_packet=True,
             )
@@ -316,7 +328,11 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
                 from_packet=False,
                 to_packet=True,
             )
@@ -408,7 +424,11 @@ class MemoryChannel:
                 remote_dst_buff=[],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
                 reduce_operation=reduce_op,
             )
 
