@@ -99,24 +99,24 @@ class DynamicExecutionPlan {
   /// Check if this is a dynamic plan
   bool isDynamic() const { return isDynamic_; }
   
- private:
-  // Fixed member order to match initialization order
-  int rank_;                                    ///< Process rank
-  std::string name_;                            ///< Plan name
-  std::string collective_;                      ///< Collective operation type
-  std::string protocol_;                        ///< Protocol type
-  bool isDynamic_;                              ///< Whether this is a dynamic plan
-  size_t minMessageSize_;                       ///< Minimum message size
-  size_t maxMessageSize_;                       ///< Maximum message size
-  int numThreadsPerBlock_;                      ///< Number of threads per block
-  std::vector<DynamicGpuTemplate> gpuTemplates_; ///< GPU templates
-  std::unordered_map<std::string, std::string> dynamicParams_; ///< Dynamic parameters
-  
-  /// Load dynamic plan from JSON
+  /// Clean up temporary files created by this plan
+  void cleanup();
+
+private:
   void loadFromJson(const std::string& planPath);
-  
-  /// Calculate thread blocks needed for a given message size
   int calculateThreadBlocks(size_t messageSize) const;
+
+  int rank_;                                         ///< Current rank
+  std::string name_;                                 ///< Plan name
+  std::string collective_;                           ///< Collective operation name
+  std::string protocol_;                             ///< Protocol name
+  bool isDynamic_;                                   ///< Whether this is a dynamic plan
+  size_t minMessageSize_;                            ///< Minimum message size
+  size_t maxMessageSize_;                            ///< Maximum message size
+  int numThreadsPerBlock_;                           ///< Number of threads per block
+  std::unordered_map<std::string, std::string> dynamicParams_;    ///< Dynamic parameters
+  std::vector<DynamicGpuTemplate> gpuTemplates_;     ///< GPU templates
+  std::string temp_file_path_;                       ///< Path to temporary file (for cleanup)
 };
 
 /// Utility class for dynamic all-to-allv operations
