@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <ctime>
 #include <numeric>
+#include <iostream>
 
 using json = nlohmann::json;
 
@@ -264,16 +265,15 @@ bool DynamicAllToAllv::execute(
     
     dynamicPlan->createConcretePlan(runtimeParams, concrete_plan_path);
     
-    // TODO: Execute the concrete plan using MSCCLPP's execution engine
-    // This would involve:
-    // 1. Loading the concrete plan with ExecutionPlan
-    // 2. Setting up the executor with the concrete plan
-    // 3. Executing the all-to-allv operation
+    std::cout << "Rank " << rank << ": Generated concrete execution plan: " << concrete_plan_path << std::endl;
     
     // For now, just return success to indicate the dynamic plan was created
+    // TODO: Execute the concrete plan using MSCCLPP's execution engine
+    std::cout << "Rank " << rank << ": Dynamic execution plan created successfully" << std::endl;
     return true;
     
   } catch (const std::exception& e) {
+    std::cerr << "Rank " << comm->bootstrap()->getRank() << ": Error in execute: " << e.what() << std::endl;
     return false;
   }
 }

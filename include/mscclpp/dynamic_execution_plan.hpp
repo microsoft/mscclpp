@@ -134,8 +134,10 @@ class DynamicAllToAllv {
     const std::vector<size_t>& recvSizes,
     int tag = 0);
   
- private:
   /// Create runtime parameters from send/recv sizes
+  /// @param sendSizes Send sizes per peer
+  /// @param recvSizes Receive sizes per peer
+  /// @return Runtime parameters structure
   static DynamicRuntimeParams createRuntimeParams(
     const std::vector<size_t>& sendSizes,
     const std::vector<size_t>& recvSizes);
