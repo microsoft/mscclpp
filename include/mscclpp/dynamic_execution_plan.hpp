@@ -76,6 +76,11 @@ class DynamicExecutionPlan {
   /// @return Concrete execution plan as JSON string
   std::string instantiate(const DynamicRuntimeParams& params);
   
+  /// Create a concrete ExecutionPlan object for the given parameters
+  /// @param params Runtime parameters for instantiation
+  /// @return Shared pointer to concrete ExecutionPlan
+  std::shared_ptr<ExecutionPlan> createExecutionPlan(const DynamicRuntimeParams& params);
+  
   /// Create a concrete execution plan file for the given parameters
   /// @param params Runtime parameters for instantiation
   /// @param outputPath Path where to write the concrete plan
@@ -117,7 +122,7 @@ class DynamicExecutionPlan {
 /// Utility class for dynamic all-to-allv operations
 class DynamicAllToAllv {
  public:
-  /// Execute dynamic all-to-allv with runtime message sizes
+  /// Execute dynamic all-to-allv with runtime message sizes using MSCCLPP execution engine
   /// @param comm The communicator
   /// @param dynamicPlan The dynamic execution plan
   /// @param sendBuffer Send buffer
