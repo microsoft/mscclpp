@@ -66,7 +66,7 @@ def allgather_example(
                     if peer != gpu:
                         dst_rank_id = peer + gpus_per_node * node
                         tbg_id = peer if peer < gpu else peer - 1
-                        for i in range(len(tbgs[tbg_id])):
+                        for i in range(tbgs[tbg_id].numtb()):
                             tb = tbgs[tbg_id].tb_list[i]
                             memory_channels[(dst_rank_id, src_rank_id, i)].signal(
                                 tb=tb, data_sync=SyncType.none, relaxed=True
@@ -79,7 +79,7 @@ def allgather_example(
                     if peer != gpu:
                         dst_rank_id = peer + gpus_per_node * node
                         tbg_id = peer if peer < gpu else peer - 1
-                        for i in range(len(tbgs[tbg_id])):
+                        for i in range(tbgs[tbg_id].numtb()):
                             tb = tbgs[tbg_id].tb_list[i]
                             memory_channels[(dst_rank_id, src_rank_id, i)].wait(
                                 tb=tb, data_sync=SyncType.after, relaxed=True
@@ -134,32 +134,32 @@ def allgather_example(
                                 memory_channels[(dst_rank_id, src_rank_id, 0)].put(
                                     scratch_buffer[dst_rank_id][local_index : local_index + 1],
                                     input_buffer[0:1],
-                                    tbg=tbgs[tbg_id],
+                                    tb_group=tbgs[tbg_id],
                                 )
                             else:
                                 memory_channels[(dst_rank_id, src_rank_id, 0)].put(
                                     scratch_buffer[dst_rank_id][local_index : local_index + 1],
                                     scratch_buffer[src_rank_id][local_index : local_index + 1],
-                                    tbg=tbgs[tbg_id],
+                                    tb_group=tbgs[tbg_id],
                                 )
-                            for i in range(len(tbgs[tbg_id])):
+                            for i in range(tbgs[tbg_id].numtb()):
                                 tb = tbgs[tbg_id].tb_list[i]
                                 memory_channels[(dst_rank_id, src_rank_id, i)].signal(tb=tb, data_sync=SyncType.before)
                                 memory_channels[(dst_rank_id, src_rank_id, i)].wait(tb=tb, data_sync=SyncType.after)
                             src_rank.copy(
                                 output_buffer[remote_index : remote_index + 1],
                                 scratch_buffer[src_rank_id][remote_index : remote_index + 1],
-                                tbg=tbgs[tbg_id],
+                                tb_group=tbgs[tbg_id],
                             )
                     if step == 0:
                         src_rank.copy(
-                            output_buffer[local_index : local_index + 1], input_buffer[0:1], tbg=tbgs[gpus_per_node - 1]
+                            output_buffer[local_index : local_index + 1], input_buffer[0:1], tb_group=tbgs[gpus_per_node - 1]
                         )
                     else:
                         src_rank.copy(
                             output_buffer[local_index : local_index + 1],
                             scratch_buffer[src_rank_id][local_index : local_index + 1],
-                            tbg=tbgs[gpus_per_node - 1],
+                            tb_group=tbgs[gpus_per_node - 1],
                         )
 
         print(JSON())

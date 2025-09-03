@@ -58,10 +58,10 @@ def reduce_send_test(num_threads_per_block, min_message_size, max_message_size):
                     ch.wait(tb=0, data_sync=SyncType.after, relaxed=True)
 
                     # Perform local reduce: combine input_buff[0:1] and input_buff[1:2]
-                    rank.reduce(input_buff[0:1], [input_buff[1:2]], tbg=tbg, dst_chunk=output_buff[0:1])
+                    rank.reduce(input_buff[0:1], [input_buff[1:2]], tb_group=tbg, dst_chunk=output_buff[0:1])
 
                     # Send reduced result to peer GPU
-                    ch.put(peer_output_buff[1:2], output_buff[0:1], tbg=tbg)
+                    ch.put(peer_output_buff[1:2], output_buff[0:1], tb_group=tbg)
 
                     # Synchronize after operation
                     ch.signal(tb=0, data_sync=SyncType.before)

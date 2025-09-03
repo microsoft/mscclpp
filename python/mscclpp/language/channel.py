@@ -95,7 +95,7 @@ class MemoryChannel:
         op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
 
-    def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
+    def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Retrieve data from remote memory to local memory.
 
         Performs a get operation to copy data from the destination rank's memory
@@ -105,7 +105,7 @@ class MemoryChannel:
             dst_chunk (Chunk): The destination chunk on the source rank where data will be stored.
             src_chunk (Chunk): The source chunk on the destination rank to retrieve data from.
             tb (int, optional): The thread block ID that will execute this get operation. Defaults to None.
-            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this get operation. Defaults to None.
+            tb_group (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this get operation. Defaults to None.
 
         Raises:
             RuntimeError: If chunk ranks don't match the channel configuration.
@@ -126,11 +126,11 @@ class MemoryChannel:
 
         if tb is not None:
             tb_list = [tb]
-        elif tbg is not None:
-            tb_list = tbg.tb_list
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
         else:
             raise RuntimeError(
-                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
         for tb_id in tb_list:
@@ -141,11 +141,11 @@ class MemoryChannel:
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
-    def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
+    def put(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Send data from local memory to remote memory.
 
         Performs a put operation to copy data from the source rank's local memory
@@ -155,7 +155,7 @@ class MemoryChannel:
             dst_chunk (Chunk): The destination chunk on the destination rank where data will be stored.
             src_chunk (Chunk): The source chunk on the source rank to send data from.
             tb (int, optional): The thread block ID that will execute this put operation. Defaults to None.
-            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this put operation. Defaults to None.
+            tb_group (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this put operation. Defaults to None.
 
         Raises:
             RuntimeError: If chunk ranks don't match the channel configuration or
@@ -181,11 +181,11 @@ class MemoryChannel:
 
         if tb is not None:
             tb_list = [tb]
-        elif tbg is not None:
-            tb_list = tbg.tb_list
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
         else:
             raise RuntimeError(
-                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
         for tb_id in tb_list:
@@ -196,11 +196,11 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
-    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
+    def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Transfer data in packet format from local to remote scratch buffer.
 
         Performs a specialized put operation that transfers data in packet format
@@ -211,7 +211,7 @@ class MemoryChannel:
             dst_chunk (Chunk): The destination scratch chunk on the destination rank.
             src_chunk (Chunk): The source scratch chunk on the source rank.
             tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
-            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
+            tb_group (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
 
         Raises:
             RuntimeError: If chunk ranks don't match channel configuration, if chunks
@@ -241,11 +241,11 @@ class MemoryChannel:
 
         if tb is not None:
             tb_list = [tb]
-        elif tbg is not None:
-            tb_list = tbg.tb_list
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
         else:
             raise RuntimeError(
-                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
         for tb_id in tb_list:
@@ -256,13 +256,13 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
                 from_packet=True,
                 to_packet=True,
             )
             get_program().add_operation(self.src_rank, tb_id, op)
 
-    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tbg: ThreadBlockGroup = None):
+    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Transfer data from local buffer to remote scratch buffer in packet format.
 
         Performs a put operation that transfers data from the source rank's buffer
@@ -273,7 +273,7 @@ class MemoryChannel:
             dst_chunk (Chunk): The destination scratch chunk on the destination rank.
             src_chunk (Chunk): The source chunk on the source rank.
             tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
-            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
+            tb_group (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
 
         Raises:
             RuntimeError: If chunk ranks don't match channel configuration, if destination
@@ -301,11 +301,11 @@ class MemoryChannel:
 
         if tb is not None:
             tb_list = [tb]
-        elif tbg is not None:
-            tb_list = tbg.tb_list
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
         else:
             raise RuntimeError(
-                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
         for tb_id in tb_list:
@@ -316,7 +316,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
                 from_packet=False,
                 to_packet=True,
             )
@@ -328,7 +328,7 @@ class MemoryChannel:
         local_src_chunk: Chunk,
         remote_src_chunks: List[Chunk],
         tb: int = None,
-        tbg: ThreadBlockGroup = None,
+        tb_group: ThreadBlockGroup = None,
         local_dst_chunk: Chunk = None,
         reduce_op: ReduceOperation = ReduceOperationType.sum,
     ):
@@ -342,7 +342,7 @@ class MemoryChannel:
             local_src_chunk (Chunk): The local source chunk on the source rank.
             remote_src_chunks (List[Chunk]): List of remote source chunks to reduce with.
             tb (int, optional): The thread block ID that will execute this operation. Defaults to None.
-            tbg (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
+            tb_group (ThreadBlockGroup, optional): The ThreadBlockGroup that will execute this operation. Defaults to None.
             local_dst_chunk (Chunk, optional): The local destination chunk. If None,
                 uses local_src_chunk as destination. Defaults to None.
             reduce_op (ReduceOperation, optional): The reduction operation to perform.
@@ -377,11 +377,11 @@ class MemoryChannel:
 
         if tb is not None:
             tb_list = [tb]
-        elif tbg is not None:
-            tb_list = tbg.tb_list
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
         else:
             raise RuntimeError(
-                "Either 'tb' (thread block ID) or 'tbg' (ThreadBlockGroup) must be provided, but both are None."
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
         for tb_id in tb_list:
@@ -408,7 +408,7 @@ class MemoryChannel:
                 remote_dst_buff=[],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg_info=(ThreadBlockGroupInfo(tbg.get_internal_id(tb_id), tbg.numtb()) if tbg is not None else None),
+                tbg_info=(ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb()) if tb_group is not None else None),
                 reduce_operation=reduce_op,
             )
 
