@@ -219,6 +219,17 @@ The following figure shows how thread blocks and channels are replicated across 
 MSCCL++ DSL Instance Replication Overview
 ```
 
+## Thread Block Group
+
+This feature is currently a prototype. It allows you to define and use a set of thread blocks as a group to execute operations. By grouping thread blocks, you can allocate thread blocks in a non-uniform way, giving different operations different amounts of thread blocks as needed.
+
+For example:
+```python
+# Create a Thread Block Group with 4 thread blocks
+tbg = ThreadBlockGroup(tb_list=[0, 1, 2, 3])
+# Use the Thread Block Group to perform the copy operation
+rank.copy(output_buffer[0:1], input_buffer[0:1], tbg=tbg)
+```
 
 ## Execution plan
 
