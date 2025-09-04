@@ -356,15 +356,11 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 #endif
 
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppNcclDlHandle == NULL) {
-    int dlopenStatus = mscclppNcclDlopenInit();
-    if (dlopenStatus == dlopenSuccess) {
-      mscclppNcclDlopenSharedLib = true;
-    } else {
-      if (mscclppEnableNcclFallback == true) {
-        WARN("Failed to load the shared library for nccl/rccl");
-        return ncclInternalError;
-      }
+  if (mscclppEnableNcclFallback && mscclppNcclDlHandle == NULL) {
+    mscclppNcclDlopenSharedLib = (mscclppNcclDlopenInit() == dlopenSuccess);
+    if (!mscclppNcclDlopenSharedLib) {
+      WARN("Failed to load the shared library for nccl/rccl");
+      return ncclInternalError;
     }
   }
 
@@ -795,12 +791,9 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  // Need to check env then load the lib
-  if (mscclppNcclDlopenSharedLib == false) {
-    int dlopenStatus = mscclppNcclDlopenInit();
-    if (dlopenStatus == dlopenSuccess) {
-      mscclppNcclDlopenSharedLib = true;
-    }
+  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
+  if (mscclppEnableNcclFallback && mscclppNcclDlopenSharedLib == false) {
+    mscclppNcclDlopenSharedLib = (mscclppNcclDlopenInit() == dlopenSuccess);
   }
   if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.GroupStart();
