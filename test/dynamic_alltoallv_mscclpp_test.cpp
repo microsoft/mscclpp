@@ -3,6 +3,7 @@
 
 #include <mscclpp/dynamic_execution_plan.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>  // For GpuBuffer
 #include <vector>
 #include <iostream>
 #include <memory>
@@ -11,6 +12,8 @@
 #include <mpi.h>
 #include <unistd.h>  // for getcwd
 #include <fstream>   // For file existence check
+#include <chrono>    // For sleep_for
+#include <thread>    // For this_thread
 
 int main(int argc, char* argv[]) {
   
@@ -21,48 +24,54 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
   MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
   
+  // Declare variables outside try block so they're accessible in catch block
+  std::shared_ptr<mscclpp::Communicator> comm = nullptr;
+  std::shared_ptr<mscclpp::DynamicExecutionPlan> dynamicPlan = nullptr;
+  
+  // Declare GPU buffers outside try block so we can control their lifetime
+  std::unique_ptr<mscclpp::GpuBuffer<char>> sendGpuBuffer = nullptr;
+  std::unique_ptr<mscclpp::GpuBuffer<char>> recvGpuBuffer = nullptr;
+  
   try {
-    std::cout << "MPI Rank " << mpi_rank << " of " << mpi_size << " starting MSCCLPP execution test..." << std::endl;
+    // Set CUDA device based on MPI rank
+    cudaSetDevice(mpi_rank % 8);  // Assuming up to 8 GPUs per node
     
-    // Determine GPU device based on rank
-    int num_gpus;
-    cudaGetDeviceCount(&num_gpus);
+    int device;
+    cudaGetDevice(&device);
+    std::cout << "Rank " << mpi_rank << ": Using CUDA device " << device << std::endl;
     
-    if (num_gpus == 0) {
-      std::cerr << "No CUDA devices found!" << std::endl;
-      MPI_Finalize();
-      return 1;
-    }
+    // Initialize TcpBootstrap for communication setup
+    std::cout << "Rank " << mpi_rank << ": Creating TcpBootstrap..." << std::endl;
     
-    // Map MPI rank to GPU device (round-robin if more ranks than GPUs)
-    int device_id = mpi_rank % num_gpus;
-    cudaSetDevice(device_id);
-    
-    std::cout << "Rank " << mpi_rank << ": Using GPU device " << device_id << " (total GPUs: " << num_gpus << ")" << std::endl;
-    
-    // Initialize CUDA context
-    cudaFree(0);  // Force CUDA context initialization
-    
-    // Create TcpBootstrap for MSCCLPP with multiple ranks
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(mpi_rank, mpi_size);
     
-    // Create unique ID and broadcast from rank 0
+    // Create a unique ID (rank 0 creates and broadcasts)
     mscclpp::UniqueId uniqueId;
     if (mpi_rank == 0) {
       uniqueId = bootstrap->createUniqueId();
+      std::cout << "Rank " << mpi_rank << ": Created unique ID for bootstrap" << std::endl;
     }
+    
+    // Broadcast the unique ID to all ranks
     MPI_Bcast(&uniqueId, sizeof(uniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
     
+    std::cout << "Rank " << mpi_rank << ": Received unique ID, initializing bootstrap..." << std::endl;
+    
+    // Initialize bootstrap with the unique ID
     bootstrap->initialize(uniqueId);
     
-    // Create communicator
-    auto comm = std::make_shared<mscclpp::Communicator>(bootstrap);
+    // Create Communicator (without ProxyService for simplicity)
+    comm = std::make_shared<mscclpp::Communicator>(bootstrap);
     
-    std::cout << "Rank " << mpi_rank << ": MSCCLPP communicator initialized" << std::endl;
+    if (!comm) {
+      throw std::runtime_error("Failed to create Communicator");
+    }
+    
+    std::cout << "Rank " << mpi_rank << ": Communicator created successfully" << std::endl;
     
     // Load dynamic execution plan template with better path handling
     std::string planPath = "test/dynamic_alltoallv_plan.json";
-    auto dynamicPlan = std::make_shared<mscclpp::DynamicExecutionPlan>(planPath, mpi_rank);
+    dynamicPlan = std::make_shared<mscclpp::DynamicExecutionPlan>(planPath, mpi_rank);
     
     std::cout << "Rank " << mpi_rank << ": Dynamic execution plan loaded" << std::endl;
     
@@ -97,42 +106,23 @@ int main(int argc, char* argv[]) {
     }
     std::cout << std::endl;
     
-    // Allocate GPU buffers
-    void* d_sendBuffer = nullptr;
-    void* d_recvBuffer = nullptr;
+    // Create MSCCLPP GpuBuffer objects with proper lifetime management
+    sendGpuBuffer = std::make_unique<mscclpp::GpuBuffer<char>>(totalSendSize);
+    recvGpuBuffer = std::make_unique<mscclpp::GpuBuffer<char>>(totalRecvSize);
     
-    if (totalSendSize > 0) {
-      cudaError_t err = cudaMalloc(&d_sendBuffer, totalSendSize);
-      if (err != cudaSuccess) {
-        std::cerr << "Rank " << mpi_rank << ": Failed to allocate send buffer: " << cudaGetErrorString(err) << std::endl;
-        MPI_Finalize();
-        return 1;
-      }
-    }
+    char* d_sendBuffer = sendGpuBuffer->data();
+    char* d_recvBuffer = recvGpuBuffer->data();
     
-    if (totalRecvSize > 0) {
-      cudaError_t err = cudaMalloc(&d_recvBuffer, totalRecvSize);
-      if (err != cudaSuccess) {
-        std::cerr << "Rank " << mpi_rank << ": Failed to allocate recv buffer: " << cudaGetErrorString(err) << std::endl;
-        if (d_sendBuffer) cudaFree(d_sendBuffer);
-        MPI_Finalize();
-        return 1;
-      }
-    }
+    std::cout << "Rank " << mpi_rank << ": GPU buffers allocated - send: " << totalSendSize 
+              << " bytes, recv: " << totalRecvSize << " bytes" << std::endl;
     
-    // Initialize send buffer with rank-specific test pattern
+    // Initialize send buffer with test data
     if (totalSendSize > 0) {
       std::vector<char> h_sendBuffer(totalSendSize);
       
-      // Initialize different patterns for different destination ranks
-      size_t offset = 0;
-      for (int dest_rank = 0; dest_rank < mpi_size; ++dest_rank) {
-        for (size_t i = 0; i < sendSizes[dest_rank]; ++i) {
-          // Pattern: (source_rank * 0x10) + (dest_rank * 0x01) + (i % 256)
-          h_sendBuffer[offset + i] = static_cast<char>(
-            (mpi_rank * 0x10) + (dest_rank * 0x01) + ((offset + i) % 0x10));
-        }
-        offset += sendSizes[dest_rank];
+      // Fill with pattern: rank ID + offset
+      for (size_t i = 0; i < totalSendSize; ++i) {
+        h_sendBuffer[i] = static_cast<char>((mpi_rank * 16 + i) % 256);
       }
       
       cudaMemcpy(d_sendBuffer, h_sendBuffer.data(), totalSendSize, cudaMemcpyHostToDevice);
@@ -142,7 +132,7 @@ int main(int argc, char* argv[]) {
       cudaMemset(d_recvBuffer, 0, totalRecvSize);
     }
     
-    std::cout << "Rank " << mpi_rank << ": GPU buffers allocated and initialized" << std::endl;
+    std::cout << "Rank " << mpi_rank << ": GPU buffers initialized" << std::endl;
     
     // Synchronize all ranks before starting the test
     MPI_Barrier(MPI_COMM_WORLD);
@@ -189,21 +179,62 @@ int main(int argc, char* argv[]) {
     // Synchronize all ranks before cleanup
     MPI_Barrier(MPI_COMM_WORLD);
     
-    // Cleanup GPU memory
-    if (d_sendBuffer) cudaFree(d_sendBuffer);
-    if (d_recvBuffer) cudaFree(d_recvBuffer);
+    std::cout << "Rank " << mpi_rank << ": Starting proper cleanup..." << std::endl;
     
-    // Reset CUDA device
-    cudaDeviceReset();
+    // Explicit cleanup in the correct order to avoid memory issues
+    // 1. Clean up dynamic plan first (this may hold references to buffers)
+    if (dynamicPlan) {
+      dynamicPlan->cleanup();
+      dynamicPlan.reset();
+    }
     
-    std::cout << "Rank " << mpi_rank << ": Test completed" << std::endl;
+    // 2. Reset communicator (this may unregister memory)
+    if (comm) {
+      comm.reset();
+    }
+    
+    // 3. CUDA synchronize before releasing buffers
+    cudaDeviceSynchronize();
+    
+    // 4. Finally release GPU buffers
+    sendGpuBuffer.reset();
+    recvGpuBuffer.reset();
+    
+    std::cout << "Rank " << mpi_rank << ": Cleanup completed successfully" << std::endl;
     
   } catch (const std::exception& e) {
     std::cerr << "Rank " << mpi_rank << " Error: " << e.what() << std::endl;
+    
+    // Cleanup in catch block with extra safety
+    try {
+      std::cout << "Rank " << mpi_rank << ": Exception cleanup starting..." << std::endl;
+      
+      if (dynamicPlan) {
+        dynamicPlan->cleanup();
+        dynamicPlan.reset();
+      }
+      
+      if (comm) {
+        comm.reset();
+      }
+      
+      // CUDA synchronize before releasing buffers
+      cudaDeviceSynchronize();
+      
+      sendGpuBuffer.reset();
+      recvGpuBuffer.reset();
+      
+      std::cout << "Rank " << mpi_rank << ": Exception cleanup completed" << std::endl;
+      
+    } catch (const std::exception& cleanup_error) {
+      std::cerr << "Rank " << mpi_rank << " Cleanup error: " << cleanup_error.what() << std::endl;
+    }
+    
     MPI_Finalize();
     return 1;
   }
   
+  std::cout << "Rank " << mpi_rank << ": Test completed successfully" << std::endl;
   MPI_Finalize();
   return 0;
 }
