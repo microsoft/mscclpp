@@ -139,7 +139,7 @@ static inline void mscclppNcclDlopenFinalize() {
 }
 
 static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
-  if (fallbackList == nullptr || strcmp(fallbackList, "all") == 0) {
+  if (strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
@@ -414,7 +414,15 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
 
-  comm->algorithmFactory->destroy();
+  // The last reference of algorithmFactory instead of the singleton instance
+  if (comm->algorithmFactory.use_count() == 2) {
+    comm->algorithmFactory->destroy();
+  }
+  comm->algorithmFactory = nullptr;
+  comm->comm = nullptr;
+  comm->scratchBuffer_ = nullptr;
+  comm->executor = nullptr;
+  comm->executionPlans.clear();
   delete comm;
   return ncclSuccess;
 }
