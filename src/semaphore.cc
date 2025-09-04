@@ -92,8 +92,14 @@ struct Semaphore::Impl {
   RegisteredMemory remoteStubMemory_;
 };
 
-Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub)
-    : pimpl_(std::make_unique<Impl>(localStub, remoteStub.memory())) {}
+Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub) {
+  auto remoteMemImpl = remoteStub.memory().pimpl_;
+  if (remoteMemImpl->hostHash == getHostHash() && remoteMemImpl->pidHash == getPidHash()) {
+    pimpl_ = std::make_unique<Impl>(localStub, RegisteredMemory::deserialize(remoteStub.memory().serialize()));
+  } else {
+    pimpl_ = std::make_unique<Impl>(localStub, remoteStub.memory());
+  }
+}
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Semaphore::connection() const {
   return pimpl_->localStub_.pimpl_->connection_;
