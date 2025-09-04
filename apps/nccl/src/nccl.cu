@@ -139,7 +139,7 @@ static inline void mscclppNcclDlopenFinalize() {
 }
 
 static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
-  if (fallbackList == nullptr || fallbackList[0] == '\0' || strcmp(fallbackList, "all") == 0) {
+  if (fallbackList == nullptr || strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
@@ -711,6 +711,9 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
                                     ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = sendcount * ncclTypeSize(datatype);
+  if (bytes == 0) {
+    return ncclSuccess;
+  }
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "

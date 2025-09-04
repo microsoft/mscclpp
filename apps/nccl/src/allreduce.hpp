@@ -836,7 +836,7 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
-  const size_t nvlsBufferSize_ = (1 << 30);
+  const size_t nvlsBufferSize_ = 8UL * (1 << 30);
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
