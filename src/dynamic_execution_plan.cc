@@ -157,13 +157,13 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
   json concrete_json;
   
   // Basic plan information
-  concrete_json["name"] = name_ + "_instantiated";
-  concrete_json["collective"] = "alltoallv";
-  concrete_json["protocol"] = "Simple";
+  concrete_json["name"] = std::string(name_ + "_instantiated");
+  concrete_json["collective"] = std::string("alltoallv");
+  concrete_json["protocol"] = std::string("Simple");
   concrete_json["inplace"] = false;
   concrete_json["reuse_resources"] = false;
   
-  // Buffer alignment configuration that works
+  // Buffer alignment configuration
   concrete_json["buffer_alignment"] = 16;
   concrete_json["num_threads_per_block"] = 1024;
   concrete_json["use_double_scratch_buffer"] = false;
@@ -195,21 +195,18 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
     gpu_json["output_chunks"] = static_cast<int>(num_chunks);
     gpu_json["scratch_chunks"] = 0;
     
-    // Empty arrays for resources (we'll use local copy operations)
+    // Empty arrays for resources - this works without errors
     gpu_json["channels"] = json::array();
     gpu_json["remote_buffers"] = json::array();
     gpu_json["semaphores"] = json::array();
     
-    // Create threadblocks with actual copy operations for alltoallv
+    // Create threadblocks with simple local copy operations
     json threadblocks = json::array();
     json threadblock;
     threadblock["id"] = 0;
     
-    // Create copy operations to simulate alltoallv data movement
+    // Create simple copy operations for testing
     json operations = json::array();
-    
-    // For alltoallv, each rank needs to copy data from its send buffer to recv buffer
-    // with the appropriate offsets for each peer
     
     // Calculate offsets and sizes for this rank's operations
     size_t input_offset = 0;
@@ -230,30 +227,29 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
           (input_offset + send_size_chunks) <= num_chunks &&
           (output_offset + recv_size_chunks) <= num_chunks) {
         
-        // For local testing, copy from input to output with correct offsets
-        // In a real alltoallv, this would involve remote operations
+        // For now, just do local copy to avoid channel issues
         json copy_op;
-        copy_op["name"] = "copy";
+        copy_op["name"] = std::string("copy");
         
-        // Source buffer (input)
-        copy_op["src_buff"] = json::array({
-          {
-            {"type", "i"},
-            {"index", 0},
-            {"offset", static_cast<int>(input_offset)},
-            {"size", static_cast<int>(send_size_chunks)}
-          }
-        });
+        // Create src_buff array with single element
+        json src_element;
+        src_element["type"] = std::string("i");
+        src_element["index"] = 0;
+        src_element["offset"] = static_cast<int>(input_offset);
+        src_element["size"] = static_cast<int>(send_size_chunks);
         
-        // Destination buffer (output)
-        copy_op["dst_buff"] = json::array({
-          {
-            {"type", "o"},
-            {"index", 0},
-            {"offset", static_cast<int>(output_offset)},
-            {"size", static_cast<int>(send_size_chunks)}
-          }
-        });
+        copy_op["src_buff"] = json::array();
+        copy_op["src_buff"].push_back(src_element);
+        
+        // Create dst_buff array with single element
+        json dst_element;
+        dst_element["type"] = std::string("o");
+        dst_element["index"] = 0;
+        dst_element["offset"] = static_cast<int>(output_offset);
+        dst_element["size"] = static_cast<int>(send_size_chunks);
+        
+        copy_op["dst_buff"] = json::array();
+        copy_op["dst_buff"].push_back(dst_element);
         
         operations.push_back(copy_op);
         
@@ -270,14 +266,14 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
     // If no operations were created, add a nop to avoid empty operation list
     if (operations.empty()) {
       json nop_op;
-      nop_op["name"] = "nop";
+      nop_op["name"] = std::string("nop");
       operations.push_back(nop_op);
       std::cout << "Rank " << rank_id << ": No copy operations created, using nop" << std::endl;
     }
     
     threadblock["ops"] = operations;
     
-    // Empty arrays for threadblock-level resources
+    // Ensure these are always arrays, never null
     threadblock["channels"] = json::array();
     threadblock["remote_buffer_refs"] = json::array();
     
@@ -289,8 +285,8 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
   
   concrete_json["gpus"] = gpus_json;
   
-  std::cout << "Rank " << rank_ << ": Generated JSON with " << gpus_json.size() 
-            << " GPUs and copy operations for alltoallv simulation" << std::endl;
+  std::cout << "Rank " << rank_ << ": Generated simplified JSON with " << gpus_json.size() 
+            << " GPUs and local copy operations" << std::endl;
   
   return concrete_json.dump(2);
 }
@@ -542,87 +538,89 @@ bool DynamicAllToAllv::execute(
     
     std::cout << "Rank " << rank << ": Registered memory buffers" << std::endl;
     
-    // Step 5: Setup connections to all peer ranks (only same-node for simplicity)
+    // Step 5: Setup connections to all peer ranks
     std::vector<std::shared_future<std::shared_ptr<Connection>>> connectionFutures;
     std::vector<std::shared_ptr<Connection>> connections;
+    std::map<int, std::shared_ptr<Connection>> rankToConnection;
     
     for (int peer_rank = 0; peer_rank < numRanks; ++peer_rank) {
       if (peer_rank != rank) {
-        // For this example, we'll use CudaIpc if on same node, otherwise skip complex networking
-        bool sameNode = (peer_rank / 8) == (rank / 8);  // Assuming 8 GPUs per node
+        // Use CudaIpc for all connections (assuming same node)
+        EndpointConfig config;
+        config.transport = Transport::CudaIpc;
         
-        if (sameNode) {
-          // Create endpoint configuration for CudaIpc transport
-          EndpointConfig config;
-          config.transport = Transport::CudaIpc;
-          
-          // Establish connection to peer rank
-          auto connectionFuture = comm->connect(config, peer_rank, 0);
-          connectionFutures.push_back(connectionFuture);
-          
-          std::cout << "Rank " << rank << ": Initiated CudaIpc connection to rank " << peer_rank << std::endl;
-        } else {
-          std::cout << "Rank " << rank << ": Skipping cross-node connection to rank " << peer_rank 
-                    << " (requires InfiniBand or Ethernet)" << std::endl;
-        }
+        // Establish connection to peer rank
+        auto connectionFuture = comm->connect(config, peer_rank, 0);
+        connectionFutures.push_back(connectionFuture);
+        
+        std::cout << "Rank " << rank << ": Initiated CudaIpc connection to rank " << peer_rank << std::endl;
       }
     }
     
     // Step 6: Wait for all connections to be established
-    for (auto& future : connectionFutures) {
-      connections.push_back(future.get());
+    int conn_idx = 0;
+    for (int peer_rank = 0; peer_rank < numRanks; ++peer_rank) {
+      if (peer_rank != rank) {
+        auto conn = connectionFutures[conn_idx++].get();
+        connections.push_back(conn);
+        rankToConnection[peer_rank] = conn;
+      }
     }
     
     std::cout << "Rank " << rank << ": Established " << connections.size() << " connections" << std::endl;
     
-    // Step 7: Send memory handles to connected peers
-    for (size_t i = 0; i < connections.size(); ++i) {
-      int peerRank = comm->remoteRankOf(*connections[i]);
-      comm->sendMemory(sendBufferRegistered, peerRank, 0);
-      comm->sendMemory(recvBufferRegistered, peerRank, 1);
-      
-      std::cout << "Rank " << rank << ": Sent memory handles to rank " << peerRank << std::endl;
+    // Step 7: Exchange memory handles for both send and recv buffers
+    std::vector<std::shared_future<RegisteredMemory>> remoteSendMemFutures;
+    std::vector<std::shared_future<RegisteredMemory>> remoteRecvMemFutures;
+    std::map<int, RegisteredMemory> remoteSendMems;
+    std::map<int, RegisteredMemory> remoteRecvMems;
+    
+    // Send our buffers to all peers
+    for (const auto& [peer_rank, conn] : rankToConnection) {
+      comm->sendMemory(sendBufferRegistered, peer_rank, 0);  // Tag 0 for send buffer
+      comm->sendMemory(recvBufferRegistered, peer_rank, 1);  // Tag 1 for recv buffer
+      std::cout << "Rank " << rank << ": Sent memory handles to rank " << peer_rank << std::endl;
     }
     
-    // Step 8: Receive memory handles from connected peers
-    std::vector<std::shared_future<RegisteredMemory>> remoteSendMemories;
-    std::vector<std::shared_future<RegisteredMemory>> remoteRecvMemories;
-    
-    for (size_t i = 0; i < connections.size(); ++i) {
-      int peerRank = comm->remoteRankOf(*connections[i]);
-      remoteSendMemories.push_back(comm->recvMemory(peerRank, 0));
-      remoteRecvMemories.push_back(comm->recvMemory(peerRank, 1));
+    // Receive buffers from all peers
+    for (const auto& [peer_rank, conn] : rankToConnection) {
+      remoteSendMemFutures.push_back(comm->recvMemory(peer_rank, 0));
+      remoteRecvMemFutures.push_back(comm->recvMemory(peer_rank, 1));
     }
     
-    // Wait for all memory exchanges to complete
-    for (auto& future : remoteSendMemories) {
-      future.wait();
-    }
-    for (auto& future : remoteRecvMemories) {
-      future.wait();
+    // Wait and store remote memories
+    conn_idx = 0;
+    for (const auto& [peer_rank, conn] : rankToConnection) {
+      remoteSendMems[peer_rank] = remoteSendMemFutures[conn_idx].get();
+      remoteRecvMems[peer_rank] = remoteRecvMemFutures[conn_idx].get();
+      conn_idx++;
     }
     
     std::cout << "Rank " << rank << ": Memory exchange completed with " << connections.size() << " peers" << std::endl;
     
-    // Step 9: Create and setup Executor
+    // Step 8: Create Executor
+    // Note: MSCCLPP's Executor handles channels internally based on the execution plan
+    // We don't need to explicitly create or set channels
     auto executor = std::make_shared<Executor>(comm);
     
     std::cout << "Rank " << rank << ": Created executor, executing plan..." << std::endl;
     
-    // Step 10: Execute the plan with the exact buffer sizes from ExecutionPlan
+    // Step 9: Execute the plan
     std::cout << "Rank " << rank << ": About to execute with:" << std::endl;
     std::cout << "  - sendBuffer: " << sendBuffer << std::endl;
     std::cout << "  - recvBuffer: " << recvBuffer << std::endl; 
-    std::cout << "  - maxBufferSize: " << maxBufferSize << " bytes" << std::endl;
-    std::cout << "  - maxBufferSize in elements: " << (maxBufferSize / sizeof(uint32_t)) << std::endl;
+    std::cout << "  - sendBufferSize: " << maxBufferSize << " bytes" << std::endl;
+    std::cout << "  - recvBufferSize: " << maxBufferSize << " bytes" << std::endl;
     std::cout << "  - DataType: UINT32" << std::endl;
     std::cout << "  - Execution plan name: " << executionPlan->name() << std::endl;
     
-    // CRUCIAL: Use the exact same buffer sizes that the ExecutionPlan was created with
     executor->execute(rank, sendBuffer, recvBuffer, 
-                     maxBufferSize, maxBufferSize,  // These must match the JSON chunks
+                     maxBufferSize, maxBufferSize,
                      DataType::UINT32,
                      *executionPlan, cudaStreamDefault);
+    
+    // Synchronize to ensure all operations complete
+    cudaStreamSynchronize(cudaStreamDefault);
     
     std::cout << "Rank " << rank << ": Execution completed successfully!" << std::endl;
     
