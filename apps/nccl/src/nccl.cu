@@ -50,6 +50,7 @@ typedef struct _mscclppNcclOps_t {
   ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
   ncclResult_t (*CommDestroy)(ncclComm_t comm);
   ncclResult_t (*CommUserRank)(const ncclComm_t, int* rank);
+
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*AllGather)(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
@@ -58,6 +59,14 @@ typedef struct _mscclppNcclOps_t {
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*ReduceScatter)(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
                                 ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Send)(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                       cudaStream_t stream);
+  ncclResult_t (*Recv)(void* recvbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                       cudaStream_t stream);
+
+  // Group Operations
+  ncclResult_t (*GroupStart)();
+  ncclResult_t (*GroupEnd)();
 } mscclppNcclOps_t;
 
 mscclppNcclOps_t mscclppNcclOps;
@@ -113,6 +122,12 @@ static inline int mscclppNcclDlopenInit() {
              ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
              ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
+             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
+             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
 
   return dlopenSuccess;
 }
@@ -753,15 +768,23 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   return ncclInvalidUsage;
 }
 
-NCCL_API ncclResult_t ncclSend(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
-  WARN("ncclSend is currently unavailable");
+NCCL_API ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                               cudaStream_t stream) {
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Send(sendbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
+                               stream);
+  }
+  WARN("No FallBack implementation for Send");
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclRecv(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
-  WARN("ncclRecv is currently unavailable");
+NCCL_API ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                               cudaStream_t stream) {
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Recv(recvbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
+                               stream);
+  }
+  WARN("No FallBack implementation for Recv");
   return ncclInternalError;
 }
 
@@ -772,23 +795,36 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  // Do nothing
-  return ncclSuccess;
+  // Need to check env then load the lib
+  if (mscclppNcclDlopenSharedLib == false) {
+    int dlopenStatus = mscclppNcclDlopenInit();
+    if (dlopenStatus == dlopenSuccess) {
+      mscclppNcclDlopenSharedLib = true;
+    }
+  }
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.GroupStart();
+  }
+  WARN("ncclGroupStart is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclGroupEnd() {
-  // Do nothing
-  return ncclSuccess;
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.GroupEnd();
+  }
+  WARN("ncclGroupEnd is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
   // TODO: Implementation
-  return ncclSuccess;
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
   // TODO: Implementation
-  return ncclSuccess;
+  return ncclInternalError;
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
