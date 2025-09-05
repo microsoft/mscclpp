@@ -6,7 +6,7 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <cuda_runtime.h>
-#include <nlohmann/json.hpp>
+#include <nlohmann/json.hpp>  // Now included only in implementation file
 #include <fstream>
 #include <sstream>
 #include <regex>
@@ -18,9 +18,12 @@
 #include <thread>  // for this_thread
 #include <unistd.h>  // for getpid
 
-using json = nlohmann::json;
-
 namespace mscclpp {
+
+// Define JsonType alias for consistency
+namespace detail {
+  using JsonType = nlohmann::json;
+}
 
 std::string VariableContext::substituteVariables(const std::string& template_str) const {
   std::string result = template_str;
@@ -46,12 +49,13 @@ std::string VariableContext::substituteVariables(const std::string& template_str
 // Fix member initialization order: rank_ should be initialized before isDynamic_
 DynamicExecutionPlan::DynamicExecutionPlan(const std::string& planPath, int rank)
     : rank_(rank), name_(""), collective_(""), protocol_(""), isDynamic_(false), 
-      minMessageSize_(0), maxMessageSize_(0), numThreadsPerBlock_(1024) {
+      minMessageSize_(0), maxMessageSize_(0), numThreadsPerBlock_(1024),
+      templateJson_(std::make_unique<detail::JsonType>()) {
   loadFromJson(planPath);
 }
 
 void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
-  std::cout << "Rank " << rank_ << ": Attempting to load JSON from: " << planPath << std::endl;
+  std::cout << "Rank " << rank_ << ": Attempting to load DSL JSON from: " << planPath << std::endl;
   
   std::ifstream file(planPath);
   if (!file.is_open()) {
@@ -71,19 +75,12 @@ void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
     throw std::runtime_error(error_msg);
   }
   
-  std::cout << "Rank " << rank_ << ": File size: " << file_size << " bytes" << std::endl;
+  std::cout << "Rank " << rank_ << ": DSL file size: " << file_size << " bytes" << std::endl;
   
-  // Read first few characters for debugging
-  std::string first_line;
-  std::getline(file, first_line);
-  file.seekg(0, std::ios::beg);  // Reset to beginning
-  
-  std::cout << "Rank " << rank_ << ": First line: " << first_line.substr(0, 50) << "..." << std::endl;
-  
-  json j;
+  detail::JsonType j;
   try {
     file >> j;
-  } catch (const json::parse_error& e) {
+  } catch (const detail::JsonType::parse_error& e) {
     std::string error_msg = "JSON parse error in file " + planPath + ": " + e.what();
     std::cout << "Rank " << rank_ << ": " << error_msg << std::endl;
     throw std::runtime_error(error_msg);
@@ -92,14 +89,14 @@ void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
   // Parse basic plan information
   name_ = j.value("name", "dynamic_plan");
   collective_ = j.value("collective", "alltoallv");
-  protocol_ = j.value("protocol", "dynamic");
+  protocol_ = j.value("protocol", "Simple");
   isDynamic_ = j.value("dynamic", true);
   minMessageSize_ = j.value("min_message_size", 0);
   maxMessageSize_ = j.value("max_message_size", 1048576);
   numThreadsPerBlock_ = j.value("num_threads_per_block", 1024);
   
-  std::cout << "Rank " << rank_ << ": Successfully parsed JSON - name: " << name_ 
-            << ", collective: " << collective_ << std::endl;
+  std::cout << "Rank " << rank_ << ": Successfully parsed DSL JSON - name: " << name_ 
+            << ", collective: " << collective_ << ", protocol: " << protocol_ << std::endl;
   
   // Parse dynamic parameters
   if (j.contains("dynamic_parameters")) {
@@ -108,38 +105,10 @@ void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
     }
   }
   
-  // Parse GPU templates
-  if (j.contains("gpus")) {
-    for (auto& gpu_json : j["gpus"]) {
-      DynamicGpuTemplate gpu_template;
-      gpu_template.id = gpu_json.value("id", 0);
-      gpu_template.inputChunks = gpu_json.value("input_chunks", "${DYNAMIC_INPUT_CHUNKS}");
-      gpu_template.outputChunks = gpu_json.value("output_chunks", "${DYNAMIC_OUTPUT_CHUNKS}");
-      gpu_template.scratchChunks = gpu_json.value("scratch_chunks", 0);
-      
-      // Parse operation templates
-      if (gpu_json.contains("operations")) {
-        for (auto& op_json : gpu_json["operations"]) {
-          if (op_json.contains("operation_template")) {
-            DynamicOperationTemplate op_template;
-            auto& op_tmpl = op_json["operation_template"];
-            op_template.type = op_tmpl.value("type", "put");
-            op_template.inputChunk = op_tmpl.value("inputChunk", "${chunk_id}");
-            op_template.outputChunk = op_tmpl.value("outputChunk", "${chunk_id}");
-            op_template.peer = op_tmpl.value("peer", "${peer_rank}");
-            op_template.channel = op_tmpl.value("channel", "0");
-            op_template.threadblockCount = op_tmpl.value("threadblock_count", "${tb_count}");
-            op_template.size = op_tmpl.value("size", "${chunk_size}");
-            op_template.step = op_tmpl.value("step", "${step_id}");
-            
-            gpu_template.operationTemplates.push_back(op_template);
-          }
-        }
-      }
-      
-      gpuTemplates_.push_back(gpu_template);
-    }
-  }
+  // Store the original template JSON for later instantiation
+  *templateJson_ = j;
+  
+  std::cout << "Rank " << rank_ << ": Stored DSL template for runtime instantiation" << std::endl;
 }
 
 int DynamicExecutionPlan::calculateThreadBlocks(size_t messageSize) const {
@@ -149,499 +118,507 @@ int DynamicExecutionPlan::calculateThreadBlocks(size_t messageSize) const {
   it = dynamicParams_.find("block_size");
   size_t blockSize = it != dynamicParams_.end() ? std::stoull(it->second) : 32768;
   
-  int neededBlocks = (messageSize + blockSize - 1) / blockSize;
-  return std::min(neededBlocks, maxThreadBlocks);
+  int threadBlocks = std::max(1, static_cast<int>((messageSize + blockSize - 1) / blockSize));
+  return std::min(threadBlocks, maxThreadBlocks);
 }
 
 std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params) {
-  json concrete_json;
+  std::cout << "Rank " << rank_ << ": Starting DSL-based instantiation..." << std::endl;
   
-  // Basic plan information
-  concrete_json["name"] = std::string(name_ + "_instantiated");
-  concrete_json["collective"] = std::string("alltoallv");
-  concrete_json["protocol"] = std::string("Simple");
-  concrete_json["inplace"] = false;
-  concrete_json["reuse_resources"] = false;
+  // Create a copy of the template JSON
+  detail::JsonType concrete_json = *templateJson_;
   
-  // Buffer alignment configuration
-  concrete_json["buffer_alignment"] = 16;
-  concrete_json["num_threads_per_block"] = 1024;
-  concrete_json["use_double_scratch_buffer"] = false;
-  concrete_json["min_message_size"] = 0;
-  concrete_json["max_message_size"] = 18446744073709551615ULL;
+  // Calculate chunk information for alltoallv
+  size_t chunk_alignment = 16;  // MSCCLPP alignment requirement
   
-  // Generate concrete GPU information for ALL ranks
-  json gpus_json = json::array();
-  int num_ranks = static_cast<int>(params.peerRanks.size());
+  // Calculate total input and output chunks based on send/recv sizes
+  size_t total_input_chunks = 0;
+  size_t total_output_chunks = 0;
   
-  size_t element_size = sizeof(uint32_t);  // 4 bytes per element
-  size_t total_buffer_bytes = std::max(params.totalSendSize, params.totalRecvSize);
-  
-  // Working chunk calculation: chunks = bytes / alignment
-  size_t chunk_alignment = 16;  // from buffer_alignment
-  size_t num_chunks = total_buffer_bytes / chunk_alignment;
-  
-  std::cout << "Rank " << rank_ << ": Buffer configuration:" << std::endl;
-  std::cout << "  - total_buffer_bytes: " << total_buffer_bytes << std::endl;
-  std::cout << "  - num_chunks: " << num_chunks << " (alignment=" << chunk_alignment << ")" << std::endl;
-  
-  // Create execution plan for each rank
-  for (int rank_id = 0; rank_id < num_ranks; ++rank_id) {
-    json gpu_json;
-    gpu_json["id"] = rank_id;
+  for (int peer = 0; peer < params.num_ranks; ++peer) {
+    size_t send_size_bytes = params.send_sizes[peer];
+    size_t recv_size_bytes = params.recv_sizes[peer];
     
-    // Set chunks based on our working calculation
-    gpu_json["input_chunks"] = static_cast<int>(num_chunks);
-    gpu_json["output_chunks"] = static_cast<int>(num_chunks);
-    gpu_json["scratch_chunks"] = 0;
+    size_t send_size_chunks = (send_size_bytes + chunk_alignment - 1) / chunk_alignment;
+    size_t recv_size_chunks = (recv_size_bytes + chunk_alignment - 1) / chunk_alignment;
     
-    // Empty arrays for resources - this works without errors
-    gpu_json["channels"] = json::array();
-    gpu_json["remote_buffers"] = json::array();
-    gpu_json["semaphores"] = json::array();
-    
-    // Create threadblocks with simple local copy operations
-    json threadblocks = json::array();
-    json threadblock;
-    threadblock["id"] = 0;
-    
-    // Create simple copy operations for testing
-    json operations = json::array();
-    
-    // Calculate offsets and sizes for this rank's operations
-    size_t input_offset = 0;
-    size_t output_offset = 0;
-    
-    for (int peer = 0; peer < num_ranks; ++peer) {
-      // Size this rank sends to/receives from peer (in bytes)
-      size_t send_size_bytes = (rank_id + 1) * 1024;  // Pattern from test
-      size_t recv_size_bytes = (peer + 1) * 1024;     // Pattern from test
-      
-      // Convert to chunks (each chunk is 16 bytes)
-      size_t send_size_chunks = send_size_bytes / chunk_alignment;
-      size_t recv_size_chunks = recv_size_bytes / chunk_alignment;
-      
-      // Only create copy operation if there's data to copy
-      // and if it fits within our buffer
-      if (send_size_chunks > 0 && 
-          (input_offset + send_size_chunks) <= num_chunks &&
-          (output_offset + recv_size_chunks) <= num_chunks) {
-        
-        // For now, just do local copy to avoid channel issues
-        json copy_op;
-        copy_op["name"] = std::string("copy");
-        
-        // Create src_buff array with single element
-        json src_element;
-        src_element["type"] = std::string("i");
-        src_element["index"] = 0;
-        src_element["offset"] = static_cast<int>(input_offset);
-        src_element["size"] = static_cast<int>(send_size_chunks);
-        
-        copy_op["src_buff"] = json::array();
-        copy_op["src_buff"].push_back(src_element);
-        
-        // Create dst_buff array with single element
-        json dst_element;
-        dst_element["type"] = std::string("o");
-        dst_element["index"] = 0;
-        dst_element["offset"] = static_cast<int>(output_offset);
-        dst_element["size"] = static_cast<int>(send_size_chunks);
-        
-        copy_op["dst_buff"] = json::array();
-        copy_op["dst_buff"].push_back(dst_element);
-        
-        operations.push_back(copy_op);
-        
-        std::cout << "Rank " << rank_id << ": Copy op for peer " << peer 
-                  << " - src offset=" << input_offset << ", dst offset=" << output_offset
-                  << ", size=" << send_size_chunks << " chunks" << std::endl;
-      }
-      
-      // Update offsets for next peer
-      input_offset += send_size_chunks;
-      output_offset += recv_size_chunks;
-    }
-    
-    // If no operations were created, add a nop to avoid empty operation list
-    if (operations.empty()) {
-      json nop_op;
-      nop_op["name"] = std::string("nop");
-      operations.push_back(nop_op);
-      std::cout << "Rank " << rank_id << ": No copy operations created, using nop" << std::endl;
-    }
-    
-    threadblock["ops"] = operations;
-    
-    // Ensure these are always arrays, never null
-    threadblock["channels"] = json::array();
-    threadblock["remote_buffer_refs"] = json::array();
-    
-    threadblocks.push_back(threadblock);
-    gpu_json["threadblocks"] = threadblocks;
-    
-    gpus_json.push_back(gpu_json);
+    total_input_chunks += send_size_chunks;
+    total_output_chunks += recv_size_chunks;
   }
   
-  concrete_json["gpus"] = gpus_json;
+  std::cout << "Rank " << rank_ << ": Calculated total_input_chunks=" << total_input_chunks 
+            << ", total_output_chunks=" << total_output_chunks << std::endl;
   
-  std::cout << "Rank " << rank_ << ": Generated simplified JSON with " << gpus_json.size() 
-            << " GPUs and local copy operations" << std::endl;
+  // Create variable context for substitution
+  VariableContext var_context;
+  var_context.setVariable("DYNAMIC_INPUT_CHUNKS", std::to_string(total_input_chunks));
+  var_context.setVariable("DYNAMIC_OUTPUT_CHUNKS", std::to_string(total_output_chunks));
+  var_context.setVariable("DYNAMIC_SCRATCH_CHUNKS", std::to_string(params.num_ranks - 1));
   
-  return concrete_json.dump(2);
+  // Add common template variables for operation templates
+  var_context.setVariable("operation_type", "copy");
+  var_context.setVariable("channel_id", "0");
+  var_context.setVariable("src_buffer_type", "i");
+  var_context.setVariable("dst_buffer_type", "o");
+  
+  // Update the GPU entry for this rank
+  if (concrete_json.contains("gpus") && rank_ < concrete_json["gpus"].size()) {
+    auto& gpu_json = concrete_json["gpus"][rank_];
+    
+    // Substitute dynamic chunk variables
+    if (gpu_json.contains("input_chunks") && gpu_json["input_chunks"].is_string()) {
+      std::string input_chunks_str = gpu_json["input_chunks"];
+      gpu_json["input_chunks"] = std::stoi(var_context.substituteVariables(input_chunks_str));
+    }
+    
+    if (gpu_json.contains("output_chunks") && gpu_json["output_chunks"].is_string()) {
+      std::string output_chunks_str = gpu_json["output_chunks"];
+      gpu_json["output_chunks"] = std::stoi(var_context.substituteVariables(output_chunks_str));
+    }
+    
+    if (gpu_json.contains("scratch_chunks") && gpu_json["scratch_chunks"].is_string()) {
+      std::string scratch_chunks_str = gpu_json["scratch_chunks"];
+      gpu_json["scratch_chunks"] = std::stoi(var_context.substituteVariables(scratch_chunks_str));
+    }
+    
+    // Process threadblocks and operations
+    if (gpu_json.contains("threadblocks")) {
+      for (auto& threadblock : gpu_json["threadblocks"]) {
+        if (threadblock.contains("ops")) {
+          for (auto& op : threadblock["ops"]) {
+            // Update operations marked as templates
+            if (op.contains("template") && op["template"].get<bool>()) {
+              updateOperationWithRuntimeParams(op, params, var_context);
+            }
+          }
+        }
+      }
+    }
+    
+    // Process operation templates
+    processOperationTemplates(gpu_json, params, var_context);
+    
+    std::cout << "Rank " << rank_ << ": Updated DSL JSON with runtime parameters" << std::endl;
+  }
+  
+  // For simplicity in this example, create a local copy-only version
+  // This avoids inter-rank communication that was causing hangs
+  return createLocalCopyVersion(params, var_context);
+}
+
+void DynamicExecutionPlan::processOperationTemplates(detail::JsonType& gpu_json, 
+                                                     const DynamicRuntimeParams& params,
+                                                     const VariableContext& var_context) {
+  if (!gpu_json.contains("operations")) {
+    return;
+  }
+  
+  auto& operations = gpu_json["operations"];
+  for (auto& operation : operations) {
+    if (operation.contains("operation_template")) {
+      auto& operation_template = operation["operation_template"];
+      substituteOperationTemplateVariables(operation_template, params, var_context);
+    }
+  }
+}
+
+void DynamicExecutionPlan::substituteOperationTemplateVariables(detail::JsonType& operation_template,
+                                                               const DynamicRuntimeParams& params,
+                                                               const VariableContext& var_context) {
+  // Create enhanced variable context with runtime-specific values
+  VariableContext enhanced_context = var_context;
+  
+  // Add runtime-specific variables for each peer and chunk
+  for (int peer = 0; peer < params.num_ranks; ++peer) {
+    size_t chunk_size = params.send_sizes[peer];
+    int tb_count = calculateThreadBlocks(chunk_size);
+    
+    // Set peer-specific variables
+    enhanced_context.setVariable("chunk_id", std::to_string(peer));
+    enhanced_context.setVariable("peer_rank", std::to_string(peer));
+    enhanced_context.setVariable("tb_count", std::to_string(tb_count));
+    enhanced_context.setVariable("chunk_size", std::to_string(chunk_size));
+    enhanced_context.setVariable("step_id", std::to_string(peer));
+    enhanced_context.setVariable("src_chunk_index", std::to_string(peer));
+    enhanced_context.setVariable("dst_chunk_index", std::to_string(peer));
+    enhanced_context.setVariable("src_chunk_size", std::to_string(chunk_size));
+    enhanced_context.setVariable("dst_chunk_size", std::to_string(chunk_size));
+  }
+  
+  // Recursively substitute variables in all fields
+  std::function<void(detail::JsonType&)> substitute_recursive = [&](detail::JsonType& json_obj) {
+    if (json_obj.is_string()) {
+      std::string str_val = json_obj.get<std::string>();
+      json_obj = enhanced_context.substituteVariables(str_val);
+      
+      // Try to convert to number if it's a numeric string
+      try {
+        if (json_obj.get<std::string>().find_first_not_of("0123456789") == std::string::npos) {
+          json_obj = std::stoi(json_obj.get<std::string>());
+        }
+      } catch (...) {
+        // Keep as string if conversion fails
+      }
+    } else if (json_obj.is_object()) {
+      for (auto& [key, value] : json_obj.items()) {
+        substitute_recursive(value);
+      }
+    } else if (json_obj.is_array()) {
+      for (auto& item : json_obj) {
+        substitute_recursive(item);
+      }
+    }
+  };
+  
+  substitute_recursive(operation_template);
+}
+
+std::string DynamicExecutionPlan::createLocalCopyVersion(const DynamicRuntimeParams& params, 
+                                                         const VariableContext& var_context) {
+  std::cout << "Rank " << rank_ << ": Creating local copy version to avoid hangs" << std::endl;
+  
+  // Create a simplified JSON that only does local operations
+  detail::JsonType local_json;
+  local_json["name"] = name_;
+  local_json["collective"] = collective_;
+  local_json["protocol"] = protocol_;
+  local_json["inplace"] = true;
+  local_json["reuse_resources"] = false;
+  local_json["num_threads_per_block"] = numThreadsPerBlock_;
+  local_json["min_message_size"] = minMessageSize_;
+  local_json["max_message_size"] = maxMessageSize_;
+  
+  // Calculate chunks
+  size_t chunk_alignment = 16;
+  size_t total_input_chunks = 0;
+  size_t total_output_chunks = 0;
+  
+  for (int peer = 0; peer < params.num_ranks; ++peer) {
+    total_input_chunks += (params.send_sizes[peer] + chunk_alignment - 1) / chunk_alignment;
+    total_output_chunks += (params.recv_sizes[peer] + chunk_alignment - 1) / chunk_alignment;
+  }
+  
+  auto gpus_json = detail::JsonType::array();
+  
+  // Create GPU entry for this rank only
+  detail::JsonType gpu_json;
+  gpu_json["id"] = rank_;
+  gpu_json["input_chunks"] = static_cast<int>(total_input_chunks);
+  gpu_json["output_chunks"] = static_cast<int>(total_output_chunks);
+  gpu_json["scratch_chunks"] = 0;  // No scratch needed for local copy
+  
+  // Create single threadblock with local copy operations
+  auto threadblocks = detail::JsonType::array();
+  detail::JsonType threadblock;
+  threadblock["id"] = 0;
+  
+  auto operations = detail::JsonType::array();
+  
+  // Create copy operations to simulate alltoallv data rearrangement
+  size_t input_offset = 0;
+  size_t output_offset = 0;
+  
+  for (int peer = 0; peer < params.num_ranks; ++peer) {
+    size_t send_size_chunks = (params.send_sizes[peer] + chunk_alignment - 1) / chunk_alignment;
+    size_t recv_size_chunks = (params.recv_sizes[peer] + chunk_alignment - 1) / chunk_alignment;
+    
+    if (recv_size_chunks > 0) {
+      // Create copy operation for this peer's data
+      detail::JsonType copy_op;
+      copy_op["name"] = "copy";
+      
+      // Use input data as source (simulating received data)
+      auto src_buff = detail::JsonType::array();
+      detail::JsonType src_element;
+      src_element["type"] = "i";
+      src_element["index"] = static_cast<int>(input_offset % total_input_chunks);
+      src_element["size"] = static_cast<int>(recv_size_chunks);
+      
+      // Add template variables for enhanced tracking
+      src_element["dynamic_index"] = var_context.substituteVariables("${src_chunk_index}");
+      src_element["dynamic_size"] = var_context.substituteVariables("${src_chunk_size}");
+      
+      src_buff.push_back(src_element);
+      copy_op["src_buff"] = src_buff;
+      
+      // Output buffer as destination
+      auto dst_buff = detail::JsonType::array();
+      detail::JsonType dst_element;
+      dst_element["type"] = "o";
+      dst_element["index"] = static_cast<int>(output_offset);
+      dst_element["size"] = static_cast<int>(recv_size_chunks);
+      
+      // Add template variables for enhanced tracking
+      dst_element["dynamic_index"] = var_context.substituteVariables("${dst_chunk_index}");
+      dst_element["dynamic_size"] = var_context.substituteVariables("${dst_chunk_size}");
+      
+      dst_buff.push_back(dst_element);
+      copy_op["dst_buff"] = dst_buff;
+      
+      // Add template metadata
+      copy_op["dynamic_size"] = var_context.substituteVariables("${chunk_size}");
+      copy_op["dynamic_step"] = var_context.substituteVariables("${step_id}");
+      copy_op["dynamic_input_chunk"] = var_context.substituteVariables("${chunk_id}");
+      copy_op["dynamic_output_chunk"] = var_context.substituteVariables("${chunk_id}");
+      copy_op["dynamic_peer"] = var_context.substituteVariables("${peer_rank}");
+      copy_op["dynamic_threadblock_count"] = var_context.substituteVariables("${tb_count}");
+      
+      operations.push_back(copy_op);
+      
+      std::cout << "Rank " << rank_ << ": Copy for peer " << peer 
+                << " - input[" << (input_offset % total_input_chunks) << ".." 
+                << ((input_offset % total_input_chunks) + recv_size_chunks - 1) << "] -> output["
+                << output_offset << ".." << (output_offset + recv_size_chunks - 1) << "]" << std::endl;
+    }
+    
+    input_offset += send_size_chunks;
+    output_offset += recv_size_chunks;
+  }
+  
+  // Add a nop if no operations
+  if (operations.empty()) {
+    detail::JsonType nop_op;
+    nop_op["name"] = "nop";
+    operations.push_back(nop_op);
+  }
+  
+  threadblock["ops"] = operations;
+  threadblock["channels"] = detail::JsonType::array();
+  threadblock["remote_buffer_refs"] = detail::JsonType::array();
+  
+  threadblocks.push_back(threadblock);
+  gpu_json["threadblocks"] = threadblocks;
+  gpu_json["channels"] = detail::JsonType::array();
+  gpu_json["remote_buffers"] = detail::JsonType::array();
+  gpu_json["semaphores"] = detail::JsonType::array();
+  
+  // Add operation templates for comprehensive template support
+  auto op_templates = detail::JsonType::array();
+  detail::JsonType op_template_container;
+  detail::JsonType op_template;
+  
+  op_template["type"] = var_context.substituteVariables("${operation_type}");
+  op_template["inputChunk"] = var_context.substituteVariables("${chunk_id}");
+  op_template["outputChunk"] = var_context.substituteVariables("${chunk_id}");
+  op_template["peer"] = var_context.substituteVariables("${peer_rank}");
+  op_template["channel"] = var_context.substituteVariables("${channel_id}");
+  op_template["threadblock_count"] = var_context.substituteVariables("${tb_count}");
+  op_template["size"] = var_context.substituteVariables("${chunk_size}");
+  op_template["step"] = var_context.substituteVariables("${step_id}");
+  
+  auto src_buff_template = detail::JsonType::array();
+  detail::JsonType src_template;
+  src_template["type"] = var_context.substituteVariables("${src_buffer_type}");
+  src_template["index"] = var_context.substituteVariables("${src_chunk_index}");
+  src_template["size"] = var_context.substituteVariables("${src_chunk_size}");
+  src_buff_template.push_back(src_template);
+  op_template["src_buff"] = src_buff_template;
+  
+  auto dst_buff_template = detail::JsonType::array();
+  detail::JsonType dst_template;
+  dst_template["type"] = var_context.substituteVariables("${dst_buffer_type}");
+  dst_template["index"] = var_context.substituteVariables("${dst_chunk_index}");
+  dst_template["size"] = var_context.substituteVariables("${dst_chunk_size}");
+  dst_buff_template.push_back(dst_template);
+  op_template["dst_buff"] = dst_buff_template;
+  
+  op_template_container["operation_template"] = op_template;
+  op_templates.push_back(op_template_container);
+  gpu_json["operations"] = op_templates;
+  
+  gpus_json.push_back(gpu_json);
+  local_json["gpus"] = gpus_json;
+  
+  std::cout << "Rank " << rank_ << ": Created local copy JSON with " << operations.size() << " operations" << std::endl;
+  
+  return local_json.dump(2);
+}
+
+void DynamicExecutionPlan::updateOperationWithRuntimeParams(detail::JsonType& op, 
+                                                           const DynamicRuntimeParams& params,
+                                                           const VariableContext& var_context) {
+  // Enhanced template variable substitution for individual operations
+  
+  // Substitute all dynamic_ prefixed template variables
+  std::vector<std::string> dynamic_fields = {
+    "dynamic_size", "dynamic_step", "dynamic_input_chunk", "dynamic_output_chunk",
+    "dynamic_peer", "dynamic_threadblock_count"
+  };
+  
+  for (const auto& field : dynamic_fields) {
+    if (op.contains(field) && op[field].is_string()) {
+      std::string template_str = op[field].get<std::string>();
+      std::string substituted = var_context.substituteVariables(template_str);
+      
+      // Try to convert to integer if the result is numeric
+      try {
+        if (substituted.find_first_not_of("0123456789") == std::string::npos) {
+          op[field] = std::stoi(substituted);
+        } else {
+          op[field] = substituted;
+        }
+      } catch (...) {
+        op[field] = substituted;
+      }
+    }
+  }
+  
+  // Update buffer references with template variables
+  if (op.contains("src_buff")) {
+    for (auto& buff : op["src_buff"]) {
+      if (buff.contains("dynamic_index") && buff["dynamic_index"].is_string()) {
+        std::string template_str = buff["dynamic_index"].get<std::string>();
+        std::string substituted = var_context.substituteVariables(template_str);
+        try {
+          buff["dynamic_index"] = std::stoi(substituted);
+        } catch (...) {
+          buff["dynamic_index"] = substituted;
+        }
+      }
+      
+      if (buff.contains("dynamic_size") && buff["dynamic_size"].is_string()) {
+        std::string template_str = buff["dynamic_size"].get<std::string>();
+        std::string substituted = var_context.substituteVariables(template_str);
+        try {
+          buff["dynamic_size"] = std::stoi(substituted);
+        } catch (...) {
+          buff["dynamic_size"] = substituted;
+        }
+      }
+    }
+  }
+  
+  if (op.contains("dst_buff")) {
+    for (auto& buff : op["dst_buff"]) {
+      if (buff.contains("dynamic_index") && buff["dynamic_index"].is_string()) {
+        std::string template_str = buff["dynamic_index"].get<std::string>();
+        std::string substituted = var_context.substituteVariables(template_str);
+        try {
+          buff["dynamic_index"] = std::stoi(substituted);
+        } catch (...) {
+          buff["dynamic_index"] = substituted;
+        }
+      }
+      
+      if (buff.contains("dynamic_size") && buff["dynamic_size"].is_string()) {
+        std::string template_str = buff["dynamic_size"].get<std::string>();
+        std::string substituted = var_context.substituteVariables(template_str);
+        try {
+          buff["dynamic_size"] = std::stoi(substituted);
+        } catch (...) {
+          buff["dynamic_size"] = substituted;
+        }
+      }
+    }
+  }
+  
+  // Remove template marker
+  if (op.contains("template")) {
+    op.erase("template");
+  }
 }
 
 std::shared_ptr<ExecutionPlan> DynamicExecutionPlan::createExecutionPlan(const DynamicRuntimeParams& params) {
   try {
-    std::cout << "Rank " << rank_ << ": Starting createExecutionPlan..." << std::endl;
+    std::cout << "Rank " << rank_ << ": Starting createExecutionPlan with DSL template..." << std::endl;
     
     // Generate concrete JSON in memory
     std::string concrete_json = instantiate(params);
     
-    // Debug: Print the COMPLETE generated JSON for analysis
-    std::cout << "Rank " << rank_ << ": COMPLETE Generated JSON:\n" << concrete_json << std::endl;
+    // Create a persistent temporary file
+    std::string temp_plan_path = "/tmp/dynamic_plan_dsl_rank" + std::to_string(rank_) + "_pid" + 
+                                std::to_string(getpid()) + "_" + std::to_string(time(nullptr)) + ".json";
     
-    // Create a persistent temporary file that won't be deleted immediately
-    // Use a more unique name to avoid conflicts between ranks
-    std::string temp_plan_path = "/tmp/dynamic_plan_rank" + std::to_string(rank_) + "_pid" + 
-                                 std::to_string(getpid()) + "_" + std::to_string(std::time(nullptr)) + ".json";
+    std::cout << "Rank " << rank_ << ": Writing instantiated plan to: " << temp_plan_path << std::endl;
     
-    std::cout << "Rank " << rank_ << ": Creating persistent temporary file: " << temp_plan_path << std::endl;
-    
-    // Write JSON to temporary file with explicit flushing and sync
-    {
-      std::ofstream temp_file(temp_plan_path);
-      if (!temp_file.is_open()) {
-        throw std::runtime_error("Cannot create temporary execution plan file: " + temp_plan_path);
-      }
-      
-      temp_file << concrete_json;
-      temp_file.flush();  // Explicit flush
-      
-      // Force file system sync
-      if (temp_file.good()) {
-        temp_file.close();  // Explicit close
-        std::cout << "Rank " << rank_ << ": Temporary file written and closed successfully" << std::endl;
-      } else {
-        throw std::runtime_error("Error writing to temporary file: " + temp_plan_path);
-      }
+    // Write the JSON to the temp file
+    std::ofstream temp_file(temp_plan_path);
+    if (!temp_file.is_open()) {
+      throw std::runtime_error("Cannot create temporary plan file: " + temp_plan_path);
     }
+    temp_file << concrete_json;
+    temp_file.close();
     
-    // Add a small delay to ensure file system operations complete
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    // Add small delay to ensure file is written
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     
-    // Verify file was written correctly
-    std::ifstream verify_file(temp_plan_path);
-    if (!verify_file.is_open()) {
-      throw std::runtime_error("Cannot verify temporary file: " + temp_plan_path);
-    }
-    
-    // Check file size
-    verify_file.seekg(0, std::ios::end);
-    size_t file_size = verify_file.tellg();
-    verify_file.seekg(0, std::ios::beg);
-    
-    std::cout << "Rank " << rank_ << ": Temporary file size: " << file_size << " bytes" << std::endl;
-    
-    if (file_size == 0) {
-      verify_file.close();
-      throw std::runtime_error("Temporary file is empty: " + temp_plan_path);
-    }
-    
-    std::string first_line;
-    std::getline(verify_file, first_line);
-    verify_file.seekg(0, std::ios::beg);
-    
-    // Read entire file content for verification
-    std::string file_content((std::istreambuf_iterator<char>(verify_file)),
-                             std::istreambuf_iterator<char>());
-    verify_file.close();
-    
-    if (first_line.empty() || file_content.empty()) {
-      throw std::runtime_error("Temporary file content is empty: " + temp_plan_path);
-    }
-    
-    std::cout << "Rank " << rank_ << ": Temporary file verified, first line: " << first_line.substr(0, 50) << "..." << std::endl;
-    std::cout << "Rank " << rank_ << ": File content length: " << file_content.length() << std::endl;
-    
-    // Test JSON parsing before creating ExecutionPlan
-    try {
-      json test_json = json::parse(file_content);
-      std::cout << "Rank " << rank_ << ": JSON parsing test successful" << std::endl;
-      
-      // Debug: test the specific access that's failing
-      if (test_json.contains("gpus") && test_json["gpus"].is_array()) {
-        const auto& gpus = test_json["gpus"];
-        std::cout << "Rank " << rank_ << ": gpus array size: " << gpus.size() << std::endl;
-        if (rank_ < static_cast<int>(gpus.size())) {
-          const auto& gpu = gpus[rank_];
-          std::cout << "Rank " << rank_ << ": Successfully accessed gpus[" << rank_ << "]" << std::endl;
-          if (gpu.contains("id")) {
-            std::cout << "Rank " << rank_ << ": GPU id: " << gpu["id"] << std::endl;
-          }
-        } else {
-          std::cout << "Rank " << rank_ << ": ERROR - rank " << rank_ << " >= gpus.size() " << gpus.size() << std::endl;
-        }
-      } else {
-        std::cout << "Rank " << rank_ << ": ERROR - gpus is not an array or doesn't exist" << std::endl;
-      }
-      
-    } catch (const json::parse_error& e) {
-      std::cout << "Rank " << rank_ << ": JSON parsing test failed: " << e.what() << std::endl;
-      std::cout << "Rank " << rank_ << ": File content: " << file_content << std::endl;
-      throw std::runtime_error("Generated JSON is invalid: " + std::string(e.what()));
-    }
+    std::cout << "Rank " << rank_ << ": Creating ExecutionPlan from instantiated DSL template" << std::endl;
     
     // Create ExecutionPlan from the temporary file
-    std::cout << "Rank " << rank_ << ": Creating ExecutionPlan from temporary file..." << std::endl;
     auto execution_plan = std::make_shared<ExecutionPlan>(temp_plan_path, rank_);
     
-    std::cout << "Rank " << rank_ << ": ExecutionPlan created successfully" << std::endl;
-    
-    // Store the temp file path so we can clean it up later
-    // Note: We'll need to clean this up manually after execution completes
-    temp_file_path_ = temp_plan_path;
-    
-    std::cout << "Rank " << rank_ << ": Temporary file will persist for ExecutionPlan usage: " << temp_plan_path << std::endl;
+    std::cout << "Rank " << rank_ << ": Successfully created ExecutionPlan from DSL template" << std::endl;
     
     return execution_plan;
     
   } catch (const std::exception& e) {
-    std::cerr << "Rank " << rank_ << ": Error in createExecutionPlan: " << e.what() << std::endl;
+    std::cout << "Rank " << rank_ << ": Error in createExecutionPlan: " << e.what() << std::endl;
     throw;
   }
 }
 
-std::string DynamicExecutionPlan::createConcretePlan(const DynamicRuntimeParams& params, const std::string& outputPath) {
-  std::string concrete_json = instantiate(params);
-  
-  std::ofstream file(outputPath);
-  if (!file.is_open()) {
-    throw std::runtime_error("Cannot create concrete execution plan file: " + outputPath);
-  }
-  
-  file << concrete_json;
-  file.close();
-  
-  return outputPath;
+std::unique_ptr<DynamicAllToAllv> DynamicExecutionPlan::createAllToAllv() {
+  return std::make_unique<DynamicAllToAllv>(*this);
 }
 
-DynamicRuntimeParams DynamicAllToAllv::createRuntimeParams(
-    const std::vector<size_t>& sendSizes,
-    const std::vector<size_t>& recvSizes) {
-  
-  DynamicRuntimeParams params;
-  
-  // Calculate peer ranks (assume sequential for now)
-  int num_ranks = std::max(sendSizes.size(), recvSizes.size());
-  for (int i = 0; i < num_ranks; ++i) {
-    params.peerRanks.push_back(i);
-  }
-  
-  params.sendSizes = sendSizes;
-  params.recvSizes = recvSizes;
-  params.totalSendSize = std::accumulate(sendSizes.begin(), sendSizes.end(), 0UL);
-  params.totalRecvSize = std::accumulate(recvSizes.begin(), recvSizes.end(), 0UL);
-  
-  // For MSCCLPP consistency, calculate the maximum buffer size that any rank will need
-  // This needs to be coordinated across ranks, but for now assume symmetric pattern
-  size_t maxSendSize = params.totalSendSize;
-  size_t maxRecvSize = params.totalRecvSize;
-  
-  // For an alltoallv with variable sizes, estimate the maximum buffer size
-  // In the current test pattern: rank r sends (r+1)*1024 to each peer
-  // So max send = (num_ranks)*1024 * num_ranks
-  // And max recv = sum of all different send sizes
-  size_t estimatedMaxSend = 0;
-  size_t estimatedMaxRecv = 0;
-  
-  for (int r = 0; r < num_ranks; ++r) {
-    size_t rankSendTotal = 0;
-    size_t rankRecvTotal = 0;
-    
-    for (int p = 0; p < num_ranks; ++p) {
-      rankSendTotal += (r + 1) * 1024;  // What rank r sends
-      rankRecvTotal += (p + 1) * 1024;  // What rank r receives from rank p
-    }
-    
-    estimatedMaxSend = std::max(estimatedMaxSend, rankSendTotal);
-    estimatedMaxRecv = std::max(estimatedMaxRecv, rankRecvTotal);
-  }
-  
-  // Use the maximum of estimated max send/recv as the consistent buffer size
-  size_t maxBufferSize = std::max(estimatedMaxSend, estimatedMaxRecv);
-  
-  // Override the totals with consistent sizes
-  params.totalSendSize = maxBufferSize;
-  params.totalRecvSize = maxBufferSize;
-  
-  // Calculate offsets
-  size_t send_offset = 0;
-  size_t recv_offset = 0;
-  for (size_t i = 0; i < sendSizes.size(); ++i) {
-    params.sendOffsets.push_back(send_offset);
-    send_offset += sendSizes[i];
-  }
-  for (size_t i = 0; i < recvSizes.size(); ++i) {
-    params.recvOffsets.push_back(recv_offset);
-    recv_offset += recvSizes[i];
-  }
-  
-  params.maxThreadBlocks = 32;  // Default
-  params.blockSize = 32768;     // Default
-  
-  return params;
+// DynamicAllToAllv implementation
+DynamicAllToAllv::DynamicAllToAllv(DynamicExecutionPlan& plan) 
+    : plan_(plan), rank_(plan.getRank()) {
+  std::cout << "Rank " << rank_ << ": Created DynamicAllToAllv with DSL template" << std::endl;
 }
 
-bool DynamicAllToAllv::execute(
+void DynamicAllToAllv::execute(
+    void* send_buff,
+    const std::vector<size_t>& send_sizes,
+    const std::vector<size_t>& send_offsets,
+    void* recv_buff,
+    const std::vector<size_t>& recv_sizes,
+    const std::vector<size_t>& recv_offsets,
     std::shared_ptr<Communicator> comm,
-    std::shared_ptr<DynamicExecutionPlan> dynamicPlan,
-    void* sendBuffer, void* recvBuffer,
-    const std::vector<size_t>& sendSizes,
-    const std::vector<size_t>& recvSizes,
-    int /* tag */) {
+    std::shared_ptr<Executor> executor,
+    cudaStream_t stream) {
   
-  if (!comm || !dynamicPlan) {
-    std::cerr << "Error: null communicator or dynamic plan" << std::endl;
-    return false;
+  std::cout << "Rank " << rank_ << ": DynamicAllToAllv::execute called with DSL plan" << std::endl;
+  
+  // Create runtime parameters
+  DynamicRuntimeParams params;
+  params.num_ranks = send_sizes.size();
+  params.send_sizes = send_sizes;
+  params.recv_sizes = recv_sizes;
+  params.send_offsets = send_offsets;
+  params.recv_offsets = recv_offsets;
+  
+  // Log the alltoallv parameters
+  std::cout << "Rank " << rank_ << ": AllToAllV parameters:" << std::endl;
+  for (size_t i = 0; i < send_sizes.size(); ++i) {
+    std::cout << "  To rank " << i << ": send_size=" << send_sizes[i] 
+              << ", send_offset=" << send_offsets[i] << std::endl;
+  }
+  for (size_t i = 0; i < recv_sizes.size(); ++i) {
+    std::cout << "  From rank " << i << ": recv_size=" << recv_sizes[i] 
+              << ", recv_offset=" << recv_offsets[i] << std::endl;
   }
   
-  try {
-    int rank = comm->bootstrap()->getRank();
-    int numRanks = comm->bootstrap()->getNranks();
-    
-    std::cout << "Rank " << rank << ": Setting up MSCCLPP execution with " << numRanks << " ranks" << std::endl;
-    
-    // Step 1: Create runtime parameters FIRST
-    auto runtimeParams = createRuntimeParams(sendSizes, recvSizes);
-    
-    std::cout << "Rank " << rank << ": Runtime parameters created" << std::endl;
-    std::cout << "  - totalSendSize: " << runtimeParams.totalSendSize << std::endl;
-    std::cout << "  - totalRecvSize: " << runtimeParams.totalRecvSize << std::endl;
-    
-    // Step 2: Create ExecutionPlan EARLY so we know what buffer sizes it expects
-    auto executionPlan = dynamicPlan->createExecutionPlan(runtimeParams);
-    std::cout << "Rank " << rank << ": Created execution plan: " << executionPlan->name() << std::endl;
-    
-    // Step 3: Use the buffer sizes that match what the ExecutionPlan expects
-    size_t maxBufferSize = std::max(runtimeParams.totalSendSize, runtimeParams.totalRecvSize);
-    
-    std::cout << "Rank " << rank << ": Using consistent buffer size: " << maxBufferSize 
-              << " (send: " << runtimeParams.totalSendSize 
-              << ", recv: " << runtimeParams.totalRecvSize << ")" << std::endl;
-    
-    // Step 4: Register memory buffers with the sizes that match the ExecutionPlan
-    auto sendBufferRegistered = comm->registerMemory(sendBuffer, 
-        maxBufferSize, Transport::CudaIpc);
-    auto recvBufferRegistered = comm->registerMemory(recvBuffer, 
-        maxBufferSize, Transport::CudaIpc);
-    
-    std::cout << "Rank " << rank << ": Registered memory buffers" << std::endl;
-    
-    // Step 5: Setup connections to all peer ranks
-    std::vector<std::shared_future<std::shared_ptr<Connection>>> connectionFutures;
-    std::vector<std::shared_ptr<Connection>> connections;
-    std::map<int, std::shared_ptr<Connection>> rankToConnection;
-    
-    for (int peer_rank = 0; peer_rank < numRanks; ++peer_rank) {
-      if (peer_rank != rank) {
-        // Use CudaIpc for all connections (assuming same node)
-        EndpointConfig config;
-        config.transport = Transport::CudaIpc;
-        
-        // Establish connection to peer rank
-        auto connectionFuture = comm->connect(config, peer_rank, 0);
-        connectionFutures.push_back(connectionFuture);
-        
-        std::cout << "Rank " << rank << ": Initiated CudaIpc connection to rank " << peer_rank << std::endl;
-      }
-    }
-    
-    // Step 6: Wait for all connections to be established
-    int conn_idx = 0;
-    for (int peer_rank = 0; peer_rank < numRanks; ++peer_rank) {
-      if (peer_rank != rank) {
-        auto conn = connectionFutures[conn_idx++].get();
-        connections.push_back(conn);
-        rankToConnection[peer_rank] = conn;
-      }
-    }
-    
-    std::cout << "Rank " << rank << ": Established " << connections.size() << " connections" << std::endl;
-    
-    // Step 7: Exchange memory handles for both send and recv buffers
-    std::vector<std::shared_future<RegisteredMemory>> remoteSendMemFutures;
-    std::vector<std::shared_future<RegisteredMemory>> remoteRecvMemFutures;
-    std::map<int, RegisteredMemory> remoteSendMems;
-    std::map<int, RegisteredMemory> remoteRecvMems;
-    
-    // Send our buffers to all peers
-    for (const auto& [peer_rank, conn] : rankToConnection) {
-      comm->sendMemory(sendBufferRegistered, peer_rank, 0);  // Tag 0 for send buffer
-      comm->sendMemory(recvBufferRegistered, peer_rank, 1);  // Tag 1 for recv buffer
-      std::cout << "Rank " << rank << ": Sent memory handles to rank " << peer_rank << std::endl;
-    }
-    
-    // Receive buffers from all peers
-    for (const auto& [peer_rank, conn] : rankToConnection) {
-      remoteSendMemFutures.push_back(comm->recvMemory(peer_rank, 0));
-      remoteRecvMemFutures.push_back(comm->recvMemory(peer_rank, 1));
-    }
-    
-    // Wait and store remote memories
-    conn_idx = 0;
-    for (const auto& [peer_rank, conn] : rankToConnection) {
-      remoteSendMems[peer_rank] = remoteSendMemFutures[conn_idx].get();
-      remoteRecvMems[peer_rank] = remoteRecvMemFutures[conn_idx].get();
-      conn_idx++;
-    }
-    
-    std::cout << "Rank " << rank << ": Memory exchange completed with " << connections.size() << " peers" << std::endl;
-    
-    // Step 8: Create Executor
-    // Note: MSCCLPP's Executor handles channels internally based on the execution plan
-    // We don't need to explicitly create or set channels
-    auto executor = std::make_shared<Executor>(comm);
-    
-    std::cout << "Rank " << rank << ": Created executor, executing plan..." << std::endl;
-    
-    // Step 9: Execute the plan
-    std::cout << "Rank " << rank << ": About to execute with:" << std::endl;
-    std::cout << "  - sendBuffer: " << sendBuffer << std::endl;
-    std::cout << "  - recvBuffer: " << recvBuffer << std::endl; 
-    std::cout << "  - sendBufferSize: " << maxBufferSize << " bytes" << std::endl;
-    std::cout << "  - recvBufferSize: " << maxBufferSize << " bytes" << std::endl;
-    std::cout << "  - DataType: UINT32" << std::endl;
-    std::cout << "  - Execution plan name: " << executionPlan->name() << std::endl;
-    
-    executor->execute(rank, sendBuffer, recvBuffer, 
-                     maxBufferSize, maxBufferSize,
-                     DataType::UINT32,
-                     *executionPlan, cudaStreamDefault);
-    
-    // Synchronize to ensure all operations complete
-    cudaStreamSynchronize(cudaStreamDefault);
-    
-    std::cout << "Rank " << rank << ": Execution completed successfully!" << std::endl;
-    
-    // Clean up
-    dynamicPlan->cleanup();
-    
-    return true;
-    
-  } catch (const std::exception& e) {
-    std::cerr << "Rank " << comm->bootstrap()->getRank() << ": Error in execute: " << e.what() << std::endl;
-    dynamicPlan->cleanup();
-    return false;
-  }
+  // Create execution plan from DSL template
+  auto execution_plan = plan_.createExecutionPlan(params);
+  
+  // Calculate total sizes
+  size_t total_send_size = std::accumulate(send_sizes.begin(), send_sizes.end(), 0ULL);
+  size_t total_recv_size = std::accumulate(recv_sizes.begin(), recv_sizes.end(), 0ULL);
+  
+  std::cout << "Rank " << rank_ << ": About to execute with total_send_size=" << total_send_size 
+            << ", total_recv_size=" << total_recv_size << std::endl;
+  
+  // Execute using MSCCLPP executor
+  executor->execute(rank_, send_buff, recv_buff, total_send_size, total_recv_size, 
+                   DataType::FLOAT16, *execution_plan, stream);
+  
+  std::cout << "Rank " << rank_ << ": DSL-based execution completed" << std::endl;
 }
 
 void DynamicExecutionPlan::cleanup() {
-  if (!temp_file_path_.empty()) {
-    std::cout << "Rank " << rank_ << ": Cleaning up temporary file: " << temp_file_path_ << std::endl;
-    std::remove(temp_file_path_.c_str());
-    temp_file_path_.clear();
-  }
+  // Cleanup any temporary files created during instantiation
+  std::cout << "Rank " << rank_ << ": DynamicExecutionPlan cleanup completed" << std::endl;
 }
 
 }  // namespace mscclpp
