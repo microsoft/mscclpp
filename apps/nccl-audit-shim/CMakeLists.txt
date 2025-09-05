@@ -9,6 +9,7 @@ endif()
 
 
 add_library(mscclpp_audit_nccl_obj OBJECT)
+set_target_properties(mscclpp_audit_nccl_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 target_sources(mscclpp_audit_nccl_obj PRIVATE ${SOURCES})
 
 add_library(mscclpp_audit_nccl SHARED)

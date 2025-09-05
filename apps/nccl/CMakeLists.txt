@@ -35,5 +35,3 @@ install(TARGETS mscclpp_nccl
     LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
 install(TARGETS mscclpp_nccl_static
     ARCHIVE DESTINATION ${INSTALL_PREFIX}/lib)
-
-install(CODE [[execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink libmscclpp_nccl.so ${CMAKE_INSTALL_PREFIX}/lib/libnccl.so.2)]])

@@ -1,34 +1,29 @@
-// aud_nccl.c
-#define _GNU_SOURCE
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <dlfcn.h>
 #include <limits.h>
 #include <link.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
-static void self_dir(char out[PATH_MAX]) {
-  Dl_info di;
-  if (dladdr((void*)&self_dir, &di) && di.dli_fname) {
-    size_t n = strnlen(di.dli_fname, PATH_MAX - 1);
-    char tmp[PATH_MAX];
-    memcpy(tmp, di.dli_fname, n);
-    tmp[n] = '\0';
-    char* s = strrchr(tmp, '/');
-    if (s)
-      *s = '\0';
-    else
-      strcpy(tmp, ".");
-    snprintf(out, PATH_MAX, "%s", tmp);
-  } else
-    snprintf(out, PATH_MAX, ".");
+#include <cstring>
+#include <filesystem>
+
+static std::filesystem::path getLibDir() {
+    Dl_info info{};
+    if (dladdr((void*)&getLibDir, &info) == 0 || !info.dli_fname) {
+        throw std::runtime_error("dladdr failed");
+    }
+
+    std::filesystem::path p(info.dli_fname);
+    if (!p.is_absolute()) p = std::filesystem::absolute(p);
+    return p.parent_path();
 }
-unsigned int la_version(unsigned int v) { return LAV_CURRENT; }
+
+unsigned int la_version(unsigned int) { return LAV_CURRENT; }
+
 char* la_objsearch(const char* name, uintptr_t*, unsigned int) {
+  const char* library = "libmscclpp_nccl.so";
   if (strcmp(name, "libnccl.so.2") && strcmp(name, "libnccl.so")) return (char*)name;
-  static char buf[PATH_MAX];
-  char me[PATH_MAX];
-  self_dir(me);
-  snprintf(buf, sizeof(buf), "%s/libnccl.so.2", me);
-  return buf;
+  std::string path = (getLibDir() / library).string();
+  return strdup(path.c_str());
 }

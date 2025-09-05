@@ -830,8 +830,7 @@ NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclCom
   return ncclCommInitRankConfig(newcomm, groupSize, uniqueId, newRank, nullptr);
 }
 
-ncclResult_t ncclCommInitRankScalable(ncclComm_t* newcomm, int nranks, int myrank, int nId, ncclUniqueId* commIds,
-                                      ncclConfig_t* config) {
+ncclResult_t ncclCommInitRankScalable(ncclComm_t*, int, int, int, ncclUniqueId*, ncclConfig_t*) {
   WARN("ncclCommInitRankScalable is currently unavailable");
   return ncclInternalError;
 }
@@ -905,12 +904,12 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommWindowRegister(ncclComm_t comm, void* buff, size_t size, ncclWindow_t* win, int winFlags) {
+NCCL_API ncclResult_t ncclCommWindowRegister(ncclComm_t, void*, size_t, ncclWindow_t*, int) {
   WARN("ncclCommWindowRegister is currently unavailable");
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclCommWindowDeregister(ncclComm_t comm, ncclWindow_t win) {
+NCCL_API ncclResult_t ncclCommWindowDeregister(ncclComm_t, ncclWindow_t) {
   WARN("ncclCommWindowDeregister is currently unavailable");
   return ncclInternalError;
 }
