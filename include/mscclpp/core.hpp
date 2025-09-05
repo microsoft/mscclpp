@@ -419,6 +419,7 @@ class Context;
 class Connection;
 class RegisteredMemory;
 class SemaphoreStub;
+class Semaphore;
 
 /// One end of a connection.
 class Endpoint {
@@ -566,6 +567,7 @@ class RegisteredMemory {
   friend class Context;
   friend class Connection;
   friend class SemaphoreStub;
+  friend class Semaphore;
 };
 
 /// Connection between two processes.
