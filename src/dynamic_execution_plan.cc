@@ -9,6 +9,7 @@
 #include <numeric>
 #include <regex>
 #include <sstream>
+#include <chrono>
 
 namespace mscclpp {
 
@@ -201,11 +202,41 @@ std::unique_ptr<DynamicAllToAllv> DynamicExecutionPlan::createAllToAllv() {
 }
 
 std::shared_ptr<ExecutionPlan> DynamicExecutionPlan::createExecutionPlan(const DynamicRuntimeParams& params) {
-  // This would create a concrete ExecutionPlan from the instantiated template
-  // For now, return nullptr as this requires more complex implementation
+  // Instantiate the dynamic plan with runtime parameters
   std::string concretePlan = instantiate(params);
-  // TODO: Parse concretePlan and create ExecutionPlan object
-  return nullptr;
+  
+  // Create a temporary file to store the concrete plan
+  std::string tempFileName = "/tmp/dynamic_plan_" + std::to_string(rank_) + "_" + 
+                            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".json";
+  
+  // Write the concrete plan to the temporary file
+  std::ofstream outFile(tempFileName);
+  if (!outFile.is_open()) {
+    throw std::runtime_error("Cannot create temporary file: " + tempFileName);
+  }
+  
+  outFile << concretePlan;
+  outFile.close();
+  
+  // Store for cleanup (only store the latest one)
+  if (!temp_file_path_.empty()) {
+    std::remove(temp_file_path_.c_str());  // Remove previous temp file
+  }
+  temp_file_path_ = tempFileName;
+  
+  std::cout << "Rank " << rank_ << ": Created concrete execution plan file: " << tempFileName << std::endl;
+  
+  // Create and return the ExecutionPlan object
+  try {
+    auto executionPlan = std::make_shared<ExecutionPlan>(tempFileName, rank_);
+    std::cout << "Rank " << rank_ << ": Successfully created ExecutionPlan from dynamic template" << std::endl;
+    return executionPlan;
+  } catch (const std::exception& e) {
+    // Clean up the temp file if ExecutionPlan creation fails
+    std::remove(tempFileName.c_str());
+    temp_file_path_.clear();
+    throw std::runtime_error("Failed to create ExecutionPlan: " + std::string(e.what()));
+  }
 }
 
 std::string DynamicExecutionPlan::createConcretePlan(const DynamicRuntimeParams& params, const std::string& outputPath) {
