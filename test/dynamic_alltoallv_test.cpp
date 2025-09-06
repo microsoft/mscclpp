@@ -44,8 +44,8 @@ bool executeDynamicAllToAllvWithMPI(
   for (int i = 0; i < numRanks; ++i) {
     sendCounts[i] = static_cast<int>(sendSizes[i]);
     recvCounts[i] = static_cast<int>(recvSizes[i]);
-    sendDispls[i] = static_cast<int>(runtimeParams.sendOffsets[i]);
-    recvDispls[i] = static_cast<int>(runtimeParams.recvOffsets[i]);
+    sendDispls[i] = static_cast<int>(runtimeParams.send_offsets[i]);
+    recvDispls[i] = static_cast<int>(runtimeParams.recv_offsets[i]);
   }
   
   // Debug: Print MPI parameters

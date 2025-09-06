@@ -27,6 +27,7 @@ int main(int argc, char* argv[]) {
   // Declare variables outside try block so they're accessible in catch block
   std::shared_ptr<mscclpp::Communicator> comm = nullptr;
   std::shared_ptr<mscclpp::DynamicExecutionPlan> dynamicPlan = nullptr;
+  std::shared_ptr<mscclpp::Executor> executor = nullptr;
   
   // Declare GPU buffers outside try block so we can control their lifetime
   std::unique_ptr<mscclpp::GpuBuffer<char>> sendGpuBuffer = nullptr;
@@ -48,52 +49,77 @@ int main(int argc, char* argv[]) {
     // Create a unique ID (rank 0 creates and broadcasts)
     mscclpp::UniqueId uniqueId;
     if (mpi_rank == 0) {
-      uniqueId = bootstrap->createUniqueId();
-      std::cout << "Rank " << mpi_rank << ": Created unique ID for bootstrap" << std::endl;
+      uniqueId = mscclpp::TcpBootstrap::createUniqueId();
+      std::cout << "Rank " << mpi_rank << ": Created unique ID" << std::endl;
     }
     
-    // Broadcast the unique ID to all ranks
+    // Broadcast unique ID to all ranks
     MPI_Bcast(&uniqueId, sizeof(uniqueId), MPI_BYTE, 0, MPI_COMM_WORLD);
+    std::cout << "Rank " << mpi_rank << ": Received unique ID" << std::endl;
     
-    std::cout << "Rank " << mpi_rank << ": Received unique ID, initializing bootstrap..." << std::endl;
-    
-    // Initialize bootstrap with the unique ID
+    // Initialize TcpBootstrap with the unique ID
     bootstrap->initialize(uniqueId);
+    std::cout << "Rank " << mpi_rank << ": TcpBootstrap initialized" << std::endl;
     
-    // Create Communicator (without ProxyService for simplicity)
+    // Create communicator
     comm = std::make_shared<mscclpp::Communicator>(bootstrap);
+    std::cout << "Rank " << mpi_rank << ": Communicator created" << std::endl;
     
-    if (!comm) {
-      throw std::runtime_error("Failed to create Communicator");
+    // Create executor
+    executor = std::make_shared<mscclpp::Executor>(comm);
+    std::cout << "Rank " << mpi_rank << ": Executor created" << std::endl;
+    
+    // Load dynamic execution plan from enhanced DSL-generated JSON with comprehensive template variables
+    std::string dsl_plan_path = "test/dynamic_alltoallv_plan.json";
+    
+    // Check if DSL file exists
+    std::ifstream test_file(dsl_plan_path);
+    if (!test_file.good()) {
+      std::cout << "Rank " << mpi_rank << ": DSL file not found at: " << dsl_plan_path << std::endl;
+      std::cout << "Rank " << mpi_rank << ": Please ensure the comprehensive template file exists with:" << std::endl;
+      std::cout << "- operation_template section with variables: ${operation_type}, ${chunk_id}, ${peer_rank}, ${channel_id}, ${tb_count}" << std::endl;
+      std::cout << "- Enhanced buffer template variables: ${src_chunk_index}, ${dst_chunk_index}, ${src_chunk_size}, ${dst_chunk_size}" << std::endl;
+      std::cout << "- Dynamic operation variables: ${chunk_size}, ${step_id}" << std::endl;
+      throw std::runtime_error("Enhanced DSL execution plan file not found");
     }
+    test_file.close();
     
-    std::cout << "Rank " << mpi_rank << ": Communicator created successfully" << std::endl;
+    std::cout << "Rank " << mpi_rank << ": Loading enhanced DSL execution plan from: " << dsl_plan_path << std::endl;
+    dynamicPlan = std::make_shared<mscclpp::DynamicExecutionPlan>(dsl_plan_path, mpi_rank);
+    std::cout << "Rank " << mpi_rank << ": Enhanced dynamic execution plan loaded from DSL with comprehensive template support" << std::endl;
     
-    // Load dynamic execution plan template with better path handling
-    std::string planPath = "test/dynamic_alltoallv_plan.json";
-    dynamicPlan = std::make_shared<mscclpp::DynamicExecutionPlan>(planPath, mpi_rank);
+    // Create DynamicAllToAllv instance
+    auto dynamicAllToAllv = dynamicPlan->createAllToAllv();
+    std::cout << "Rank " << mpi_rank << ": DynamicAllToAllv created with enhanced template variable support" << std::endl;
     
-    std::cout << "Rank " << mpi_rank << ": Dynamic execution plan loaded" << std::endl;
-    
-    // Setup variable send/recv sizes for multi-GPU all-to-allv
+    // Define test message sizes for alltoallv (variable sizes per peer)
     std::vector<size_t> sendSizes(mpi_size);
     std::vector<size_t> recvSizes(mpi_size);
+    std::vector<size_t> sendOffsets(mpi_size);
+    std::vector<size_t> recvOffsets(mpi_size);
     
-    // Example: each rank sends different amounts to different peers
+    // Create variable message sizes: send (rank+1)*1024 bytes to each peer
+    size_t sendOffset = 0;
     for (int i = 0; i < mpi_size; ++i) {
-      // Variable message sizes: rank r sends (r+1)*1024 bytes to peer i
-      sendSizes[i] = (mpi_rank + 1) * 1024;  // Variable sizes based on sender rank
-      recvSizes[i] = (i + 1) * 1024;         // Variable sizes based on sender rank (peer i)
+      sendSizes[i] = (mpi_rank + 1) * 1024;  // This rank sends (rank+1)*1KB to peer i
+      sendOffsets[i] = sendOffset;
+      sendOffset += sendSizes[i];
     }
     
-    // Calculate total buffer sizes
-    size_t totalSendSize = std::accumulate(sendSizes.begin(), sendSizes.end(), 0UL);
-    size_t totalRecvSize = std::accumulate(recvSizes.begin(), recvSizes.end(), 0UL);
+    // Receive sizes: receive (peer+1)*1024 bytes from each peer
+    size_t recvOffset = 0;
+    for (int i = 0; i < mpi_size; ++i) {
+      recvSizes[i] = (i + 1) * 1024;  // Receive (peer+1)*1KB from peer i
+      recvOffsets[i] = recvOffset;
+      recvOffset += recvSizes[i];
+    }
     
-    std::cout << "Rank " << mpi_rank << ": Total send size: " << totalSendSize
-              << ", Total recv size: " << totalRecvSize << std::endl;
+    size_t totalSendSize = std::accumulate(sendSizes.begin(), sendSizes.end(), 0ULL);
+    size_t totalRecvSize = std::accumulate(recvSizes.begin(), recvSizes.end(), 0ULL);
     
-    // Print send/recv patterns for debugging
+    std::cout << "Rank " << mpi_rank << ": Total send size: " << totalSendSize 
+              << ", total recv size: " << totalRecvSize << std::endl;
+    
     std::cout << "Rank " << mpi_rank << " send sizes: ";
     for (int i = 0; i < mpi_size; ++i) {
       std::cout << sendSizes[i] << " ";
@@ -137,104 +163,57 @@ int main(int argc, char* argv[]) {
     // Synchronize all ranks before starting the test
     MPI_Barrier(MPI_COMM_WORLD);
     
-    std::cout << "Rank " << mpi_rank << ": Starting dynamic all-to-allv execution with MSCCLPP..." << std::endl;
+    std::cout << "Rank " << mpi_rank << ": Starting enhanced DSL-based dynamic all-to-allv execution with comprehensive template variable support..." << std::endl;
     
-    // Execute dynamic all-to-allv with MSCCLPP execution engine
-    bool success = mscclpp::DynamicAllToAllv::execute(
-      comm, dynamicPlan, d_sendBuffer, d_recvBuffer, sendSizes, recvSizes);
+    // Create CUDA stream
+    cudaStream_t stream;
+    cudaStreamCreate(&stream);
     
-    if (success) {
-      std::cout << "Rank " << mpi_rank << ": Dynamic all-to-allv completed successfully!" << std::endl;
+    // Execute dynamic all-to-allv with enhanced DSL template supporting all template variables
+    dynamicAllToAllv->execute(
+      d_sendBuffer, sendSizes, sendOffsets,
+      d_recvBuffer, recvSizes, recvOffsets,
+      comm, executor, stream);
+    
+    // Synchronize the stream
+    cudaStreamSynchronize(stream);
+    cudaStreamDestroy(stream);
+    
+    std::cout << "Rank " << mpi_rank << ": Enhanced DSL-based dynamic all-to-allv completed successfully with comprehensive template variable substitution!" << std::endl;
+    
+    // Copy results back to host for verification
+    if (totalRecvSize > 0) {
+      std::vector<char> h_recvBuffer(totalRecvSize);
+      cudaMemcpy(h_recvBuffer.data(), d_recvBuffer, totalRecvSize, cudaMemcpyDeviceToHost);
       
-      // Copy results back to host for verification
-      if (totalRecvSize > 0) {
-        std::vector<char> h_recvBuffer(totalRecvSize);
-        cudaMemcpy(h_recvBuffer.data(), d_recvBuffer, totalRecvSize, cudaMemcpyDeviceToHost);
-        
-        // Verify received data
-        std::cout << "Rank " << mpi_rank << ": First few received bytes: ";
-        for (int i = 0; i < std::min(10, static_cast<int>(totalRecvSize)); ++i) {
-          std::cout << std::hex << static_cast<int>(static_cast<unsigned char>(h_recvBuffer[i])) << " ";
-        }
-        std::cout << std::dec << std::endl;
-        
-        // Verify data per source rank
-        size_t recv_offset = 0;
-        for (int src_rank = 0; src_rank < mpi_size; ++src_rank) {
-          if (recvSizes[src_rank] > 0) {
-            std::cout << "Rank " << mpi_rank << ": From rank " << src_rank << " (first 4 bytes): ";
-            for (int i = 0; i < std::min(4, static_cast<int>(recvSizes[src_rank])); ++i) {
-              std::cout << std::hex << static_cast<int>(static_cast<unsigned char>(h_recvBuffer[recv_offset + i])) << " ";
-            }
-            std::cout << std::dec << std::endl;
-          }
-          recv_offset += recvSizes[src_rank];
-        }
+      std::cout << "Rank " << mpi_rank << ": First 20 received bytes: ";
+      for (size_t i = 0; i < std::min(totalRecvSize, size_t(20)); ++i) {
+        std::cout << static_cast<int>(h_recvBuffer[i]) << " ";
       }
-      
-    } else {
-      std::cout << "Rank " << mpi_rank << ": Dynamic all-to-allv failed!" << std::endl;
+      std::cout << std::endl;
     }
     
-    // Synchronize all ranks before cleanup
-    MPI_Barrier(MPI_COMM_WORLD);
+    // Cleanup
+    dynamicPlan->cleanup();
     
-    std::cout << "Rank " << mpi_rank << ": Starting proper cleanup..." << std::endl;
-    
-    // Explicit cleanup in the correct order to avoid memory issues
-    // 1. Clean up dynamic plan first (this may hold references to buffers)
-    if (dynamicPlan) {
-      dynamicPlan->cleanup();
-      dynamicPlan.reset();
-    }
-    
-    // 2. Reset communicator (this may unregister memory)
-    if (comm) {
-      comm.reset();
-    }
-    
-    // 3. CUDA synchronize before releasing buffers
-    cudaDeviceSynchronize();
-    
-    // 4. Finally release GPU buffers
-    sendGpuBuffer.reset();
-    recvGpuBuffer.reset();
-    
-    std::cout << "Rank " << mpi_rank << ": Cleanup completed successfully" << std::endl;
+    std::cout << "Rank " << mpi_rank << ": Enhanced template variable test completed successfully!" << std::endl;
     
   } catch (const std::exception& e) {
-    std::cerr << "Rank " << mpi_rank << " Error: " << e.what() << std::endl;
+    std::cout << "Rank " << mpi_rank << ": Error occurred: " << e.what() << std::endl;
     
-    // Cleanup in catch block with extra safety
-    try {
-      std::cout << "Rank " << mpi_rank << ": Exception cleanup starting..." << std::endl;
-      
-      if (dynamicPlan) {
+    // Cleanup in case of error
+    if (dynamicPlan) {
+      try {
         dynamicPlan->cleanup();
-        dynamicPlan.reset();
+      } catch (...) {
+        // Ignore cleanup errors
       }
-      
-      if (comm) {
-        comm.reset();
-      }
-      
-      // CUDA synchronize before releasing buffers
-      cudaDeviceSynchronize();
-      
-      sendGpuBuffer.reset();
-      recvGpuBuffer.reset();
-      
-      std::cout << "Rank " << mpi_rank << ": Exception cleanup completed" << std::endl;
-      
-    } catch (const std::exception& cleanup_error) {
-      std::cerr << "Rank " << mpi_rank << " Cleanup error: " << cleanup_error.what() << std::endl;
     }
     
     MPI_Finalize();
     return 1;
   }
   
-  std::cout << "Rank " << mpi_rank << ": Test completed successfully" << std::endl;
   MPI_Finalize();
   return 0;
 }
