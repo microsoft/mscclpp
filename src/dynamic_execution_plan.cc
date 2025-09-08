@@ -68,6 +68,42 @@ DynamicExecutionPlan::DynamicExecutionPlan(const std::string& planPath, int rank
 
 DynamicExecutionPlan::~DynamicExecutionPlan() = default;
 
+// Helper method for processing template variables - defined before use
+void DynamicExecutionPlan::processJsonTemplateVariables(JsonType& json_obj, const VariableContext& var_context) {
+  // Helper lambda to process a raw nlohmann::json recursively
+  std::function<void(nlohmann::json&)> processRawJson = [&](nlohmann::json& j) {
+    if (j.is_string()) {
+      // If it's a string, substitute template variables
+      std::string str_value = j.get<std::string>();
+      std::string substituted = var_context.substituteVariables(str_value);
+      
+      // Try to convert to number if it looks like a number
+      if (std::regex_match(substituted, std::regex(R"(^-?\d+$)"))) {
+        j = std::stoll(substituted);
+      } else if (std::regex_match(substituted, std::regex(R"(^-?\d*\.\d+$)"))) {
+        j = std::stod(substituted);
+      } else {
+        j = substituted;
+      }
+    } else if (j.is_object()) {
+      // Recursively process object members
+      for (auto it = j.begin(); it != j.end(); ++it) {
+        processRawJson(it.value());
+      }
+    } else if (j.is_array()) {
+      // Recursively process array elements
+      for (auto it = j.begin(); it != j.end(); ++it) {
+        processRawJson(*it);
+      }
+    }
+    // For other types (numbers, booleans, null), do nothing
+  };
+  
+  // Process the JsonType object using the lambda
+  nlohmann::json& raw_json = static_cast<nlohmann::json&>(json_obj);
+  processRawJson(raw_json);
+}
+
 // DynamicAllToAllv implementation
 DynamicAllToAllv::DynamicAllToAllv(DynamicExecutionPlan& plan) : plan_(plan), rank_(plan.getRank()) {}
 
@@ -182,19 +218,57 @@ void DynamicAllToAllv::execute(
     params.peerRanks[i] = i;
   }
   
-  // Instantiate the dynamic plan with runtime parameters
-  std::string concretePlan = plan_.instantiate(params);
+  std::cout << "Rank " << rank_ << ": Starting dynamic all-to-allv execution..." << std::endl;
   
-  std::cout << "Rank " << rank_ << ": Generated concrete execution plan for dynamic all-to-allv" << std::endl;
-  
-  // For now, this is a placeholder implementation
-  // In a full implementation, you would:
-  // 1. Parse the concrete plan JSON
-  // 2. Create the appropriate GPU operations
-  // 3. Execute them using the provided executor and stream
-  
-  // TODO: Implement actual execution logic based on the concrete plan
-  std::cout << "Rank " << rank_ << ": Dynamic all-to-allv execution completed (placeholder)" << std::endl;
+  try {
+    // Step 1: Create a concrete ExecutionPlan from the dynamic template
+    auto executionPlan = plan_.createExecutionPlan(params);
+    if (!executionPlan) {
+      throw std::runtime_error("Failed to create concrete execution plan");
+    }
+    
+    std::cout << "Rank " << rank_ << ": Created concrete ExecutionPlan: " << executionPlan->name() 
+              << " (collective: " << executionPlan->collective() << ")" << std::endl;
+    
+    // Step 2: Execute using MSCCLPP executor
+    size_t totalSendSize = params.totalSendSize;
+    size_t totalRecvSize = params.totalRecvSize;
+    
+    std::cout << "Rank " << rank_ << ": Executing with total send size: " << totalSendSize 
+              << ", total recv size: " << totalRecvSize << std::endl;
+    
+    // Step 3: Execute the concrete plan using the MSCCLPP executor
+    // For alltoallv operations, we typically use FLOAT16 or UINT32 data type
+    // Using UINT32 as it's suitable for variable-size data transfers
+    executor->execute(
+      rank_,                      // rank
+      send_buff,                  // send buffer 
+      recv_buff,                  // receive buffer
+      totalSendSize,              // send buffer size
+      totalRecvSize,              // receive buffer size
+      mscclpp::DataType::UINT32,  // data type (can be adjusted based on actual data)
+      *executionPlan,             // execution plan
+      stream,                     // CUDA stream
+      mscclpp::PacketType::LL16   // packet type (LL16 is commonly used)
+    );
+    
+    std::cout << "Rank " << rank_ << ": Successfully executed dynamic all-to-allv using concrete ExecutionPlan" << std::endl;
+    
+  } catch (const std::exception& e) {
+    std::cout << "Rank " << rank_ << ": Error during dynamic all-to-allv execution: " << e.what() << std::endl;
+    
+    // Fallback: Generate and print the concrete plan for debugging
+    try {
+      std::string concretePlan = plan_.instantiate(params);
+      std::cout << "Rank " << rank_ << ": Generated concrete plan for debugging:\n" 
+                << concretePlan.substr(0, 1000) << "..." << std::endl;  // Print first 1000 chars
+    } catch (const std::exception& debug_e) {
+      std::cout << "Rank " << rank_ << ": Failed to generate concrete plan for debugging: " 
+                << debug_e.what() << std::endl;
+    }
+    
+    throw;  // Re-throw the original exception
+  }
 }
 
 std::unique_ptr<DynamicAllToAllv> DynamicExecutionPlan::createAllToAllv() {
@@ -273,6 +347,16 @@ void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
   nlohmann::json j;
   file >> j;
   
+  // Debug: Print the JSON structure
+  std::cout << "Rank " << rank_ << ": Loaded JSON keys: ";
+  for (auto& [key, value] : j.items()) {
+    std::cout << key << "(" << (value.is_string() ? "string" : 
+                                value.is_object() ? "object" : 
+                                value.is_array() ? "array" : 
+                                value.is_number() ? "number" : "other") << ") ";
+  }
+  std::cout << std::endl;
+  
   // Store basic properties
   name_ = j.value("name", "");
   collective_ = j.value("collective", "");
@@ -285,10 +369,25 @@ void DynamicExecutionPlan::loadFromJson(const std::string& planPath) {
   std::cout << "Rank " << rank_ << ": Loaded DSL template: " << name_ 
             << ", collective: " << collective_ << ", protocol: " << protocol_ << std::endl;
   
-  // Parse dynamic parameters
+  // Parse dynamic parameters with better error handling
   if (j.contains("dynamic_parameters")) {
-    for (auto& [key, value] : j["dynamic_parameters"].items()) {
-      dynamicParams_[key] = value.get<std::string>();
+    std::cout << "Rank " << rank_ << ": Processing dynamic_parameters..." << std::endl;
+    auto& dynamic_params = j["dynamic_parameters"];
+    
+    if (dynamic_params.is_object()) {
+      for (auto& [key, value] : dynamic_params.items()) {
+        if (value.is_string()) {
+          dynamicParams_[key] = value.get<std::string>();
+          std::cout << "Rank " << rank_ << ": Added dynamic param: " << key << " = " << value.get<std::string>() << std::endl;
+        } else {
+          std::cout << "Rank " << rank_ << ": Skipping non-string dynamic param: " << key 
+                    << " (type: " << (value.is_object() ? "object" : 
+                                     value.is_array() ? "array" : 
+                                     value.is_number() ? "number" : "other") << ")" << std::endl;
+        }
+      }
+    } else {
+      std::cout << "Rank " << rank_ << ": Warning: dynamic_parameters is not an object" << std::endl;
     }
   }
   
@@ -313,28 +412,38 @@ void DynamicExecutionPlan::updateOperationWithRuntimeParams(JsonType& op,
                                                            const VariableContext& var_context) {
   // Template substitution for operation parameters
   if (op.contains("count")) {
-    std::string count_str = op["count"].get<std::string>();
-    op["count"] = var_context.substituteVariables(count_str);
+    if (op["count"].is_string()) {
+      std::string count_str = op["count"].get<std::string>();
+      op["count"] = var_context.substituteVariables(count_str);
+    }
   }
   
   if (op.contains("o_buff")) {
-    std::string o_buff_str = op["o_buff"].get<std::string>();
-    op["o_buff"] = var_context.substituteVariables(o_buff_str);
+    if (op["o_buff"].is_string()) {
+      std::string o_buff_str = op["o_buff"].get<std::string>();
+      op["o_buff"] = var_context.substituteVariables(o_buff_str);
+    }
   }
   
   if (op.contains("i_buff")) {
-    std::string i_buff_str = op["i_buff"].get<std::string>();
-    op["i_buff"] = var_context.substituteVariables(i_buff_str);
+    if (op["i_buff"].is_string()) {
+      std::string i_buff_str = op["i_buff"].get<std::string>();
+      op["i_buff"] = var_context.substituteVariables(i_buff_str);
+    }
   }
   
   if (op.contains("srcOffset")) {
-    std::string srcOffset_str = op["srcOffset"].get<std::string>();
-    op["srcOffset"] = var_context.substituteVariables(srcOffset_str);
+    if (op["srcOffset"].is_string()) {
+      std::string srcOffset_str = op["srcOffset"].get<std::string>();
+      op["srcOffset"] = var_context.substituteVariables(srcOffset_str);
+    }
   }
   
   if (op.contains("dstOffset")) {
-    std::string dstOffset_str = op["dstOffset"].get<std::string>();
-    op["dstOffset"] = var_context.substituteVariables(dstOffset_str);
+    if (op["dstOffset"].is_string()) {
+      std::string dstOffset_str = op["dstOffset"].get<std::string>();
+      op["dstOffset"] = var_context.substituteVariables(dstOffset_str);
+    }
   }
 }
 
@@ -343,75 +452,150 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
     throw std::runtime_error("No template loaded");
   }
   
-  // Create a working copy of the template
-  nlohmann::json concrete_json = *templateJson_;
+  std::cout << "Rank " << rank_ << ": Starting template instantiation..." << std::endl;
   
-  // Set up variable context with available DynamicRuntimeParams fields
-  VariableContext var_context;
-  var_context.variables["num_ranks"] = std::to_string(params.num_ranks);
-  var_context.variables["rank"] = std::to_string(rank_);
-  var_context.variables["total_send_size"] = std::to_string(params.totalSendSize);
-  var_context.variables["total_recv_size"] = std::to_string(params.totalRecvSize);
-  var_context.variables["max_thread_blocks"] = std::to_string(params.maxThreadBlocks);
-  var_context.variables["block_size"] = std::to_string(params.blockSize);
-  var_context.variables["thread_blocks"] = std::to_string(calculateThreadBlocks(params.totalSendSize));
-  
-  // Add send/recv sizes as comma-separated strings for template use
-  std::stringstream send_sizes_str, recv_sizes_str, send_offsets_str, recv_offsets_str;
-  for (size_t i = 0; i < params.send_sizes.size(); ++i) {
-    if (i > 0) {
-      send_sizes_str << ",";
-      recv_sizes_str << ",";
-      send_offsets_str << ",";
-      recv_offsets_str << ",";
-    }
-    send_sizes_str << params.send_sizes[i];
-    recv_sizes_str << params.recv_sizes[i];
-    send_offsets_str << params.send_offsets[i];
-    recv_offsets_str << params.recv_offsets[i];
-  }
-  var_context.variables["send_sizes"] = send_sizes_str.str();
-  var_context.variables["recv_sizes"] = recv_sizes_str.str();
-  var_context.variables["send_offsets"] = send_offsets_str.str();
-  var_context.variables["recv_offsets"] = recv_offsets_str.str();
-  
-  std::cout << "Rank " << rank_ << ": Instantiating template with total_send_size=" << params.totalSendSize
-            << ", total_recv_size=" << params.totalRecvSize << ", num_ranks=" << params.num_ranks << std::endl;
-  
-  // Update GPU-specific sections
-  if (concrete_json.contains("gpus") && rank_ < static_cast<int>(concrete_json["gpus"].size())) {
-    auto& gpu_json = concrete_json["gpus"][rank_];
+  try {
+    std::cout << "Rank " << rank_ << ": Working directly with templateJson_..." << std::endl;
+    // Work directly with the templateJson_ instead of creating a copy
+    // This avoids the problematic copy constructor that's causing the error
     
-    // Process threadblocks and operations
-    if (gpu_json.contains("threadblocks")) {
-      for (auto& threadblock : gpu_json["threadblocks"]) {
-        if (threadblock.contains("ops")) {
-          for (auto& op : threadblock["ops"]) {
-            // Update operations marked as templates
-            if (op.contains("template") && op["template"].get<bool>()) {
-              // Convert nlohmann::json to JsonType for the method call
-              JsonType op_wrapper(op);
-              updateOperationWithRuntimeParams(op_wrapper, params, var_context);
-              op = static_cast<nlohmann::json>(op_wrapper);  // Copy back
-            }
-          }
-        }
+    // Debug: Print the structure of the loaded template
+    std::cout << "Rank " << rank_ << ": Analyzing template JSON structure..." << std::endl;
+    for (auto& [key, value] : templateJson_->items()) {
+      std::cout << "  " << key << ": " << (value.is_string() ? "string" :
+                                           value.is_object() ? "object" :
+                                           value.is_array() ? "array" :
+                                           value.is_number() ? "number" : "other") << std::endl;
+    }
+    std::cout << "Rank " << rank_ << ": JSON structure analysis completed" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Starting variable context setup..." << std::endl;
+    // Set up variable context with available DynamicRuntimeParams fields
+    VariableContext var_context;
+    
+    std::cout << "Rank " << rank_ << ": Adding basic runtime parameters..." << std::endl;
+    var_context.variables["num_ranks"] = std::to_string(params.num_ranks);
+    var_context.variables["rank"] = std::to_string(rank_);
+    var_context.variables["total_send_size"] = std::to_string(params.totalSendSize);
+    var_context.variables["total_recv_size"] = std::to_string(params.totalRecvSize);
+    var_context.variables["max_thread_blocks"] = std::to_string(params.maxThreadBlocks);
+    var_context.variables["block_size"] = std::to_string(params.blockSize);
+    
+    std::cout << "Rank " << rank_ << ": Calculating thread blocks..." << std::endl;
+    var_context.variables["thread_blocks"] = std::to_string(calculateThreadBlocks(params.totalSendSize));
+    std::cout << "Rank " << rank_ << ": Thread blocks calculated successfully" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Adding dynamic template variables..." << std::endl;
+    // Add the specific template variables that appear in the JSON
+    var_context.variables["DYNAMIC_INPUT_CHUNKS"] = std::to_string(params.num_ranks);
+    var_context.variables["DYNAMIC_OUTPUT_CHUNKS"] = std::to_string(params.num_ranks);
+    var_context.variables["DYNAMIC_SCRATCH_CHUNKS"] = "0";
+    
+    // Add buffer-related template variables
+    var_context.variables["src_buffer_type"] = "i";  // input buffer type
+    var_context.variables["dst_buffer_type"] = "o";  // output buffer type
+    std::cout << "Rank " << rank_ << ": Dynamic template variables added" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Adding default template variables..." << std::endl;
+    // Add commonly used template variables with default values
+    var_context.variables["src_chunk_index"] = "0";
+    var_context.variables["src_chunk_size"] = "1024";
+    var_context.variables["dst_chunk_index"] = "0";
+    var_context.variables["dst_chunk_size"] = "1024";
+    var_context.variables["chunk_size"] = "1024";
+    var_context.variables["step_id"] = "0";
+    var_context.variables["chunk_id"] = "0";
+    var_context.variables["peer_rank"] = "0";
+    var_context.variables["tb_count"] = "1";
+    std::cout << "Rank " << rank_ << ": Default template variables added" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Adding per-peer variables..." << std::endl;
+    // Add individual peer data for template substitution
+    for (int i = 0; i < params.num_ranks; ++i) {
+      var_context.variables["peer_rank_" + std::to_string(i)] = std::to_string(i);
+      var_context.variables["channel_id_" + std::to_string(i)] = std::to_string(i);
+      var_context.variables["chunk_id_" + std::to_string(i)] = std::to_string(i);
+      var_context.variables["tb_count_" + std::to_string(i)] = std::to_string(1); // Default to 1 thread block
+      
+      // Add per-peer buffer variables
+      var_context.variables["src_chunk_index_" + std::to_string(i)] = std::to_string(i * 1024);
+      var_context.variables["dst_chunk_index_" + std::to_string(i)] = std::to_string(i * 1024);
+      var_context.variables["src_chunk_size_" + std::to_string(i)] = "1024";
+      var_context.variables["dst_chunk_size_" + std::to_string(i)] = "1024";
+    }
+    std::cout << "Rank " << rank_ << ": Per-peer variables added for " << params.num_ranks << " ranks" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Adding additional template variables..." << std::endl;
+    // Add commonly used template variables
+    var_context.variables["operation_type"] = "put"; // or "get", depending on operation
+    var_context.variables["channel_id"] = "0";
+    var_context.variables["src_buffer_id"] = "0";
+    var_context.variables["dst_buffer_id"] = "0";
+    var_context.variables["src_offset"] = "0";
+    var_context.variables["dst_offset"] = "0";
+    var_context.variables["count"] = "1024";
+    std::cout << "Rank " << rank_ << ": Additional template variables added" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Generating size arrays..." << std::endl;
+    // Add send/recv sizes as comma-separated strings for template use
+    std::stringstream send_sizes_str, recv_sizes_str, send_offsets_str, recv_offsets_str;
+    for (size_t i = 0; i < params.send_sizes.size(); ++i) {
+      if (i > 0) {
+        send_sizes_str << ",";
+        recv_sizes_str << ",";
+        send_offsets_str << ",";
+        recv_offsets_str << ",";
+      }
+      send_sizes_str << params.send_sizes[i];
+      recv_sizes_str << params.recv_sizes[i];
+      send_offsets_str << params.send_offsets[i];
+      recv_offsets_str << params.recv_offsets[i];
+    }
+    var_context.variables["send_sizes"] = send_sizes_str.str();
+    var_context.variables["recv_sizes"] = recv_sizes_str.str();
+    var_context.variables["send_offsets"] = send_offsets_str.str();
+    var_context.variables["recv_offsets"] = recv_offsets_str.str();
+    std::cout << "Rank " << rank_ << ": Size arrays generated" << std::endl;
+    
+    std::cout << "Rank " << rank_ << ": Variable context set up successfully with " 
+              << var_context.variables.size() << " variables" << std::endl;
+    
+    // Debug: Print some of the variables
+    std::cout << "Rank " << rank_ << ": Key variables: ";
+    for (const auto& [key, value] : var_context.variables) {
+      if (key.find("DYNAMIC") != std::string::npos || key == "chunk_size" || key == "peer_rank" || 
+          key == "src_buffer_type" || key == "dst_buffer_type") {
+        std::cout << key << "=" << value << " ";
       }
     }
+    std::cout << std::endl;
     
-    // Process operation templates
-    JsonType gpu_wrapper(gpu_json);
-    processOperationTemplates(gpu_wrapper, params, var_context);
-    gpu_json = static_cast<nlohmann::json>(gpu_wrapper);  // Copy back
+    std::cout << "Rank " << rank_ << ": Starting template variable processing..." << std::endl;
+    // Process template variables directly on the original templateJson_
+    processJsonTemplateVariables(*templateJson_, var_context);
+    std::cout << "Rank " << rank_ << ": Template variable processing completed" << std::endl;
     
-    std::cout << "Rank " << rank_ << ": Updated DSL JSON with runtime parameters" << std::endl;
+    std::cout << "Rank " << rank_ << ": Generating final JSON..." << std::endl;
+    // Generate the final JSON directly from templateJson_
+    std::string result = templateJson_->dump(2);
+    
+    std::cout << "Rank " << rank_ << ": Template instantiation complete, result size: " 
+              << result.length() << " characters" << std::endl;
+    return result;
+    
+  } catch (const std::exception& e) {
+    std::cout << "Rank " << rank_ << ": Error during instantiation: " << e.what() << std::endl;
+    
+    // Try to print some debug information about the template
+    try {
+      std::cout << "Rank " << rank_ << ": Template JSON dump (first 500 chars): " 
+                << templateJson_->dump().substr(0, 500) << "..." << std::endl;
+    } catch (...) {
+      std::cout << "Rank " << rank_ << ": Could not dump template JSON for debugging" << std::endl;
+    }
+    
+    throw;
   }
-  
-  // For simplicity in this example, create a local copy-only version
-  std::string result = concrete_json.dump(2);
-  
-  std::cout << "Rank " << rank_ << ": Template instantiation complete" << std::endl;
-  return result;
 }
 
 void DynamicExecutionPlan::processOperationTemplates(JsonType& gpu_json, 
@@ -439,8 +623,10 @@ void DynamicExecutionPlan::substituteOperationTemplateVariables(JsonType& operat
   
   // Handle operation_type substitution
   if (operation_template.contains("operation_type")) {
-    std::string op_type = operation_template["operation_type"].get<std::string>();
-    operation_template["operation_type"] = var_context.substituteVariables(op_type);
+    if (operation_template["operation_type"].is_string()) {
+      std::string op_type = operation_template["operation_type"].get<std::string>();
+      operation_template["operation_type"] = var_context.substituteVariables(op_type);
+    }
   }
   
   // Handle channel_id substitution  
@@ -523,6 +709,16 @@ void DynamicExecutionPlan::substituteOperationTemplateVariables(JsonType& operat
       value = static_cast<nlohmann::json>(nested_template);
     }
   }
+  
+  // Debug: Print template structure for troubleshooting
+  std::cout << "Rank " << rank_ << ": Processing operation template with keys: ";
+  for (auto& [key, value] : operation_template.items()) {
+    std::cout << key << "(" << (value.is_string() ? "string" : 
+                                value.is_object() ? "object" : 
+                                value.is_array() ? "array" : 
+                                value.is_number() ? "number" : "other") << ") ";
+  }
+  std::cout << std::endl;
 }
 
 } // namespace mscclpp

@@ -179,6 +179,7 @@ class DynamicExecutionPlan {
   
   // Forward declare a JsonType to avoid exposing nlohmann::json in header
   class JsonType;
+  void processJsonTemplateVariables(JsonType& json_obj, const VariableContext& var_context);
   void updateOperationWithRuntimeParams(JsonType& op, 
                                        const DynamicRuntimeParams& params,
                                        const VariableContext& var_context);
