@@ -607,7 +607,7 @@ static ncclResult_t ncclAllGatherFallback(const void* sendbuff, void* recvbuff, 
 
 static void ncclCommInitRankFallbackSingleNode(ncclComm* commPtr, std::shared_ptr<mscclpp::Communicator> mscclppComm,
                                                int rank) {
-  INFO(MSCCLPP_INIT, "Initializing fallback single node for rank %d, world_size=%d", rank,
+  INFO(MSCCLPP_NCCL, "Initializing fallback single node for rank %d, world_size=%d", rank,
        mscclppComm->bootstrap()->getNranks());
   if (mscclpp::isNvlsSupported()) {
     commPtr->nvlsConnections = setupNvlsConnections(commPtr, NVLS_BUFFER_SIZE);
@@ -684,7 +684,7 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
-  INFO(MSCCLPP_INIT, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
+  INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
   if (comm == nullptr) {
     WARN("comm is nullptr");
     return ncclInvalidArgument;
@@ -995,13 +995,15 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  int rank = comm->comm->bootstrap()->getRank();
+  INFO(MSCCLPP_INIT, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
+       recvbuff, count, datatype, comm);
+
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
     return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -1052,16 +1054,17 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
         "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
+  // Declarating variables
+  size_t bytes = count * ncclTypeSize(datatype);
+  int rank = comm->comm->bootstrap()->getRank();
+  INFO(MSCCLPP_NCCL, "rank %d allreduce sendbuff %p recvbuff %p count %ld, dtype %d comm is %p", rank, sendbuff,
+       recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allreduce", fallbackList)) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  // Declarating variables
-  size_t bytes = count * ncclTypeSize(datatype);
-  int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["allreduce"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -1174,14 +1177,16 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
+  int rank = comm->comm->bootstrap()->getRank();
+  int nRank = comm->comm->bootstrap()->getNranks();
+  INFO(MSCCLPP_NCCL, "rank %d allgather sendbuff %p recvbuff %p count %ld, dtype %d, comm %p", rank, sendbuff, recvbuff,
+       sendcount, datatype, comm);
+
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["allgather"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -1278,7 +1283,7 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   try {
     sharedPtr = mscclpp::GpuBuffer(size).memory();
     if (sharedPtr == nullptr) {
-      INFO(MSCCLPP_ALLOC, "Failed to allocate memory");
+      WARN("Failed to allocate memory via ncclMemAlloc");
       return ncclSystemError;
     }
   } catch (const mscclpp::Error& e) {
