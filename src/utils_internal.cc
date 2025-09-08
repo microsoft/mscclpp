@@ -12,6 +12,7 @@
 #include <memory>
 #include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <sstream>
 #include <string>
 
@@ -230,6 +231,40 @@ void getRandomData(void* buffer, size_t bytes) {
     }
     if (fp) fclose(fp);
   }
+}
+
+TokenPool::TokenPool(size_t nToken) : nToken_(nToken) {
+  tokens_ = detail::gpuCallocPhysicalShared<uint64_t>(
+      nToken, detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+  MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)(&baseAddr_), NULL, (CUdeviceptr)tokens_.get()));
+  size_t nElems = (nToken + 63) / 64;
+  allocationMap_.resize(nElems, 0);
+  tailMask_ = (nToken % 64) ? ((1UL << (nToken % 64)) - 1) : ~0UL;
+}
+
+std::shared_ptr<uint64_t> TokenPool::getToken() {
+  auto deleter = [self = shared_from_this()](uint64_t* token) {
+    size_t index = (token - self->baseAddr_) / 64;
+    size_t bit = (token - self->baseAddr_) % 64;
+    uint64_t mask = 1UL << bit;
+    if ((self->allocationMap_[index] & mask) == 0) {
+      WARN("TokenPool tried to free a token that was not allocated");
+      return;
+    }
+    self->allocationMap_[index] &= ~mask;
+  };
+
+  size_t size = allocationMap_.size();
+  for (size_t i = 0; i < size; i++) {
+    uint64_t mask = (i + 1 == size) ? tailMask_ : ~0ULL;
+    uint64_t holes = (~allocationMap_[i]) & mask;
+    if (!holes) continue;
+    size_t bit = __builtin_ctzll(holes);
+    allocationMap_[i] |= (1UL << bit);
+    INFO(MSCCLPP_ALLOC, "TokenPool allocated token at addr %p", baseAddr_ + i * 64 + bit);
+    return std::shared_ptr<uint64_t>(baseAddr_ + i * 64 + bit, deleter);
+  }
+  throw Error("TokenPool is exhausted", ErrorCode::InternalError);
 }
 
 }  // namespace mscclpp

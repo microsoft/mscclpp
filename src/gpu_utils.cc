@@ -113,6 +113,20 @@ void* gpuCallocUncached(size_t bytes) {
 }
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
+size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
+  size_t gran = 0;
+  int deviceId = -1;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
+
+  CUmemAllocationProp prop = {};
+  prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+  prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+  prop.location.id = deviceId;
+  prop.requestedHandleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  cuMemGetAllocationGranularity(&gran, &prop, granFlag);
+  return gran;
+}
+
 #if (CUDA_NVLS_API_AVAILABLE)
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
