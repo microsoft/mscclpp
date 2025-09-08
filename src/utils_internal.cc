@@ -234,12 +234,16 @@ void getRandomData(void* buffer, size_t bytes) {
 }
 
 TokenPool::TokenPool(size_t nToken) : nToken_(nToken) {
+#if (CUDA_NVLS_API_AVAILABLE)
   tokens_ = detail::gpuCallocPhysicalShared<uint64_t>(
       nToken, detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM));
   MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)(&baseAddr_), NULL, (CUdeviceptr)tokens_.get()));
   size_t nElems = (nToken + 63) / 64;
   allocationMap_.resize(nElems, 0);
   tailMask_ = (nToken % 64) ? ((1UL << (nToken % 64)) - 1) : ~0UL;
+#else
+  throw Error("TokenPool only available on GPUs with NVLS support", ErrorCode::InvalidUsage);
+#endif
 }
 
 std::shared_ptr<uint64_t> TokenPool::getToken() {
