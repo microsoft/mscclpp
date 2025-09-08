@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cu)
 file(GLOB_RECURSE HEADERS CONFIGURE_DEPENDS include/*.h)
 
 if(MSCCLPP_USE_ROCM)
