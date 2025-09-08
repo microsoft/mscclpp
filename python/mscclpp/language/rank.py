@@ -110,20 +110,27 @@ class Rank:
                 "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
+        operations = []
         for tb_id in tb_list:
             op = CopyOperation(
+                rank=self.rank,
+                threadblock=tb_id,
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                tbg_info=(
-                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                tbg=(
+                    tb_group
                     if tb_group is not None
                     else None
                 ),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
-
-            get_program().add_operation(self.rank, tb_id, op)
+            operations.append(op)
+        
+        if tb_group is None:
+            get_program().add_operation(self.rank, tb_id, operations[0])
+        else:
+            get_program().add_tbg_operation(operations)
 
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Copy data from source chunk to destination chunk.
@@ -240,21 +247,28 @@ class Rank:
                 "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
+        operations = []
         for tb_id in tb_list:
             op = ReduceOperation(
-                [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
+                rank=self.rank,
+                threadblock=tb_id,
+                local_src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
-                [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                local_dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                tbg=(
+                    tb_group
                     if tb_group is not None
                     else None
                 ),
                 packet=packet,
             )
+            operations.append(op)
 
-            get_program().add_operation(self.rank, tb_id, op)
+        if tb_group is None:
+            get_program().add_operation(self.rank, tb_id, operations[0])
+        else:
+            get_program().add_tbg_operation(operations)
 
     def barrier(self, tb_list: List[int]):
         """Create a synchronization barrier between thread blocks.
@@ -278,8 +292,8 @@ class Rank:
             op = SyncOperation()
             get_program().add_operation(self.rank, tb_list[0], op)
         else:
-            op = BarrierOperation(self.rank, tb_list)
             for tb in tb_list:
+                op = BarrierOperation(self.rank, tb, tb_list)
                 get_program().add_operation(self.rank, tb, op)
 
 

@@ -5,6 +5,9 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.internal.register import ChannelRegister, SemaphoreRegister
+from mscclpp.language.internal.op_dep_graph import OperationDependencyGraph
+from mscclpp.language.internal.buffer_access import BuffersAccess
 from typing import List
 import json
 
@@ -99,6 +102,8 @@ class CollectiveProgram:
         self.min_message_size = min_message_size
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
+        self.op_dep_dag = OperationDependencyGraph()
+        self.buffers_access = BuffersAccess(num_ranks)
         self.buffers = collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
@@ -134,22 +139,36 @@ class CollectiveProgram:
     def setup_channel(self, tb, channel):
         tb_channel_ids = []
         tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
+        for tb_channel_id in tb_channel_ids:
+            ChannelRegister.add_channel(channel.src_rank, tb, tb_channel_id, channel)
         return tb_channel_ids
 
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
     def add_semaphore(self, semaphore):
+        SemaphoreRegister.add_semaphore(semaphore)
         self.gpus[semaphore.rank].add_semaphore(semaphore)
 
     def add_operation(self, rank, tb, operation):
         if self.loop_context != None:
             self.loop_context.add_operation(rank, tb, operation)
         else:
-            self.gpus[rank].add_operation(tb, operation)
+            self.op_dep_dag.add_operation(operation)
+
+    def add_tbg_operation(self, operations):
+        self.op_dep_dag.add_tbg_operation(operations)
 
     def post_process_operations(self):
-        for gpu in self.gpus:
+        #self.op_dep_dag.add_semaphore_dependency()
+        list_op = self.op_dep_dag.get_execution_order()
+        print(f"execution order operation: {list_op}")
+        list_op = self.buffers_access.process_operations(list_op)
+        print(f"adding sync operations: {list_op}")
+        for op in list_op:
+            self.gpus[op.rank].add_operation(op.threadblock, op)
+
+        """ for gpu in self.gpus:
             if self.instr_fusion:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
@@ -159,7 +178,7 @@ class CollectiveProgram:
                 self.instances,
                 self.get_default_replication_policy_function(),
                 self.get_buffer_replication_policy_function(),
-            )
+            ) """
 
     def get_default_replication_policy_function(self):
         return lambda value, instance, num_instances: value * num_instances + instance
