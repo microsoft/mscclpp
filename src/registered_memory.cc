@@ -205,6 +205,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
   if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
+    if (this->isCuMemMapAlloc) {
+      detail::setReadWriteMemoryAccess(this->data, this->baseDataSize);
+    }
   } else if (transports.has(Transport::CudaIpc)) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
@@ -247,10 +250,10 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
-#else
-      throw Error("CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
-                  ErrorCode::InvalidUsage);
-#endif
+#else   // !(CUDA_NVLS_API_AVAILABLE)
+      // never reach here.
+      throw Error("Unexpected error", ErrorCode::InternalError);
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
     } else if (getHostHash() == this->hostHash) {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;

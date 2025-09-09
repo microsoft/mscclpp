@@ -27,11 +27,11 @@ struct SemaphoreStub::Impl {
 };
 
 static std::shared_ptr<uint64_t> gpuCallocToken() {
-#if (CUDA_NVLS_API_AVAILABLE)
-  if (isNvlsSupported()) {
-    return detail::gpuCallocPhysicalShared<uint64_t>(1, 0);
-  }
-#endif  // CUDA_NVLS_API_AVAILABLE
+// #if (CUDA_NVLS_API_AVAILABLE)
+//   if (isNvlsSupported()) {
+//     return detail::gpuCallocPhysicalShared<uint64_t>(1, 0);
+//   }
+// #endif  // CUDA_NVLS_API_AVAILABLE
 #if defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocUncachedShared<uint64_t>();
 #else   // !defined(MSCCLPP_DEVICE_HIP)
@@ -92,8 +92,14 @@ struct Semaphore::Impl {
   RegisteredMemory remoteStubMemory_;
 };
 
-Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub)
-    : pimpl_(std::make_unique<Impl>(localStub, remoteStub.memory())) {}
+Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub) {
+  auto remoteMemImpl = remoteStub.memory().pimpl_;
+  if (remoteMemImpl->hostHash == getHostHash() && remoteMemImpl->pidHash == getPidHash()) {
+    pimpl_ = std::make_unique<Impl>(localStub, RegisteredMemory::deserialize(remoteStub.memory().serialize()));
+  } else {
+    pimpl_ = std::make_unique<Impl>(localStub, remoteStub.memory());
+  }
+}
 
 MSCCLPP_API_CPP std::shared_ptr<Connection> Semaphore::connection() const {
   return pimpl_->localStub_.pimpl_->connection_;

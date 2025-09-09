@@ -296,6 +296,7 @@ static mscclpp::Algorithm algoSelector(
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
+  INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
   if (comm == nullptr) {
     WARN("comm is nullptr");
     return ncclInvalidArgument;
@@ -443,6 +444,11 @@ NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclCom
   return ncclCommInitRankConfig(newcomm, groupSize, uniqueId, newRank, nullptr);
 }
 
+ncclResult_t ncclCommInitRankScalable(ncclComm_t*, int, int, int, ncclUniqueId*, ncclConfig_t*) {
+  WARN("ncclCommInitRankScalable is currently unavailable");
+  return ncclInternalError;
+}
+
 NCCL_API const char* ncclGetErrorString(ncclResult_t result) {
   switch (result) {
     case ncclSuccess:
@@ -512,6 +518,16 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   return ncclSuccess;
 }
 
+NCCL_API ncclResult_t ncclCommWindowRegister(ncclComm_t, void*, size_t, ncclWindow_t*, int) {
+  WARN("ncclCommWindowRegister is currently unavailable");
+  return ncclInternalError;
+}
+
+NCCL_API ncclResult_t ncclCommWindowDeregister(ncclComm_t, ncclWindow_t) {
+  WARN("ncclCommWindowDeregister is currently unavailable");
+  return ncclInternalError;
+}
+
 NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t*, void*, ncclDataType_t, ncclScalarResidence_t, ncclComm_t) {
   // TODO: implement this function
   WARN("ncclRedOpCreatePreMulSum is currently unavailable");
@@ -546,7 +562,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  INFO(MSCCLPP_NCCL, "Broadcast count: %ld, datatype: %d, root: %d, messageSize: %ld", count, datatype, root, bytes);
+  int rank = comm->comm->bootstrap()->getRank();
+  INFO(MSCCLPP_INIT, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
+       recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
@@ -554,8 +572,6 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["broadcast"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -599,8 +615,11 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
         "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
-  INFO(MSCCLPP_NCCL, "AllReduce count: %ld, datatype: %d, op: %d, messageSize: %ld", count, datatype,
-       reductionOperation, count * ncclTypeSize(datatype));
+  // Declarating variables
+  size_t bytes = count * ncclTypeSize(datatype);
+  int rank = comm->comm->bootstrap()->getRank();
+  INFO(MSCCLPP_NCCL, "rank %d allreduce sendbuff %p recvbuff %p count %ld, dtype %d comm is %p", rank, sendbuff,
+       recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
@@ -608,10 +627,6 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  // Declarating variables
-  size_t bytes = count * ncclTypeSize(datatype);
-  int rank = comm->comm->bootstrap()->getRank();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["allreduce"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -705,17 +720,17 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  INFO(MSCCLPP_NCCL, "AllGather count: %ld, datatype: %d, messageSize: %ld", sendcount, datatype,
-       bytes * comm->comm->bootstrap()->getNranks());
+  int rank = comm->comm->bootstrap()->getRank();
+  int nRank = comm->comm->bootstrap()->getNranks();
+  INFO(MSCCLPP_NCCL, "rank %d allgather sendbuff %p recvbuff %p count %ld, dtype %d, comm %p", rank, sendbuff, recvbuff,
+       sendcount, datatype, comm);
+
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
   if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-
-  int rank = comm->comm->bootstrap()->getRank();
-  int nRank = comm->comm->bootstrap()->getNranks();
 
   std::vector<executionPlanInstance>& plans = comm->executionPlans["allgather"];
   std::shared_ptr<mscclpp::ExecutionPlan> plan;
@@ -770,23 +785,33 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  // Do nothing
+  // TODO: Do nothing for now
+  WARN("ncclGroupStart is currently unavailable, return success");
   return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclGroupEnd() {
-  // Do nothing
+  // TODO: Do nothing for now
+  WARN("ncclGroupEnd is currently unavailable, return success");
   return ncclSuccess;
+}
+
+NCCL_API ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t*) {
+  // TODO: implement this function
+  WARN("ncclGroupSimulateEnd is not implemented");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
   // TODO: Implementation
-  return ncclSuccess;
+  WARN("ncclCommRegister is currently unavailable");
+  return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
   // TODO: Implementation
-  return ncclSuccess;
+  WARN("ncclCommDeregister is currently unavailable");
+  return ncclInternalError;
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
@@ -798,7 +823,7 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   try {
     sharedPtr = mscclpp::GpuBuffer(size).memory();
     if (sharedPtr == nullptr) {
-      INFO(MSCCLPP_ALLOC, "Failed to allocate memory");
+      WARN("Failed to allocate memory via ncclMemAlloc");
       return ncclSystemError;
     }
   } catch (const mscclpp::Error& e) {
