@@ -208,12 +208,12 @@ class DataAccess:
             and (self.data_access_type != DataAccessType.read or other.data_access_type != DataAccessType.read)
         ):
             if self.threadblock == other.threadblock:
-                return DataAccessConflict(self.rank, {}, DataAccessConflictType.intra_threadblock)
+                return DataAccessConflict(self.rank, {(other.threadblock, other.operation_order_id, True)}, DataAccessConflictType.intra_threadblock)
             else:
                 is_order_defined = ((self.tb_group is not None and other.tb_group is not None and self.tb_group.tbg_overlap(other.tb_group))
                 or (self.tb_group is not None and other.tb_group is None and self.tb_group.tb_overlap(other.threadblock))
                 or (self.tb_group is None and other.tb_group is not None and other.tb_group.tb_overlap(self.threadblock)))
-                return DataAccessConflict(self.rank, {(other.threadblock, other.operation_order_id, is_order_defined)}, DataAccessConflictType.inter_threadblock)
+                return DataAccessConflict(self.rank, {(self.threadblock, other.operation_order_id, True), (other.threadblock, other.operation_order_id, is_order_defined)}, DataAccessConflictType.inter_threadblock)
         else:
             return DataAccessConflict(self.rank)
 

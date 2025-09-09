@@ -49,6 +49,7 @@ class BuffersAccess:
          for tb in operation.barrier_info.tb_list:
             if operation.threadblock != tb:
                 self.track_barrier[operation.rank, operation.threadblock, tb] = order_id
+                self.track_sync[operation.rank, operation.threadblock] = order_id
 
     def compute_data_access(self, data_access: DataAccess) -> bool:
         intervals = self.rank_intervals[data_access.rank]
@@ -73,6 +74,8 @@ class BuffersAccess:
                         conflict_data_access.end,
                         conflict_data_access.buffer_type,
                         conflict_operation_type,
+                        conflict_data_access.tb_group
+                        
                     )
                 ] = conflict_operation_type
             if conflict_data_access.start < data_access.start:
@@ -86,6 +89,7 @@ class BuffersAccess:
                         data_access.start,
                         conflict_data_access.buffer_type,
                         conflict_operation_type,
+                        conflict_data_access.tb_group
                     )
                 ] = conflict_operation_type
 
@@ -99,17 +103,17 @@ class BuffersAccess:
         fix_operations = []
         if data_access_conflict.conflict_type == DataAccessConflictType.intra_threadblock:
             for tb in data_access_conflict.threadblocks:
-                if tb[1] > self.data_sync[(rank, threadblock)]:
+                if (rank, threadblock) not in self.track_sync or tb[1] > self.track_sync[(rank, threadblock)]:
                     fix_operations.append(SyncOperation(rank, threadblock))
-                    self.data_sync[(rank, threadblock)] = order_id
+                    self.track_sync[(rank, threadblock)] = order_id
                     break
         if data_access_conflict.conflict_type == DataAccessConflictType.inter_threadblock:
-            conflict_tb = [threadblock]
+            conflict_tb = set([threadblock])
             for tb in data_access_conflict.threadblocks:
-                if (threadblock, tb[0]) not in self.track_barrier or self.track_barrier[(threadblock, tb[0])] < tb[1]:
+                if threadblock != tb[0] and ((rank, threadblock, tb[0]) not in self.track_barrier or self.track_barrier[(rank, threadblock, tb[0])] < tb[1]):
                     if not tb[2]:
                         raise RuntimeError("Operations order not defined.")
-                    conflict_tb.append(tb[0])
+                    conflict_tb.add(tb[0])
             for tb in conflict_tb:
                 op = BarrierOperation(rank, tb, conflict_tb)
                 self.update_barrier(op, order_id)
