@@ -235,23 +235,24 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo() {
+  auto factoryBuilder = mscclpp::AlgorithmFactoryBuilder::getInstance();
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
-  broadcastAlgo6->registerAlgorithm();
+  factoryBuilder->addAlgorithmBuilder(broadcastAlgo6);
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
   std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
-  allgatherAlgo6->registerAlgorithm();
+  factoryBuilder->addAlgorithmBuilder(allgatherAlgo6);
   // TODO(binyli): remove allgather8 algo, use nccl by default
-  allgatherAlgo8->registerAlgorithm();
+  factoryBuilder->addAlgorithmBuilder(allgatherAlgo8);
 
   std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>();
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
-  allreduceAllpairAlgo->registerAlgorithm();
-  allreduceNvlsAlgo->registerAlgorithm();
-  allreduceNvlsWithCopyAlgo->registerAlgorithm();
-  allreduceAllreduce8Algo->registerAlgorithm();
+  factoryBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
+  factoryBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
+  factoryBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
+  factoryBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -314,9 +315,6 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
 
-  commPtr->algorithmFactory = mscclpp::AlgorithmFactory::getInstance();
-  commPtr->algorithmFactory->setFallbackAlgorithmSelector(algoSelector);
-
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
     if (!std::filesystem::is_directory(collectiveDir)) {
@@ -331,7 +329,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
   }
 
+  mscclpp::AlgorithmFactoryBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
   registerCustomizedAlgo();
+  commPtr->algorithmFactory = mscclpp::AlgorithmFactoryBuilder::getInstance()->build();
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
@@ -402,8 +402,6 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
     mscclppNcclDlopenFinalize();
     delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
   }
-
-  comm->algorithmFactory->destroy();
   delete comm;
   return ncclSuccess;
 }

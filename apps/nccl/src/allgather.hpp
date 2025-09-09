@@ -209,10 +209,10 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
+class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
  public:
   AllgatherAlgo6();
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   bool disableChannelCache_;
@@ -228,9 +228,9 @@ class AllgatherAlgo6 : public std::enable_shared_from_this<AllgatherAlgo6> {
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
 };
 
-class AllgatherAlgo8 : public std::enable_shared_from_this<AllgatherAlgo8> {
+class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
  public:
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;

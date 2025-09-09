@@ -262,10 +262,10 @@ mscclpp::AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void
   return mscclpp::AlgorithmCtxKey{(void*)sendBasePtr, nullptr, sendBytes, 0, 0};
 }
 
-void AllreducePacket::registerAlgorithm() {
-  auto self = shared_from_this();
-  mscclpp::Algorithm allgatherAlgo(
-      "allreduce",
+mscclpp::Algorithm AllreducePacket::build() {
+  auto self = std::make_shared<AllreducePacket>();
+  mscclpp::Algorithm allreduceAlgo(
+      "default_allreduce_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
@@ -278,7 +278,7 @@ void AllreducePacket::registerAlgorithm() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllreduceContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_packet", allgatherAlgo);
+  return allreduceAlgo;
 }
 
 void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm,
@@ -359,10 +359,10 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvls::initAllreduceContext(std::
   return ctx;
 }
 
-void AllreduceNvls::registerAlgorithm() {
-  auto self = shared_from_this();
-  mscclpp::Algorithm allgatherAlgo(
-      "allreduce",
+mscclpp::Algorithm AllreduceNvls::build() {
+  auto self = std::make_shared<AllreduceNvls>();
+  mscclpp::Algorithm allreduceAlgo(
+      "default_allreduce_nvls", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
@@ -375,7 +375,7 @@ void AllreduceNvls::registerAlgorithm() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllreduceContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_nvls", allgatherAlgo);
+  return allreduceAlgo;
 }
 
 void AllreduceNvlsWithCopy::initialize(std::shared_ptr<mscclpp::Communicator> comm,
@@ -433,10 +433,10 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsWithCopy::initAllreduceConte
   return ctx;
 }
 
-void AllreduceNvlsWithCopy::registerAlgorithm() {
-  auto self = shared_from_this();
-  mscclpp::Algorithm allgatherAlgo(
-      "allreduce",
+mscclpp::Algorithm AllreduceNvlsWithCopy::build() {
+  auto self = std::make_shared<AllreduceNvlsWithCopy>();
+  mscclpp::Algorithm allreduceAlgo(
+      "default_allreduce_nvls_with_copy", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
@@ -449,11 +449,11 @@ void AllreduceNvlsWithCopy::registerAlgorithm() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllreduceContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_nvls_with_copy",
-                                                              allgatherAlgo);
+  return allreduceAlgo;
 }
 
-void Allreduce8::initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+void Allreduce8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                            std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   this->scratchBuffer_ = std::static_pointer_cast<char>(extras.at("scratch"));
   this->scratchBufferSize_ = *(size_t*)(extras.at("scratch_size").get());
   this->conns_ = setupConnections(comm);
@@ -539,10 +539,10 @@ std::shared_ptr<mscclpp::AlgorithmCtx> Allreduce8::initAllreduceContext(std::sha
   return ctx;
 }
 
-void Allreduce8::registerAlgorithm() {
-  auto self = shared_from_this();
-  mscclpp::Algorithm allgatherAlgo(
-      "allreduce",
+mscclpp::Algorithm Allreduce8::build() {
+  auto self = std::make_shared<Allreduce8>();
+  mscclpp::Algorithm allreduceAlgo(
+      "default_allreduce_allreduce8", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
@@ -555,6 +555,5 @@ void Allreduce8::registerAlgorithm() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllreduceContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allreduce", "default_allreduce_allreduce8",
-                                                              allgatherAlgo);
+  return allreduceAlgo;
 }

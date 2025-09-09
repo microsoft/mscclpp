@@ -795,9 +795,9 @@ __global__ void __launch_bounds__(1024, 1)
 
 enum Op getReduceOp(ncclRedOp_t op);
 
-class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
+class AllreducePacket : public mscclpp::AlgorithmBuilder {
  public:
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
@@ -821,10 +821,10 @@ class AllreducePacket : public std::enable_shared_from_this<AllreducePacket> {
   std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
 };
 
-class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
+class AllreduceNvls : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvls() = default;
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
@@ -843,9 +843,9 @@ class AllreduceNvls : public std::enable_shared_from_this<AllreduceNvls> {
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 };
 
-class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsWithCopy> {
+class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
  public:
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
@@ -867,9 +867,9 @@ class AllreduceNvlsWithCopy : public std::enable_shared_from_this<AllreduceNvlsW
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 };
 
-class Allreduce8 : public std::enable_shared_from_this<Allreduce8> {
+class Allreduce8 : public mscclpp::AlgorithmBuilder {
  public:
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,

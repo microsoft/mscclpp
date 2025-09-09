@@ -76,19 +76,19 @@ __global__ void __launch_bounds__(1024)
   }
 }
 
-class AllgatherAlgo : public std::enable_shared_from_this<AllgatherAlgo> {
+class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
  public:
-  AllgatherAlgo() = default;
-  ~AllgatherAlgo() {
+  AllgatherAlgoBuilder() = default;
+  ~AllgatherAlgoBuilder() {
     if (proxyService_) {
       proxyService_->stopProxy();
     }
   }
 
-  void registerAlgorithm() {
-    auto self = shared_from_this();
+  mscclpp::Algorithm build() {
+    auto self = std::make_shared<AllgatherAlgoBuilder>();
     mscclpp::Algorithm allgatherAlgo(
-        "allgather",
+        "allgather", "allgather",
         [self](std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&) {
           self->initialize(comm);
         },
@@ -103,7 +103,7 @@ class AllgatherAlgo : public std::enable_shared_from_this<AllgatherAlgo> {
         [self](const void* input, void* output, size_t count, int dtype) {
           return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
         });
-    mscclpp::AlgorithmFactory::getInstance()->registerAlgorithm("allgather", "allgather", allgatherAlgo);
+    return allgatherAlgo;
   }
 
  private:
@@ -196,10 +196,9 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
   MSCCLPP_CUDATHROW(cudaSetDevice(rank));
 
   // register algorithm
-  auto allgatherAlgo = std::make_shared<AllgatherAlgo>();
-  allgatherAlgo->registerAlgorithm();
-  auto algoFactory = mscclpp::AlgorithmFactory::getInstance();
-  algoFactory->setAlgorithmSelector(
+  auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
+  mscclpp::AlgorithmFactoryBuilder::getInstance()->addAlgorithmBuilder(allgatherAlgoBuilder);
+  mscclpp::AlgorithmFactoryBuilder::getInstance()->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>&
              algoMapByCollective,
          std::string collective, size_t messageSize, int nRanksPerNode, int worldSize) {

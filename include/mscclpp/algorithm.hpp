@@ -56,8 +56,8 @@ class Algorithm {
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
                                                                       const void*, void*, size_t, int)>;
   using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, int dtype)>;
-  Algorithm(std::string name, InitFunc initFunc, KernelFunc kernelFunc, ContextInitFunc contextInitFunc,
-            ContextKeyGenFunc contextKeyGenFunc);
+  Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
+            ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
   Algorithm() = default;
 
   /// @brief Launch the algorithm.
@@ -73,9 +73,12 @@ class Algorithm {
   int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   bool isEmpty();
+  std::string name() const;
+  std::string collective() const;
 
  private:
-  std::shared_ptr<AlgorithmImpl> impl_;
+  class Impl;
+  std::shared_ptr<Impl> impl_;
 };
 }  // namespace mscclpp
 
@@ -104,19 +107,19 @@ struct hash<mscclpp::AlgorithmCtxKey> {
 
 namespace mscclpp {
 
+class AlgorithmBuilder {
+ public:
+  virtual ~AlgorithmBuilder() = default;
+  virtual Algorithm build() = 0;
+};
+
+using AlgoSelectFunc = std::function<Algorithm(
+    const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
+    std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
+
 class AlgorithmFactory {
  public:
-  using AlgoSelectFunc = std::function<Algorithm(
-      const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-      std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
-
-  static std::shared_ptr<AlgorithmFactory> getInstance();
-
-  /// @brief Register a new algorithm.
-  /// @param collective The collective operation name.
-  /// @param algoName The algorithm name.
-  /// @param algorithm The algorithm implementation.
-  void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
+  AlgorithmFactory() = default;
 
   /// @brief Select an algorithm based on the collective operation name and message size.
   /// @param collective The collective operation name.
@@ -125,6 +128,28 @@ class AlgorithmFactory {
   /// @param worldSize The total number of ranks.
   /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
   Algorithm selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode, int worldSize);
+
+  /// @brief Register a new algorithm.
+  /// @param collective The collective operation name.
+  /// @param algoName The algorithm name.
+  /// @param algorithm The algorithm implementation.
+  void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
+
+ private:
+  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective_;
+  AlgoSelectFunc algoSelector_ = nullptr;
+  AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
+
+  friend class AlgorithmFactoryBuilder;
+};
+
+class AlgorithmFactoryBuilder {
+ public:
+  static std::shared_ptr<AlgorithmFactoryBuilder> getInstance();
+
+  /// @brief Add a new algorithm builder for a specific collective operation.
+  /// @param builder The algorithm builder.
+  void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.
@@ -136,11 +161,13 @@ class AlgorithmFactory {
   /// assign a predefined selector as the fallback selector.
   void setFallbackAlgorithmSelector(AlgoSelectFunc selector);
 
-  void destroy();
+  /// @brief Build the AlgorithmFactory instance.
+  /// @return The AlgorithmFactory instance.
+  std::shared_ptr<AlgorithmFactory> build();
 
  private:
-  AlgorithmFactory() = default;
-  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective_;
+  AlgorithmFactoryBuilder() = default;
+  std::vector<std::shared_ptr<AlgorithmBuilder>> algoBuilders_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 };

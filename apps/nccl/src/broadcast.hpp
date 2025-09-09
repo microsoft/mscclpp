@@ -155,10 +155,10 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
   return cudaGetLastError();
 }
 
-class BroadcastAlgo6 : public std::enable_shared_from_this<BroadcastAlgo6> {
+class BroadcastAlgo6 : public mscclpp::AlgorithmBuilder {
  public:
   BroadcastAlgo6() = default;
-  void registerAlgorithm();
+  mscclpp::Algorithm build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
