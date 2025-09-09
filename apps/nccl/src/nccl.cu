@@ -1246,19 +1246,19 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  // Do nothing
-  WARN("ncclGroupStart is currently unavailable");
-  return ncclInternalError;
+  // TODO: Do nothing for now
+  WARN("ncclGroupStart is currently unavailable, return success");
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclGroupEnd() {
-  // Do nothing
-  WARN("ncclGroupEnd is currently unavailable");
-  return ncclInternalError;
+  // TODO: Do nothing for now
+  WARN("ncclGroupEnd is currently unavailable, return success");
+  return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t*) {
-  // Do nothing
+  // TODO: implement this function
   WARN("ncclGroupSimulateEnd is not implemented");
   return ncclInternalError;
 }
@@ -1271,6 +1271,7 @@ NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) 
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
   // TODO: Implementation
+  WARN("ncclCommDeregister is currently unavailable");
   return ncclInternalError;
 }
 

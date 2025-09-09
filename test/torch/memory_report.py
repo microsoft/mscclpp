@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 # LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so MSCCLPP_DISABLE_CHANNEL_CACHE=true  torchrun --nnodes=1 --nproc_per_node=8 memory_report.py
 import os, sys
@@ -56,15 +56,13 @@ def main():
 
     # make a subgroup over all ranks (you can change to a subset to test)
     group_ranks = list(range(world_size))
-    if world_size >= 2:
-        group_ranks = [0, 1, 2, 3, 4, 5, 6, 7]  # minimal pair
     if rank == 0:
         print(f"Creating new_group with ranks={group_ranks}", flush=True)
     grp = dist.new_group(ranks=group_ranks, backend=backend)
     x = torch.ones(nelems, device=local_rank, dtype=torch.float32) * (rank + 1)
     dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp)
 
-    grp = dist.new_group(ranks=[0, 1, 2, 3, 4, 5, 6, 7], backend=backend)
+    grp = dist.new_group(ranks=list(range(world_size)), backend=backend)
     x = torch.ones(nelems, device=local_rank, dtype=torch.float32) * (rank + 1)
     dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp)
 
