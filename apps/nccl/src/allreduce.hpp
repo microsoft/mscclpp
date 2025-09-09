@@ -798,7 +798,9 @@ cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
                       size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
                       size_t nelems, cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28,
                       uint32_t* deviceFlag56, uint32_t numScratchBuff) {
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
+  bool isCuMemMapAllocated =
+      mscclpp::isCuMemMapAllocated((int*)buff) && mscclpp::isCuMemMapAllocated((void*)resultBuff);
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
   int nPeers = nRanksPerNode - 1;
 
   if (sizeof(T) * nelems < worldSize * sizeof(int)) {
