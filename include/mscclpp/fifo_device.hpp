@@ -134,6 +134,19 @@ struct FifoDeviceHandle {
     return prevHead;
   }
 
+  /// Poll whether a specific trigger is popped from the FIFO.
+  /// @param fifoHead FIFO head where the trigger was pushed.
+  /// @return True if the trigger is popped; false otherwise.
+  MSCCLPP_DEVICE_INLINE bool poll(uint64_t fifoHead) {
+    uint64_t val;
+    if (fifoHead < (val = atomicLoad(tail, memoryOrderAcquire))) {
+      // Same as in sync(), this may write a stale value to tailCache.
+      *tailCache = val;
+      return true;
+    }
+    return false;
+  }
+
   /// Wait until a specific trigger is popped from the FIFO.
   /// @param fifoHead FIFO head where the trigger was pushed.
   /// @param maxSpinCount Max spin count before assert. Never assert if negative.
