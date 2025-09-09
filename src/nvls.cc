@@ -60,6 +60,8 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
   mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
   bufferSize_ = mcProp_.size;
+  INFO(MSCCLPP_COLL, "NVLS multicast properties: size=%ld, numDevices=%d, handleTypes=%lld", mcProp_.size,
+       mcProp_.numDevices, mcProp_.handleTypes);
   MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
   mcFileDesc_ = 0;
   MSCCLPP_CUTHROW(
