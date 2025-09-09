@@ -113,6 +113,7 @@ void* gpuCallocUncached(size_t bytes) {
 }
 #endif  // defined(__HIP_PLATFORM_AMD__)
 
+#if (CUDA_NVLS_API_AVAILABLE)
 size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
   size_t gran = 0;
   int deviceId = -1;
@@ -127,7 +128,6 @@ size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
   return gran;
 }
 
-#if (CUDA_NVLS_API_AVAILABLE)
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag) {
   size_t gran = 0;
   int numDevices = 0;
