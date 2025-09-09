@@ -40,7 +40,7 @@ struct Context::Impl {
   std::unordered_map<Transport, std::unique_ptr<IbCtx>> ibContexts_;
   std::vector<std::shared_ptr<CudaIpcStream>> ipcStreams_;
   std::shared_ptr<TokenPool> tokenPool_;
-  const size_t maxNumTokens_ =  1 << 15;  // 32K tokens
+  const size_t maxNumTokens_ = 1 << 15;  // 32K tokens
 
   Impl();
 
