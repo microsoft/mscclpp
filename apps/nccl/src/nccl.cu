@@ -117,7 +117,7 @@ static inline void mscclppNcclDlopenFinalize() {
 }
 
 static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
-  if (fallbackList == nullptr || fallbackList[0] == '\0' || strcmp(fallbackList, "all") == 0) {
+  if (strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
@@ -260,6 +260,10 @@ static mscclpp::Algorithm algoSelector(
   if (collective == "broadcast") {
 #if defined(__HIP_PLATFORM_AMD__)
     return algoMapByCollective.at(collective).at("default_broadcast6");
+#else
+    if (!mscclppNcclDlopenSharedLib) {
+      return algoMapByCollective.at(collective).at("default_broadcast6");
+    }
 #endif
   }
   if (collective == "allgather") {
@@ -268,6 +272,10 @@ static mscclpp::Algorithm algoSelector(
     } else {
 #if defined(__HIP_PLATFORM_AMD__)
       return algoMapByCollective.at(collective).at("default_allgather6");
+#else
+      if (!mscclppNcclDlopenSharedLib) {
+        return algoMapByCollective.at(collective).at("default_allgather8");
+      }
 #endif
     }
   }
@@ -281,6 +289,10 @@ static mscclpp::Algorithm algoSelector(
     } else {
 #if defined(__HIP_PLATFORM_AMD__)
       return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+#else
+      if (!mscclppNcclDlopenSharedLib) {
+        return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+      }
 #endif
     }
   }
