@@ -75,10 +75,6 @@ class Env {
   /// debugging purposes. Currently supports `all`, `broadcast`, `allreduce`, `reducescatter`, and `allgather`.
   const std::string forceNcclFallbackOperation;
 
-  /// Env name: `MSCCLPP_ENABLE_NCCL_FALLBACK`. If set to true, it will enable the fallback implementation for NCCL
-  /// operations. This is useful for debugging purposes. Default is false.
-  const bool enableNcclFallback;
-
   /// Env name: `MSCCLPP_DISABLE_CHANNEL_CACHE`. If set to true, it will disable the channel cache for NCCL APIs.
   /// Currently, this should be set to true if the application may call NCCL APIs on the same local buffer with
   /// different remote buffers, e.g., in the case of a dynamic communicator. If CUDA/HIP graphs are used, disabling

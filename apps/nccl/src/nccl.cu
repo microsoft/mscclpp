@@ -77,13 +77,6 @@ bool mscclppNcclDlopenSharedLib = false;
 
 static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
-  if (mscclpp::env()->ncclSharedLibPath.empty()) {
-#if defined(__HIP_PLATFORM_AMD__)
-    ncclLibPath = "librccl.so";  // Default RCCL library name
-#else
-    ncclLibPath = "libnccl.so";  // Default NCCL library name
-#endif
-  }
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
       WARN("The value of the environment variable %s is a directory", ncclLibPath);
@@ -341,16 +334,14 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   }
 #endif
 
-  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppNcclDlHandle == NULL) {
+  const std::string ncclLibPath = mscclpp::env()->ncclSharedLibPath;
+  if (!ncclLibPath.empty()) {
     int dlopenStatus = mscclppNcclDlopenInit();
     if (dlopenStatus == dlopenSuccess) {
       mscclppNcclDlopenSharedLib = true;
     } else {
-      if (mscclppEnableNcclFallback == true) {
-        WARN("Failed to load the shared library for nccl/rccl");
-        return ncclInternalError;
-      }
+      WARN("Failed to load the shared library for nccl/rccl");
+      return ncclInternalError;
     }
   }
 
@@ -567,8 +558,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
        recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
     return mscclppNcclOps.Broadcast(sendbuff, recvbuff, count, datatype, root,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -622,8 +612,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
        recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppEnableNcclFallback && mscclppNcclInFallbackList("allreduce", fallbackList)) {
+  if (mscclppNcclDlopenSharedLib && mscclppNcclInFallbackList("allreduce", fallbackList)) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -676,8 +665,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
        bytes * comm->comm->bootstrap()->getNranks());
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
     return mscclppNcclOps.ReduceScatter(sendbuff, recvbuff, recvcount, datatype, op,
                                         *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
@@ -726,8 +714,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
        sendcount, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
-  const bool mscclppEnableNcclFallback = mscclpp::env()->enableNcclFallback;
-  if (mscclppEnableNcclFallback == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
+  if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
     return mscclppNcclOps.AllGather(sendbuff, recvbuff, sendcount, datatype,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
