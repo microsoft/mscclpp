@@ -111,33 +111,42 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
             "max_thread_blocks": "32",
             "block_size": "32768"
         }
-        
+
         # Modify each GPU to use dynamic chunk variables
         for gpu_data in plan_dict["gpus"]:
-            gpu_data["input_chunks"] = "${DYNAMIC_INPUT_CHUNKS}"
-            gpu_data["output_chunks"] = "${DYNAMIC_OUTPUT_CHUNKS}"
-            gpu_data["scratch_chunks"] = "${DYNAMIC_SCRATCH_CHUNKS}"
+            gpu_data.pop("input_chunks")
+            gpu_data.pop("output_chunks")
+            gpu_data.pop("scratch_chunks")
+
+            gpu_data["dynamic_input_chunks"] = gpu_size
+            gpu_data["dynamic_output_chunks"] = gpu_size
+            gpu_data["dynamic_scratch_chunks"] = gpu_size - 1
             
             # Add operation templates for runtime instantiation
             if "threadblocks" in gpu_data:
+                i = 0
                 for tb in gpu_data["threadblocks"]:
+                    tb["dynamic_tbgroup_id"] = i
+                    i += 1
                     # Mark operations as templates that need runtime instantiation
                     if "ops" in tb:
                         for op in tb["ops"]:
                             if "src_buff" in op or "dst_buff" in op:
-                                op["template"] = True
-                                op["dynamic_threadblock_count"] = "${tb_count}"
-                                
                                 # For buffer references, add dynamic chunk mapping
                                 if "src_buff" in op:
                                     for buff in op["src_buff"]:
-                                        buff["dynamic_index"] = "${src_chunk_index}"
-                                        buff["dynamic_size"] = "${src_chunk_size}"
+                                        buff["dynamic_index"] = 0
+                                        buff["dynamic_size"] = 1
+                                        buff.pop("index")
+                                        buff.pop("size")
                                         
                                 if "dst_buff" in op:
                                     for buff in op["dst_buff"]:
-                                        buff["dynamic_index"] = "${dst_chunk_index}"
-                                        buff["dynamic_size"] = "${dst_chunk_size}"
+                                        buff["dynamic_index"] = 0
+                                        buff["dynamic_size"] = 1
+                                        buff.pop("index")
+                                        buff.pop("size")
+                    tb.pop("id")
         
         # Output the modified JSON
         print(json.dumps(plan_dict, indent=2))

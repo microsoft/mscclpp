@@ -7,59 +7,43 @@
   "gpus": [
     {
       "id": 0,
-      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
-      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
-      "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -76,23 +60,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "wait",
@@ -124,34 +102,28 @@
                 0
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 0
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -168,23 +140,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -202,34 +168,28 @@
                 1
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 1
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -246,23 +206,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -280,7 +234,8 @@
                 2
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 2
         }
       ],
       "channels": [
@@ -316,63 +271,50 @@
           ]
         }
       ],
-      "semaphores": []
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
     },
     {
       "id": 1,
-      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
-      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
-      "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -399,23 +341,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -433,34 +369,28 @@
                 0
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 0
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -477,23 +407,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "wait",
@@ -523,34 +447,28 @@
                 1
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 1
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -567,23 +485,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -601,7 +513,8 @@
                 2
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 2
         }
       ],
       "channels": [
@@ -637,63 +550,50 @@
           ]
         }
       ],
-      "semaphores": []
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
     },
     {
       "id": 2,
-      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
-      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
-      "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -710,23 +610,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -744,34 +638,28 @@
                 0
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 0
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -799,23 +687,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -834,34 +716,28 @@
                 1
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 1
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -878,23 +754,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "wait",
@@ -922,7 +792,8 @@
                 2
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 2
         }
       ],
       "channels": [
@@ -958,63 +829,50 @@
           ]
         }
       ],
-      "semaphores": []
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
     },
     {
       "id": 3,
-      "input_chunks": "${DYNAMIC_INPUT_CHUNKS}",
-      "output_chunks": "${DYNAMIC_OUTPUT_CHUNKS}",
-      "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 3,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             },
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -1031,23 +889,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 0,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -1065,34 +917,28 @@
                 0
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 0
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -1109,23 +955,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 1,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -1143,34 +983,28 @@
                 1
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 1
         },
         {
-          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
               "src_buff": [
                 {
                   "type": "i",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "buffer_id": 0,
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
-              "channel_type": "memory",
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              "channel_type": "memory"
             },
             {
               "name": "nop"
@@ -1199,23 +1033,17 @@
               "src_buff": [
                 {
                   "type": "s",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${src_chunk_index}",
-                  "dynamic_size": "${src_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
               ],
               "dst_buff": [
                 {
                   "type": "o",
-                  "index": 2,
-                  "size": 1,
-                  "dynamic_index": "${dst_chunk_index}",
-                  "dynamic_size": "${dst_chunk_size}"
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
                 }
-              ],
-              "template": true,
-              "dynamic_threadblock_count": "${tb_count}"
+              ]
             }
           ],
           "channels": [
@@ -1235,7 +1063,8 @@
                 2
               ]
             }
-          ]
+          ],
+          "dynamic_tbgroup_id": 2
         }
       ],
       "channels": [
@@ -1271,7 +1100,10 @@
           ]
         }
       ],
-      "semaphores": []
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
     }
   ],
   "num_threads_per_block": 1024,
