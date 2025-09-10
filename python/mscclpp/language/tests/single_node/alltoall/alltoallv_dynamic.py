@@ -11,8 +11,10 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
     AllToAllV with placeholder variables for runtime chunk size determination
     This creates a template that can be instantiated with actual sizes at runtime
     """
-    chunksperloop = 1
-    collective = AllToAll(gpu_size, chunksperloop, True)
+    blockSize = 32768
+    maxThreadBlocks = 32
+    # TODO: Support new AllToAllv in DSL
+    collective = AllToAllv(gpu_size, blockSize, maxThreadBlocks, True)
     
     with CollectiveProgram(
         name,
@@ -32,7 +34,7 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
         for gpu in range(gpu_size):
             src_rank_id = gpu
             # Use maximum possible scratch buffer size for template
-            scratch_buffer[src_rank_id] = Buffer(src_rank_id, gpu_size - 1)
+            scratch_buffer[src_rank_id] = VariableBuffer(src_rank_id, gpu_size - 1)
             
             for peer in range(gpu_size):
                 dst_rank_id = peer
@@ -43,14 +45,14 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
         for gpu in range(gpu_size):
             src_rank_id = gpu
             src_rank = Rank(src_rank_id)
-            input_buffer = src_rank.get_input_buffer()
+            input_buffer = src_rank.get_variable_input_buffer()
             
             # First, handle local copy for same rank data
-            output_buffer = src_rank.get_output_buffer()
+            output_buffer = src_rank.get_variable_output_buffer()
             src_rank.copy(
                 output_buffer[src_rank_id : src_rank_id + 1],
                 input_buffer[src_rank_id : src_rank_id + 1],
-                tb=0,
+                dynamic_tbgroup_id=0,
             )
             
             # Then send data to other ranks
@@ -64,9 +66,10 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
                     channels[dst_rank_id, src_rank_id].put(
                         scratch_buffer[dst_rank_id][remote_index : remote_index + 1],
                         input_buffer[dst_rank_id : dst_rank_id + 1],
-                        tb=tb,
+                        dynamic_tbgroup_id=tb,
                     )
-                    channels[dst_rank_id, src_rank_id].signal(tb=tb, data_sync=SyncType.before)
+                    # TODO: support dynamic_tbgroup_id in template json, assign signal to thread block id 0 of each thread block group (tbgroup)
+                    channels[dst_rank_id, src_rank_id].signal(dynamic_tbgroup_id=tb, data_sync=SyncType.before)
 
         # Phase 2: Each rank receives data from its scratch buffer
         for gpu in range(gpu_size):
@@ -83,14 +86,16 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
                     tb = index
                     
                     # Wait for data to arrive from the source rank
-                    channels[dst_rank_id, src_rank_id].wait(tb=tb, data_sync=SyncType.after)
+                    # TODO: Verify if the order of dst_rank_id, src_rank_id is correct
+                    # TODO: support dynamic_tbgroup_id in template json, assign wait to thread block id 0 of each thread block group (tbgroup)
+                    channels[dst_rank_id, src_rank_id].wait(dynamic_tbgroup_id=tb, data_sync=SyncType.after)
                     
                     # Copy from local scratch buffer to output buffer
                     # Both buffers are on the same rank (dst_rank_id)
                     dst_rank.copy(
                         output_buffer[src_rank_id : src_rank_id + 1],
                         scratch_buffer[dst_rank_id][index : index + 1],
-                        tb=tb,
+                        dynamic_tbgroup_id=tb,
                     )
 
         # Get the JSON and modify it to add dynamic support
@@ -121,13 +126,6 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
                         for op in tb["ops"]:
                             if "src_buff" in op or "dst_buff" in op:
                                 op["template"] = True
-                                op["dynamic_size"] = "${chunk_size}"
-                                op["dynamic_step"] = "${step_id}"
-                                
-                                # Add additional template variables for comprehensive dynamic support
-                                op["dynamic_input_chunk"] = "${chunk_id}"
-                                op["dynamic_output_chunk"] = "${chunk_id}"
-                                op["dynamic_peer"] = "${peer_rank}"
                                 op["dynamic_threadblock_count"] = "${tb_count}"
                                 
                                 # For buffer references, add dynamic chunk mapping
@@ -140,39 +138,6 @@ def alltoallv_variable_example(name, gpu_size, num_threads_per_block, min_messag
                                     for buff in op["dst_buff"]:
                                         buff["dynamic_index"] = "${dst_chunk_index}"
                                         buff["dynamic_size"] = "${dst_chunk_size}"
-            
-            # Also add operation templates at the GPU level (for compatibility with different JSON structures)
-            if "operations" not in gpu_data:
-                gpu_data["operations"] = []
-            
-            # Add a comprehensive operation template
-            operation_template = {
-                "operation_template": {
-                    "type": "${operation_type}",  # put, get, copy, etc.
-                    "inputChunk": "${chunk_id}",
-                    "outputChunk": "${chunk_id}",
-                    "peer": "${peer_rank}",
-                    "channel": "${channel_id}",
-                    "threadblock_count": "${tb_count}",
-                    "size": "${chunk_size}",
-                    "step": "${step_id}",
-                    "src_buff": [
-                        {
-                            "type": "${src_buffer_type}",
-                            "index": "${src_chunk_index}",
-                            "size": "${src_chunk_size}"
-                        }
-                    ],
-                    "dst_buff": [
-                        {
-                            "type": "${dst_buffer_type}",
-                            "index": "${dst_chunk_index}",
-                            "size": "${dst_chunk_size}"
-                        }
-                    ]
-                }
-            }
-            gpu_data["operations"].append(operation_template)
         
         # Output the modified JSON
         print(json.dumps(plan_dict, indent=2))

@@ -12,7 +12,7 @@
       "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "id": 0,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
@@ -35,11 +35,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -64,11 +59,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -102,11 +92,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -142,7 +127,7 @@
           ]
         },
         {
-          "id": 1,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -166,11 +151,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -204,11 +184,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -230,7 +205,7 @@
           ]
         },
         {
-          "id": 2,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -254,11 +229,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -292,11 +262,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -351,35 +316,7 @@
           ]
         }
       ],
-      "semaphores": [],
-      "operations": [
-        {
-          "operation_template": {
-            "type": "${operation_type}",
-            "inputChunk": "${chunk_id}",
-            "outputChunk": "${chunk_id}",
-            "peer": "${peer_rank}",
-            "channel": "${channel_id}",
-            "threadblock_count": "${tb_count}",
-            "size": "${chunk_size}",
-            "step": "${step_id}",
-            "src_buff": [
-              {
-                "type": "${src_buffer_type}",
-                "index": "${src_chunk_index}",
-                "size": "${src_chunk_size}"
-              }
-            ],
-            "dst_buff": [
-              {
-                "type": "${dst_buffer_type}",
-                "index": "${dst_chunk_index}",
-                "size": "${dst_chunk_size}"
-              }
-            ]
-          }
-        }
-      ]
+      "semaphores": []
     },
     {
       "id": 1,
@@ -388,7 +325,7 @@
       "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "id": 0,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
@@ -411,11 +348,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -440,11 +372,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -488,11 +415,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -514,7 +436,7 @@
           ]
         },
         {
-          "id": 1,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -538,11 +460,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -576,11 +493,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -614,7 +526,7 @@
           ]
         },
         {
-          "id": 2,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -638,11 +550,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -676,11 +583,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -735,35 +637,7 @@
           ]
         }
       ],
-      "semaphores": [],
-      "operations": [
-        {
-          "operation_template": {
-            "type": "${operation_type}",
-            "inputChunk": "${chunk_id}",
-            "outputChunk": "${chunk_id}",
-            "peer": "${peer_rank}",
-            "channel": "${channel_id}",
-            "threadblock_count": "${tb_count}",
-            "size": "${chunk_size}",
-            "step": "${step_id}",
-            "src_buff": [
-              {
-                "type": "${src_buffer_type}",
-                "index": "${src_chunk_index}",
-                "size": "${src_chunk_size}"
-              }
-            ],
-            "dst_buff": [
-              {
-                "type": "${dst_buffer_type}",
-                "index": "${dst_chunk_index}",
-                "size": "${dst_chunk_size}"
-              }
-            ]
-          }
-        }
-      ]
+      "semaphores": []
     },
     {
       "id": 2,
@@ -772,7 +646,7 @@
       "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "id": 0,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
@@ -795,11 +669,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -824,11 +693,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -862,11 +726,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -888,7 +747,7 @@
           ]
         },
         {
-          "id": 1,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -912,11 +771,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -961,11 +815,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -988,7 +837,7 @@
           ]
         },
         {
-          "id": 2,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -1012,11 +861,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1050,11 +894,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1119,35 +958,7 @@
           ]
         }
       ],
-      "semaphores": [],
-      "operations": [
-        {
-          "operation_template": {
-            "type": "${operation_type}",
-            "inputChunk": "${chunk_id}",
-            "outputChunk": "${chunk_id}",
-            "peer": "${peer_rank}",
-            "channel": "${channel_id}",
-            "threadblock_count": "${tb_count}",
-            "size": "${chunk_size}",
-            "step": "${step_id}",
-            "src_buff": [
-              {
-                "type": "${src_buffer_type}",
-                "index": "${src_chunk_index}",
-                "size": "${src_chunk_size}"
-              }
-            ],
-            "dst_buff": [
-              {
-                "type": "${dst_buffer_type}",
-                "index": "${dst_chunk_index}",
-                "size": "${dst_chunk_size}"
-              }
-            ]
-          }
-        }
-      ]
+      "semaphores": []
     },
     {
       "id": 3,
@@ -1156,7 +967,7 @@
       "scratch_chunks": "${DYNAMIC_SCRATCH_CHUNKS}",
       "threadblocks": [
         {
-          "id": 0,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "copy",
@@ -1179,11 +990,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1208,11 +1014,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1246,11 +1047,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -1272,7 +1068,7 @@
           ]
         },
         {
-          "id": 1,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -1296,11 +1092,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1334,11 +1125,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -1360,7 +1146,7 @@
           ]
         },
         {
-          "id": 2,
+          "group_id": "${dynamic_tbgroup_id}",
           "ops": [
             {
               "name": "put",
@@ -1384,11 +1170,6 @@
               ],
               "channel_type": "memory",
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             },
             {
@@ -1434,11 +1215,6 @@
                 }
               ],
               "template": true,
-              "dynamic_size": "${chunk_size}",
-              "dynamic_step": "${step_id}",
-              "dynamic_input_chunk": "${chunk_id}",
-              "dynamic_output_chunk": "${chunk_id}",
-              "dynamic_peer": "${peer_rank}",
               "dynamic_threadblock_count": "${tb_count}"
             }
           ],
@@ -1495,35 +1271,7 @@
           ]
         }
       ],
-      "semaphores": [],
-      "operations": [
-        {
-          "operation_template": {
-            "type": "${operation_type}",
-            "inputChunk": "${chunk_id}",
-            "outputChunk": "${chunk_id}",
-            "peer": "${peer_rank}",
-            "channel": "${channel_id}",
-            "threadblock_count": "${tb_count}",
-            "size": "${chunk_size}",
-            "step": "${step_id}",
-            "src_buff": [
-              {
-                "type": "${src_buffer_type}",
-                "index": "${src_chunk_index}",
-                "size": "${src_chunk_size}"
-              }
-            ],
-            "dst_buff": [
-              {
-                "type": "${dst_buffer_type}",
-                "index": "${dst_chunk_index}",
-                "size": "${dst_chunk_size}"
-              }
-            ]
-          }
-        }
-      ]
+      "semaphores": []
     }
   ],
   "num_threads_per_block": 1024,
