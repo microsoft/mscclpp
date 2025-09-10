@@ -160,11 +160,9 @@ class CollectiveProgram:
         self.op_dep_dag.add_tbg_operation(operations)
 
     def post_process_operations(self):
-        #self.op_dep_dag.add_semaphore_dependency()
+        self.op_dep_dag.add_semaphore_dependency()
         list_op = self.op_dep_dag.get_execution_order()
-        print(f"execution order operation: {list_op}")
         list_op = self.buffers_access.process_operations(list_op)
-        print(f"adding sync operations: {list_op}")
         for op in list_op:
             self.gpus[op.rank].add_operation(op.threadblock, op)
 

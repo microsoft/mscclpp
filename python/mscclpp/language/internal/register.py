@@ -18,5 +18,5 @@ class SemaphoreRegister:
         SemaphoreRegister.semaphores[(semaphore.rank, semaphore.id)] = semaphore
 
     @staticmethod
-    def get_channel(rank: int, semaphore_id: int):
+    def get_semaphore(rank: int, semaphore_id: int):
         return SemaphoreRegister.semaphores.get((rank, semaphore_id))

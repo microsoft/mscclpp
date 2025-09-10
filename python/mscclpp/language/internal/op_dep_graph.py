@@ -22,6 +22,7 @@ class OperationDependencyGraph:
 
         self.barrier_nodes: Dict[Tuple[int, int], List[OperationDependencyGraph.Node]] = {}
         self.tb_barriers: Dict[Tuple[int, int, int], int] = {}
+        self.node_list = []
     
     def add_operation(self, operation, agg_node = None):
         """
@@ -52,6 +53,7 @@ class OperationDependencyGraph:
             agg_node.add_node(node)
             node = agg_node
 
+        self.node_list.append(node)
         if (rank, threadblock) not in self.last_node:
             self.last_node[(rank, threadblock)] = node
             if node.get_input() == 0:
@@ -107,18 +109,25 @@ class OperationDependencyGraph:
         sem_acq = {}
         sem_val = {}
 
+        self.reset()
+
         def compute_sem_op(sem_op, node):
-             for id in node.operaion.semaphore_ids:
-                if (node.operaion.rank, id) not in sem_op:
-                    sem_op[(node.operaion.rank, id)] = []
-                    sem_val[(node.operaion.rank, id)] = SemaphoreRegister[(node.operaion.rank, id)].initial_value
-                sem_op[(node.operaion.rank, id)].append(node)
+             for id in node.operation.semaphore_ids:
+                if (node.operation.rank, id) not in sem_op:
+                    sem_op[(node.operation.rank, id)] = []
+                    sem_val[(node.operation.rank, id)] = SemaphoreRegister.get_semaphore(node.operation.rank, id).initial_value
+                sem_op[(node.operation.rank, id)].append(node)
 
         def process_node(node):
             for next_node in node.next_nodes:
                 next_node.add_reach()
                 if next_node.get_reach() == next_node.get_input():
-                    queue.put(next_node)
+                    if isinstance(next_node, self.Node) and next_node.agg_node is not None:
+                        for sub_node in next_node.agg_node.nodes:
+                            queue.put(sub_node)
+                    else:
+                       queue.put(next_node) 
+
 
         for node in self.root_nodes:
             queue.put(node)
@@ -136,35 +145,61 @@ class OperationDependencyGraph:
             if not sem_rel and not sem_acq:
                 break
             else:
-                if sem_rel.keys() != sem_acq.keys():
-                    raise RuntimeError(f"Undefined Semaphore Behaviour.")
-                else:
-                    for key, sem_rel_nodes in sem_rel.keys():
-                        if len(sem_acq[key]) > 1 or sem_val[key] != sem_rel[key] - sem_acq[key]:
+                removed_keys = []
+                for key in sem_acq.keys():
+                    if key in sem_rel:
+                        if len(sem_acq[key]) > 1 or sem_val[key] != len(sem_rel[key]) - len(sem_acq[key]):
                             raise RuntimeError(f"Undefined Behaviour Semaphore Id {key[1]}.")
                         else:
                             sem_acq_node = sem_acq[key][0]
+                            sem_val[key] = 0
+                            if sem_acq_node in self.root_nodes:
+                                self.root_nodes.remove(sem_acq_node)
                             process_node(sem_acq_node)
-                            for sem_rel_node in sem_rel_nodes:
-                                sem_rel_nodes.next_nodes.append(sem_acq_node)
+                            for sem_rel_node in sem_rel[key]:
+                                process_node(sem_rel_node)
+                                sem_rel_node.next_nodes.append(sem_acq_node)
+                                sem_acq_node.operation.add_tb_sync(sem_rel_node.operation.threadblock)
                                 sem_acq_node.previous_nodes.append(sem_rel_node)
                                 sem_acq_node.add_input()
-                                process_node(sem_rel_node)
+                        
+                        removed_keys.append(key)
+                
+                for key in removed_keys:
+                    sem_rel.pop(key)
+                    sem_acq.pop(key)
+
+        if len(sem_rel.keys()) > 0 or len(sem_acq.keys()):
+            raise RuntimeError(f"Undefined Semaphore Behaviour.")
     
     def reset(self):
+        for node in self.node_list:
+            node.reset()
+
+    def print(self):
+        """
+        Returns the order of operations in the DAG.
+        """
+        self.reset()
+        self.check()
+        
         queue = Queue()
-        visited = set()
         for node in self.root_nodes:
-            visited.add(node)
             queue.put(node)
 
         while not queue.empty():
             node = queue.get()
-            node.reset()
+            print(f"node {node.print()}")
             for next_node in node.next_nodes:
-                if next_node not in visited:
-                    visited.add(next_node)
-                    queue.put(next_node)
+                next_node.add_reach()
+                print(f"next_node {next_node.print()}")
+                if next_node.get_reach() == next_node.get_input():
+                    if isinstance(next_node, self.Node) and next_node.agg_node is not None:
+                        for sub_node in next_node.agg_node.nodes:
+                            queue.put(sub_node)
+                    else:
+                       queue.put(next_node) 
+            print()
 
     def check(self):
         """
@@ -265,6 +300,9 @@ class OperationDependencyGraph:
                  self.agg_node.reset()
             else:
                 self.reach = 0
+
+        def print(self):
+            return f"rank {self.operation.rank} tb {self.operation.threadblock} {self.operation.name}"
             
 
     class AggregateNode(BaseNode):
@@ -281,3 +319,6 @@ class OperationDependencyGraph:
             for node in self.nodes:
                 operations.append(node)
             return operations
+
+        def print(self):
+            return f"rank {self.operations[0].rank} tb {self.operations[0].threadblock} {self.operations[0].name}"

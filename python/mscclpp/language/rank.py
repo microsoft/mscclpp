@@ -422,7 +422,7 @@ class Semaphore:
         Example:
             >>> sem.acquire(tb=0, data_sync=SyncType.before)
         """
-        op = SemaphoreAcquireOperation([self.id], data_sync)
+        op = SemaphoreAcquireOperation(self.rank, tb, [self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
 
     def release(self, tb: int, data_sync: SyncType = SyncType.both):
@@ -440,5 +440,5 @@ class Semaphore:
         Example:
             >>> sem.release(tb=0, data_sync=SyncType.after)
         """
-        op = SemaphoreReleaseOperation([self.id], data_sync)
+        op = SemaphoreReleaseOperation(self.rank, tb, [self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)

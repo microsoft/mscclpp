@@ -115,21 +115,6 @@ class RemoteChunk(LocalChunk):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
-@dataclass
-class ThreadBlockGroupInfo:
-    tb_id: int
-    tbg_size: int
-
-    def to_dict(self):
-        return {"tb_id": self.tb_id, "tbg_size": self.tbg_size}
-
-    def start_offset(self, size):
-        return (size / self.tbg_size) * self.tb_id
-
-    def end_offset(self, size):
-        return (size / self.tbg_size) * (self.tb_id + 1)
-
-
 class SyncOperation(BaseOperation):
     def __init__(self, rank: int, threadblock: int):
         super().__init__(rank, threadblock, Instruction.nop)
@@ -159,7 +144,7 @@ class CopyOperation(BaseOperation):
         threadblock: int,
         src_buff: List[LocalChunk],
         dst_buff: List[LocalChunk],
-        tbg: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         from_packet: bool = False,
         to_packet: bool = False,
     ):
@@ -186,8 +171,8 @@ class CopyOperation(BaseOperation):
                         self.threadblock,
                         self.id,
                         order_id,
-                        chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                        chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                        chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                         chunk.type,
                         DataAccessType.read,
                         self.tbg
@@ -201,8 +186,8 @@ class CopyOperation(BaseOperation):
                         self.threadblock,
                         self.id,
                         order_id,
-                        chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                        chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                        chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                         chunk.type,
                         DataAccessType.write,
                         self.tbg
@@ -234,6 +219,10 @@ class SemaphoreAcquireOperation(BaseOperation):
         super().__init__(rank, threadblock, Instruction.sem_acquire)
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
+        self.tb_sync = set()
+
+    def add_tb_sync(self, tb):
+        self.tb_sync.add(tb)
 
     def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
@@ -506,8 +495,8 @@ class GetOperation(BaseOperation):
                     self.threadblock,
                     self.id,
                     order_id,
-                    chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                    chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                    chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                    chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                     chunk.type,
                     DataAccessType.write,
                     self.tbg
@@ -563,7 +552,7 @@ class PutOperation(BaseOperation):
         dst_buff: List[RemoteChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
-        tbg: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         from_packet: bool = False,
         to_packet: bool = False,
         with_signal: bool = False,
@@ -605,8 +594,8 @@ class PutOperation(BaseOperation):
                         self.threadblock,
                         self.id,
                         order_id,
-                        chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                        chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                        chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                         chunk.type,
                         DataAccessType.read,
                         self.tbg
@@ -678,7 +667,7 @@ class ReduceOperation(BaseOperation):
         put_channel_ids: List[int] = None,
         channel_type: ChannelType = ChannelType.none,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
-        tbg: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         packet: bool = False,
     ):
         remote_src_buff = remote_src_buff if remote_src_buff is not None else []
@@ -725,8 +714,8 @@ class ReduceOperation(BaseOperation):
                         self.threadblock,
                         self.id,
                         order_id,
-                        chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                        chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                        chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                         chunk.type,
                         DataAccessType.read,
                         self.tbg
@@ -739,8 +728,8 @@ class ReduceOperation(BaseOperation):
                     self.threadblock,
                     self.id,
                     order_id,
-                    chunk.index + self.tbg.start_offset(chunk.size, self.threadblock) if self.tbg is not None else 0,
-                    chunk.index + self.tbg.end_offset(chunk.size, self.threadblock) if self.tbg is not None else chunk.size,
+                    chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                    chunk.index + self.tbg.end_offset(self.threadblock, chunk.size) if self.tbg is not None else chunk.size,
                     chunk.type,
                     DataAccessType.write,
                     self.tbg

@@ -29,6 +29,8 @@ class BuffersAccess:
                 self.track_sync[operation.rank, operation.threadblock] = i
                 if operation.name == Instruction.barrier:
                     self.update_barrier(operation, i)
+            if operation.name == Instruction.sem_acquire:
+                self.update_semaphore(operation, i)
             else:
                 if operation.name == Instruction.pipeline:
                     pipeline_buffer_access = BuffersAccess()
@@ -50,6 +52,11 @@ class BuffersAccess:
             if operation.threadblock != tb:
                 self.track_barrier[operation.rank, operation.threadblock, tb] = order_id
                 self.track_sync[operation.rank, operation.threadblock] = order_id
+
+    def update_semaphore(self, operation, order_id):
+         for tb in operation.tb_sync:
+            if operation.threadblock != tb:
+                self.track_barrier[operation.rank, operation.threadblock, tb] = order_id
 
     def compute_data_access(self, data_access: DataAccess) -> bool:
         intervals = self.rank_intervals[data_access.rank]
@@ -114,10 +121,11 @@ class BuffersAccess:
                     if not tb[2]:
                         raise RuntimeError("Operations order not defined.")
                     conflict_tb.add(tb[0])
-            for tb in conflict_tb:
-                op = BarrierOperation(rank, tb, conflict_tb)
-                self.update_barrier(op, order_id)
-                fix_operations.append(op)
+            if len(conflict_tb) > 1:
+                for tb in conflict_tb:
+                    op = BarrierOperation(rank, tb, conflict_tb)
+                    self.update_barrier(op, order_id)
+                    fix_operations.append(op)
 
         return fix_operations     
 
