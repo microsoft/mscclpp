@@ -1245,6 +1245,13 @@ NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, n
   return ncclInternalError;
 }
 
+NCCL_API ncclResult_t  ncclAllToAllv(const void *, const size_t [],
+    const size_t [], void *, const size_t [],
+    const size_t [], ncclDataType_t , ncclComm_t , hipStream_t ) {
+  WARN("ncclAllToAllv is currently unavailable");
+  return ncclInternalError;
+}
+
 NCCL_API ncclResult_t ncclGroupStart() {
   // TODO: Do nothing for now
   WARN("ncclGroupStart is currently unavailable, return success");
