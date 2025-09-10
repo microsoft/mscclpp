@@ -33,8 +33,6 @@ add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
 
 # Dynamic AllToAllv tests
-add_test_executable(dynamic_alltoallv_test dynamic_alltoallv_test.cpp)
-add_test_executable(dynamic_alltoallv_simple_example dynamic_alltoallv_simple_example.cpp)
 add_test_executable(dynamic_alltoallv_mscclpp_test dynamic_alltoallv_mscclpp_test.cpp)
 
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
