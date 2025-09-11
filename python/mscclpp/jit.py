@@ -2,8 +2,25 @@
 # Licensed under the MIT License.
 
 
+import json
+from pathlib import Path
+from typing import Any
+from blake3 import blake3
+import inspect
+import os
+
 from python.mscclpp.language.program import CollectiveProgram
 
+from ._mscclpp import __version__ as mscclpp_version
+
+
+def _stable_json_bytes(obj: Any) -> bytes:
+    return json.dumps(
+        obj,
+        sort_keys=True,
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
 
 def compile(
     algo,
@@ -50,5 +67,30 @@ def compile(
         max_msg_size,
         **kwargs,
     )
-    prog.to_json()
-    pass
+    source = inspect.getsource(algo)
+
+    source_hash = blake3(source.encode("utf-8")).hexdigest()
+    plan_id = blake3(
+        _stable_json_bytes(
+            {
+                "version": mscclpp_version,
+                "algo_name": name,
+                "collective": collective,
+                "tags": tags,
+                "source_hash": source_hash,
+                "envs": {
+                    "nranks_per_node": nranks_per_node,
+                    "world_size": world_size,
+                    "instances": instances,
+                    "protocol": protocol,
+                },
+            }
+        )
+    ).hexdigest()
+    plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp")
+    os.makedirs(plan_dir, exist_ok=True)
+    filename = f"{plan_id}".json
+    full_path = os.path.join(plan_dir, filename)
+    if not os.path.exists(full_path):
+        with open(f"/{plan_dir}/{filename}", "w") as f:
+            json.dump(prog.to_json(), f, separators=(",", ":"), ensure_ascii=False)
