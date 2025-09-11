@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "api.h"
+#include "connection_kernels.hpp"
 #include "context.hpp"
 #include "debug.h"
 #include "endpoint.hpp"
@@ -141,6 +142,17 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
 #endif
 }
 
+void CudaIpcConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value) {
+  validateTransport(dst, remoteTransport());
+
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
+  void* args[] = {reinterpret_cast<void**>(&dstPtr), &value};
+
+  stream_->launch(connectionAtomicAddKernelFunc(), dim3(1), dim3(1), args, 0);
+
+  INFO(MSCCLPP_P2P, "CudaIpcConnection atomicAdd: value %lu to %p", value, dstPtr);
+}
+
 void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -242,6 +254,19 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+}
+
+void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value) {
+  validateTransport(dst, remoteTransport());
+  auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+  }
+
+  auto dstMrInfo = dstTransportInfo.ibMrInfo;
+  qp_.lock()->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, value, /*signaled=*/true);
+  qp_.lock()->postSend();
+  INFO(MSCCLPP_NET, "IBConnection atomicAdd: value %lu to %p", value, (uint8_t*)dstMrInfo.addr + dstOffset);
 }
 
 void IBConnection::flush(int64_t timeoutUsec) {
@@ -407,6 +432,11 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+}
+
+void EthernetConnection::atomicAdd([[maybe_unused]] RegisteredMemory dst, [[maybe_unused]] uint64_t dstOffset,
+                                   [[maybe_unused]] uint64_t value) {
+  throw mscclpp::Error("EthernetConnection does not support atomicAdd", ErrorCode::InvalidUsage);
 }
 
 void EthernetConnection::flush(int64_t) {
