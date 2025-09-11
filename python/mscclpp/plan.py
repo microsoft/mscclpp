@@ -11,7 +11,7 @@ class PlanHandle:
     id: str # Unique identifier for the plan
     name: str # Name of the plan
     collective: str # Type of collective operation
-    tags: dict # Additional tags or metadata
+    tags: set # Additional tags or metadata
     constraints: dict # Constraints such as min/max message size, nranks_per_node, world_size
     executionPlan: ExecutionPlan # The actual ExecutionPlan object
 
