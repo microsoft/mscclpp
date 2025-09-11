@@ -6,8 +6,12 @@
 #include <mscclpp/gpu_utils.hpp>
 
 static inline bool isCudaTeardownError(cudaError_t err) {
+#if defined(__HIP_PLATFORM_AMD__)
+  return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
+#else   // !defined(__HIP_PLATFORM_AMD__)
   return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
-         err == cudaErrorInvalidDevice;
+        err == cudaErrorInvalidDevice;
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 }
 
 static inline bool isCuTeardownError(CUresult r) {
