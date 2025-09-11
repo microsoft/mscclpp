@@ -5,17 +5,20 @@ from dataclasses import dataclass
 from typing import Callable, Dict
 from ._mscclpp import ExecutionPlan
 
+
 @dataclass(frozen=True)
 class PlanHandle:
     """A handle to a compiled MSCCL++ execution plan."""
-    id: str # Unique identifier for the plan
-    name: str # Name of the plan
-    collective: str # Type of collective operation
-    tags: set # Additional tags or metadata
-    constraints: dict # Constraints such as min/max message size, nranks_per_node, world_size
-    executionPlan: ExecutionPlan # The actual ExecutionPlan object
 
-class Registry():
+    id: str  # Unique identifier for the plan
+    name: str  # Name of the plan
+    collective: str  # Type of collective operation
+    tags: set  # Additional tags or metadata
+    constraints: dict  # Constraints such as min/max message size, nranks_per_node, world_size
+    executionPlan: ExecutionPlan  # The actual ExecutionPlan object
+
+
+class Registry:
     _instance = None
     _plans = {}
 
@@ -30,6 +33,7 @@ class Registry():
     def get(cls, plan_id: str) -> PlanHandle:
         return cls._plans.get(plan_id)
 
+
 @dataclass(frozen=True)
 class Request:
     collective: str
@@ -40,8 +44,10 @@ class Request:
     output_buff: int
     hints: dict
 
+
 Selector = Callable[[Dict[str, PlanHandle], Request], PlanHandle | str]
 _selector: Selector = None
+
 
 def set_selector(selector: Selector):
     """Set the global plan selector function.
@@ -52,6 +58,7 @@ def set_selector(selector: Selector):
     """
     global _selector
     _selector = selector
+
 
 def clear_selector():
     """Clear the global plan selector function."""

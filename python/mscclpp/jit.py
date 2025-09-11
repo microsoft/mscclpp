@@ -13,10 +13,12 @@ import os
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.plan import PlanHandle, Registry
 
-from ._mscclpp import ExecutionPlan, version 
+from ._mscclpp import ExecutionPlan, version
 
 
 _version = version()
+
+
 def _stable_json_bytes(obj: Any) -> bytes:
     return json.dumps(
         obj,
@@ -38,6 +40,7 @@ class AlgoSpec:
     min_message_size: int
     max_message_size: int
     tags: set
+
 
 def compile(
     algo,
