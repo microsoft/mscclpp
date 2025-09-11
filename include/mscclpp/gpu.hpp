@@ -47,9 +47,9 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
+#endif  // CUDA_SUCCESS
 #define CUDA_ERROR_DEINITIALIZED hipErrorDeinitialized
 #define CUDA_ERROR_CONTEXT_IS_DESTROYED hipErrorContextIsDestroyed
-#endif  // CUDA_SUCCESS
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
 #define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
