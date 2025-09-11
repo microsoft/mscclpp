@@ -9,9 +9,10 @@ from blake3 import blake3
 import inspect
 import os
 
-from python.mscclpp.language.program import CollectiveProgram
+from mscclpp.language.program import CollectiveProgram
+from mscclpp.plan import PlanHandle, Registry
 
-from ._mscclpp import __version__ as mscclpp_version
+from ._mscclpp import ExecutionPlan, __version__ as mscclpp_version
 
 
 def _stable_json_bytes(obj: Any) -> bytes:
@@ -22,10 +23,12 @@ def _stable_json_bytes(obj: Any) -> bytes:
         separators=(",", ":"),
     ).encode("utf-8")
 
+
 def compile(
     algo,
     name: str,
     collective: str,
+    rank: int,
     nranks_per_node: int,
     world_size: int,
     instances: int,
@@ -35,12 +38,13 @@ def compile(
     max_msg_size: int = 2**64 - 1,
     tags: dict = {},
     **kwargs,
-):
+) -> PlanHandle:
     """Compile a MSCCL++ program from a high-level algorithm description.
     Args:
         algo: The high-level algorithm description (e.g., a function or class).
         name (str): The name of the program.
         collective (str): The collective operation type (e.g., "allreduce").
+        rank (int): The rank of the current process.
         nranks_per_node (int): Number of ranks per node.
         world_size (int): Total number of ranks in the program.
         instances (int): Number of instances to replicate.
@@ -87,10 +91,28 @@ def compile(
             }
         )
     ).hexdigest()
+    plan_handel = Registry.get(plan_id)
+    if plan_handel is not None:
+        return plan_handel
+
     plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp")
     os.makedirs(plan_dir, exist_ok=True)
     filename = f"{plan_id}".json
-    full_path = os.path.join(plan_dir, filename)
-    if not os.path.exists(full_path):
+    plan_path = os.path.join(plan_dir, filename)
+    if not os.path.exists(plan_path):
         with open(f"/{plan_dir}/{filename}", "w") as f:
             json.dump(prog.to_json(), f, separators=(",", ":"), ensure_ascii=False)
+    execution_plan = ExecutionPlan(plan_path, rank)
+    return PlanHandle(
+        id=plan_id,
+        name=name,
+        collective=collective,
+        tags=tags.keys(),
+        constraints={
+            "min_msg_size": min_msg_size,
+            "max_msg_size": max_msg_size,
+            "nranks_per_node": nranks_per_node,
+            "world_size": world_size,
+        },
+        executionPlan=execution_plan,
+    )
