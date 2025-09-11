@@ -5,13 +5,50 @@
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
-namespace mscclpp {
-
-AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeRelaxed) {
-  MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode_));
+static inline bool isCudaTeardownError(cudaError_t err) {
+  return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
+         err == cudaErrorInvalidDevice;
 }
 
-AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() { (void)cudaThreadExchangeStreamCaptureMode(&mode_); }
+static inline bool isCuTeardownError(CUresult r) {
+  return r == CUDA_ERROR_DEINITIALIZED || r == CUDA_ERROR_CONTEXT_IS_DESTROYED;
+}
+
+#define MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cmd) \
+  do {                                         \
+    cudaError_t __e = cmd;                     \
+    if (isCudaTeardownError(__e)) {            \
+      (void)cudaGetLastError();                \
+    } else {                                   \
+      MSCCLPP_CUDATHROW(__e);                  \
+    }                                          \
+  } while (false)
+
+#define MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cmd) \
+  do {                                       \
+    CUresult __e = cmd;                      \
+    if (!isCuTeardownError(__e)) {           \
+      MSCCLPP_CUTHROW(__e);                  \
+    }                                        \
+  } while (false)
+
+namespace mscclpp {
+
+AvoidCudaGraphCaptureGuard::AvoidCudaGraphCaptureGuard() : mode_(cudaStreamCaptureModeRelaxed), active_(true) {
+  cudaError_t res = cudaThreadExchangeStreamCaptureMode(&mode_);
+  if (isCudaTeardownError(res)) {
+    // Runtime is going away; just mark inactive so destructor skips restoring.
+    active_ = false;
+    (void)cudaGetLastError();
+  } else {
+    MSCCLPP_CUDATHROW(res);
+  }
+}
+
+AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() {
+  if (!active_) return;
+  (void)cudaThreadExchangeStreamCaptureMode(&mode_);
+}
 
 CudaStreamWithFlags::CudaStreamWithFlags() : stream_(nullptr) { MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_)); }
 
@@ -185,12 +222,12 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
 
 void gpuFree(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaFree(ptr));
+  MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaFree(ptr));
 }
 
 void gpuFreeHost(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
-  MSCCLPP_CUDATHROW(cudaFreeHost(ptr));
+  MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaFreeHost(ptr));
 }
 
 #if (CUDA_NVLS_API_AVAILABLE)
@@ -198,12 +235,12 @@ void gpuFreePhysical(void* ptr) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   CUmemGenericAllocationHandle handle;
   size_t size = 0;
-  MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&handle, ptr));
-  MSCCLPP_CUTHROW(cuMemRelease(handle));
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
-  MSCCLPP_CUTHROW(cuMemUnmap((CUdeviceptr)ptr, size));
-  MSCCLPP_CUTHROW(cuMemRelease(handle));
-  MSCCLPP_CUTHROW(cuMemAddressFree((CUdeviceptr)ptr, size));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemRetainAllocationHandle(&handle, ptr));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemRelease(handle));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemGetAddressRange(NULL, &size, (CUdeviceptr)ptr));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemUnmap((CUdeviceptr)ptr, size));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemRelease(handle));
+  MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cuMemAddressFree((CUdeviceptr)ptr, size));
 }
 #endif  // CUDA_NVLS_API_AVAILABLE
 
