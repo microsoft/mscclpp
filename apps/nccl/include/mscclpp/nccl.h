@@ -476,6 +476,20 @@ ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, nc
                           cudaStream_t stream);
 ncclResult_t pncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclComm_t comm,
                            cudaStream_t stream);
+
+/*!All-To-Allv
+ * Device (i) sends sendcounts[j] of data from offset sdispls[j]
+ * to device (j). At the same time, device (i) receives recvcounts[j] of data
+ * from device (j) to be placed at rdispls[j].
+ * sendcounts, sdispls, recvcounts and rdispls are all measured in the units
+ * In-place operation will happen if sendbuff == recvbuff.
+ */
+ncclResult_t ncclAllToAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdispls[], void* recvbuff,
+                           const size_t recvcounts[], const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
+                           cudaStream_t stream);
+ncclResult_t pncclAllToAllv(const void* sendbuff, const size_t sendcounts[], const size_t sdispls[], void* recvbuff,
+                            const size_t recvcounts[], const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
+                            cudaStream_t stream);
 /*! @brief Opaque handle to MSCCL algorithm */
 typedef int mscclAlgoHandle_t;
 
