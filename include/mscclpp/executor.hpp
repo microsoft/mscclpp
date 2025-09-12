@@ -72,6 +72,8 @@ using ExecutionPlanSelector = std::function<std::shared_ptr<ExecutionPlanHandle>
 class ExecutionPlanRegistry {
  public:
   static std::shared_ptr<ExecutionPlanRegistry> getInstance();
+  ~ExecutionPlanRegistry();
+
   void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
   std::vector<std::shared_ptr<ExecutionPlanHandle>> getPlans(const std::string& collective);
   std::shared_ptr<ExecutionPlanHandle> select(const std::string& collective, int worldSize, int nRanksPerNode,

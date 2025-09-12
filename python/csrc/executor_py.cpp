@@ -4,6 +4,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/unordered_map.h>
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
@@ -20,6 +21,26 @@ void register_executor(nb::module_& m) {
       .value("bfloat16", DataType::BFLOAT16);
 
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
+
+  nb::class_<ExecutionRequest>(m, "ExecutionRequest")
+      .def_ro("world_size", &ExecutionRequest::worldSize)
+      .def_ro("n_ranks_per_node", &ExecutionRequest::nRanksPerNode)
+      .def_prop_ro(
+          "input_buffer",
+          [](const ExecutionRequest& self) -> uintptr_t { return reinterpret_cast<uintptr_t>(self.inputBuffer); })
+      .def_prop_ro(
+          "output_buffer",
+          [](const ExecutionRequest& self) -> uintptr_t { return reinterpret_cast<uintptr_t>(self.outputBuffer); })
+      .def_ro("message_size", &ExecutionRequest::messageSize)
+      .def_prop_ro("collective", [](ExecutionRequest& self) -> const std::string& { return self.collective; })
+      .def_prop_ro("hints", [](ExecutionRequest& self) { return self.hints; });
+
+    nb::class_<ExecutionPlanRegistry>(m, "ExecutionPlanRegistry")
+        .def_static("get_instance", &ExecutionPlanRegistry::getInstance)
+        .def("register_plan", &ExecutionPlanRegistry::registerPlan, nb::arg("planHandle"))
+        .def("get_plans", &ExecutionPlanRegistry::getPlans, nb::arg("collective"))
+        .def("set_selector", &ExecutionPlanRegistry::setSelector, nb::arg("selector"))
+        .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"));
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))

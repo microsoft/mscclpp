@@ -740,4 +740,13 @@ std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
   return impl_->select(request);
 }
 
+std::vector<std::shared_ptr<ExecutionPlanHandle>> ExecutionPlanRegistry::getPlans(const std::string& collective) {
+  if (impl_->planMap_.find(collective) != impl_->planMap_.end()) {
+    return impl_->planMap_[collective];
+  }
+  return {};
+}
+
+ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
+
 }  // namespace mscclpp
