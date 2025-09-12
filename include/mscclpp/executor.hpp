@@ -8,6 +8,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mscclpp {
 
@@ -40,6 +41,45 @@ class ExecutionPlan {
   std::shared_ptr<Impl> impl_;
 
   friend class Executor;
+};
+
+struct ExecutionPlanHandle {
+  struct Constraint {
+    int worldSize;
+    int nRanksPerNode;
+  };
+  std::string id;
+  Constraint constraint;
+  std::shared_ptr<ExecutionPlan> plan;
+  std::unordered_set<std::string> tags;
+};
+
+struct ExecutionRequest {
+  int worldSize;
+  int nRanksPerNode;
+  void* inputBuffer;
+  void* outputBuffer;
+  size_t messageSize;
+  std::string collective;
+  std::unordered_map<std::string, void*> hints;
+};
+
+using ExecutionPlanSelector = std::function<ExecutionPlanHandle(const ExecutionRequest& request)>;
+class ExecutionPlanRegistry {
+ public:
+  static std::shared_ptr<ExecutionPlanRegistry> getInstance();
+  void registerExecutionPlan(const std::shared_ptr<ExecutionPlan>& plan);
+  std::vector<ExecutionPlanHandle> get(const std::string& collective);
+  std::shared_ptr<ExecutionPlanHandle> select(const std::string& collective, int worldSize, int nRanksPerNode,
+                                              const void* sendBuffer, void* recvBuffer, size_t messageSize,
+                                              std::unordered_map<std::string, void*> hints);
+  void setSelector(ExecutionPlanSelector selector);
+  void setDefaultSelector(ExecutionPlanSelector selector);
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  ExecutionPlanRegistry() = default;
 };
 
 class Executor {
