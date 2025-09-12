@@ -11,12 +11,12 @@ import inspect
 import os
 
 from mscclpp.language.program import CollectiveProgram
-from mscclpp.plan import PlanHandle, Registry
 
-from ._mscclpp import ExecutionPlan, version
+from ._mscclpp import ExecutionPlan, ExecutionPlanHandle, ExecutionPlanRegistry, version
 
 
 _version = version()
+_execution_plan_registry = ExecutionPlanRegistry.get_instance()
 
 
 def _stable_json_bytes(obj: Any) -> bytes:
@@ -56,7 +56,7 @@ def compile(
     max_message_size: int = 2**64 - 1,
     tags: set = {},
     **kwargs,
-) -> PlanHandle:
+) -> ExecutionPlanHandle:
     """Compile a MSCCL++ program from a high-level algorithm description.
     Args:
         algo: The high-level algorithm description (e.g., a function or class).
@@ -114,7 +114,7 @@ def compile(
             }
         )
     ).hexdigest()
-    plan_handel = Registry.get(plan_id)
+    plan_handel = _execution_plan_registry.get(plan_id)
     if plan_handel is not None:
         return plan_handel
 
@@ -129,16 +129,15 @@ def compile(
         except Exception:
             Path(plan_path).unlink(missing_ok=True)
     execution_plan = ExecutionPlan(plan_path, rank)
-    return PlanHandle(
+    return ExecutionPlanHandle.create(
         id=plan_id,
         name=name,
-        collective=collective,
+        world_size=world_size,
+        nranks_per_node=nranks_per_node,
         tags=tags,
         constraints={
             "min_message_size": min_message_size,
             "max_message_size": max_message_size,
-            "nranks_per_node": nranks_per_node,
-            "world_size": world_size,
         },
-        executionPlan=execution_plan,
+        plan=execution_plan,
     )

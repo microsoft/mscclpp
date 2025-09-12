@@ -5,6 +5,7 @@
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/unordered_set.h>
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
@@ -35,12 +36,20 @@ void register_executor(nb::module_& m) {
       .def_prop_ro("collective", [](ExecutionRequest& self) -> const std::string& { return self.collective; })
       .def_prop_ro("hints", [](ExecutionRequest& self) { return self.hints; });
 
-    nb::class_<ExecutionPlanRegistry>(m, "ExecutionPlanRegistry")
-        .def_static("get_instance", &ExecutionPlanRegistry::getInstance)
-        .def("register_plan", &ExecutionPlanRegistry::registerPlan, nb::arg("planHandle"))
-        .def("get_plans", &ExecutionPlanRegistry::getPlans, nb::arg("collective"))
-        .def("set_selector", &ExecutionPlanRegistry::setSelector, nb::arg("selector"))
-        .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"));
+  nb::class_<ExecutionPlanHandle>(m, "ExecutionPlanHandle")
+      .def_ro("id", &ExecutionPlanHandle::id)
+      .def_ro("constraint", &ExecutionPlanHandle::constraint)
+      .def_ro("plan", &ExecutionPlanHandle::plan)
+      .def_ro("tags", &ExecutionPlanHandle::tags)
+      .def_static("create", &ExecutionPlanHandle::create, nb::arg("id"), nb::arg("world_size"),
+                  nb::arg("n_ranks_per_node"), nb::arg("plan"), nb::arg("tags") = std::unordered_set<std::string>{});
+
+  nb::class_<ExecutionPlanRegistry>(m, "ExecutionPlanRegistry")
+      .def_static("get_instance", &ExecutionPlanRegistry::getInstance)
+      .def("register_plan", &ExecutionPlanRegistry::registerPlan, nb::arg("planHandle"))
+      .def("get_plans", &ExecutionPlanRegistry::getPlans, nb::arg("collective"))
+      .def("set_selector", &ExecutionPlanRegistry::setSelector, nb::arg("selector"))
+      .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"));
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))
