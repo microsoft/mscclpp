@@ -44,10 +44,15 @@ void register_executor(nb::module_& m) {
       .def_static("create", &ExecutionPlanHandle::create, nb::arg("id"), nb::arg("world_size"),
                   nb::arg("n_ranks_per_node"), nb::arg("plan"), nb::arg("tags") = std::unordered_set<std::string>{});
 
+  nb::class_<ExecutionPlanHandle::Constraint>(m, "ExecutionPlanConstraint")
+      .def_ro("world_size", &ExecutionPlanHandle::Constraint::worldSize)
+      .def_ro("n_ranks_per_node", &ExecutionPlanHandle::Constraint::nRanksPerNode);
+
   nb::class_<ExecutionPlanRegistry>(m, "ExecutionPlanRegistry")
       .def_static("get_instance", &ExecutionPlanRegistry::getInstance)
       .def("register_plan", &ExecutionPlanRegistry::registerPlan, nb::arg("planHandle"))
       .def("get_plans", &ExecutionPlanRegistry::getPlans, nb::arg("collective"))
+      .def("get", &ExecutionPlanRegistry::get, nb::arg("id"))
       .def("set_selector", &ExecutionPlanRegistry::setSelector, nb::arg("selector"))
       .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"));
 

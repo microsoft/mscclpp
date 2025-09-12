@@ -714,6 +714,7 @@ void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPl
     throw Error("Cannot register a null plan", ErrorCode::ExecutorError);
   }
   planMap_[planHandle->plan->collective()].push_back(planHandle);
+  idMap_[planHandle->id] = planHandle;
 }
 
 std::shared_ptr<ExecutionPlanRegistry> ExecutionPlanRegistry::getInstance() {
@@ -745,6 +746,13 @@ std::vector<std::shared_ptr<ExecutionPlanHandle>> ExecutionPlanRegistry::getPlan
     return impl_->planMap_[collective];
   }
   return {};
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::get(const std::string& id) {
+  if (impl_->idMap_.find(id) != impl_->idMap_.end()) {
+    return impl_->idMap_[id];
+  }
+  return nullptr;
 }
 
 ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;

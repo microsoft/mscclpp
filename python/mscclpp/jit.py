@@ -135,9 +135,5 @@ def compile(
         world_size=world_size,
         nranks_per_node=nranks_per_node,
         tags=tags,
-        constraints={
-            "min_message_size": min_message_size,
-            "max_message_size": max_message_size,
-        },
         plan=execution_plan,
     )
