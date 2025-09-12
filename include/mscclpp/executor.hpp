@@ -52,27 +52,31 @@ struct ExecutionPlanHandle {
   Constraint constraint;
   std::shared_ptr<ExecutionPlan> plan;
   std::unordered_set<std::string> tags;
+
+  static std::shared_ptr<ExecutionPlanHandle> create(const std::string& id, int worldSize, int nRanksPerNode,
+                                                     std::shared_ptr<ExecutionPlan> plan,
+                                                     const std::unordered_set<std::string>& tags = {});
 };
 
 struct ExecutionRequest {
   int worldSize;
   int nRanksPerNode;
-  void* inputBuffer;
+  const void* inputBuffer;
   void* outputBuffer;
   size_t messageSize;
-  std::string collective;
-  std::unordered_map<std::string, void*> hints;
+  const std::string& collective;
+  const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
 };
 
-using ExecutionPlanSelector = std::function<ExecutionPlanHandle(const ExecutionRequest& request)>;
+using ExecutionPlanSelector = std::function<std::shared_ptr<ExecutionPlanHandle>(const ExecutionRequest& request)>;
 class ExecutionPlanRegistry {
  public:
   static std::shared_ptr<ExecutionPlanRegistry> getInstance();
-  void registerExecutionPlan(const std::shared_ptr<ExecutionPlan>& plan);
-  std::vector<ExecutionPlanHandle> get(const std::string& collective);
+  void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
+  std::vector<std::shared_ptr<ExecutionPlanHandle>> getPlans(const std::string& collective);
   std::shared_ptr<ExecutionPlanHandle> select(const std::string& collective, int worldSize, int nRanksPerNode,
                                               const void* sendBuffer, void* recvBuffer, size_t messageSize,
-                                              std::unordered_map<std::string, void*> hints);
+                                              const std::unordered_map<std::string, std::vector<uint64_t>>& hints);
   void setSelector(ExecutionPlanSelector selector);
   void setDefaultSelector(ExecutionPlanSelector selector);
 

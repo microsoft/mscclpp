@@ -684,4 +684,60 @@ size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSiz
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
+
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) {
+  selector_ = selector;
+}
+
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) {
+  defaultSelector_ = selector;
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
+  if (selector_) {
+    auto plan = selector_(request);
+    if (plan) {
+      return plan;
+    }
+  }
+  if (defaultSelector_) {
+    auto plan = defaultSelector_(request);
+    if (plan) {
+      return plan;
+    }
+  }
+  throw Error("No suitable execution plan found", ErrorCode::ExecutorError);
+}
+
+void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  if (!planHandle) {
+    throw Error("Cannot register a null plan", ErrorCode::ExecutorError);
+  }
+  planMap_[planHandle->plan->collective()].push_back(planHandle);
+}
+
+std::shared_ptr<ExecutionPlanRegistry> ExecutionPlanRegistry::getInstance() {
+  static std::shared_ptr<ExecutionPlanRegistry> instance(new ExecutionPlanRegistry);
+  return instance;
+}
+
+void ExecutionPlanRegistry::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  impl_->registerPlan(planHandle);
+}
+
+void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) {
+  impl_->setSelector(selector);
+}
+
+void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) {
+  impl_->setDefaultSelector(selector);
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
+    const std::string& collective, int worldSize, int nRanksPerNode, const void* sendBuffer, void* recvBuffer,
+    size_t messageSize, const std::unordered_map<std::string, std::vector<uint64_t>>& hints) {
+  ExecutionRequest request{worldSize, nRanksPerNode, sendBuffer, recvBuffer, messageSize, collective, hints};
+  return impl_->select(request);
+}
+
 }  // namespace mscclpp

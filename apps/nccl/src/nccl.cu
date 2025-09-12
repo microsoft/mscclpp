@@ -544,9 +544,10 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  auto planHandle =
-      comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranksPerNode(),
-                                  comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, {{"root", &root}});
+  static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
+  hints["root"][0] = static_cast<uint64_t>(root);
+  auto planHandle = comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranksPerNode(),
+                                                comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, hints);
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandle->plan, stream);
   }
