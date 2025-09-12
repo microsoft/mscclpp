@@ -254,6 +254,7 @@ auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0, size_t align = 
 }
 
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag);
+size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag);
 
 #endif  // CUDA_NVLS_API_AVAILABLE
 
