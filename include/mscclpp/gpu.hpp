@@ -27,6 +27,8 @@ using CUmemAllocationHandleType = hipMemAllocationHandleType;
 using CUmemAllocationGranularity_flags = hipMemAllocationGranularity_flags;
 
 constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
+constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
+constexpr auto cudaErrorInvalidDevice = hipErrorInvalidDevice;
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
@@ -48,6 +50,8 @@ constexpr auto CU_MEM_ALLOC_GRANULARITY_MINIMUM = hipMemAllocationGranularityMin
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
 #endif  // CUDA_SUCCESS
+#define CUDA_ERROR_DEINITIALIZED hipErrorDeinitialized
+#define CUDA_ERROR_CONTEXT_IS_DESTROYED hipErrorContextIsDestroyed
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
 #define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
