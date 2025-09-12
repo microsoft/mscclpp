@@ -40,9 +40,16 @@ struct VariableContext {
   std::string substituteVariables(const std::string& template_str) const;
 };
 
+/// Dynamic threadblock template information
+struct DynamicThreadblockInfo {
+  int tbgroup_id;                               ///< Thread block group ID
+  int num_threadblocks;                         ///< Number of thread blocks for this group
+  std::vector<int> peer_ranks;                  ///< Peer ranks handled by this thread block group
+};
+
 /// Dynamic operation template
 struct DynamicOperationTemplate {
-  std::string type;                             ///< Operation type (put, get, etc.)
+  std::string type;                             ///< Operation type (put, get, copy, etc.)
   std::string inputChunk;                       ///< Input chunk variable
   std::string outputChunk;                      ///< Output chunk variable
   std::string peer;                             ///< Peer rank variable
@@ -174,12 +181,40 @@ class DynamicExecutionPlan {
  private:
   void loadFromJson(const std::string& planPath);
   int calculateThreadBlocks(size_t messageSize) const;
-  std::string createLocalCopyVersion(const DynamicRuntimeParams& params, 
-                                   const VariableContext& var_context);
   
   // Forward declare a JsonType to avoid exposing nlohmann::json in header
   class JsonType;
+  
+  // Core dynamic template processing methods
   void processJsonTemplateVariables(JsonType& json_obj, const VariableContext& var_context);
+  void processDynamicTemplate(JsonType& json_obj, const DynamicRuntimeParams& params);
+  void processDynamicGpu(JsonType& gpu_json, const DynamicRuntimeParams& params, int gpu_id);
+  void processDynamicThreadblocks(JsonType& gpu_json, const DynamicRuntimeParams& params, int gpu_id);
+  void processDynamicThreadblock(JsonType& tb_json, const DynamicRuntimeParams& params, 
+                                int gpu_id, int tb_group_id);
+  void processDynamicOperations(JsonType& tb_json, const DynamicRuntimeParams& params, 
+                               int gpu_id, int tb_group_id);
+  void processDynamicOperation(JsonType& op_json, const DynamicRuntimeParams& params,
+                              int gpu_id, int tb_group_id, int op_index);
+  void processDynamicBuffers(JsonType& op_json, const std::string& buffer_key,
+                            const DynamicRuntimeParams& params, int gpu_id, int peer_id);
+  void processDynamicBufferObject(JsonType& buff_obj, const DynamicRuntimeParams& params, int op_index);
+  
+  // JSON sanitization methods
+  void sanitizeJsonForSerialization(JsonType& json_obj);
+  void aggressivelySanitizeJson(JsonType& json_obj);
+  JsonType createSanitizedExecutionPlan();
+  
+  // Utility methods for dynamic processing
+  int calculateThreadBlocksForGroup(int tb_group_id, const DynamicRuntimeParams& params) const;
+  int getPeerRankForOperation(int gpu_id, int tb_group_id, int op_index, 
+                             const DynamicRuntimeParams& params) const;
+  size_t getChunkSizeForPeer(int peer_id, const DynamicRuntimeParams& params, bool is_send) const;
+  size_t getChunkOffsetForPeer(int peer_id, const DynamicRuntimeParams& params, bool is_send) const;
+  size_t getChunkIndexForScratchBuffer(int src_rank, int dst_rank) const;
+  
+  // Template variable setup
+  void setupStandardVariables(VariableContext& var_context, const DynamicRuntimeParams& params);
   void updateOperationWithRuntimeParams(JsonType& op, 
                                        const DynamicRuntimeParams& params,
                                        const VariableContext& var_context);
