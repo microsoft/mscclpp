@@ -684,14 +684,9 @@ size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSiz
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) { selector_ = selector; }
 
-void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) {
-  selector_ = selector;
-}
-
-void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) {
-  defaultSelector_ = selector;
-}
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) { defaultSelector_ = selector; }
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
   if (selector_) {
@@ -726,13 +721,9 @@ void ExecutionPlanRegistry::registerPlan(const std::shared_ptr<ExecutionPlanHand
   impl_->registerPlan(planHandle);
 }
 
-void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) {
-  impl_->setSelector(selector);
-}
+void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) { impl_->setSelector(selector); }
 
-void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) {
-  impl_->setDefaultSelector(selector);
-}
+void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) { impl_->setDefaultSelector(selector); }
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
     const std::string& collective, int worldSize, int nRanksPerNode, const void* sendBuffer, void* recvBuffer,
@@ -755,6 +746,15 @@ std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::get(const std::strin
   return nullptr;
 }
 
+ExecutionPlanRegistry::ExecutionPlanRegistry() : impl_(std::make_unique<Impl>()) {}
+
 ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(const std::string& id, int worldSize,
+                                                                 int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+                                                                 const std::unordered_set<std::string>& tags) {
+  std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
+  return handle;
+}
 
 }  // namespace mscclpp

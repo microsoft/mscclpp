@@ -42,7 +42,7 @@ void register_executor(nb::module_& m) {
       .def_ro("plan", &ExecutionPlanHandle::plan)
       .def_ro("tags", &ExecutionPlanHandle::tags)
       .def_static("create", &ExecutionPlanHandle::create, nb::arg("id"), nb::arg("world_size"),
-                  nb::arg("n_ranks_per_node"), nb::arg("plan"), nb::arg("tags") = std::unordered_set<std::string>{});
+                  nb::arg("nranks_per_node"), nb::arg("plan"), nb::arg("tags") = std::unordered_set<std::string>{});
 
   nb::class_<ExecutionPlanHandle::Constraint>(m, "ExecutionPlanConstraint")
       .def_ro("world_size", &ExecutionPlanHandle::Constraint::worldSize)

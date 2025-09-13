@@ -131,9 +131,8 @@ def compile(
     execution_plan = ExecutionPlan(plan_path, rank)
     return ExecutionPlanHandle.create(
         id=plan_id,
-        name=name,
         world_size=world_size,
         nranks_per_node=nranks_per_node,
-        tags=tags,
         plan=execution_plan,
+        tags=tags,
     )

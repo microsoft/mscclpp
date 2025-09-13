@@ -86,7 +86,7 @@ class ExecutionPlanRegistry {
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
-  ExecutionPlanRegistry() = default;
+  ExecutionPlanRegistry();
 };
 
 class Executor {
