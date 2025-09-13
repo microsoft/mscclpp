@@ -204,7 +204,9 @@ class DynamicExecutionPlan {
   void sanitizeJsonForSerialization(JsonType& json_obj);
   void aggressivelySanitizeJson(JsonType& json_obj);
   JsonType createSanitizedExecutionPlan();
-  
+  void expandThreadblocks(JsonType& json_obj);
+  void validateAndFixBufferArrays(JsonType& json_obj);  // NEW: Add missing method declaration
+
   // Utility methods for dynamic processing
   int calculateThreadBlocksForGroup(int tb_group_id, const DynamicRuntimeParams& params) const;
   int getPeerRankForOperation(int gpu_id, int tb_group_id, int op_index, 

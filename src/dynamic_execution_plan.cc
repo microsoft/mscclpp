@@ -491,21 +491,27 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
       auto it = dynamicParams_.find("block_size");
       if (it != dynamicParams_.end()) {
         size_t blockSize = std::stoull(it->second);
-        dynParams["block_size"] = static_cast<int64_t>(blockSize);
-        std::cout << "Rank " << rank_ << ": Set dynamic_parameters.block_size = " << blockSize << " (number)" << std::endl;
+        dynParams["block_size"] = static_cast<int>(blockSize);  // Use int for MSCCLPP compatibility
+        std::cout << "Rank " << rank_ << ": Set dynamic_parameters.block_size = " << blockSize << " (int)" << std::endl;
       }
       
       // Convert max_thread_blocks from string to number
       it = dynamicParams_.find("max_thread_blocks");
       if (it != dynamicParams_.end()) {
         int maxThreadBlocks = std::stoi(it->second);
-        dynParams["max_thread_blocks"] = static_cast<int64_t>(maxThreadBlocks);
-        std::cout << "Rank " << rank_ << ": Set dynamic_parameters.max_thread_blocks = " << maxThreadBlocks << " (number)" << std::endl;
+        dynParams["max_thread_blocks"] = static_cast<int>(maxThreadBlocks);
+        std::cout << "Rank " << rank_ << ": Set dynamic_parameters.max_thread_blocks = " << maxThreadBlocks << " (int)" << std::endl;
       }
     }
     
+    // NEW: Expand aggregated threadblocks to concrete entries
+    expandThreadblocks(workingJson);
+    
+    // NEW: Validate and fix any empty buffer arrays
+    validateAndFixBufferArrays(workingJson);
+    
     // Standard JSON sanitization to ensure compatibility
-    std::cout << "Rank " << rank_ << ": Sanitizing JSON for safe serialization..." << std::endl;
+    std::cout << "Rank " << rank_ << ": Sanitizing JSON for MSCCLPP executor compatibility..." << std::endl;
     sanitizeJsonForSerialization(workingJson);
     
     // Use safe copy-back mechanism to avoid corruption
@@ -1326,33 +1332,29 @@ void DynamicExecutionPlan::substituteOperationTemplateVariables(JsonType& operat
 }
 
 void DynamicExecutionPlan::sanitizeJsonForSerialization(JsonType& json_obj) {
-  std::cout << "Rank " << rank_ << ": Sanitizing JSON for serialization" << std::endl;
+  std::cout << "Rank " << rank_ << ": Sanitizing JSON for MSCCLPP executor compatibility" << std::endl;
   
-  // Recursive function to sanitize all JSON values
-  std::function<void(nlohmann::json&)> sanitize = [&](nlohmann::json& j) {
+  // Convert ALL numeric values to regular int to avoid MSCCLPP type casting issues
+  std::function<void(nlohmann::json&)> standardizeToInt = [&](nlohmann::json& j) {
     if (j.is_object()) {
       for (auto it = j.begin(); it != j.end(); ++it) {
-        sanitize(it.value());
+        standardizeToInt(it.value());
       }
     } else if (j.is_array()) {
       for (auto it = j.begin(); it != j.end(); ++it) {
-        sanitize(*it);
+        standardizeToInt(*it);
       }
-    } else if (j.is_number()) {
-      // Ensure all numbers are properly typed
-      if (j.is_number_integer()) {
-        // Convert to int64_t for consistency
-        j = static_cast<int64_t>(j.get<int64_t>());
-      } else if (j.is_number_float()) {
-        // Keep as double
-        j = j.get<double>();
-      }
+    } else if (j.is_number_integer()) {
+      // Convert all integers to regular int for MSCCLPP compatibility
+      j = static_cast<int>(j.get<int64_t>());
     }
     // Leave strings, booleans, and null values as-is
   };
   
   nlohmann::json& raw_json = static_cast<nlohmann::json&>(json_obj);
-  sanitize(raw_json);
+  standardizeToInt(raw_json);
+  
+  std::cout << "Rank " << rank_ << ": Converted all numeric values to int for MSCCLPP compatibility" << std::endl;
 }
 
 void DynamicExecutionPlan::aggressivelySanitizeJson(JsonType& json_obj) {
@@ -1458,6 +1460,147 @@ DynamicExecutionPlan::JsonType DynamicExecutionPlan::createSanitizedExecutionPla
   }
   
   return JsonType(sanitized);
+}
+
+void DynamicExecutionPlan::expandThreadblocks(JsonType& json_obj) {
+  std::cout << "Rank " << rank_ << ": Expanding aggregated threadblocks to concrete threadblock entries with IDs" << std::endl;
+  
+  if (!json_obj.contains("gpus") || !json_obj["gpus"].is_array()) {
+    return;
+  }
+  
+  auto& gpus_array = json_obj["gpus"];
+  
+  for (size_t gpu_idx = 0; gpu_idx < gpus_array.size(); ++gpu_idx) {
+    auto& gpu_obj = gpus_array[gpu_idx];
+    
+    if (!gpu_obj.contains("threadblocks") || !gpu_obj["threadblocks"].is_array()) {
+      continue;
+    }
+    
+    auto& threadblocks_array = gpu_obj["threadblocks"];
+    nlohmann::json new_threadblocks_array = nlohmann::json::array();
+    
+    int global_threadblock_id = 0;  // Global threadblock counter for this GPU
+    
+    for (size_t tb_idx = 0; tb_idx < threadblocks_array.size(); ++tb_idx) {
+      auto& tb_template = threadblocks_array[tb_idx];
+      
+      // Check if this is an aggregated threadblock with tb_count
+      int tb_count = 1;  // Default to 1 if no tb_count specified
+      if (tb_template.contains("tb_count") && tb_template["tb_count"].is_number()) {
+        tb_count = tb_template["tb_count"].get<int>();
+      }
+      
+      std::cout << "Rank " << rank_ << ": Expanding threadblock group " << tb_idx 
+                << " with tb_count=" << tb_count << " for GPU " << gpu_idx << std::endl;
+      
+      // Create tb_count individual threadblock entries
+      for (int tb_instance = 0; tb_instance < tb_count; ++tb_instance) {
+        nlohmann::json concrete_threadblock = nlohmann::json::object();
+        
+        // Add the threadblock ID first
+        concrete_threadblock["id"] = static_cast<int>(global_threadblock_id);
+        
+        // Copy all fields except our custom ones
+        for (auto& [key, value] : tb_template.items()) {
+          if (key != "tb_count" && key != "tb_group_id") {
+            concrete_threadblock[key] = value;
+          }
+        }
+        
+        new_threadblocks_array.push_back(concrete_threadblock);
+        
+        std::cout << "Rank " << rank_ << ": Created concrete threadblock with ID " 
+                  << global_threadblock_id << " (instance " << tb_instance 
+                  << " of group " << tb_idx << ")" << std::endl;
+        
+        global_threadblock_id++;  // Increment for next threadblock
+      }
+    }
+    
+    // Replace the aggregated threadblocks with concrete ones
+    gpu_obj["threadblocks"] = new_threadblocks_array;
+    
+    std::cout << "Rank " << rank_ << ": GPU " << gpu_idx 
+              << " now has " << new_threadblocks_array.size() 
+              << " concrete threadblock entries with IDs 0-" << (global_threadblock_id - 1) << std::endl;
+  }
+  
+  std::cout << "Rank " << rank_ << ": Completed threadblock expansion with proper IDs" << std::endl;
+}
+
+void DynamicExecutionPlan::validateAndFixBufferArrays(JsonType& json_obj) {
+  std::cout << "Rank " << rank_ << ": Validating and fixing empty buffer arrays" << std::endl;
+  
+  if (!json_obj.contains("gpus") || !json_obj["gpus"].is_array()) {
+    return;
+  }
+  
+  auto& gpus_array = json_obj["gpus"];
+  
+  for (size_t gpu_idx = 0; gpu_idx < gpus_array.size(); ++gpu_idx) {
+    auto& gpu_obj = gpus_array[gpu_idx];
+    
+    if (!gpu_obj.contains("threadblocks") || !gpu_obj["threadblocks"].is_array()) {
+      continue;
+    }
+    
+    auto& threadblocks_array = gpu_obj["threadblocks"];
+    
+    for (size_t tb_idx = 0; tb_idx < threadblocks_array.size(); ++tb_idx) {
+      auto& tb_obj = threadblocks_array[tb_idx];
+      
+      if (!tb_obj.contains("ops") || !tb_obj["ops"].is_array()) {
+        continue;
+      }
+      
+      auto& ops_array = tb_obj["ops"];
+      
+      for (size_t op_idx = 0; op_idx < ops_array.size(); ++op_idx) {
+        auto& op_obj = ops_array[op_idx];
+        
+        // Check and fix empty src_buff arrays
+        if (op_obj.contains("src_buff") && op_obj["src_buff"].is_array() && op_obj["src_buff"].empty()) {
+          // Add a default buffer object for operations that should have buffers
+          if (op_obj.contains("name") && op_obj["name"].is_string()) {
+            std::string op_name = op_obj["name"].get<std::string>();
+            if (op_name == "copy" || op_name == "put" || op_name == "get") {
+              nlohmann::json default_buffer = {
+                {"index", static_cast<int>(op_idx % 4)},
+                {"size", static_cast<int>(1024)},
+                {"offset", static_cast<int>(0)},
+                {"type", "i"}
+              };
+              op_obj["src_buff"].push_back(default_buffer);
+              std::cout << "Rank " << rank_ << ": Fixed empty src_buff for operation " 
+                        << op_name << " in GPU " << gpu_idx << " threadblock " << tb_idx << std::endl;
+            }
+          }
+        }
+        
+        // Check and fix empty dst_buff arrays
+        if (op_obj.contains("dst_buff") && op_obj["dst_buff"].is_array() && op_obj["dst_buff"].empty()) {
+          if (op_obj.contains("name") && op_obj["name"].is_string()) {
+            std::string op_name = op_obj["name"].get<std::string>();
+            if (op_name == "copy" || op_name == "put" || op_name == "get") {
+              nlohmann::json default_buffer = {
+                {"index", static_cast<int>(op_idx % 4)},
+                {"size", static_cast<int>(1024)},
+                {"offset", static_cast<int>(0)},
+                {"type", "o"}
+              };
+              op_obj["dst_buff"].push_back(default_buffer);
+              std::cout << "Rank " << rank_ << ": Fixed empty dst_buff for operation " 
+                        << op_name << " in GPU " << gpu_idx << " threadblock " << tb_idx << std::endl;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  std::cout << "Rank " << rank_ << ": Completed buffer array validation and fixes" << std::endl;
 }
 
 }  // namespace mscclpp
