@@ -684,4 +684,77 @@ size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSiz
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) { selector_ = selector; }
+
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) { defaultSelector_ = selector; }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
+  if (selector_) {
+    auto plan = selector_(planMap_[request.collective], request);
+    if (plan) {
+      return plan;
+    }
+  }
+  if (defaultSelector_) {
+    auto plan = defaultSelector_(planMap_[request.collective], request);
+    if (plan) {
+      return plan;
+    }
+  }
+  throw Error("No suitable execution plan found", ErrorCode::ExecutorError);
+}
+
+void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  if (!planHandle) {
+    throw Error("Cannot register a null plan", ErrorCode::ExecutorError);
+  }
+  planMap_[planHandle->plan->collective()].push_back(planHandle);
+  idMap_[planHandle->id] = planHandle;
+}
+
+std::shared_ptr<ExecutionPlanRegistry> ExecutionPlanRegistry::getInstance() {
+  static std::shared_ptr<ExecutionPlanRegistry> instance(new ExecutionPlanRegistry);
+  return instance;
+}
+
+void ExecutionPlanRegistry::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  impl_->registerPlan(planHandle);
+}
+
+void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) { impl_->setSelector(selector); }
+
+void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) { impl_->setDefaultSelector(selector); }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
+    const std::string& collective, int worldSize, int nRanksPerNode, const void* sendBuffer, void* recvBuffer,
+    size_t messageSize, const std::unordered_map<std::string, std::vector<uint64_t>>& hints) {
+  ExecutionRequest request{worldSize, nRanksPerNode, sendBuffer, recvBuffer, messageSize, collective, hints};
+  return impl_->select(request);
+}
+
+std::vector<std::shared_ptr<ExecutionPlanHandle>> ExecutionPlanRegistry::getPlans(const std::string& collective) {
+  if (impl_->planMap_.find(collective) != impl_->planMap_.end()) {
+    return impl_->planMap_[collective];
+  }
+  return {};
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::get(const std::string& id) {
+  if (impl_->idMap_.find(id) != impl_->idMap_.end()) {
+    return impl_->idMap_[id];
+  }
+  return nullptr;
+}
+
+ExecutionPlanRegistry::ExecutionPlanRegistry() : impl_(std::make_unique<Impl>()) {}
+
+ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(const std::string& id, int worldSize,
+                                                                 int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+                                                                 const std::unordered_set<std::string>& tags) {
+  std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
+  return handle;
+}
+
 }  // namespace mscclpp

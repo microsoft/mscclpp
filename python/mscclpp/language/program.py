@@ -115,6 +115,7 @@ class CollectiveProgram:
         this program as the active program in the global context.
         """
         set_program(self)
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the program context and clear the active program.
@@ -175,7 +176,7 @@ class CollectiveProgram:
             raise RuntimeError("Nested Pipelines are not Supported.")
         self.loop_context = loop_context
 
-    def to_json(self):
+    def to_json(self, indent=2, **kwargs):
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
@@ -190,4 +191,4 @@ class CollectiveProgram:
             "max_message_size": self.max_message_size,
         }
 
-        return json.dumps(json_obj, indent=2)
+        return json.dumps(json_obj, indent=indent, **kwargs)
