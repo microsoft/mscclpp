@@ -68,7 +68,8 @@ struct ExecutionRequest {
   const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
 };
 
-using ExecutionPlanSelector = std::function<std::shared_ptr<ExecutionPlanHandle>(const ExecutionRequest& request)>;
+using ExecutionPlanSelector = std::function<std::shared_ptr<ExecutionPlanHandle>(
+    const std::vector<std::shared_ptr<ExecutionPlanHandle>> plans, const ExecutionRequest& request)>;
 class ExecutionPlanRegistry {
  public:
   static std::shared_ptr<ExecutionPlanRegistry> getInstance();

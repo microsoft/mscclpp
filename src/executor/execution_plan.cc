@@ -690,13 +690,13 @@ void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selec
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
   if (selector_) {
-    auto plan = selector_(request);
+    auto plan = selector_(planMap_[request.collective], request);
     if (plan) {
       return plan;
     }
   }
   if (defaultSelector_) {
-    auto plan = defaultSelector_(request);
+    auto plan = defaultSelector_(planMap_[request.collective], request);
     if (plan) {
       return plan;
     }

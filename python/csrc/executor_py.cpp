@@ -2,10 +2,12 @@
 // Licensed under the MIT license.
 
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/function.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/unordered_set.h>
+#include <nanobind/stl/vector.h>
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
