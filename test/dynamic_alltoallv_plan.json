@@ -1,6 +1,6 @@
 {
   "name": "alltoallv_dynamic_4gpu",
-  "collective": "alltoall",
+  "collective": "alltoallv",
   "protocol": "Simple",
   "inplace": true,
   "reuse_resources": false,

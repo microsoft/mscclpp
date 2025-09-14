@@ -609,8 +609,8 @@ std::string DynamicExecutionPlan::instantiate(const DynamicRuntimeParams& params
       for (int gpu_id = 0; gpu_id < params.num_ranks; ++gpu_id) {
         nlohmann::json gpu = {
           {"id", static_cast<int64_t>(gpu_id)},
-          {"input_chunks", static_cast<int64_t>(params.num_ranks)},
-          {"output_chunks", static_cast<int64_t>(params.num_ranks)},
+          {"input_chunks", static_cast<int64_t>(1)},      // CHANGED from params.num_ranks to 1
+          {"output_chunks", static_cast<int64_t>(1)},     // CHANGED from params.num_ranks to 1
           {"scratch_chunks", static_cast<int64_t>(params.num_ranks - 1)},
           {"threadblocks", nlohmann::json::array()},
           {"channels", nlohmann::json::array()},
@@ -678,8 +678,8 @@ void DynamicExecutionPlan::processDynamicTemplate(JsonType& json_obj, const Dyna
             // Create a minimal GPU structure as last resort
             gpu_raw_json = nlohmann::json{
               {"id", static_cast<int64_t>(gpu_id)},
-              {"input_chunks", static_cast<int64_t>(params.num_ranks)},
-              {"output_chunks", static_cast<int64_t>(params.num_ranks)},
+              {"input_chunks", static_cast<int64_t>(1)},      // CHANGED from params.num_ranks to 1
+              {"output_chunks", static_cast<int64_t>(1)},     // CHANGED from params.num_ranks to 1
               {"scratch_chunks", static_cast<int64_t>(params.num_ranks - 1)},
               {"threadblocks", nlohmann::json::array()}
             };
@@ -710,34 +710,48 @@ void DynamicExecutionPlan::processDynamicTemplate(JsonType& json_obj, const Dyna
 void DynamicExecutionPlan::processDynamicGpu(JsonType& gpu_json, const DynamicRuntimeParams& params, int gpu_id) {
   std::cout << "Rank " << rank_ << ": Processing dynamic GPU " << gpu_id << std::endl;
   
-  // Replace dynamic_input_chunks with actual value - use explicit int casting
+  // For alltoallv operations with variable sizes, set chunks to 1 to avoid 
+  // MSCCLPP's uniform chunk size validation
   if (gpu_json.contains("dynamic_input_chunks")) {
-    gpu_json["input_chunks"] = static_cast<int>(params.num_ranks);
+    gpu_json["input_chunks"] = 1;  // Treat entire input buffer as one chunk
     gpu_json.erase("dynamic_input_chunks");
-    std::cout << "Rank " << rank_ << ": Set input_chunks = " << params.num_ranks << std::endl;
+    std::cout << "Rank " << rank_ << ": Set input_chunks = 1 for variable-size alltoallv" << std::endl;
+  } else if (!gpu_json.contains("input_chunks")) {
+    // If no dynamic field, set it directly
+    gpu_json["input_chunks"] = 1;
+    std::cout << "Rank " << rank_ << ": Set input_chunks = 1 (direct assignment)" << std::endl;
   }
   
-  // Replace dynamic_output_chunks with actual value - use explicit int casting
   if (gpu_json.contains("dynamic_output_chunks")) {
-    gpu_json["output_chunks"] = static_cast<int>(params.num_ranks);
+    gpu_json["output_chunks"] = 1;  // Treat entire output buffer as one chunk
     gpu_json.erase("dynamic_output_chunks");
-    std::cout << "Rank " << rank_ << ": Set output_chunks = " << params.num_ranks << std::endl;
+    std::cout << "Rank " << rank_ << ": Set output_chunks = 1 for variable-size alltoallv" << std::endl;
+  } else if (!gpu_json.contains("output_chunks")) {
+    // If no dynamic field, set it directly
+    gpu_json["output_chunks"] = 1;
+    std::cout << "Rank " << rank_ << ": Set output_chunks = 1 (direct assignment)" << std::endl;
   }
   
-  // Replace dynamic_scratch_chunks with actual value - use explicit int casting
+  // Set scratch_chunks (usually all peers except self)
   if (gpu_json.contains("dynamic_scratch_chunks")) {
-    int scratch_chunks = params.num_ranks - 1;  // All peers except self
+    int scratch_chunks = params.num_ranks - 1;
     gpu_json["scratch_chunks"] = static_cast<int>(scratch_chunks);
     gpu_json.erase("dynamic_scratch_chunks");
     std::cout << "Rank " << rank_ << ": Set scratch_chunks = " << scratch_chunks << std::endl;
   }
   
+  // CRITICAL: Force input_chunks and output_chunks to 1 for alltoallv
+  // This must come after all other processing to ensure it's not overwritten
+  gpu_json["input_chunks"] = 1;
+  gpu_json["output_chunks"] = 1;
+  std::cout << "Rank " << rank_ << ": FORCED input_chunks = 1, output_chunks = 1 for alltoallv compatibility" << std::endl;
+  
   // Ensure proper type for existing fields to avoid number/number type conflicts
   if (gpu_json.contains("input_chunks") && !gpu_json["input_chunks"].is_number_integer()) {
-    gpu_json["input_chunks"] = static_cast<int>(params.num_ranks);
+    gpu_json["input_chunks"] = 1;  // CHANGED: Force to 1 instead of params.num_ranks
   }
   if (gpu_json.contains("output_chunks") && !gpu_json["output_chunks"].is_number_integer()) {
-    gpu_json["output_chunks"] = static_cast<int>(params.num_ranks);
+    gpu_json["output_chunks"] = 1;  // CHANGED: Force to 1 instead of params.num_ranks
   }
   if (gpu_json.contains("scratch_chunks") && !gpu_json["scratch_chunks"].is_number_integer()) {
     gpu_json["scratch_chunks"] = static_cast<int>(params.num_ranks - 1);
@@ -1439,8 +1453,8 @@ DynamicExecutionPlan::JsonType DynamicExecutionPlan::createSanitizedExecutionPla
   for (int gpu_id = 0; gpu_id < 4; ++gpu_id) {  // Default to 4 GPUs
     nlohmann::json gpu = {
       {"id", static_cast<int64_t>(gpu_id)},
-      {"input_chunks", static_cast<int64_t>(4)},
-      {"output_chunks", static_cast<int64_t>(4)},
+      {"input_chunks", static_cast<int64_t>(1)},      // CHANGED from 4 to 1
+      {"output_chunks", static_cast<int64_t>(1)},     // CHANGED from 4 to 1
       {"scratch_chunks", static_cast<int64_t>(3)},
       {"threadblocks", nlohmann::json::array()},
       {"channels", nlohmann::json::array()},
