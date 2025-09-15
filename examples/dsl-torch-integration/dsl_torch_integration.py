@@ -5,7 +5,7 @@
 
 import os
 import torch, torch.distributed as dist
-from mscclpp import jit, ExecutionPlanRegistry, ExecutionRequest, ExecutionPlanHandle
+from mscclpp import jit, ExecutionPlanRegistry, ExecutionRequest, ExecutionPlanHandle, RawGpuBuffer
 from mscclpp.jit import AlgoSpec
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
@@ -111,7 +111,10 @@ def init_dist():
 def main():
     _, _, local = init_dist()
     torch.cuda.set_device(local)
-    x = torch.randn(12 << 20, dtype=torch.float16, device="cuda")
+    buffer = RawGpuBuffer(24 << 20)
+    dlpack = buffer.to_dlpack(dataType=str(torch.bfloat16))
+    x = torch.utils.dlpack.from_dlpack(dlpack)
+    x.normal_()
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
     dist.barrier()
     dist.destroy_process_group()
