@@ -66,14 +66,15 @@ void AlgorithmFactory::registerAlgorithm(const std::string collective, const std
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
-Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode,
-                                            int worldSize) {
+Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, const void* input, void* output,
+                                            size_t messageSize, int nRanksPerNode, int worldSize) {
   Algorithm algo;
   if (algoSelector_) {
-    algo = algoSelector_(algoMapByCollective_, collective, messageSize, nRanksPerNode, worldSize);
+    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
   }
   if (algo.isEmpty()) {
-    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, messageSize, nRanksPerNode, worldSize);
+    algo =
+        fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
   }
   return algo;
 }

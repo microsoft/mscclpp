@@ -115,7 +115,7 @@ class AlgorithmBuilder {
 
 using AlgoSelectFunc = std::function<Algorithm(
     const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-    std::string collective, size_t messageSize, int nRanksPerNode, int worldSize)>;
+    std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode, int worldSize)>;
 
 class AlgorithmFactory {
  public:
@@ -123,11 +123,14 @@ class AlgorithmFactory {
 
   /// @brief Select an algorithm based on the collective operation name and message size.
   /// @param collective The collective operation name.
+  /// @param input The input buffer.
+  /// @param output The output buffer.
   /// @param messageSize The message size.
   /// @param nRanksPerNode The number of ranks per node.
   /// @param worldSize The total number of ranks.
   /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
-  Algorithm selectAlgorithm(const std::string& collective, size_t messageSize, int nRanksPerNode, int worldSize);
+  Algorithm selectAlgorithm(const std::string& collective, const void* input, void* output, size_t messageSize,
+                            int nRanksPerNode, int worldSize);
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.
