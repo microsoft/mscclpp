@@ -7,6 +7,8 @@
 #include <fstream>
 #include <set>
 
+#include "debug.h"
+
 namespace {
 template <typename T, typename Predicate>
 std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
@@ -69,7 +71,7 @@ auto getOpType = [](const std::string& str) {
   } else if (str == "sem_release") {
     return mscclpp::OperationType::SEM_RELEASE;
   } else {
-    throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
+    throw mscclpp::Error("Invalid operation type: " + str, mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -701,7 +703,8 @@ std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const E
       return plan;
     }
   }
-  throw Error("No suitable execution plan found", ErrorCode::ExecutorError);
+  INFO(MSCCLPP_EXECUTOR, "No suitable execution plan found for collective: %s", request.collective.c_str());
+  return nullptr;
 }
 
 void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {

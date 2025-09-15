@@ -110,9 +110,11 @@ def init_dist():
 
 def main():
     _, _, local = init_dist()
-    torch.device("cuda", local)
+    torch.cuda.set_device(local)
     x = torch.randn(12 << 20, dtype=torch.float16, device="cuda")
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
+    dist.barrier()
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":

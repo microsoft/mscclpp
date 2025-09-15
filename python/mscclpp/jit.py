@@ -127,6 +127,7 @@ def compile(
         try:
             # TODO (binyli): Each rank could it's own execution plan separately. Doesn't need to generate whole plan.
             with open(tmp_path, "w") as f:
+                prog.post_process_operations()
                 f.write(prog.to_json(indent=None, separators=(",", ":"), ensure_ascii=False))
                 f.flush()
                 os.fsync(f.fileno())
