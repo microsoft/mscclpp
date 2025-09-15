@@ -25,8 +25,8 @@ class Env {
   /// Env name: `MSCCLPP_DEBUG_SUBSYS`. The debug subsystem, a comma-separated list of subsystems to enable
   /// debug logging for.
   /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
-  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, ALL.
-  /// Unset by default.
+  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, MSCCLPP_NCCL,
+  /// ALL. Unset by default.
   const std::string debugSubsys;
 
   /// Env name: `MSCCLPP_DEBUG_FILE`. A file path to write debug logs to. Unset by default.
@@ -74,10 +74,6 @@ class Env {
   /// always use the fallback implementation, even if the MSCCL++ NCCL can handle them. This is useful for
   /// debugging purposes. Currently supports `all`, `broadcast`, `allreduce`, `reducescatter`, and `allgather`.
   const std::string forceNcclFallbackOperation;
-
-  /// Env name: `MSCCLPP_ENABLE_NCCL_FALLBACK`. If set to true, it will enable the fallback implementation for NCCL
-  /// operations. This is useful for debugging purposes. Default is false.
-  const bool enableNcclFallback;
 
   /// Env name: `MSCCLPP_DISABLE_CHANNEL_CACHE`. If set to true, it will disable the channel cache for NCCL APIs.
   /// Currently, this should be set to true if the application may call NCCL APIs on the same local buffer with
