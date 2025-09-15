@@ -1,28 +1,31 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+# LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl-torch-integration/dsl_torch_integration.py
+
 import os
 import torch, torch.distributed as dist
-from mscclpp import jit
+from mscclpp import jit, ExecutionPlanRegistry, ExecutionRequest, ExecutionPlanHandle
+from mscclpp.jit import AlgoSpec
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.rank import Rank
-from mscclpp.plan import Registry, Request
-import mscclpp.plan as plan
 
-def allreduce_nvls(name, gpu_size, num_threads_per_block, min_message_size, max_message_size):
+
+def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
     chunksperloop = 1
+    gpu_size = spec.world_size
     collective = AllReduce(gpu_size, chunksperloop, True)
-    with CollectiveProgram (
-        name,
+    with CollectiveProgram(
+        spec.name,
         collective,
         gpu_size,
         instances=8,
-        protocol="Simple",
-        num_threads_per_block=num_threads_per_block,
-        min_message_size=min_message_size,
-        max_message_size=max_message_size,
+        protocol=spec.protocol,
+        num_threads_per_block=spec.num_threads_per_block,
+        min_message_size=spec.min_message_size,
+        max_message_size=spec.max_message_size,
     ) as program:
         # Creating Channels
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
@@ -70,7 +73,8 @@ def allreduce_nvls(name, gpu_size, num_threads_per_block, min_message_size, max_
 
     return program
 
-def setup_plan(rank: int, world_size: int):
+
+def setup_plan(registry: ExecutionPlanRegistry, rank: int, world_size: int):
     plan_handle = jit.compile(
         algo=allreduce_nvls,
         name="allreduce_nvls",
@@ -81,28 +85,35 @@ def setup_plan(rank: int, world_size: int):
         instances=2,
         protocol="Simple",
         num_threads_per_block=1024,
-        min_msg_size=1<<20,
-        max_msg_size=48<<30,
+        min_message_size=1 << 20,
+        max_message_size=48 << 30,
         tags={"nvls"},
     )
-    Registry.register(plan_handle)
+    registry.register_plan(plan_handle)
 
-def selector(plans: dict, req: Request):
-    collective_plans = plans.get(req.collective)
-    nvls = [p for p in collective_plans if "nvls" in p.tags]
-    return nvls[0] if nvls else collective_plans[0]
+
+def selector(plans: list, req: ExecutionRequest) -> ExecutionPlanHandle:
+    nvls = [p for p in plans if "nvls" in p.tags]
+    return nvls[0] if nvls else plans[0]
+
 
 def init_dist():
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
-    setup_plan(rank, world)
-    plan.set_selector(selector)
+    registry = ExecutionPlanRegistry.get_instance()
+    setup_plan(registry, rank, world)
+    registry.set_selector(selector)
     dist.init_process_group(backend="nccl")
     return rank, world, local
+
 
 def main():
     _, _, local = init_dist()
     torch.device("cuda", local)
-    x = torch.randn(12<<20, dtype=torch.float16, device="cuda")
+    x = torch.randn(12 << 20, dtype=torch.float16, device="cuda")
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
+
+
+if __name__ == "__main__":
+    main()

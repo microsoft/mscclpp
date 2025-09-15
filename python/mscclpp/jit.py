@@ -122,10 +122,18 @@ def compile(
     os.makedirs(plan_dir, exist_ok=True)
     filename = f"{plan_id}.json"
     plan_path = os.path.join(plan_dir, filename)
+    tmp_path = plan_path + f".tmp.{os.getpid()}"
     if not os.path.exists(plan_path):
         try:
-            with open(f"/{plan_dir}/{filename}", "w") as f:
+            # TODO (binyli): Each rank could it's own execution plan separately. Doesn't need to generate whole plan.
+            with open(tmp_path, "w") as f:
                 f.write(prog.to_json(indent=None, separators=(",", ":"), ensure_ascii=False))
+                f.flush()
+                os.fsync(f.fileno())
+            if not os.path.exists(plan_path):
+                os.rename(tmp_path, plan_path)
+            else:
+                os.remove(tmp_path)
         except Exception:
             Path(plan_path).unlink(missing_ok=True)
     execution_plan = ExecutionPlan(plan_path, rank)
