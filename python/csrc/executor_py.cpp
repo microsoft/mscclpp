@@ -56,7 +56,8 @@ void register_executor(nb::module_& m) {
       .def("get_plans", &ExecutionPlanRegistry::getPlans, nb::arg("collective"))
       .def("get", &ExecutionPlanRegistry::get, nb::arg("id"))
       .def("set_selector", &ExecutionPlanRegistry::setSelector, nb::arg("selector"))
-      .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"));
+      .def("set_default_selector", &ExecutionPlanRegistry::setDefaultSelector, nb::arg("selector"))
+      .def("clear", &ExecutionPlanRegistry::clear);
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))

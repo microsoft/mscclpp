@@ -753,6 +753,13 @@ ExecutionPlanRegistry::ExecutionPlanRegistry() : impl_(std::make_unique<Impl>())
 
 ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
 
+void ExecutionPlanRegistry::clear() {
+  impl_->planMap_.clear();
+  impl_->idMap_.clear();
+  impl_->selector_ = nullptr;
+  impl_->defaultSelector_ = nullptr;
+}
+
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(const std::string& id, int worldSize,
                                                                  int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
                                                                  const std::unordered_set<std::string>& tags) {

@@ -93,6 +93,10 @@ def setup_plan(registry: ExecutionPlanRegistry, rank: int, world_size: int):
 
 
 def selector(plans: list, req: ExecutionRequest) -> ExecutionPlanHandle:
+    if req.collective != "allreduce":
+        return None
+    if req.message_size < 1 << 20:
+        return None
     nvls = [p for p in plans if "nvls" in p.tags]
     return nvls[0] if nvls else plans[0]
 
@@ -118,6 +122,8 @@ def main():
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
     dist.barrier()
     dist.destroy_process_group()
+    registry = ExecutionPlanRegistry.get_instance()
+    registry.clear()
 
 
 if __name__ == "__main__":

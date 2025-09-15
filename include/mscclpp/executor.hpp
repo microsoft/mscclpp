@@ -83,6 +83,7 @@ class ExecutionPlanRegistry {
                                               const std::unordered_map<std::string, std::vector<uint64_t>>& hints);
   void setSelector(ExecutionPlanSelector selector);
   void setDefaultSelector(ExecutionPlanSelector selector);
+  void clear();
 
  private:
   struct Impl;
