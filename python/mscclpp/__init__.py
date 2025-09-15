@@ -38,7 +38,6 @@ from ._mscclpp import (
     Executor,
     ExecutionPlan,
     ExecutionPlanHandle,
-    ExecutionPlanRegistry,
     ExecutionRequest,
     PacketType,
     RawGpuBuffer,

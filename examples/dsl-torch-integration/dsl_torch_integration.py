@@ -5,12 +5,13 @@
 
 import os
 import torch, torch.distributed as dist
-from mscclpp import jit, ExecutionPlanRegistry, ExecutionRequest, ExecutionPlanHandle, RawGpuBuffer
+from mscclpp import jit, ExecutionRequest, ExecutionPlanHandle, RawGpuBuffer
 from mscclpp.jit import AlgoSpec
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.rank import Rank
+from mscclpp.plans import ExecutionPlanRegistry
 
 
 def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
@@ -105,7 +106,7 @@ def init_dist():
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
-    registry = ExecutionPlanRegistry.get_instance()
+    registry = ExecutionPlanRegistry()
     setup_plan(registry, rank, world)
     registry.set_selector(selector)
     dist.init_process_group(backend="nccl")
@@ -122,8 +123,6 @@ def main():
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
     dist.barrier()
     dist.destroy_process_group()
-    registry = ExecutionPlanRegistry.get_instance()
-    registry.clear()
 
 
 if __name__ == "__main__":
