@@ -232,13 +232,15 @@ static void registerCustomizedAlgo() {
 
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, size_t messageSize, int nRanksPerNode, int worldSize) {
+    std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode, int worldSize) {
   if (nRanksPerNode != worldSize) {
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
+  bool isCuMemMapAllocated =
+      mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
   bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
+  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "broadcast") {
 #if defined(__HIP_PLATFORM_AMD__)
     return algoMapByCollective.at(collective).at("default_broadcast6");
@@ -551,7 +553,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandle->plan, stream);
   }
-  auto algo = comm->algorithmFactory->selectAlgorithm("broadcast", count * ncclTypeSize(datatype),
+  auto algo = comm->algorithmFactory->selectAlgorithm("broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype),
                                                       comm->comm->bootstrap()->getNranksPerNode(),
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
@@ -598,7 +600,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandler->plan, stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", count * ncclTypeSize(datatype),
+  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype),
                                                       comm->comm->bootstrap()->getNranksPerNode(),
                                                       comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
@@ -684,9 +686,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                            stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm("allgather", nRank * sendcount * ncclTypeSize(datatype),
-                                                      comm->comm->bootstrap()->getNranksPerNode(),
-                                                      comm->comm->bootstrap()->getNranks());
+  auto algo = comm->algorithmFactory->selectAlgorithm(
+      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype),
+      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras = {
         {"scratch", comm->scratchBuffer_}, {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
