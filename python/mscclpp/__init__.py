@@ -69,6 +69,8 @@ __all__ = [
     "Executor",
     "ExecutionPlan",
     "PacketType",
+    "RawGpuBuffer",
+    "env",
     "version",
     "is_nvls_supported",
     "alloc_shared_physical_cuda",
