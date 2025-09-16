@@ -83,7 +83,7 @@ class ExecutionPlanRegistry:
         send_buffer: int,
         recv_buffer: int,
         message_size: int,
-        hints: dict,
+        hints: dict = {},
     ) -> ExecutionPlanHandle:
         if self._selector is None or collective not in self._collective_map:
             return None
