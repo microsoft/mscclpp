@@ -5,7 +5,7 @@
 
 import os
 import torch, torch.distributed as dist
-from mscclpp import jit, ExecutionRequest, ExecutionPlanHandle, RawGpuBuffer
+from mscclpp import jit, RawGpuBuffer
 from mscclpp.jit import AlgoSpec
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
@@ -93,7 +93,7 @@ def setup_plan(registry: ExecutionPlanRegistry, rank: int, world_size: int):
     registry.register_plan(plan_handle)
 
 
-def selector(plans: list, req: ExecutionRequest) -> ExecutionPlanHandle:
+def selector(plans, req):
     if req.collective != "allreduce":
         return None
     if req.message_size < 1 << 20:

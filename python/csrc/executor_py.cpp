@@ -61,10 +61,10 @@ void register_executor(nb::module_& m) {
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))
-      .def("name", &ExecutionPlan::name)
-      .def("collective", &ExecutionPlan::collective)
-      .def("min_message_size", &ExecutionPlan::minMessageSize)
-      .def("max_message_size", &ExecutionPlan::maxMessageSize);
+      .def_prop_ro("name", [](const ExecutionPlan& self) -> std::string { return self.name(); })
+      .def_prop_ro("collective", [](const ExecutionPlan& self) -> std::string { return self.collective(); })
+      .def_prop_ro("min_message_size", [](const ExecutionPlan& self) -> size_t { return self.minMessageSize(); })
+      .def_prop_ro("max_message_size", [](const ExecutionPlan& self) -> size_t { return self.maxMessageSize(); });
 
   nb::class_<Executor>(m, "Executor")
       .def(nb::init<std::shared_ptr<Communicator>>(), nb::arg("comm"))

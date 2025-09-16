@@ -11,12 +11,13 @@ import inspect
 import os
 
 from mscclpp.language.program import CollectiveProgram
+from mscclpp.plans import ExecutionPlanHandle, ExecutionPlanRegistry
 
-from ._mscclpp import ExecutionPlan, ExecutionPlanHandle, ExecutionPlanRegistry, version
+from ._mscclpp import ExecutionPlan, ExecutionPlanHandle as _ExecutionPlanHandle, version
 
 
 _version = version()
-_execution_plan_registry = ExecutionPlanRegistry.get_instance()
+_execution_plan_registry = ExecutionPlanRegistry()
 
 
 def _stable_json_bytes(obj: Any) -> bytes:
@@ -138,10 +139,11 @@ def compile(
         except Exception:
             Path(plan_path).unlink(missing_ok=True)
     execution_plan = ExecutionPlan(plan_path, rank)
-    return ExecutionPlanHandle.create(
+    handle = _ExecutionPlanHandle.create(
         id=plan_id,
         world_size=world_size,
         nranks_per_node=nranks_per_node,
         plan=execution_plan,
         tags=tags,
     )
+    return ExecutionPlanHandle(handle)
