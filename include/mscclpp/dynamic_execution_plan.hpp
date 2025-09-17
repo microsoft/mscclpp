@@ -227,6 +227,8 @@ class DynamicExecutionPlan {
                                            const DynamicRuntimeParams& params,
                                            const VariableContext& var_context);
 
+  void enforceAllToAllVSettings(JsonType& json_obj, const DynamicRuntimeParams& params); // NEW: Add method declaration
+
   int rank_;                                         ///< Current rank
   std::string name_;                                 ///< Plan name
   std::string collective_;                           ///< Collective operation name

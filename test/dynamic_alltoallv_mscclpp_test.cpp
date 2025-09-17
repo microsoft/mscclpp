@@ -185,9 +185,9 @@ int main(int argc, char* argv[]) {
     if (totalRecvSize > 0) {
       std::vector<char> h_recvBuffer(totalRecvSize);
       cudaMemcpy(h_recvBuffer.data(), d_recvBuffer, totalRecvSize, cudaMemcpyDeviceToHost);
-      
-      std::cout << "Rank " << mpi_rank << ": First 20 received bytes: ";
-      for (size_t i = 0; i < std::min(totalRecvSize, size_t(20)); ++i) {
+
+      std::cout << "Rank " << mpi_rank << ": First 1000 received bytes: ";
+      for (size_t i = 0; i < std::min(totalRecvSize, size_t(1000)); ++i) {
         std::cout << static_cast<int>(h_recvBuffer[i]) << " ";
       }
       std::cout << std::endl;
