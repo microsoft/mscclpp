@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include "include/unix_socket.hpp"
 
 #include <poll.h>
@@ -117,7 +120,7 @@ void UnixSocketServer::start(int localRankId) {
   listenUnixSockPath_ = socketPath;
   mainThread_ = std::thread([this] {
     try {
-      this->mainLoop();
+      this->mainLoop(listenUnixSockFd_);
     } catch (const std::exception& e) {
       if (abortFlag_ && *abortFlag_) {
         return;
@@ -130,6 +133,7 @@ void UnixSocketServer::start(int localRankId) {
 void UnixSocketServer::stop() {
   *abortFlag_ = 1;
   if (mainThread_.joinable()) {
+    INFO(MSCCLPP_P2P, "Stopping unix socket server");
     mainThread_.join();
   }
   close(listenUnixSockFd_);
@@ -151,9 +155,9 @@ void UnixSocketServer::unregisterFd(uint32_t fdId) {
   fdMap_.erase(fdId);
 }
 
-void UnixSocketServer::mainLoop() {
+void UnixSocketServer::mainLoop(int listenUnixSockFd) {
   std::vector<pollfd> pollFds;
-  pollFds.push_back({listenUnixSockFd_, POLLIN, 0});
+  pollFds.push_back({listenUnixSockFd, POLLIN | POLLERR | POLLHUP | POLLNVAL | POLLRDHUP, 0});
   auto removeClient = [&pollFds](size_t index) {
     if (index == 0 || index >= pollFds.size()) {
       return;
@@ -177,14 +181,11 @@ void UnixSocketServer::mainLoop() {
       throw SysError("poll() failed on unix socket server", errno);
     }
     if (rc == 0) {
-      if (abortFlag_ && *abortFlag_) {
-        break;
-      }
       continue;
     }
 
     pollfd& listenPfd = pollFds[0];
-    if (listenPfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+    if (listenPfd.revents & (POLLERR | POLLHUP | POLLNVAL | POLLRDHUP)) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
@@ -192,7 +193,7 @@ void UnixSocketServer::mainLoop() {
     }
 
     if (listenPfd.revents & POLLIN) {
-      int connFd = accept(listenUnixSockFd_, nullptr, nullptr);
+      int connFd = accept(listenUnixSockFd, nullptr, nullptr);
       if (connFd >= 0) {
         pollFds.push_back({connFd, POLLIN | POLLERR | POLLHUP | POLLNVAL | POLLRDHUP, 0});
       } else if (errno != EINTR) {

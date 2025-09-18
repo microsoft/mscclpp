@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+
 #ifndef MSCCLPP_UNIX_SOCKET_HPP_
 #define MSCCLPP_UNIX_SOCKET_HPP_
 
@@ -33,7 +34,7 @@ class UnixSocketServer {
   std::unordered_map<uint32_t, int> fdMap_;
 
   UnixSocketServer();
-  void mainLoop();
+  void mainLoop(int listenUnixSockFd);
 };
 
 class UnixSocketClient {
