@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 #ifndef MSCCLPP_UNIX_SOCKET_HPP_
 #define MSCCLPP_UNIX_SOCKET_HPP_
 
