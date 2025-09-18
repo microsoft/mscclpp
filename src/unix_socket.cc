@@ -263,7 +263,7 @@ int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
   }
   mutex_.unlock();
   if (connectedFd != -1) {
-    return requestFdInternal(it->second, fdId);
+    return requestFdInternal(connectedFd, fdId);
   }
 
   connectedFd = socket(AF_UNIX, SOCK_STREAM, 0);
