@@ -12,6 +12,7 @@
 #include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
+#include "unix_socket.hpp"
 
 namespace mscclpp {
 
@@ -42,8 +43,11 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   size_t minMcGran_;
   size_t mcGran_;
   // These are only defined for multicast (NVLS) capability
-  pid_t rootPid_;
+  int rootFdId_;
+  int rootLocalRankId_;
   int mcFileDesc_;
+
+  UnixSocketClient& socketClient_ = UnixSocketClient::instance();
 
   std::list<std::pair<size_t, size_t>> allocatedRanges_;
   std::list<std::pair<size_t, size_t>> freeRanges_;
@@ -67,11 +71,8 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   MSCCLPP_CUTHROW(
       cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
   freeRanges_.emplace_back(0, bufferSize_);
-
-  rootPid_ = getpid();
-  if (rootPid_ < 0) {
-    throw mscclpp::SysError("getpid() failed", errno);
-  }
+  rootLocalRankId_ = env()->localRank;
+  rootFdId_ = UnixSocketServer::instance().registerFd(mcFileDesc_);
 
   INFO(MSCCLPP_COLL,
        "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld buffer size is "
@@ -89,22 +90,14 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   it += sizeof(this->minMcGran_);
   std::copy_n(it, sizeof(this->mcGran_), reinterpret_cast<char*>(&this->mcGran_));
   it += sizeof(this->mcGran_);
-  std::copy_n(it, sizeof(this->rootPid_), reinterpret_cast<char*>(&this->rootPid_));
-  it += sizeof(this->rootPid_);
-  std::copy_n(it, sizeof(this->mcFileDesc_), reinterpret_cast<char*>(&this->mcFileDesc_));
+  std::copy_n(it, sizeof(this->rootLocalRankId_), reinterpret_cast<char*>(&this->rootLocalRankId_));
+  it += sizeof(this->rootLocalRankId_);
+  std::copy_n(it, sizeof(this->rootFdId_), reinterpret_cast<char*>(&this->rootFdId_));
 
   freeRanges_.emplace_back(0, bufferSize_);
-  int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
-  if (rootPidFd < 0) {
-    throw mscclpp::SysError("pidfd_open() failed", errno);
-  }
-  int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
-  if (mcRootFileDescFd < 0) {
-    throw mscclpp::SysError("pidfd_getfd() failed", errno);
-  }
+  int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootLocalRankId_), rootFdId_);
   MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-  close(rootPidFd);
   close(mcRootFileDescFd);
 
   INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
@@ -112,8 +105,10 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
 
 NvlsConnection::Impl::~Impl() {
   // we don't need to free multicast handle object according to NCCL.
-  if (rootPid_ == getpid()) {
+  if (mcFileDesc_ >= 0) {
+    UnixSocketServer::instance().unregisterFd(rootFdId_);
     close(mcFileDesc_);
+    mcFileDesc_ = -1;
   }
 }
 
@@ -123,8 +118,8 @@ std::vector<char> NvlsConnection::Impl::serialize() {
   std::copy_n(reinterpret_cast<char*>(&bufferSize_), sizeof(bufferSize_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&minMcGran_), sizeof(minMcGran_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&mcGran_), sizeof(mcGran_), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&rootPid_), sizeof(rootPid_), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&mcFileDesc_), sizeof(mcFileDesc_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&rootLocalRankId_), sizeof(rootLocalRankId_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&rootFdId_), sizeof(rootFdId_), std::back_inserter(result));
   return result;
 }
 
