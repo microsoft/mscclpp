@@ -213,6 +213,9 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
   }
 
   establishConnections(timeoutSec);
+  env()->localRank = rank_ % getNranksPerNode();
+  unixSocketServer_.start(rank_ % getNranksPerNode());
+  INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
 }
 
 TcpBootstrap::Impl::~Impl() {
