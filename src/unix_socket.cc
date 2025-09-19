@@ -86,7 +86,16 @@ UnixSocketServer& UnixSocketServer::instance() {
   return server;
 }
 
-void UnixSocketServer::start(int localRankId) {
+std::string UnixSocketServer::generateSocketPath(int socketId) {
+  std::string path = "/tmp/mscclpp_bootstrap_" + std::to_string(socketId) + ".sock";
+  if (path.size() > kUnixPathMax) {
+    throw Error("Generated unix socket path is too long: " + path, ErrorCode::InternalError);
+  }
+  return path;
+}
+
+void UnixSocketServer::start() {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (listenUnixSockFd_ != -1) {
     return;
   }
@@ -96,7 +105,7 @@ void UnixSocketServer::start(int localRankId) {
     throw SysError("socket() failed for unix domain socket", errno);
   }
 
-  std::string socketPath = generateSocketPath(localRankId);
+  std::string socketPath = generateSocketPath(getpid());
   unlink(socketPath.c_str());
   sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
@@ -235,10 +244,6 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
 UnixSocketServer::UnixSocketServer() : abortFlagStorage_(new uint32_t(0)), abortFlag_(abortFlagStorage_.get()) {}
 
 std::string UnixSocketServer::getSocketPath() const { return listenUnixSockPath_; }
-
-std::string UnixSocketServer::generateSocketPath(int localRankId) {
-  return "/tmp/mscclpp_bootstrap_" + std::to_string(localRankId) + ".sock";
-}
 
 UnixSocketClient& UnixSocketClient::instance() {
   static UnixSocketClient client;

@@ -33,7 +33,7 @@ struct TransportInfo {
         struct {
           // These are only defined for multicast (NVLS) capability
           int rootFdId;
-          int rootLocalRankId;
+          int rootSocketId;
         };
       };
       size_t offsetFromBase;

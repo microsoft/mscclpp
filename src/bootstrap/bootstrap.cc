@@ -178,8 +178,7 @@ void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec
   INFO(MSCCLPP_INIT, "rank %d nranks %d - connecting to %s", rank_, nRanks_, line);
   establishConnections(timeoutSec);
 
-  env()->localRank = rank_ % getNranksPerNode();
-  unixSocketServer_.start(rank_ % getNranksPerNode());
+  unixSocketServer_.start();
   INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
 }
 
@@ -213,8 +212,7 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
   }
 
   establishConnections(timeoutSec);
-  env()->localRank = rank_ % getNranksPerNode();
-  unixSocketServer_.start(rank_ % getNranksPerNode());
+  unixSocketServer_.start();
   INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
 }
 

@@ -16,9 +16,9 @@ namespace mscclpp {
 class UnixSocketServer {
  public:
   static UnixSocketServer& instance();
-  static std::string generateSocketPath(int localRankId);
+  static std::string generateSocketPath(int socketId);
 
-  void start(int localRankId);
+  void start();
   void stop();
   uint32_t registerFd(int fd);
   void unregisterFd(uint32_t fdId);

@@ -90,8 +90,6 @@ class Env {
   /// Default is false.
   const bool forceDisableNvls;
 
-  int localRank = -1;  // to be set by the bootstrap
-
  private:
   Env();
 
