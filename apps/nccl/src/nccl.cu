@@ -118,7 +118,7 @@ static inline void mscclppNcclDlopenFinalize() {
 }
 
 static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
-  if (fallbackList == nullptr || fallbackList[0] == '\0' || strcmp(fallbackList, "all") == 0) {
+  if (strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
@@ -1083,6 +1083,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (plan == nullptr && mscclppNcclDlopenSharedLib) {
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  } else if (plan == nullptr) {
+    WARN("No FallBack code for AllReduce when multi-node");
+    return ncclInternalError;
   }
 
   switch (datatype) {
