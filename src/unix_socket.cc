@@ -262,12 +262,13 @@ int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
   INFO(MSCCLPP_P2P, "Requesting fdId %u from unix socket server at %s", fdId, socketPath.c_str());
 
   int connectedFd = -1;
-  mutex_.lock();
-  auto it = cachedFds_.find(socketPath);
-  if (it != cachedFds_.end()) {
-    connectedFd = it->second;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = cachedFds_.find(socketPath);
+    if (it != cachedFds_.end()) {
+      connectedFd = it->second;
+    }
   }
-  mutex_.unlock();
   if (connectedFd != -1) {
     return requestFdInternal(connectedFd, fdId);
   }
@@ -286,9 +287,14 @@ int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
     close(connectedFd);
     throw SysError("connect() failed for unix socket to " + socketPath, errno);
   }
-  mutex_.lock();
-  cachedFds_[socketPath] = connectedFd;
-  mutex_.unlock();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto [it, inserted] = cachedFds_.emplace(socketPath, connectedFd);
+    if (!inserted) {
+      close(it->second);
+      it->second = connectedFd;
+    }
+  }
   return requestFdInternal(connectedFd, fdId);
 }
 
