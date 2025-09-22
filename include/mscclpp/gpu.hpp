@@ -26,6 +26,8 @@ using CUmemAccessDesc = hipMemAccessDesc;
 using CUmemAllocationHandleType = hipMemAllocationHandleType;
 
 constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
+constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
+constexpr auto cudaErrorInvalidDevice = hipErrorInvalidDevice;
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
@@ -46,6 +48,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
 #endif  // CUDA_SUCCESS
+#define CUDA_ERROR_DEINITIALIZED hipErrorDeinitialized
+#define CUDA_ERROR_CONTEXT_IS_DESTROYED hipErrorContextIsDestroyed
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
 #define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
