@@ -996,7 +996,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   int rank = comm->comm->bootstrap()->getRank();
-  INFO(MSCCLPP_INIT, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
+  INFO(MSCCLPP_NCCL, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
        recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
@@ -1076,8 +1076,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr)
+  int nRanks = comm->comm->bootstrap()->getNranks();
+  int nRanksPerNode = comm->comm->bootstrap()->getNranksPerNode();
+  if (plan == nullptr && nRanks == nRanksPerNode)
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  if (plan == nullptr && mscclppNcclDlopenSharedLib) {
+    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
 
   switch (datatype) {
     case ncclFloat16:
