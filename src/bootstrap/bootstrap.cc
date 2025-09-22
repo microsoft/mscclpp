@@ -5,7 +5,6 @@
 
 #include <cstring>
 #include <mscclpp/core.hpp>
-#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <sstream>
 #include <thread>

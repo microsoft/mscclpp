@@ -44,7 +44,7 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   size_t mcGran_;
   // These are only defined for multicast (NVLS) capability
   int rootFdId_;
-  int rootSocketId_;
+  int rootPid_;
   int mcFileDesc_;
 
   UnixSocketClient& socketClient_ = UnixSocketClient::instance();
@@ -71,7 +71,7 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   MSCCLPP_CUTHROW(
       cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
   freeRanges_.emplace_back(0, bufferSize_);
-  rootSocketId_ = getpid();
+  rootPid_ = getpid();
   rootFdId_ = UnixSocketServer::instance().registerFd(mcFileDesc_);
 
   INFO(MSCCLPP_COLL,
@@ -90,12 +90,12 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   it += sizeof(this->minMcGran_);
   std::copy_n(it, sizeof(this->mcGran_), reinterpret_cast<char*>(&this->mcGran_));
   it += sizeof(this->mcGran_);
-  std::copy_n(it, sizeof(this->rootSocketId_), reinterpret_cast<char*>(&this->rootSocketId_));
-  it += sizeof(this->rootSocketId_);
+  std::copy_n(it, sizeof(this->rootPid_), reinterpret_cast<char*>(&this->rootPid_));
+  it += sizeof(this->rootPid_);
   std::copy_n(it, sizeof(this->rootFdId_), reinterpret_cast<char*>(&this->rootFdId_));
 
   freeRanges_.emplace_back(0, bufferSize_);
-  int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootSocketId_), rootFdId_);
+  int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootPid_), rootFdId_);
   MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
   close(mcRootFileDescFd);
@@ -118,7 +118,7 @@ std::vector<char> NvlsConnection::Impl::serialize() {
   std::copy_n(reinterpret_cast<char*>(&bufferSize_), sizeof(bufferSize_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&minMcGran_), sizeof(minMcGran_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&mcGran_), sizeof(mcGran_), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&rootSocketId_), sizeof(rootSocketId_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&rootPid_), sizeof(rootPid_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&rootFdId_), sizeof(rootFdId_), std::back_inserter(result));
   return result;
 }

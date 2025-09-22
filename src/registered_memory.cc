@@ -69,7 +69,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       } else {
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&this->fileDesc, handle, getNvlsMemHandleType(), 0));
         transportInfo.rootFdId = UnixSocketServer::instance().registerFd(fileDesc);
-        transportInfo.rootSocketId = getpid();
+        transportInfo.rootPid = getpid();
       }
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
       MSCCLPP_CUTHROW(cuMemRelease(handle));
@@ -138,7 +138,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
           detail::serialize(result, entry.shareableHandle);
         } else {
           detail::serialize(result, entry.rootFdId);
-          detail::serialize(result, entry.rootSocketId);
+          detail::serialize(result, entry.rootPid);
         }
         detail::serialize(result, entry.offsetFromBase);
       } else {
@@ -179,7 +179,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
           it = detail::deserialize(it, transportInfo.shareableHandle);
         } else {
           it = detail::deserialize(it, transportInfo.rootFdId);
-          it = detail::deserialize(it, transportInfo.rootSocketId);
+          it = detail::deserialize(it, transportInfo.rootPid);
         }
         it = detail::deserialize(it, transportInfo.offsetFromBase);
       } else {
@@ -225,7 +225,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
         } else {
-          int fd = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootSocketId),
+          int fd = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootPid),
                                                           entry.rootFdId);
           INFO(MSCCLPP_P2P, "Get file descriptor %d from peer 0x%lx", fd, hostHash);
           MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
