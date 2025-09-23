@@ -1,20 +1,18 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl-torch-integration/dsl_torch_integration.py
+# LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl-torch-integration/dsl_with_nccl_api.py
 
 import os
 import torch, torch.distributed as dist
-from mscclpp import jit, RawGpuBuffer
-from mscclpp.jit import AlgoSpec
+import mscclpp
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.rank import Rank
-from mscclpp.plans import ExecutionPlanRegistry
 
 
-def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
+def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     chunksperloop = 1
     gpu_size = spec.world_size
     collective = AllReduce(gpu_size, chunksperloop, True)
@@ -75,8 +73,8 @@ def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
     return program
 
 
-def setup_plan(registry: ExecutionPlanRegistry, rank: int, world_size: int):
-    plan_handle = jit.compile(
+def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
+    plan_handle = mscclpp.compile(
         algo=allreduce_nvls,
         name="allreduce_nvls",
         collective="allreduce",
@@ -106,7 +104,7 @@ def init_dist():
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
-    registry = ExecutionPlanRegistry()
+    registry = mscclpp.ExecutionPlanRegistry()
     setup_plan(registry, rank, world)
     registry.set_selector(selector)
     dist.init_process_group(backend="nccl")
@@ -116,7 +114,7 @@ def init_dist():
 def main():
     _, _, local = init_dist()
     torch.cuda.set_device(local)
-    buffer = RawGpuBuffer(24 << 20)
+    buffer = mscclpp.RawGpuBuffer(24 << 20)
     dlpack = buffer.to_dlpack(dataType=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()

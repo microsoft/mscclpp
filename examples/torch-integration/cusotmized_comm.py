@@ -6,18 +6,16 @@
 import os
 import torch
 import mscclpp.comm as mscclpp_comm
-from mscclpp import jit, RawGpuBuffer, DataType, Executor
-from mscclpp.jit import AlgoSpec
+import mscclpp
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.rank import Rank
-from mscclpp.plans import ExecutionPlanRegistry
 import netifaces as ni
 import ipaddress
 
 
-def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
+def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     chunksperloop = 1
     gpu_size = spec.world_size
     collective = AllReduce(gpu_size, chunksperloop, True)
@@ -78,8 +76,8 @@ def allreduce_nvls(spec: AlgoSpec) -> CollectiveProgram:
     return program
 
 
-def setup_plan(registry: ExecutionPlanRegistry, rank: int, world_size: int):
-    plan_handle = jit.compile(
+def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
+    plan_handle = mscclpp.compile(
         algo=allreduce_nvls,
         name="allreduce_nvls",
         collective="allreduce",
@@ -118,15 +116,15 @@ def interfaces_for_ip_netifaces(ip: str):
     return None
 
 
-def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> DataType:
+def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
     if dtype == torch.float16:
-        return DataType.float16
+        return mscclpp.DataType.float16
     elif dtype == torch.float32:
-        return DataType.float32
+        return mscclpp.DataType.float32
     elif dtype == torch.int32:
-        return DataType.int32
+        return mscclpp.DataType.int32
     elif dtype == torch.bfloat16:
-        return DataType.bfloat16
+        return mscclpp.DataType.bfloat16
     else:
         raise ValueError(f"Unknown data type: {dtype}")
 
@@ -138,8 +136,8 @@ class CustomizedComm:
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        self.registry = ExecutionPlanRegistry()
-        self.executor = Executor(comm.communicator)
+        self.registry = mscclpp.ExecutionPlanRegistry()
+        self.executor = mscclpp.Executor(comm.communicator)
 
     def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
         assert op == torch.distributed.ReduceOp.SUM
@@ -178,7 +176,7 @@ def init_dist() -> CustomizedComm:
     interface = interfaces_for_ip_netifaces(master_addr)
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
-    registry = ExecutionPlanRegistry()
+    registry = mscclpp.ExecutionPlanRegistry()
     setup_plan(registry, rank, world)
     registry.set_selector(selector)
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
@@ -191,7 +189,7 @@ def main():
     torch.cuda.set_device(local)
     comm = init_dist()
     comm.barrier_cpu()
-    buffer = RawGpuBuffer(24 << 20)
+    buffer = mscclpp.RawGpuBuffer(24 << 20)
     dlpack = buffer.to_dlpack(dataType=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()
