@@ -90,10 +90,6 @@ __all__ = [
     "__version__",
     "get_include",
     "get_lib",
-    ### Deprecated ###
-    "ProxyChannel",
-    "SmChannel",
-    "SmDevice2DeviceSemaphore",
 ]
 
 __version__: str = str(version())
@@ -125,21 +121,6 @@ def deprecated(new_cls):
         return wrapper
 
     return decorator
-
-
-@deprecated(PortChannel)
-class ProxyChannel(PortChannel):
-    pass
-
-
-@deprecated(MemoryChannel)
-class SmChannel(MemoryChannel):
-    pass
-
-
-@deprecated(MemoryDevice2DeviceSemaphore)
-class SmDevice2DeviceSemaphore(MemoryDevice2DeviceSemaphore):
-    pass
 
 
 class ExecutionPlanHandle:
