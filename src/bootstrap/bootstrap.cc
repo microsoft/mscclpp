@@ -577,6 +577,7 @@ void TcpBootstrap::Impl::close() {
   peerSendSockets_.clear();
   peerRecvSockets_.clear();
   unixSocketServer_.stop();
+  UnixSocketClient::instance().reset();
 }
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return Impl::createUniqueId(); }

@@ -95,6 +95,7 @@ std::string UnixSocketServer::generateSocketPath(int socketId) {
 }
 
 void UnixSocketServer::start() {
+  *abortFlag_ = 0;
   std::lock_guard<std::mutex> lock(mutex_);
   if (listenUnixSockFd_ != -1) {
     return;
@@ -142,7 +143,7 @@ void UnixSocketServer::start() {
 void UnixSocketServer::stop() {
   *abortFlag_ = 1;
   if (mainThread_.joinable()) {
-    INFO(MSCCLPP_P2P, "Stopping unix socket server");
+    INFO(MSCCLPP_INIT, "Stopping unix socket server");
     mainThread_.join();
   }
   close(listenUnixSockFd_);
@@ -250,13 +251,15 @@ UnixSocketClient& UnixSocketClient::instance() {
   return client;
 }
 
-UnixSocketClient::~UnixSocketClient() {
+void UnixSocketClient::reset() {
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& pair : cachedFds_) {
     close(pair.second);
   }
   cachedFds_.clear();
 }
+
+UnixSocketClient::~UnixSocketClient() { reset(); }
 
 int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
   INFO(MSCCLPP_P2P, "Requesting fdId %u from unix socket server at %s", fdId, socketPath.c_str());

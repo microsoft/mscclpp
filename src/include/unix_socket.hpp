@@ -42,6 +42,7 @@ class UnixSocketClient {
   static UnixSocketClient& instance();
 
   int requestFd(const std::string& socketPath, uint32_t fdId);
+  void reset();
   ~UnixSocketClient();
 
  private:
