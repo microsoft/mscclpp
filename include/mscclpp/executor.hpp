@@ -8,7 +8,6 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace mscclpp {
 
@@ -51,11 +50,11 @@ struct ExecutionPlanHandle {
   std::string id;
   Constraint constraint;
   std::shared_ptr<ExecutionPlan> plan;
-  std::unordered_set<std::string> tags;
+  std::unordered_map<std::string, uint64_t> tags;
 
   static std::shared_ptr<ExecutionPlanHandle> create(const std::string& id, int worldSize, int nRanksPerNode,
                                                      std::shared_ptr<ExecutionPlan> plan,
-                                                     const std::unordered_set<std::string>& tags = {});
+                                                     const std::unordered_map<std::string, uint64_t>& tags = {});
 };
 
 struct ExecutionRequest {

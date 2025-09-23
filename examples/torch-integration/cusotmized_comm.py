@@ -89,7 +89,7 @@ def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: i
         num_threads_per_block=1024,
         min_message_size=1 << 20,
         max_message_size=48 << 30,
-        tags={"nvls"},
+        tags={"nvls": 1},
     )
     registry.register_plan(plan_handle)
 

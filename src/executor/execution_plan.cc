@@ -762,7 +762,7 @@ void ExecutionPlanRegistry::clear() {
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(const std::string& id, int worldSize,
                                                                  int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
-                                                                 const std::unordered_set<std::string>& tags) {
+                                                                 const std::unordered_map<std::string, uint64_t>& tags) {
   std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
   return handle;
 }

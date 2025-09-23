@@ -244,7 +244,7 @@ class AlgoSpec:
     num_threads_per_block: int
     min_message_size: int
     max_message_size: int
-    tags: set
+    tags: dict
 
 
 def compile(
@@ -259,7 +259,7 @@ def compile(
     num_threads_per_block: int = 1024,
     min_message_size: int = 0,
     max_message_size: int = 2**64 - 1,
-    tags: set = {},
+    tags: dict = {},
     **kwargs,
 ) -> ExecutionPlanHandle:
     """Compile a MSCCL++ program from a high-level algorithm description.
@@ -275,7 +275,7 @@ def compile(
         num_threads_per_block (int): Number of threads per GPU thread block.
         min_msg_size (int): Minimum message size for this program.
         max_msg_size (int): Maximum message size for this program.
-        tags (set): Additional tags or metadata for the program.
+        tags (dict): Additional tags or metadata for the program.
         **kwargs: Additional keyword arguments for future extensions.
     Returns:
         The compiled program object.
@@ -308,7 +308,7 @@ def compile(
                 "version": __version__,
                 "algo_name": name,
                 "collective": collective,
-                "tags": sorted(tags),
+                "tags": sorted(tags.items()),
                 "source_hash": source_hash,
                 "envs": {
                     "nranks_per_node": nranks_per_node,
