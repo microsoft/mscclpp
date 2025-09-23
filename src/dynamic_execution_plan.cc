@@ -195,14 +195,34 @@ bool DynamicAllToAllv::execute(
     cudaStream_t stream;
     cudaStreamCreate(&stream);
     
+    // Debug: Verify input buffer has data before execution
+    std::vector<uint8_t> host_send_debug(1000);
+    cudaMemcpy(host_send_debug.data(), sendBuffer, 1000, cudaMemcpyDeviceToHost);
+    std::cout << "Rank " << allToAllv->rank_ << ": Input buffer before execution (first 10 bytes): ";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << static_cast<int>(host_send_debug[i]) << " ";
+    }
+    std::cout << std::endl;
+    
     // Execute the operation
     allToAllv->execute(
       sendBuffer, sendSizes, params.send_offsets,
       recvBuffer, recvSizes, params.recv_offsets,
       comm, executor, stream);
     
-    // Synchronize and cleanup
+    // Ensure execution completes
     cudaStreamSynchronize(stream);
+    
+    // Debug: Check if anything was written to output buffer
+    std::vector<uint8_t> host_recv_debug(1000);
+    cudaMemcpy(host_recv_debug.data(), recvBuffer, 1000, cudaMemcpyDeviceToHost);
+    std::cout << "Rank " << allToAllv->rank_ << ": Output buffer after execution (first 10 bytes): ";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << static_cast<int>(host_recv_debug[i]) << " ";
+    }
+    std::cout << std::endl;
+    
+    // Synchronize and cleanup
     cudaStreamDestroy(stream);
     
     return true;
@@ -262,19 +282,43 @@ void DynamicAllToAllv::execute(
               << ", total recv size: " << totalRecvSize << std::endl;
     
     // Step 3: Execute the concrete plan using the MSCCLPP executor
-    // MSCCLPP doesn't have UINT8, so we use UINT32 (4 bytes per element)
-    // The buffer sizes should be interpreted correctly by MSCCLPP
+    // MSCCLPP expects buffer sizes as element counts when using UINT32 DataType
+    size_t sendElementCount = totalSendSize / sizeof(uint32_t);
+    size_t recvElementCount = totalRecvSize / sizeof(uint32_t);
+    
+    // Debug: Verify input buffer has data before execution
+    std::vector<uint8_t> host_send_debug(1000);
+    cudaMemcpy(host_send_debug.data(), send_buff, 1000, cudaMemcpyDeviceToHost);
+    std::cout << "Rank " << rank_ << ": Input buffer before execution (first 10 bytes): ";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << static_cast<int>(host_send_debug[i]) << " ";
+    }
+    std::cout << std::endl;
+    
+    // Execute with MSCCLPP
     executor->execute(
-      rank_,                      // rank
-      send_buff,                  // send buffer 
-      recv_buff,                  // receive buffer
-      totalSendSize,              // send buffer size (in bytes)
-      totalRecvSize,              // receive buffer size (in bytes)
-      mscclpp::DataType::UINT32,  // Use UINT32 - MSCCLPP doesn't have UINT8
-      *executionPlan,             // execution plan
-      stream,                     // CUDA stream
-      mscclpp::PacketType::LL16   // packet type (LL16 is commonly used)
+      rank_,                      
+      send_buff,                  
+      recv_buff,                  
+      sendElementCount,           
+      recvElementCount,           
+      mscclpp::DataType::UINT32,  
+      *executionPlan,             
+      stream,                     
+      mscclpp::PacketType::LL16   
     );
+    
+    // Ensure execution completes
+    cudaStreamSynchronize(stream);
+    
+    // Debug: Check if anything was written to output buffer
+    std::vector<uint8_t> host_recv_debug(1000);
+    cudaMemcpy(host_recv_debug.data(), recv_buff, 1000, cudaMemcpyDeviceToHost);
+    std::cout << "Rank " << rank_ << ": Output buffer after execution (first 10 bytes): ";
+    for (int i = 0; i < 10; ++i) {
+        std::cout << static_cast<int>(host_recv_debug[i]) << " ";
+    }
+    std::cout << std::endl;
     
     std::cout << "Rank " << rank_ << ": Successfully executed dynamic all-to-allv using concrete ExecutionPlan" << std::endl;
     
@@ -907,22 +951,43 @@ void DynamicExecutionPlan::processDynamicOperation(JsonType& op_json, const Dyna
     for (size_t i = 0; i < src_buff_array.size(); ++i) {
       auto& buff_obj = src_buff_array[i];
       if (buff_obj.is_object()) {
-        // Calculate source offset: where rank_ stores data for target_peer
-        size_t src_offset = target_peer * send_size_per_peer;
+        nlohmann::json proper_buffer_obj;
         
-        // COMPLETELY REPLACE the buffer object - don't process dynamic fields
-        nlohmann::json proper_buffer_obj = {
-          {"index", target_peer},  // CRITICAL FIX: Use target_peer as index
-          {"size", static_cast<int>(send_size_per_peer)},  // CORRECT SIZE
-          {"offset", static_cast<int>(src_offset)},
-          {"type", "i"}
-        };
+        // Check if this is a COPY operation that should read from scratch buffer
+        if (op_name == "copy" && buff_obj.value("type", "") == "s") {
+          // COPY from scratch buffer (data received from remote ranks)
+          size_t recv_size_elements = receive_size_from_peer / sizeof(uint32_t);
+          size_t recv_offset = 0;
+          // Calculate offset for data received from target_peer
+          for (int sender = 0; sender < target_peer; ++sender) {
+            recv_offset += (sender + 1) * 1024;
+          }
+          size_t recv_offset_elements = recv_offset / sizeof(uint32_t);
+          
+          proper_buffer_obj = {
+            {"index", static_cast<uint32_t>(1)},  // Scratch buffer uses index 1
+            {"size", static_cast<uint32_t>(recv_size_elements)},
+            {"offset", static_cast<uint32_t>(recv_offset_elements)},
+            {"type", "s"}  // Reading from scratch buffer
+          };
+        } else {
+          // Normal case: read from input buffer
+          size_t src_offset_bytes = target_peer * send_size_per_peer;
+          size_t send_size_elements = send_size_per_peer / sizeof(uint32_t);
+          size_t src_offset_elements = src_offset_bytes / sizeof(uint32_t);
+          
+          proper_buffer_obj = {
+            {"index", static_cast<uint32_t>(0)},  // Input buffer uses index 0
+            {"size", static_cast<uint32_t>(send_size_elements)},
+            {"offset", static_cast<uint32_t>(src_offset_elements)},
+            {"type", "i"}  // Input buffer
+          };
+        }
         
         buff_obj = proper_buffer_obj;
         
         std::cout << "Rank " << rank_ << ": CREATED src_buff[" << i << "] = " 
-                  << "{ index:" << target_peer << ", size:" << send_size_per_peer
-                  << ", offset:" << src_offset << ", type:\"i\" }" << std::endl;
+                  << buff_obj.dump() << std::endl;
       }
     }
   }
@@ -969,15 +1034,38 @@ void DynamicExecutionPlan::processDynamicOperation(JsonType& op_json, const Dyna
             dst_offset += (sender + 1) * 1024;
           }
         }
-        
-        // COMPLETELY REPLACE the buffer object - don't process dynamic fields
-        nlohmann::json proper_buffer_obj = {
-          {"index", dst_index},  // CRITICAL FIX: Use target_peer as index
-          {"size", static_cast<int>(dst_size)},    // GUARANTEED CONSISTENT WITH SOURCE
-          {"offset", static_cast<int>(dst_offset)},
-          {"type", "o"}
-        };
-        
+
+        size_t dst_size_elements = dst_size / sizeof(uint32_t);
+        size_t dst_offset_elements = dst_offset / sizeof(uint32_t);        
+
+        // // COMPLETELY REPLACE the buffer object - don't process dynamic fields
+        // nlohmann::json proper_buffer_obj = {
+        //   {"index", static_cast<uint32_t>(0)},      // MSCCLPP uint32_t compatibility
+        //   {"size", static_cast<uint32_t>(dst_size_elements)}, // Convert bytes to elements
+        //   {"offset", static_cast<uint32_t>(dst_offset_elements)}, // Convert bytes to elements
+        //   {"type", "o"}  // Output buffer for COPY operations
+        // };
+
+        nlohmann::json proper_buffer_obj;
+        // For PUT operations, dst_buff should use scratch buffer type
+        if (op_name == "put") {
+            // PUT operations write to remote scratch buffers
+            proper_buffer_obj = {
+                {"index", static_cast<uint32_t>(1)},  // Scratch buffers use index 1, not 0!
+                {"size", static_cast<uint32_t>(dst_size_elements)},
+                {"offset", static_cast<uint32_t>(dst_offset_elements)},
+                {"type", "s"}  // Scratch buffer for PUT operations
+            };
+        } else {
+            // COPY operations write to output buffers
+            proper_buffer_obj = {
+                {"index", static_cast<uint32_t>(0)},  // Output buffer uses index 0
+                {"size", static_cast<uint32_t>(dst_size_elements)},
+                {"offset", static_cast<uint32_t>(dst_offset_elements)},
+                {"type", "o"}  // Output buffer for COPY operations
+            };
+        }
+          
         buff_obj = proper_buffer_obj;
         
         std::cout << "Rank " << rank_ << ": CREATED dst_buff[" << i << "] = " 
