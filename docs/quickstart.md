@@ -108,6 +108,47 @@ $ python -m pip install .
 $ CXX=/opt/rocm/bin/hipcc python -m pip install .
 ```
 
+### Version Tracking
+
+The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
+
+#### Checking Version Information
+
+After installation, you can check the version information in several ways:
+
+**From Python:**
+```python
+import mscclpp
+
+# Show all version information
+mscclpp.show_version()
+# Output:
+# MSCCLPP Version Information:
+#   Package Version: 0.7.0
+#   Git Commit: 43f160c
+#   Git Branch: main
+#   Git Remote: https://github.com/microsoft/mscclpp.git
+
+# Access individual attributes
+print(f"Version: {mscclpp.__version__}")
+print(f"Git commit: {mscclpp.__git_commit__}")
+print(f"Git branch: {mscclpp.__git_branch__}")
+print(f"Git remote: {mscclpp.__git_remote__}")
+
+# Get as dictionary
+info = mscclpp.get_version_info()
+```
+
+#### Version Information Details
+
+The version tracking captures:
+- **Package Version**: The semantic version from setup.py
+- **Git Commit**: Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
+- **Git Branch**: The branch name at build time
+- **Git Remote**: Repository URL (credentials are automatically stripped for security)
+
+This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.
+
 (vscode-dev-container)=
 ## VSCode Dev Container
 

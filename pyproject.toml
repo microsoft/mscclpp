@@ -2,12 +2,51 @@
 # Licensed under the MIT license.
 
 [build-system]
-requires = ["scikit-build-core"]
-build-backend = "scikit_build_core.build"
+requires = [
+    "setuptools>=61.0",
+    "wheel",
+    "cmake>=3.25",
+    "scikit-build-core>=0.9.0",
+]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "mscclpp"
 version = "0.7.0"
+description = "MSCCLPP Python bindings with version tracking"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Microsoft"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: System :: Hardware :: Symmetric Multi-processing",
+    "Topic :: System :: Distributed Computing",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: C++",
+]
+
+[project.urls]
+Homepage = "https://github.com/microsoft/mscclpp"
+Repository = "https://github.com/microsoft/mscclpp.git"
+
+[project.scripts]
+mscclpp-version = "mscclpp.__main__:main"
+
+[tool.setuptools]
+packages = ["mscclpp"]
+package-dir = {"" = "python"}
+
+[tool.setuptools.package-data]
+mscclpp = ["*.py", "*.pyi", "_version.py"]
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
