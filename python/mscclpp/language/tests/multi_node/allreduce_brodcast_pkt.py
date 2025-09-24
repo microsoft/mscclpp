@@ -8,9 +8,8 @@ from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
-def allreduce_example(
-    name, gpus_per_node, tbg_size, num_threads_per_block, min_message_size, max_message_size
-):
+
+def allreduce_example(name, gpus_per_node, tbg_size, num_threads_per_block, min_message_size, max_message_size):
     nodes = 2
     num_gpus = nodes * gpus_per_node
     chunksperloop = 1
@@ -32,9 +31,7 @@ def allreduce_example(
         scratch_buffer = []
         tb_offset = 1
         total_tb = tbg_size + tb_offset
-        tbg = ThreadBlockGroup(
-            tb_list=[i for i in range(tb_offset, tb_offset + tbg_size)]
-        )
+        tbg = ThreadBlockGroup(tb_list=[i for i in range(tb_offset, tb_offset + tbg_size)])
 
         for node in range(nodes):
             for gpu in range(gpus_per_node):
@@ -60,33 +57,37 @@ def allreduce_example(
                     dst_rank_id = peer + gpus_per_node * node
                     if peer == gpu:
                         src_rank.copy_packets(
-                            scratch_buffer[dst_rank_id][index: index + num_gpus],
-                            src_input_buffer[0: num_gpus],
-                            tb_group=tbg
+                            scratch_buffer[dst_rank_id][index : index + num_gpus],
+                            src_input_buffer[0:num_gpus],
+                            tb_group=tbg,
                         )
                     else:
                         memory_channels[(dst_rank_id, src_rank_id)].put_packets(
-                            scratch_buffer[dst_rank_id][index: index + num_gpus],
-                            src_input_buffer[0: num_gpus],
-                            tb_group=tbg
+                            scratch_buffer[dst_rank_id][index : index + num_gpus],
+                            src_input_buffer[0:num_gpus],
+                            tb_group=tbg,
                         )
                 port_channels[src_rank_id].read_put_packets(
-                    scratch_buffer[next_rank_id][index: index + num_gpus],
-                    scratch_buffer[src_rank_id][index: index + num_gpus],
-                    tb=0
+                    scratch_buffer[next_rank_id][index : index + num_gpus],
+                    scratch_buffer[src_rank_id][index : index + num_gpus],
+                    tb=0,
                 )
                 for peer in range(gpus_per_node):
                     dst_rank_id = peer + gpus_per_node * node
                     if peer == gpu:
                         continue
                     memory_channels[(dst_rank_id, src_rank_id)].read_put_packets(
-                        scratch_buffer[dst_rank_id][next_index: next_index + num_gpus],
-                        scratch_buffer[src_rank_id][next_index: next_index + num_gpus],
-                        tb_group=tbg
+                        scratch_buffer[dst_rank_id][next_index : next_index + num_gpus],
+                        scratch_buffer[src_rank_id][next_index : next_index + num_gpus],
+                        tb_group=tbg,
                     )
                 src_rank.reduce(
-                    src_input_buffer[0: num_gpus],
-                    [scratch_buffer[src_rank_id][i * num_gpus: i * num_gpus + num_gpus] for i in range(0, num_gpus) if i != src_rank_id],
+                    src_input_buffer[0:num_gpus],
+                    [
+                        scratch_buffer[src_rank_id][i * num_gpus : i * num_gpus + num_gpus]
+                        for i in range(0, num_gpus)
+                        if i != src_rank_id
+                    ],
                     tb_group=tbg,
                     packet=True,
                 )
