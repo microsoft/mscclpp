@@ -68,7 +68,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, getNvlsMemHandleType(), 0));
       } else {
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&this->fileDesc, handle, getNvlsMemHandleType(), 0));
-        transportInfo.rootFdId = UnixSocketServer::instance().registerFd(fileDesc);
+        transportInfo.rootFd = UnixSocketServer::instance().registerFd(fileDesc);
         transportInfo.rootPid = getpid();
       }
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
@@ -137,7 +137,7 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           detail::serialize(result, entry.shareableHandle);
         } else {
-          detail::serialize(result, entry.rootFdId);
+          detail::serialize(result, entry.rootFd);
           detail::serialize(result, entry.rootPid);
         }
         detail::serialize(result, entry.offsetFromBase);
@@ -178,7 +178,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           it = detail::deserialize(it, transportInfo.shareableHandle);
         } else {
-          it = detail::deserialize(it, transportInfo.rootFdId);
+          it = detail::deserialize(it, transportInfo.rootFd);
           it = detail::deserialize(it, transportInfo.rootPid);
         }
         it = detail::deserialize(it, transportInfo.offsetFromBase);
@@ -225,8 +225,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
         } else {
-          int fd = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootPid),
-                                                          entry.rootFdId);
+          int fd =
+              UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootPid), entry.rootFd);
           INFO(MSCCLPP_P2P, "Get file descriptor %d from peer 0x%lx", fd, hostHash);
           MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
                                                          CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
@@ -265,6 +265,7 @@ RegisteredMemory::Impl::~Impl() {
       // For local registered memory
       if (fileDesc >= 0) {
         close(fileDesc);
+        UnixSocketServer::instance().unregisterFd(fileDesc);
         fileDesc = -1;
       }
       return;

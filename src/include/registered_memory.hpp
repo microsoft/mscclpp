@@ -32,7 +32,7 @@ struct TransportInfo {
         char shareableHandle[64];
         struct {
           // These are only defined for multicast (NVLS) capability
-          int rootFdId;
+          int rootFd;
           int rootPid;
         };
       };

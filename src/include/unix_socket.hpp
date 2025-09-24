@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace mscclpp {
 
@@ -20,8 +21,8 @@ class UnixSocketServer {
 
   void start();
   void stop();
-  uint32_t registerFd(int fd);
-  void unregisterFd(uint32_t fdId);
+  int registerFd(int fd);
+  void unregisterFd(int fd);
   std::string getSocketPath() const;
 
  private:
@@ -31,7 +32,7 @@ class UnixSocketServer {
   std::unique_ptr<uint32_t> abortFlagStorage_;
   volatile uint32_t* abortFlag_;
   std::mutex mutex_;
-  std::unordered_map<uint32_t, int> fdMap_;
+  std::unordered_set<int> fdSet_;
 
   UnixSocketServer();
   void mainLoop(int listenUnixSockFd);

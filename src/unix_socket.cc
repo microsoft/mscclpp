@@ -22,8 +22,6 @@ namespace {
 
 constexpr size_t kUnixPathMax = sizeof(sockaddr_un::sun_path) - 1;
 
-std::atomic<uint32_t> nextFdId{1};
-
 void sendAll(int fd, const void* buffer, size_t size) {
   const char* data = static_cast<const char*>(buffer);
   size_t written = 0;
@@ -153,16 +151,20 @@ void UnixSocketServer::stop() {
   }
 }
 
-uint32_t UnixSocketServer::registerFd(int fd) {
+int UnixSocketServer::registerFd(int fd) {
+  INFO(MSCCLPP_P2P, "Registered fd %d", fd);
   std::lock_guard<std::mutex> lock(mutex_);
-  uint32_t id = nextFdId.fetch_add(1, std::memory_order_relaxed);
-  fdMap_[id] = fd;
-  return id;
+  if (fdSet_.count(fd) != 0) {
+    throw Error("Fd is already registered: " + std::to_string(fd), ErrorCode::InvalidUsage);
+  }
+  fdSet_.insert(fd);
+  return fd;
 }
 
-void UnixSocketServer::unregisterFd(uint32_t fdId) {
+void UnixSocketServer::unregisterFd(int fd) {
+  INFO(MSCCLPP_P2P, "Unregistered fd %d", fd);
   std::lock_guard<std::mutex> lock(mutex_);
-  fdMap_.erase(fdId);
+  fdSet_.erase(fd);
 }
 
 void UnixSocketServer::mainLoop(int listenUnixSockFd) {
@@ -220,16 +222,16 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
         removeClient(idx);
         continue;
       } else if (client.revents & POLLIN) {
-        uint32_t fdId = 0;
-        recvAll(client.fd, &fdId, sizeof(fdId));
+        int fd = 0;
+        recvAll(client.fd, &fd, sizeof(fd));
         int fdToSend = -1;
         {
           std::lock_guard<std::mutex> lock(mutex_);
-          auto it = fdMap_.find(fdId);
-          if (it == fdMap_.end()) {
-            throw Error("Requested fdId not found: " + std::to_string(fdId), ErrorCode::InvalidUsage);
+          auto it = fdSet_.find(fd);
+          if (it == fdSet_.end()) {
+            throw Error("Requested fd not found: " + std::to_string(fd), ErrorCode::InvalidUsage);
           }
-          fdToSend = it->second;
+          fdToSend = *it;
         }
         sendStatusAndFd(client.fd, 0, fdToSend);
       }
