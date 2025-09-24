@@ -112,6 +112,13 @@ $ CXX=/opt/rocm/bin/hipcc python -m pip install .
 
 The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
 
+#### Version Format
+
+The package version includes the git commit hash directly in the version string for development builds:
+- **Release version**: `0.7.0`
+- **Development version**: `0.7.0+git.43f160c` (includes short commit hash)
+- **Development with uncommitted changes**: `0.7.0+git.43f160c-dirty`
+
 #### Checking Version Information
 
 After installation, you can check the version information in several ways:
@@ -124,28 +131,33 @@ import mscclpp
 mscclpp.show_version()
 # Output:
 # MSCCLPP Version Information:
-#   Package Version: 0.7.0
+#   Package Version: 0.7.0+git.43f160c
+#   Base Version: 0.7.0
 #   Git Commit: 43f160c
 #   Git Branch: main
 #   Git Remote: https://github.com/microsoft/mscclpp.git
 
 # Access individual attributes
-print(f"Version: {mscclpp.__version__}")
-print(f"Git commit: {mscclpp.__git_commit__}")
+print(f"Version: {mscclpp.__version__}")           # Full version with commit
+print(f"Base version: {mscclpp.__base_version__}") # Semantic version only
+print(f"Git commit: {mscclpp.__git_commit__}")     # Commit hash only
 print(f"Git branch: {mscclpp.__git_branch__}")
 print(f"Git remote: {mscclpp.__git_remote__}")
 
 # Get as dictionary
 info = mscclpp.get_version_info()
+print(f"Full version: {info['version']}")
+print(f"Base version: {info['base_version']}")
 ```
 
 #### Version Information Details
 
 The version tracking captures:
-- **Package Version**: The semantic version from setup.py
-- **Git Commit**: Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
-- **Git Branch**: The branch name at build time
-- **Git Remote**: Repository URL (credentials are automatically stripped for security)
+- **Package Version** (`__version__`): Full version string including git commit (e.g., `0.7.0+git.43f160c`)
+- **Base Version** (`__base_version__`): Semantic version without git information (e.g., `0.7.0`)
+- **Git Commit** (`__git_commit__`): Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
+- **Git Branch** (`__git_branch__`): The branch name at build time
+- **Git Remote** (`__git_remote__`): Repository URL (credentials are automatically stripped for security)
 
 This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.
 

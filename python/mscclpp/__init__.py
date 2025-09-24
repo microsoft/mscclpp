@@ -11,6 +11,7 @@ from functools import wraps
 try:
     from ._version import (
         __version__,
+        __base_version__,
         __git_commit__,
         __git_branch__,
         __git_remote__,
@@ -19,7 +20,8 @@ try:
     )
 except ImportError:
     # Fallback if version file doesn't exist
-    __version__ = "unknown"
+    __version__ = "0.7.0"
+    __base_version__ = "0.7.0"
     __git_commit__ = "unknown"
     __git_branch__ = "unknown"
     __git_remote__ = "unknown"
@@ -28,6 +30,7 @@ except ImportError:
         """Fallback version info"""
         return {
             "version": __version__,
+            "base_version": __base_version__,
             "commit": __git_commit__,
             "branch": __git_branch__,
             "remote": __git_remote__
@@ -38,7 +41,11 @@ except ImportError:
         info = get_version_info()
         if verbose:
             print("MSCCL++ Version Information:")
-            print(f"  Package Version: {info['version']} (version tracking unavailable)")
+            print(f"  Package Version: {info['version']}")
+            print(f"  Base Version: {info['base_version']}")
+            print(f"  Git Commit: {info['commit']}")
+            print(f"  Git Branch: {info['branch']}")
+            print(f"  Git Remote: {info['remote']}")
         return info
 
 # Try to import the C++ extension
