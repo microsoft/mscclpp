@@ -178,6 +178,9 @@ class DynamicExecutionPlan {
   /// Clean up temporary files created by this plan
   void cleanup();
 
+  /// Add a public getter for the temp file path
+  const std::string& getTempFilePath() const { return temp_file_path_; }
+
  private:
   void loadFromJson(const std::string& planPath);
   int calculateThreadBlocks(size_t messageSize) const;

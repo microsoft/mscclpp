@@ -278,8 +278,8 @@ void DynamicAllToAllv::execute(
     size_t totalSendSize = params.totalSendSize;
     size_t totalRecvSize = params.totalRecvSize;
     
-    std::cout << "Rank " << rank_ << ": Executing with total send size: " << totalSendSize 
-              << ", total recv size: " << totalRecvSize << std::endl;
+    std::cout << "Rank " << rank_ << ": Executing with total send size: " 
+              << totalSendSize << ", total recv size: " << totalRecvSize << std::endl;
     
     // Step 3: Execute the concrete plan using the MSCCLPP executor
     // MSCCLPP expects buffer sizes as element counts when using UINT32 DataType
@@ -320,7 +320,51 @@ void DynamicAllToAllv::execute(
     }
     std::cout << std::endl;
     
-    std::cout << "Rank " << rank_ << ": Successfully executed dynamic all-to-allv using concrete ExecutionPlan" << std::endl;
+    // NEW: Debug note about scratch buffer configuration
+    // MSCCLPP internally manages scratch buffers based on the execution plan
+    std::cout << "Rank " << rank_ << ": NOTE: MSCCLPP manages scratch buffers internally based on execution plan configuration" << std::endl;
+    std::cout << "Rank " << rank_ << ": Checking scratch buffer configuration in concrete plan..." << std::endl;
+    
+    // Check the concrete plan we just created to verify scratch_chunks
+    // Use the public getter instead of accessing private member directly
+    const std::string& tempFilePath = plan_.getTempFilePath();
+    if (!tempFilePath.empty()) {
+      try {
+        std::ifstream planFile(tempFilePath);
+        if (planFile.is_open()) {
+          nlohmann::json planObj;
+          planFile >> planObj;
+          planFile.close();
+          
+          // Check scratch buffer configuration for this rank's GPU
+          bool foundGpu = false;
+          if (planObj.contains("gpus") && planObj["gpus"].is_array()) {
+            for (const auto& gpu : planObj["gpus"]) {
+              if (gpu.contains("id") && gpu["id"].get<int>() == rank_) {
+                foundGpu = true;
+                int scratchChunks = gpu.value("scratch_chunks", 0);
+                std::cout << "Rank " << rank_ << ": GPU " << rank_ << " has scratch_chunks = " << scratchChunks << std::endl;
+                if (scratchChunks == 0) {
+                  std::cout << "Rank " << rank_ << ": WARNING: scratch_chunks is 0! Data transfer will fail!" << std::endl;
+                  std::cout << "Rank " << rank_ << ": The execution plan must have scratch_chunks > 0 for AllToAllV!" << std::endl;
+                } else {
+                  std::cout << "Rank " << rank_ << ": Good: scratch_chunks = " << scratchChunks << " (should enable data transfer)" << std::endl;
+                }
+                break;
+              }
+            }
+            if (!foundGpu) {
+              std::cout << "Rank " << rank_ << ": WARNING: Could not find GPU " << rank_ << " in execution plan!" << std::endl;
+            }
+          }
+        }
+      } catch (const std::exception& e) {
+        std::cout << "Rank " << rank_ << ": Could not verify scratch buffer configuration: " << e.what() << std::endl;
+      }
+    }
+    
+    // Synchronize and cleanup
+    cudaStreamDestroy(stream);
     
   } catch (const std::exception& e) {
     std::cout << "Rank " << rank_ << ": Error during dynamic all-to-allv execution: " << e.what() << std::endl;
@@ -751,12 +795,16 @@ void DynamicExecutionPlan::processDynamicGpu(JsonType& gpu_json, const DynamicRu
     std::cout << "Rank " << rank_ << ": Set output_chunks = 1 (direct assignment)" << std::endl;
   }
   
-  // Set scratch_chunks (usually all peers except self)
+  // CRITICAL FIX: Always set scratch_chunks for AllToAllV
+  // Each GPU needs scratch buffers to receive data from other ranks
+  int scratch_chunks = params.num_ranks - 1;  // One scratch chunk per remote peer
+  gpu_json["scratch_chunks"] = scratch_chunks;
+  std::cout << "Rank " << rank_ << ": FORCED scratch_chunks = " << scratch_chunks 
+            << " for GPU " << gpu_id << " (AllToAllV requirement)" << std::endl;
+  
+  // Remove any dynamic scratch chunks field
   if (gpu_json.contains("dynamic_scratch_chunks")) {
-    int scratch_chunks = params.num_ranks - 1;
-    gpu_json["scratch_chunks"] = static_cast<int>(scratch_chunks);
     gpu_json.erase("dynamic_scratch_chunks");
-    std::cout << "Rank " << rank_ << ": Set scratch_chunks = " << scratch_chunks << std::endl;
   }
   
   // CRITICAL: Force input_chunks and output_chunks to 1 for alltoallv
@@ -767,13 +815,13 @@ void DynamicExecutionPlan::processDynamicGpu(JsonType& gpu_json, const DynamicRu
   
   // Ensure proper type for existing fields to avoid number/number type conflicts
   if (gpu_json.contains("input_chunks") && !gpu_json["input_chunks"].is_number_integer()) {
-    gpu_json["input_chunks"] = 1;  // CHANGED: Force to 1 instead of params.num_ranks
+    gpu_json["input_chunks"] = 1;  // Force to 1
   }
   if (gpu_json.contains("output_chunks") && !gpu_json["output_chunks"].is_number_integer()) {
-    gpu_json["output_chunks"] = 1;  // CHANGED: Force to 1 instead of params.num_ranks
+    gpu_json["output_chunks"] = 1;  // Force to 1
   }
   if (gpu_json.contains("scratch_chunks") && !gpu_json["scratch_chunks"].is_number_integer()) {
-    gpu_json["scratch_chunks"] = static_cast<int>(params.num_ranks - 1);
+    gpu_json["scratch_chunks"] = scratch_chunks;
   }
   if (gpu_json.contains("id") && !gpu_json["id"].is_number_integer()) {
     gpu_json["id"] = static_cast<int>(gpu_id);
