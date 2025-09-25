@@ -58,17 +58,19 @@ def main():
     group_ranks = list(range(world_size))
     if rank == 0:
         print(f"Creating new_group with ranks={group_ranks}", flush=True)
-    grp = dist.new_group(ranks=group_ranks, backend=backend)
+    grp0 = dist.new_group(ranks=group_ranks, backend=backend)
     x = torch.ones(nelems, device=local_rank, dtype=torch.float32) * (rank + 1)
-    dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp)
+    dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp0)
 
-    grp = dist.new_group(ranks=list(range(world_size)), backend=backend)
+    grp1 = dist.new_group(ranks=list(range(world_size)), backend=backend)
     x = torch.ones(nelems, device=local_rank, dtype=torch.float32) * (rank + 1)
-    dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp)
+    dist.all_reduce(x, op=dist.ReduceOp.SUM, group=grp1)
 
     dist.barrier()
 
     print(memory_report(local_rank))
+    dist.destroy_process_group(grp0)
+    dist.destroy_process_group(grp1)
     dist.destroy_process_group()
 
 

@@ -162,6 +162,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::AlgorithmFactory> algorithmFactory;
   std::shared_ptr<char> scratchBuffer_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
+  int nRanksPerNode;
+  int worldSize;
 
   void* mscclppNcclComm;
 };
@@ -322,6 +324,13 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->comm = mscclppComm;
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
+  commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
+  commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
+
+  if (commPtr->worldSize == 1) {
+    *comm = commPtr;
+    return ncclSuccess;
+  }
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
@@ -379,7 +388,12 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t*, int, const int*) {
+NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int*) {
+  if (ndev == 1) {
+    ncclUniqueId Id;
+    ncclGetUniqueId(&Id);
+    return ncclCommInitRank(comm, ndev, Id, 0);
+  }
   // TODO: implement this function
   WARN("ncclCommInitAll is currently unavailable");
   return ncclInternalError;
@@ -560,6 +574,13 @@ NCCL_API ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatyp
 NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     int root, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = count * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
+
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
@@ -568,7 +589,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   int rank = comm->comm->bootstrap()->getRank();
-  INFO(MSCCLPP_INIT, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
+  INFO(MSCCLPP_NCCL, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
        recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
@@ -612,6 +633,13 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     ncclRedOp_t reductionOperation, ncclComm_t comm, cudaStream_t stream) {
+  size_t bytes = count * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) {
     WARN(
@@ -620,7 +648,6 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
   // Declarating variables
-  size_t bytes = count * ncclTypeSize(datatype);
   int rank = comm->comm->bootstrap()->getRank();
   INFO(MSCCLPP_NCCL, "rank %d allreduce sendbuff %p recvbuff %p count %ld, dtype %d comm is %p", rank, sendbuff,
        recvbuff, count, datatype, comm);
@@ -668,6 +695,13 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
                                         ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = recvcount * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
+
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
@@ -715,6 +749,12 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
                                     ncclComm_t comm, cudaStream_t stream) {
   size_t bytes = sendcount * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
@@ -779,14 +819,31 @@ NCCL_API ncclResult_t ncclRecv(void*, size_t, ncclDataType_t, int, ncclComm_t, c
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t) {
+NCCL_API ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                   ncclComm_t comm, cudaStream_t stream) {
+  size_t bytes = count * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   // TODO: implement this function
   WARN("ncclAllToAll is currently unavailable");
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclAllToAllv(const void*, const size_t[], const size_t[], void*, const size_t[], const size_t[],
-                                    ncclDataType_t, ncclComm_t, cudaStream_t) {
+NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const size_t sendcounts[],
+                                    const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
+                                    const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
+                                    cudaStream_t stream) {
+  size_t bytes = recvcounts[0] * ncclTypeSize(datatype);
+  if (comm->worldSize == 1) {
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync((char*)recvbuff + rdispls[0] * ncclTypeSize(datatype),
+                                      (const char*)sendbuff + sdispls[0] * ncclTypeSize(datatype), bytes,
+                                      cudaMemcpyDeviceToDevice, stream));
+    return ncclSuccess;
+  }
   WARN("ncclAllToAllv is currently unavailable");
   return ncclInternalError;
 }
