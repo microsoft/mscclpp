@@ -118,7 +118,7 @@ static inline void mscclppNcclDlopenFinalize() {
 }
 
 static inline int mscclppNcclInFallbackList(const char* collOps, const char* fallbackList) {
-  if (fallbackList == nullptr || fallbackList[0] == '\0' || strcmp(fallbackList, "all") == 0) {
+  if (strcmp(fallbackList, "all") == 0) {
     return 1;
   }
 
@@ -207,6 +207,7 @@ struct ncclComm {
   uint32_t buffFlag;
 
   int nRanksPerNode;
+  int worldSize;
 
   std::shared_ptr<uint32_t> deviceFlag7;
   std::shared_ptr<uint32_t> deviceFlag28;
@@ -703,10 +704,15 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->comm = mscclppComm;
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
+  commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
+
+  if (commPtr->worldSize == 1) {
+    *comm = commPtr;
+    return ncclSuccess;
+  }
 
   // FallBack for single node
-  if (mscclppComm->bootstrap()->getNranks() == mscclppComm->bootstrap()->getNranksPerNode())
-    ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
+  if (commPtr->worldSize == commPtr->nRanksPerNode) ncclCommInitRankFallbackSingleNode(commPtr, mscclppComm, rank);
 
   const std::string& collectiveDir = mscclpp::env()->executionPlanDir;
   if (collectiveDir != "") {
@@ -759,7 +765,12 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   return ncclSuccess;
 }
 
-NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t*, int, const int*) {
+NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int*) {
+  if (ndev == 1) {
+    ncclUniqueId Id;
+    ncclGetUniqueId(&Id);
+    return ncclCommInitRank(comm, ndev, Id, 0);
+  }
   // TODO: implement this function
   WARN("ncclCommInitAll is currently unavailable");
   return ncclInternalError;
@@ -987,6 +998,14 @@ NCCL_API ncclResult_t ncclBroadcastFallback(const void* sendbuff, void* recvbuff
 
 NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     int root, ncclComm_t comm, cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      size_t bytes = count * ncclTypeSize(datatype);
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
+
   size_t bytes = count * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
@@ -996,7 +1015,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
 
   int rank = comm->comm->bootstrap()->getRank();
-  INFO(MSCCLPP_INIT, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
+  INFO(MSCCLPP_NCCL, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
        recvbuff, count, datatype, comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
@@ -1047,6 +1066,13 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
 
 NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
                                     ncclRedOp_t reductionOperation, ncclComm_t comm, cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      size_t bytes = count * ncclTypeSize(datatype);
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) {
     WARN(
@@ -1076,8 +1102,17 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     }
   }
 
-  if (plan == nullptr)
+  int nRanks = comm->comm->bootstrap()->getNranks();
+  int nRanksPerNode = comm->comm->bootstrap()->getNranksPerNode();
+  if (plan == nullptr && nRanks == nRanksPerNode)
     return ncclAllReduceFallback(sendbuff, recvbuff, count, datatype, reductionOperation, comm, stream);
+  if (plan == nullptr && mscclppNcclDlopenSharedLib) {
+    return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
+                                    *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  } else if (plan == nullptr) {
+    WARN("No FallBack code for AllReduce when multi-node");
+    return ncclInternalError;
+  }
 
   switch (datatype) {
     case ncclFloat16:
@@ -1107,6 +1142,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 
 NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
                                         ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      size_t bytes = recvcount * ncclTypeSize(datatype);
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
+
   size_t bytes = recvcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
@@ -1169,6 +1212,13 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 
 NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcount, ncclDataType_t datatype,
                                     ncclComm_t comm, cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      size_t bytes = sendcount * ncclTypeSize(datatype);
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   size_t bytes = sendcount * ncclTypeSize(datatype);
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
@@ -1239,14 +1289,31 @@ NCCL_API ncclResult_t ncclRecv(void*, size_t, ncclDataType_t, int, ncclComm_t, c
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclAllToAll(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t) {
+NCCL_API ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                   ncclComm_t comm, cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    if (sendbuff != recvbuff) {
+      size_t bytes = count * ncclTypeSize(datatype);
+      CUDACHECK(cudaMemcpyAsync(recvbuff, sendbuff, bytes, cudaMemcpyDeviceToDevice, stream));
+    }
+    return ncclSuccess;
+  }
   // TODO: implement this function
   WARN("ncclAllToAll is currently unavailable");
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclAllToAllv(const void*, const size_t[], const size_t[], void*, const size_t[], const size_t[],
-                                    ncclDataType_t, ncclComm_t, cudaStream_t) {
+NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const size_t sendcounts[],
+                                    const size_t sdispls[], void* recvbuff, const size_t recvcounts[],
+                                    const size_t rdispls[], ncclDataType_t datatype, ncclComm_t comm,
+                                    cudaStream_t stream) {
+  if (comm->worldSize == 1) {
+    size_t bytes = recvcounts[0] * ncclTypeSize(datatype);
+    MSCCLPP_CUDATHROW(cudaMemcpyAsync((char*)recvbuff + rdispls[0] * ncclTypeSize(datatype),
+                                      (const char*)sendbuff + sdispls[0] * ncclTypeSize(datatype), bytes,
+                                      cudaMemcpyDeviceToDevice, stream));
+    return ncclSuccess;
+  }
   WARN("ncclAllToAllv is currently unavailable");
   return ncclInternalError;
 }
