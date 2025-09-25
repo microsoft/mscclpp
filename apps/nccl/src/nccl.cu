@@ -159,7 +159,7 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::shared_ptr<mscclpp::Executor> executor;
   std::unordered_map<std::string, std::vector<executionPlanInstance>> executionPlans;
-  std::shared_ptr<mscclpp::AlgorithmFactory> algorithmFactory;
+  std::shared_ptr<mscclpp::AlgorithmCollection> algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
   int nRanksPerNode;
@@ -230,7 +230,7 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo() {
-  auto factoryBuilder = mscclpp::AlgorithmFactoryBuilder::getInstance();
+  auto factoryBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
   factoryBuilder->addAlgorithmBuilder(broadcastAlgo6);
 
@@ -346,9 +346,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
     }
   }
 
-  mscclpp::AlgorithmFactoryBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
+  mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
   registerCustomizedAlgo();
-  commPtr->algorithmFactory = mscclpp::AlgorithmFactoryBuilder::getInstance()->build();
+  commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
@@ -611,9 +611,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (plan != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
-  auto algo = comm->algorithmFactory->selectAlgorithm("broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype),
-                                                      comm->comm->bootstrap()->getNranksPerNode(),
-                                                      comm->comm->bootstrap()->getNranks());
+  auto algo = comm->algorithmCollection->selectAlgorithm(
+      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
+      comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"root", std::make_shared<int>(root)},
@@ -672,9 +672,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm("allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype),
-                                                      comm->comm->bootstrap()->getNranksPerNode(),
-                                                      comm->comm->bootstrap()->getNranks());
+  auto algo = comm->algorithmCollection->selectAlgorithm(
+      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
+      comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"op", std::make_shared<int>(reductionOperation)},
@@ -789,7 +789,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, totalBytes, plan, stream);
   }
 
-  auto algo = comm->algorithmFactory->selectAlgorithm(
+  auto algo = comm->algorithmCollection->selectAlgorithm(
       "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype),
       comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
