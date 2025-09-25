@@ -12,7 +12,7 @@ The example shows how to:
    - Connection discovery / proxy setup.
    - Context key generation (so contexts can be reused / cached).
    - Launch function binding (kernel wrapper executed when NCCL all-gather is called).
-3. Register the algorithm builder with the global `AlgorithmFactoryBuilder` and install a **selector** deciding which implementation to return for a given collective request.
+3. Register the algorithm builder with the global `AlgorithmCollectionBuilder` and install a **selector** deciding which implementation to return for a given collective request.
 4. Run a multi-process (multi-rank) test using standard NCCL calls. The user program remains unchanged apart from initialization / registration code.
 5. (Optionally) Capture the sequence of `ncclAllGather` calls into a CUDA Graph for efficient replay.
 

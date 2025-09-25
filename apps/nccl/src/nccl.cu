@@ -230,24 +230,24 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 }
 
 static void registerCustomizedAlgo() {
-  auto factoryBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+  auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
   std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
-  factoryBuilder->addAlgorithmBuilder(broadcastAlgo6);
+  collectionBuilder->addAlgorithmBuilder(broadcastAlgo6);
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
   std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
-  factoryBuilder->addAlgorithmBuilder(allgatherAlgo6);
+  collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
   // TODO(binyli): remove allgather8 algo, use nccl by default
-  factoryBuilder->addAlgorithmBuilder(allgatherAlgo8);
+  collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
 
   std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>();
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
-  factoryBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
-  factoryBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
-  factoryBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
-  factoryBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
+  collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
+  collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
+  collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
+  collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
 }
 
 static mscclpp::Algorithm algoSelector(
