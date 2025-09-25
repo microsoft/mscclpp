@@ -2,12 +2,15 @@
 # Licensed under the MIT license.
 
 [build-system]
-requires = ["scikit-build-core"]
+requires = [
+    "scikit-build-core>=0.4.3",
+    "setuptools-scm[toml]>=6.2"
+]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
-version = "0.7.0"
+dynamic = ["version"]
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"

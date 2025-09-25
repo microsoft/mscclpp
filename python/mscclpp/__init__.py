@@ -7,6 +7,51 @@ import os
 import warnings
 from functools import wraps
 
+# Import version information first
+try:
+    from ._version import (
+        __version__,
+        __base_version__,
+        __git_commit__,
+        __git_branch__,
+        __git_remote__,
+        __git_dirty__,
+        __git_distance__,  # Add this
+        __scm_version__,
+        get_version_info,
+        show_version
+    )
+
+except ImportError:
+    # Fallback for development or if _version.py doesn't exist
+    from ._mscclpp import version
+    __version__ = str(version())
+    __base_version__ = __version__
+    __git_commit__ = "unknown"
+    __git_branch__ = "unknown"
+    __git_remote__ = "unknown"
+    __git_dirty__ = False
+    __git_distance__ = 0  # Add this
+    __scm_version__ = None
+
+    def get_version_info():
+        return {
+            "version": __version__,
+            "base_version": __base_version__,
+            "commit": __git_commit__,
+            "branch": __git_branch__,
+            "remote": __git_remote__,
+            "dirty": __git_dirty__,
+            "distance": __git_distance__,  # Add this
+            "scm_version": __scm_version__
+        }
+
+    def show_version(verbose=True):
+        info = get_version_info()
+        if verbose:
+            print(f"MSCCLPP Version: {info['version']}")
+        return info
+
 from ._mscclpp import (
     Env,
     ErrorCode,
@@ -45,7 +90,6 @@ from ._mscclpp import (
     npkit,
 )
 
-
 __all__ = [
     "Device",
     "DeviceType",
@@ -73,7 +117,17 @@ __all__ = [
     "is_nvls_supported",
     "alloc_shared_physical_cuda",
     "npkit",
+    # Version information
     "__version__",
+    "__base_version__",
+    "__git_commit__",
+    "__git_branch__",
+    "__git_remote__",
+    "__git_dirty__",
+    "__git_distance__",
+    "__scm_version__",
+    "get_version_info",
+    "show_version",
     "get_include",
     "get_lib",
     ### Deprecated ###
@@ -82,7 +136,7 @@ __all__ = [
     "SmDevice2DeviceSemaphore",
 ]
 
-__version__: str = str(version())
+# Remove the old __version__ assignment since it's now imported from _version.py
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
