@@ -61,12 +61,12 @@ std::string Algorithm::name() const { return impl_->name_; }
 
 std::string Algorithm::collective() const { return impl_->collective_; }
 
-void AlgorithmFactory::registerAlgorithm(const std::string collective, const std::string algoName,
+void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
                                          Algorithm algorithm) {
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
-Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, const void* input, void* output,
+Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
                                             size_t messageSize, int nRanksPerNode, int worldSize) {
   Algorithm algo;
   if (algoSelector_) {
@@ -79,30 +79,30 @@ Algorithm AlgorithmFactory::selectAlgorithm(const std::string& collective, const
   return algo;
 }
 
-std::shared_ptr<AlgorithmFactoryBuilder> AlgorithmFactoryBuilder::getInstance() {
-  static std::shared_ptr<AlgorithmFactoryBuilder> instance(new AlgorithmFactoryBuilder());
+std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
+  static std::shared_ptr<AlgorithmCollectionBuilder> instance(new AlgorithmCollectionBuilder());
   return instance;
 }
 
-void AlgorithmFactoryBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
+void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
   this->algoBuilders_.push_back(builder);
 }
 
-void AlgorithmFactoryBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
+void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
 
-void AlgorithmFactoryBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {
+void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {
   fallbackAlgoSelector_ = selector;
 }
 
-std::shared_ptr<AlgorithmFactory> AlgorithmFactoryBuilder::build() {
-  auto factory = std::make_shared<AlgorithmFactory>();
+std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
+  auto collection = std::make_shared<AlgorithmCollection>();
   for (const auto& builder : algoBuilders_) {
     auto algo = builder->build();
-    factory->registerAlgorithm(algo.collective(), algo.name(), algo);
+    collection->registerAlgorithm(algo.collective(), algo.name(), algo);
   }
-  factory->algoSelector_ = algoSelector_;
-  factory->fallbackAlgoSelector_ = fallbackAlgoSelector_;
-  return factory;
+  collection->algoSelector_ = algoSelector_;
+  collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  return collection;
 }
 
 }  // namespace mscclpp

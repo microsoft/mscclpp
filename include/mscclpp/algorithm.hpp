@@ -117,9 +117,9 @@ using AlgoSelectFunc = std::function<Algorithm(
     const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
     std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode, int worldSize)>;
 
-class AlgorithmFactory {
+class AlgorithmCollection {
  public:
-  AlgorithmFactory() = default;
+  AlgorithmCollection() = default;
 
   /// @brief Select an algorithm based on the collective operation name and message size.
   /// @param collective The collective operation name.
@@ -143,12 +143,12 @@ class AlgorithmFactory {
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
-  friend class AlgorithmFactoryBuilder;
+  friend class AlgorithmCollectionBuilder;
 };
 
-class AlgorithmFactoryBuilder {
+class AlgorithmCollectionBuilder {
  public:
-  static std::shared_ptr<AlgorithmFactoryBuilder> getInstance();
+  static std::shared_ptr<AlgorithmCollectionBuilder> getInstance();
 
   /// @brief Add a new algorithm builder for a specific collective operation.
   /// @param builder The algorithm builder.
@@ -164,12 +164,12 @@ class AlgorithmFactoryBuilder {
   /// assign a predefined selector as the fallback selector.
   void setFallbackAlgorithmSelector(AlgoSelectFunc selector);
 
-  /// @brief Build the AlgorithmFactory instance.
-  /// @return The AlgorithmFactory instance.
-  std::shared_ptr<AlgorithmFactory> build();
+  /// @brief Build the AlgorithmCollection instance.
+  /// @return The AlgorithmCollection instance.
+  std::shared_ptr<AlgorithmCollection> build();
 
  private:
-  AlgorithmFactoryBuilder() = default;
+  AlgorithmCollectionBuilder() = default;
   std::vector<std::shared_ptr<AlgorithmBuilder>> algoBuilders_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
