@@ -205,3 +205,60 @@ export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
 export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
 torchrun --nnodes=1 --nproc_per_node=8 your_script.py
 ```
+
+### Version Tracking
+
+The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
+
+#### Version Format
+
+The package version includes the git commit hash directly in the version string for development builds:
+- **Release version**: `0.7.0`
+- **Development version**: `0.7.1.dev36+g6e2360d69` (includes short commit hash)
+- **Development with uncommitted changes**: `0.7.1.dev36+g6e2360d69.dirty`
+
+#### Checking Version Information
+
+After installation, you can check the version information in several ways:
+
+**From Python:**
+```python
+import mscclpp
+# Show all version information
+mscclpp.show_version()
+# Output:
+# MSCCLPP Version Information:
+#   Package Version: 0.7.1.dev36+g6e2360d69
+#   Base Version: 0.7.1
+#   Git Commit (short): 6e2360d69
+#   Git Commit (full): 6e2360d69... (partial)
+#   Git Branch: main
+#   Git Remote: https://github.com/microsoft/mscclpp.git
+#   Working Tree Dirty: False
+#   Distance from Tag: 36
+
+# Access individual attributes
+print(f"Version: {mscclpp.__version__}")           # Full version with commit
+print(f"Base version: {mscclpp.__base_version__}") # Semantic version only
+print(f"Git commit: {mscclpp.__git_commit__}")     # Commit hash only
+print(f"Git branch: {mscclpp.__git_branch__}")
+print(f"Git remote: {mscclpp.__git_remote__}")
+
+# Get as dictionary
+info = mscclpp.get_version_info()
+print(f"Full version: {info['version']}")
+print(f"Base version: {info['base_version']}")
+```
+
+#### Version Information Details
+
+The version tracking captures:
+- **Package Version** (`__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
+- **Base Version** (`__base_version__`): Semantic version without git information (e.g., `0.7.1`)
+- **Git Commit** (`__git_commit__`): Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
+- **Git Branch** (`__git_branch__`): The branch name at build time
+- **Git Remote** (`__git_remote__`): Repository URL (credentials are automatically stripped for security)
+- **Git Dirty** (`__git_dirty__`): Boolean indicating if the working tree had uncommitted changes at build time (`True` means the build was "dirty")
+- **Git Distance** (`__git_distance__`): Number of commits since the last tag (e.g., `36` in `0.7.1.dev36+g6e2360d69`)
+
+This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.
