@@ -3,8 +3,8 @@
 
 """
 Multi-node AllReduce implementation using packet-based communication.
-This implements a hierarchical AllReduce: intra-node reduction followed by
-inter-node exchange and final intra-node broadcast.
+This implements a hierarchical AllReduce: intra-node allreduce followed by
+inter-node exchange and final intra-node allreduce.
 """
 
 import argparse
@@ -20,9 +20,9 @@ def allreduce_example(
 ):
     """
     Implements a multi-node AllReduce using a hierarchical approach:
-    1. Intra-node reduction (reduce within each node)
+    1. Intra-node allreduce
     2. Inter-node exchange (exchange reduced data between nodes)
-    3. Intra-node broadcast (broadcast final result within each node)
+    3. Intra-node allreduce
     """
     # Configuration constants
     num_nodes = 2
@@ -185,7 +185,7 @@ parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
 parser.add_argument("--tbg_size", type=int, help="number of thread blocks in the thread block group")
 parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
 parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
+parser.add_argument("--max_message_size", type=int, default=2 * 2**20, help="maximum message size")
 
 args = parser.parse_args()
 
