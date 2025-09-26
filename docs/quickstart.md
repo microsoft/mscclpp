@@ -241,8 +241,11 @@ mscclpp.show_version()
 print(f"Version: {mscclpp.__version__}")           # Full version with commit
 print(f"Base version: {mscclpp.__base_version__}") # Semantic version only
 print(f"Git commit: {mscclpp.__git_commit__}")     # Commit hash only
-print(f"Git branch: {mscclpp.__git_branch__}")
-print(f"Git remote: {mscclpp.__git_remote__}")
+print(f"Git commit: {mscclpp.__git_commit_full__}") # Full commit hash only
+print(f"Git branch: {mscclpp.__git_branch__}") # Branch name
+print(f"Git remote: {mscclpp.__git_remote__}") # Repository URL
+print(f"Git remote: {mscclpp.__git_dirty__}") # Uncommited changes
+print(f"Git remote: {mscclpp.__git_distance__}") # Number of commits since latest tag
 
 # Get as dictionary
 info = mscclpp.get_version_info()
@@ -256,6 +259,7 @@ The version tracking captures:
 - **Package Version** (`__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
 - **Base Version** (`__base_version__`): Semantic version without git information (e.g., `0.7.1`)
 - **Git Commit** (`__git_commit__`): Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
+- **Git Commit** (`__git_commit_full__`): Full SHA hash with '-dirty' suffix if there were uncommitted changes at build time
 - **Git Branch** (`__git_branch__`): The branch name at build time
 - **Git Remote** (`__git_remote__`): Repository URL (credentials are automatically stripped for security)
 - **Git Dirty** (`__git_dirty__`): Boolean indicating if the working tree had uncommitted changes at build time (`True` means the build was "dirty")
