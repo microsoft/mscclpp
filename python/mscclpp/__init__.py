@@ -132,7 +132,7 @@ def _get_git_info():
         potential_paths = [
             os.path.dirname(__file__),  # Current directory
             os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Up two levels
-            "/home/qinghuazhou/mscclpp_pip_version",  # Known development path
+            ".",  # Use current working directory instead of absolute path
         ]
 
         for path in potential_paths:
