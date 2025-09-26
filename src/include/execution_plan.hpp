@@ -66,6 +66,20 @@ struct SemaphoreInfo {
   int initValue;
 };
 
+struct ExecutionPlanRegistry::Impl {
+  void setSelector(ExecutionPlanSelector selector);
+  void setDefaultSelector(ExecutionPlanSelector selector);
+  void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
+  std::shared_ptr<ExecutionPlanHandle> select(const ExecutionRequest& request);
+  std::vector<ExecutionPlanHandle> getPlans(const std::string& collective);
+  std::shared_ptr<ExecutionPlanHandle> get(const std::string& id);
+
+  ExecutionPlanSelector selector_ = nullptr;
+  ExecutionPlanSelector defaultSelector_ = nullptr;
+  std::unordered_map<std::string, std::vector<std::shared_ptr<ExecutionPlanHandle>>> planMap_;
+  std::unordered_map<std::string, std::shared_ptr<ExecutionPlanHandle>> idMap_;
+};
+
 struct ExecutionPlan::Impl {
  public:
   Impl(const std::string& planPath, int rank);
