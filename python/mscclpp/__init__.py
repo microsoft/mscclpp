@@ -7,66 +7,16 @@ import os
 import warnings
 from functools import wraps
 
-# Get version - try multiple sources in order of preference
+# Get version
 def _get_version():
     """Get version from the best available source"""
 
-    # Method 1: Try setuptools-scm generated _version.py (most reliable)
+    # Try setuptools-scm generated _version.py (most reliable)
     try:
         from ._version import __version__
         return __version__
     except ImportError:
-        pass
-
-    # Method 2: Try package metadata
-    try:
-        from importlib.metadata import version
-        return version("mscclpp")
-    except Exception:
-        pass
-
-    # Method 3: Generate from git (fallback)
-    try:
-        import subprocess
-
-        # Get git describe output
-        result = subprocess.check_output(
-            ["git", "describe", "--tags", "--long", "--dirty"],
-            text=True, stderr=subprocess.DEVNULL, cwd=os.path.dirname(__file__)
-        ).strip()
-
-        # Convert to setuptools-scm format
-        if "-" in result:
-            parts = result.split("-")
-            if len(parts) >= 3:
-                tag = parts[0].lstrip('v')
-                distance = parts[1]
-                commit = parts[2]
-
-                if distance != "0":
-                    # Increment patch for development versions
-                    tag_parts = tag.split('.')
-                    if len(tag_parts) >= 3:
-                        patch = int(tag_parts[2]) + 1
-                        base = f"{tag_parts[0]}.{tag_parts[1]}.{patch}"
-                    else:
-                        base = tag
-                    version_str = f"{base}.dev{distance}+{commit}"
-                else:
-                    version_str = f"{tag}+{commit}"
-
-                if "dirty" in result:
-                    version_str += ".dirty"
-
-                return version_str
-
-        return result.lstrip('v')
-
-    except Exception:
-        pass
-
-    # Final fallback
-    return "0.7.0+unknown"
+        raise RuntimeError("Could not determine MSCCL++ version from setuptools-scm generated _version.py.")
 
 __version__ = _get_version()
 
@@ -121,99 +71,15 @@ __git_commit__ = _version_info["git_commit"]
 __git_distance__ = _version_info["git_distance"]
 __git_dirty__ = _version_info["git_dirty"]
 
-# Get additional git information at runtime (from the source repository if available)
-def _get_git_info():
-    """Get additional git information from source repository if available"""
-    try:
-        import subprocess
-
-        # Try to find the source repository
-        # First check if we're in a development installation
-        potential_paths = [
-            os.path.dirname(__file__),  # Current directory
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Up two levels
-            ".",  # Use current working directory instead of absolute path
-        ]
-
-        for path in potential_paths:
-            if os.path.exists(os.path.join(path, ".git")):
-                def git_cmd(cmd):
-                    try:
-                        return subprocess.check_output(
-                            cmd, text=True, stderr=subprocess.DEVNULL,
-                            cwd=path
-                        ).strip()
-                    except:
-                        return None
-
-                branch = git_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"])
-                remote = git_cmd(["git", "config", "--get", "remote.origin.url"])
-                commit_full = git_cmd(["git", "rev-parse", "HEAD"])
-
-                if branch or remote or commit_full:
-                    return {
-                        "branch": branch or "unknown",
-                        "remote": remote or "unknown",
-                        "commit_full": commit_full or "unknown"
-                    }
-
-        # If we can't find a git repository but have a commit in the version,
-        # try to construct the full commit hash
-        if __git_commit__ != "unknown":
-            # The short commit is usually the first 7-9 characters
-            # We can't reconstruct the full hash, but we can indicate we have partial info
-            return {
-                "branch": "unknown",
-                "remote": "unknown",
-                "commit_full": f"{__git_commit__}... (partial)"
-            }
-
-        return {
-            "branch": "unknown",
-            "remote": "unknown",
-            "commit_full": "unknown"
-        }
-    except Exception:
-        return {
-            "branch": "unknown",
-            "remote": "unknown",
-            "commit_full": "unknown"
-        }
-
-_git_info = _get_git_info()
-__git_branch__ = _git_info["branch"]
-__git_remote__ = _git_info["remote"]
-__git_commit_full__ = _git_info["commit_full"]
-__scm_version__ = __version__
-
 def get_version_info():
     """Get complete version information as a dictionary"""
     return {
         "version": __version__,
         "base_version": __base_version__,
         "commit": __git_commit__,
-        "commit_full": __git_commit_full__,
-        "branch": __git_branch__,
-        "remote": __git_remote__,
         "dirty": __git_dirty__,
         "distance": __git_distance__,
-        "scm_version": __scm_version__
     }
-
-def show_version(verbose=True):
-    """Display version information"""
-    info = get_version_info()
-    if verbose:
-        print("MSCCLPP Version Information:")
-        print(f"  Package Version: {info['version']}")
-        print(f"  Base Version: {info['base_version']}")
-        print(f"  Git Commit (short): {info['commit']}")
-        print(f"  Git Commit (full): {info['commit_full']}")
-        print(f"  Git Branch: {info['branch']}")
-        print(f"  Git Remote: {info['remote']}")
-        print(f"  Working Tree Dirty: {info['dirty']}")
-        print(f"  Distance from Tag: {info['distance']}")
-    return info
 
 from ._mscclpp import (
     Env,

@@ -224,45 +224,23 @@ After installation, you can check the version information in several ways:
 **From Python:**
 ```python
 import mscclpp
-# Show all version information
-mscclpp.show_version()
-# Output:
-# MSCCLPP Version Information:
-#   Package Version: 0.7.1.dev36+g6e2360d69
-#   Base Version: 0.7.1
-#   Git Commit (short): 6e2360d69
-#   Git Commit (full): 6e2360d69... (partial)
-#   Git Branch: main
-#   Git Remote: https://github.com/microsoft/mscclpp.git
-#   Working Tree Dirty: False
-#   Distance from Tag: 36
 
 # Access individual attributes
 print(f"Version: {mscclpp.__version__}")           # Full version with commit
-print(f"Base version: {mscclpp.__base_version__}") # Semantic version only
+Version: 0.7.1.dev36+g6e2360d69
 print(f"Git commit: {mscclpp.__git_commit__}")     # Commit hash only
-print(f"Git commit: {mscclpp.__git_commit_full__}") # Full commit hash only
-print(f"Git branch: {mscclpp.__git_branch__}") # Branch name
-print(f"Git remote: {mscclpp.__git_remote__}") # Repository URL
-print(f"Git remote: {mscclpp.__git_dirty__}") # Uncommited changes
-print(f"Git remote: {mscclpp.__git_distance__}") # Number of commits since latest tag
+Git commit: 6e2360d69
 
 # Get as dictionary
 info = mscclpp.get_version_info()
-print(f"Full version: {info['version']}")
-print(f"Base version: {info['base_version']}")
+print(f"Version: {info['version']}")
+print(f"Git commit: {info['commit']}")
 ```
 
 #### Version Information Details
 
 The version tracking captures:
 - **Package Version** (`__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
-- **Base Version** (`__base_version__`): Semantic version without git information (e.g., `0.7.1`)
 - **Git Commit** (`__git_commit__`): Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
-- **Git Commit** (`__git_commit_full__`): Full SHA hash with '-dirty' suffix if there were uncommitted changes at build time
-- **Git Branch** (`__git_branch__`): The branch name at build time
-- **Git Remote** (`__git_remote__`): Repository URL (credentials are automatically stripped for security)
-- **Git Dirty** (`__git_dirty__`): Boolean indicating if the working tree had uncommitted changes at build time (`True` means the build was "dirty")
-- **Git Distance** (`__git_distance__`): Number of commits since the last tag (e.g., `36` in `0.7.1.dev36+g6e2360d69`)
 
 This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.
