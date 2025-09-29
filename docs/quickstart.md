@@ -214,8 +214,8 @@ The MSCCL++ Python package includes comprehensive version tracking that captures
 
 The package version includes the git commit hash directly in the version string for development builds:
 - **Release version**: `0.7.0`
-- **Development version**: `0.7.1.dev36+g6e2360d69` (includes short commit hash)
-- **Development with uncommitted changes**: `0.7.1.dev36+g6e2360d69.dirty`
+- **Development version**: `0.7.0.dev36+g6e2360d69` (includes short commit hash)
+- **Development with uncommitted changes**: `0.7.0.dev36+g6e2360d69.dirty`
 
 #### Checking Version Information
 
