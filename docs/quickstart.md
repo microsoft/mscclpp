@@ -227,20 +227,16 @@ import mscclpp
 
 # Access individual attributes
 print(f"Version: {mscclpp.__version__}")           # Full version with commit
-Version: 0.7.1.dev36+g6e2360d69
-print(f"Git commit: {mscclpp.__git_commit__}")     # Commit hash only
-Git commit: 6e2360d69
+Version: 0.7.0.dev36+g6e2360d69
 
 # Get as dictionary
-info = mscclpp.get_version_info()
-print(f"Version: {info['version']}")
-print(f"Git commit: {info['commit']}")
+mscclpp.version()
+{'version': '0.7.0.dev36+g6e2360d69', 'base_version': '0.7.0', 'git_commit': '6e2360d69'}
 ```
 
 #### Version Information Details
 
 The version tracking captures:
-- **Package Version** (`__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
-- **Git Commit** (`__git_commit__`): Short SHA hash with '-dirty' suffix if there were uncommitted changes at build time
+- **Package Version** (`mscclpp.__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
 
 This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.

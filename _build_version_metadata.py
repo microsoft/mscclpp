@@ -1,8 +1,33 @@
+"""
+    MIT License
+
+    Copyright (c) Microsoft Corporation.
+
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE
+"""
+
 """Custom build backend wrapper to ensure version generation."""
 
 import os
 import sys
 import re
+import logging
 from pathlib import Path
 
 # Import the original backend
@@ -13,8 +38,16 @@ from scikit_build_core.build import build_editable as _orig_build_editable
 from scikit_build_core.build import get_requires_for_build_wheel as _orig_get_requires_for_build_wheel
 from scikit_build_core.build import prepare_metadata_for_build_wheel as _orig_prepare_metadata_for_build_wheel
 
+logging.basicConfig(level=logging.INFO)
+
 def _get_version():
-    """Get version using setuptools-scm and clean it up"""
+    """Get version using setuptools-scm, VERSION and clean it up"""
+    try:
+        with open("VERSION", "r") as vf:
+            base_version = vf.read().strip()
+    except FileNotFoundError:
+        base_version = "0.0.0"
+
     try:
         import setuptools_scm
         version = setuptools_scm.get_version(root=".")
@@ -22,12 +55,16 @@ def _get_version():
         # Remove the .dYYYYMMDD timestamp if present
         # Convert "0.7.1.dev36+g6e2360d69.d20250926" to "0.7.1.dev36+g6e2360d69"
         version = re.sub(r'\.d\d{8}', '', version)
-        
-        print(f"Generated version with setuptools-scm: {version}", file=sys.stderr)
+
+        # Use the value in VERSION as the base version
+        # Change to "0.7.0.dev36+g6e2360d69"
+        version = re.sub(r'^[0-9]+\.[0-9]+\.[0-9]+', base_version, version)
+
+        logging.info(f"Generated version with setuptools-scm: {version}")
         return version
     except Exception as e:
-        print(f"setuptools-scm failed: {e}, using fallback", file=sys.stderr)
-        return "0.7.0+unknown"
+        logging.warning(f"setuptools-scm failed: {e}, using fallback")
+        return base_version + "+unknown"
 
 def _generate_version_file():
     """Generate _version.py file using setuptools-scm"""
@@ -42,7 +79,7 @@ def _generate_version_file():
         f.write(f'__version__ = "{version}"\n')
         f.write(f'version = "{version}"\n')
     
-    print(f"Wrote version {version} to {version_file}", file=sys.stderr)
+    logging.info(f"Wrote version {version} to {version_file}")
     
     # Also write a metadata file that scikit-build-core can read
     metadata_file = Path("python/mscclpp/PKG-INFO")
