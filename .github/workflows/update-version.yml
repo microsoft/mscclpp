@@ -31,21 +31,6 @@ jobs:
           sed -i "s/^release = \".*\"/release = \"v${VERSION}\"/" docs/conf.py
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
 
-          IFS='.' read -ra VER <<< "$VERSION"
-          MAJOR=${VER[0]}
-          MINOR=${VER[1]}
-          PATCH=${VER[2]}
-
-          # Update CMakeLists.txt
-          sed -i "s/set(MSCCLPP_MAJOR \".*\")/set(MSCCLPP_MAJOR \"${MAJOR}\")/" CMakeLists.txt
-          sed -i "s/set(MSCCLPP_MINOR \".*\")/set(MSCCLPP_MINOR \"${MINOR}\")/" CMakeLists.txt
-          sed -i "s/set(MSCCLPP_PATCH \".*\")/set(MSCCLPP_PATCH \"${PATCH}\")/" CMakeLists.txt
-
-          # Update header files
-          sed -i "s/#define MSCCLPP_MAJOR .*/#define MSCCLPP_MAJOR ${MAJOR}/" include/mscclpp/core.hpp
-          sed -i "s/#define MSCCLPP_MINOR .*/#define MSCCLPP_MINOR ${MINOR}/" include/mscclpp/core.hpp
-          sed -i "s/#define MSCCLPP_PATCH .*/#define MSCCLPP_PATCH ${PATCH}/" include/mscclpp/core.hpp
-
       - name: Commit and Push Changes
         run: |
           git config user.name "github-actions"
