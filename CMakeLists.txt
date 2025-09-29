@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+cmake_minimum_required(VERSION 3.25)
+project(mscclpp LANGUAGES CXX)
+
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
 if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
@@ -34,9 +37,6 @@ configure_file(
   "${CMAKE_CURRENT_BINARY_DIR}/include/mscclpp/version.hpp"
   @ONLY
 )
-
-cmake_minimum_required(VERSION 3.25)
-project(mscclpp LANGUAGES CXX)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
