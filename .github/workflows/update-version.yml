@@ -27,15 +27,13 @@ jobs:
       - name: Update Version in Files
         run: |
           VERSION=${{ env.VERSION }}
-          sed -i "s/^version: .*/version: ${VERSION}/" CITATION.cff
           sed -i "s/^release = \".*\"/release = \"v${VERSION}\"/" docs/conf.py
-          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
 
       - name: Commit and Push Changes
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git add CITATION.cff docs/conf.py include/mscclpp/core.hpp pyproject.toml || true
+          git add CITATION.cff docs/conf.py || true
           if git diff --cached --exit-code; then
             echo "No changes to commit."
           else
