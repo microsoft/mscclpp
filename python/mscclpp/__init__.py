@@ -8,6 +8,7 @@ import warnings
 import re
 from functools import wraps
 
+
 # Get version
 def _get_version():
     """Get version from the best available source"""
@@ -15,9 +16,11 @@ def _get_version():
     # Try setuptools-scm generated _version.py (most reliable)
     try:
         from ._version import __version__
+
         return __version__
     except ImportError:
         raise RuntimeError("Could not determine MSCCL++ version from setuptools-scm generated _version.py.")
+
 
 # Parse version components
 def _parse_version(version_string):
@@ -27,19 +30,14 @@ def _parse_version(version_string):
     match = re.match(pattern, version_string)
 
     if match:
-        return {
-            "base_version": match.group("base"),
-            "git_commit": match.group("commit") or "unknown"
-        }
+        return {"base_version": match.group("base"), "git_commit": match.group("commit") or "unknown"}
     else:
         # Fallback parsing - try to extract what we can
         base = version_string.split("+")[0].lstrip("v").split(".dev")[0]
         commit = "unknown"
 
-        return {
-            "base_version": base,
-            "git_commit": commit
-        }
+        return {"base_version": base, "git_commit": commit}
+
 
 __version__ = _get_version()
 
@@ -48,13 +46,17 @@ _version_info = _parse_version(__version__)
 __base_version__ = _version_info["base_version"]
 __git_commit__ = _version_info["git_commit"]
 
-def version():
+
+def _version():
     """Get complete version information as a dictionary"""
     return {
         "version": __version__,
         "base_version": __base_version__,
         "git_commit": __git_commit__,
     }
+
+
+version: dict = _version()
 
 from ._mscclpp import (
     Env,

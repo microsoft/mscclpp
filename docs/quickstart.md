@@ -230,7 +230,7 @@ print(f"Version: {mscclpp.__version__}")           # Full version with commit
 Version: 0.7.0.dev36+g6e2360d69
 
 # Get as dictionary
-mscclpp.version()
+mscclpp.version
 {'version': '0.7.0.dev36+g6e2360d69', 'base_version': '0.7.0', 'git_commit': '6e2360d69'}
 ```
 
