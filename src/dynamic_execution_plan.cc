@@ -972,153 +972,71 @@ void DynamicExecutionPlan::processDynamicOperation(JsonType& op_json, const Dyna
   std::cout << "Rank " << rank_ << ": Processing dynamic operation " << op_index 
             << " targeting peer " << target_peer << std::endl;
   
-  // Get operation name to determine processing strategy
   std::string op_name = op_json.value("name", "unknown");
-  
-  // Skip operations that don't need buffer processing
   if (op_name == "nop" || op_name == "signal" || op_name == "wait") {
     std::cout << "Rank " << rank_ << ": Skipping buffer processing for " << op_name << " operation" << std::endl;
     return;
   }
-  
-  std::cout << "Rank " << rank_ << ": Operation " << op_index << " (" << op_name 
-            << ") → target_peer=" << target_peer << std::endl;
 
-  // CRITICAL FIX: Calculate correct data sizes for AllToAllV
-  // In AllToAllV: rank rank_ sends (rank_ + 1) * 1024 bytes to ALL peers
-  size_t send_size_per_peer = (rank_ + 1) * 1024;  // Use rank_ instead of gpu_id
+  size_t send_size_per_peer = (rank_ + 1) * 1024;
   size_t receive_size_from_peer = (target_peer + 1) * 1024;
-  
-  std::cout << "Rank " << rank_ << ": AllToAllV sizing - send_per_peer=" << send_size_per_peer 
-            << ", receive_from_" << target_peer << "=" << receive_size_from_peer << std::endl;
 
-  // Process src_buff array - COMPLETELY REPLACE with correct values
+  // src_buff
   if (op_json.contains("src_buff") && op_json["src_buff"].is_array()) {
     auto& src_buff_array = op_json["src_buff"];
-    std::cout << "Rank " << rank_ << ": Processing src_buff array with " << src_buff_array.size() << " elements" << std::endl;
     for (size_t i = 0; i < src_buff_array.size(); ++i) {
       auto& buff_obj = src_buff_array[i];
       if (buff_obj.is_object()) {
         nlohmann::json proper_buffer_obj;
-        
-        // Check if this is a COPY operation that should read from scratch buffer
-        if (op_name == "copy" && buff_obj.value("type", "") == "s") {
-          // COPY from scratch buffer (data received from remote ranks)
-          size_t recv_size_elements = receive_size_from_peer / sizeof(uint32_t);
-          size_t recv_offset = 0;
-          // Calculate offset for data received from target_peer
-          for (int sender = 0; sender < target_peer; ++sender) {
-            recv_offset += (sender + 1) * 1024;
-          }
-          size_t recv_offset_elements = recv_offset / sizeof(uint32_t);
-          
-          proper_buffer_obj = {
-            {"index", static_cast<uint32_t>(1)},  // Scratch buffer uses index 1
-            {"size", static_cast<uint32_t>(recv_size_elements)},
-            {"offset", static_cast<uint32_t>(recv_offset_elements)},
-            {"type", "s"}  // Reading from scratch buffer
-          };
-        } else {
-          // Normal case: read from input buffer
-          size_t src_offset_bytes = target_peer * send_size_per_peer;
-          size_t send_size_elements = send_size_per_peer / sizeof(uint32_t);
-          size_t src_offset_elements = src_offset_bytes / sizeof(uint32_t);
-          
-          proper_buffer_obj = {
-            {"index", static_cast<uint32_t>(0)},  // Input buffer uses index 0
-            {"size", static_cast<uint32_t>(send_size_elements)},
-            {"offset", static_cast<uint32_t>(src_offset_elements)},
-            {"type", "i"}  // Input buffer
-          };
-        }
-        
+        size_t src_offset_bytes = target_peer * send_size_per_peer;
+        size_t send_size_elements = send_size_per_peer / sizeof(uint32_t);
+        size_t src_offset_elements = src_offset_bytes / sizeof(uint32_t);
+
+        proper_buffer_obj = {
+          {"index", static_cast<uint32_t>(0)},
+          {"size", static_cast<uint32_t>(send_size_elements)},
+          {"offset", static_cast<uint32_t>(src_offset_elements)},
+          {"type", "i"}
+        };
         buff_obj = proper_buffer_obj;
-        
-        std::cout << "Rank " << rank_ << ": CREATED src_buff[" << i << "] = " 
-                  << buff_obj.dump() << std::endl;
       }
     }
   }
 
-  // Process dst_buff array - COMPLETELY REPLACE with correct values
+  // dst_buff
   if (op_json.contains("dst_buff") && op_json["dst_buff"].is_array()) {
     auto& dst_buff_array = op_json["dst_buff"];
-    std::cout << "Rank " << rank_ << ": Processing dst_buff array with " << dst_buff_array.size() << " elements" << std::endl;
     for (size_t i = 0; i < dst_buff_array.size(); ++i) {
       auto& buff_obj = dst_buff_array[i];
       if (buff_obj.is_object()) {
-        size_t dst_size, dst_offset;
-        int dst_index;
-        
-        if (op_name == "copy") {
-          // CRITICAL FIX: For COPY operations, use CONSISTENT sizes
-          // Copy should match the source size exactly
-          dst_size = send_size_per_peer;  // SAME as source
-          dst_index = target_peer;
-          
-          // Calculate destination offset in output buffer
-          dst_offset = 0;
-          for (int sender = 0; sender < target_peer; ++sender) {
-            dst_offset += (sender + 1) * 1024; // accumulate sizes from previous senders
-          }
-          
-        } else if (op_name == "put") {
-          // For PUT: rank_ sends to target_peer - MUST BE SAME SIZE AS SOURCE
-          dst_size = send_size_per_peer;  // SAME as source - CRITICAL!
-          dst_index = target_peer;  // CRITICAL FIX: Use target_peer as index
-          
-          // PUT destination offset: where target_peer receives data from rank_
-          dst_offset = 0;
-          for (int sender = 0; sender < rank_; ++sender) {  // Use rank_ instead of gpu_id
-            dst_offset += (sender + 1) * 1024;
-          }
-          
-        } else {
-          // For other operations: use consistent sizing
-          dst_size = send_size_per_peer;  // SAME as source to avoid mismatches
-          dst_index = target_peer;  // CRITICAL FIX: Use target_peer as index
-          dst_offset = 0;
-          for (int sender = 0; sender < target_peer; ++sender) {
-            dst_offset += (sender + 1) * 1024;
-          }
+        size_t dst_size = send_size_per_peer;
+        int dst_index = target_peer;
+        size_t dst_offset = 0;
+        for (int sender = 0; sender < rank_; ++sender) {
+          dst_offset += (sender + 1) * 1024;
         }
-
         size_t dst_size_elements = dst_size / sizeof(uint32_t);
-        size_t dst_offset_elements = dst_offset / sizeof(uint32_t);        
+        size_t dst_offset_elements = dst_offset / sizeof(uint32_t);
 
-        // // COMPLETELY REPLACE the buffer object - don't process dynamic fields
-        // nlohmann::json proper_buffer_obj = {
-        //   {"index", static_cast<uint32_t>(0)},      // MSCCLPP uint32_t compatibility
-        //   {"size", static_cast<uint32_t>(dst_size_elements)}, // Convert bytes to elements
-        //   {"offset", static_cast<uint32_t>(dst_offset_elements)}, // Convert bytes to elements
-        //   {"type", "o"}  // Output buffer for COPY operations
-        // };
-
-        nlohmann::json proper_buffer_obj;
-        // For PUT operations, dst_buff should use scratch buffer type
         if (op_name == "put") {
-            // PUT operations write to remote scratch buffers
-            proper_buffer_obj = {
-                {"index", static_cast<uint32_t>(1)},  // Scratch buffers use index 1, not 0!
-                {"size", static_cast<uint32_t>(dst_size_elements)},
-                {"offset", static_cast<uint32_t>(dst_offset_elements)},
-                {"type", "s"}  // Scratch buffer for PUT operations
-            };
+          // For put: buffer_id, size, offset, index (no type)
+          nlohmann::json proper_buffer_obj = {
+            {"buffer_id", static_cast<uint32_t>(target_peer)},
+            {"size", static_cast<uint32_t>(dst_size_elements)},
+            {"offset", static_cast<uint32_t>(dst_offset_elements)},
+            {"index", static_cast<uint32_t>(1)}
+          };
+          buff_obj = proper_buffer_obj;
         } else {
-            // COPY operations write to output buffers
-            proper_buffer_obj = {
-                {"index", static_cast<uint32_t>(0)},  // Output buffer uses index 0
-                {"size", static_cast<uint32_t>(dst_size_elements)},
-                {"offset", static_cast<uint32_t>(dst_offset_elements)},
-                {"type", "o"}  // Output buffer for COPY operations
-            };
+          // For copy: index, size, offset, type
+          nlohmann::json proper_buffer_obj = {
+            {"index", static_cast<uint32_t>(0)},
+            {"size", static_cast<uint32_t>(dst_size_elements)},
+            {"offset", static_cast<uint32_t>(dst_offset_elements)},
+            {"type", "o"}
+          };
+          buff_obj = proper_buffer_obj;
         }
-          
-        buff_obj = proper_buffer_obj;
-        
-        std::cout << "Rank " << rank_ << ": CREATED dst_buff[" << i << "] = " 
-                  << "{ index:" << dst_index << ", size:" << dst_size 
-                  << ", offset:" << dst_offset << ", type:\"o\" } for " << op_name << std::endl;
       }
     }
   }
