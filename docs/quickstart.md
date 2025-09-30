@@ -205,3 +205,38 @@ export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
 export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
 torchrun --nnodes=1 --nproc_per_node=8 your_script.py
 ```
+
+### Version Tracking
+
+The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
+
+#### Version Format
+
+The package version includes the git commit hash directly in the version string for development builds:
+- **Release version**: `0.7.0`
+- **Development version**: `0.7.0.dev36+g6e2360d69` (includes short commit hash)
+- **Development with uncommitted changes**: `0.7.0.dev36+g6e2360d69.dirty`
+
+#### Checking Version Information
+
+After installation, you can check the version information in several ways:
+
+**From Python:**
+```python
+import mscclpp
+
+# Access individual attributes
+print(f"Version: {mscclpp.__version__}")           # Full version with commit
+Version: 0.7.0.dev36+g6e2360d69
+
+# Get as dictionary
+mscclpp.version
+{'version': '0.7.0.dev36+g6e2360d69', 'base_version': '0.7.0', 'git_commit': '6e2360d69'}
+```
+
+#### Version Information Details
+
+The version tracking captures:
+- **Package Version** (`mscclpp.__version__`): Full version string including git commit (e.g., `0.7.1.dev36+g6e2360d69`)
+
+This information is embedded during the package build process and remains accessible even after distribution, making it easier to debug issues and ensure reproducibility.
