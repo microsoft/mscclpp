@@ -111,7 +111,6 @@ if(MSCCLPP_USE_CUDA)
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
-    enable_language(HIP)
 
     set(CMAKE_HIP_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
