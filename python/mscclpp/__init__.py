@@ -9,10 +9,13 @@ import re
 from functools import wraps
 
 
+if os.environ.get("MSCCLPP_HOME", None) is None:
+    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
+
+
 # Get version
 def _get_version():
     """Get version from the best available source"""
-
     # Try setuptools-scm generated _version.py (most reliable)
     try:
         from ._version import __version__
@@ -131,9 +134,6 @@ __all__ = [
     "SmChannel",
     "SmDevice2DeviceSemaphore",
 ]
-
-if os.environ.get("MSCCLPP_HOME", None) is None:
-    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
 
 def get_include() -> str:
