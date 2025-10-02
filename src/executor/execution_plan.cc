@@ -485,6 +485,9 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     throw Error("Invalid channel type", ErrorCode::ExecutorError);
   };
 
+  uint32_t tbId = 0;
+  uint32_t tbgSize = 1;
+
   operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
   if (op.contains("channel_type")) {
     operation.channelType = convertToChannelType(op["channel_type"]);
@@ -494,6 +497,10 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
       operation.channelIndexes[i] = op["channel_ids"][i];
     }
+  }
+  if (op.contains("tbg_info")) {
+    tbId = op["tbg_info"]["tb_id"];
+    tbgSize = op["tbg_info"]["tbg_size"];
   }
   if (op.contains("src_buff")) {
     operation.nInputs = op["src_buff"].size();
@@ -517,10 +524,12 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsInputBufferType = bufferType;
         operation.nvlsInputIndex = buff["switch_channel_id"];
       }
-      operation.inputOffsets[i] =
-          this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
-      operation.inputBufferSizes[i] =
-          this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      size_t inputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t inputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      inputOffset += calcOffset(inputBufferSize, tbId, tbgSize);
+      inputBufferSize = calcSize(inputBufferSize, tbId, tbgSize);
+      operation.inputOffsets[i] = inputOffset;
+      operation.inputBufferSizes[i] = inputBufferSize;
     }
   }
   if (op.contains("dst_buff")) {
@@ -545,10 +554,12 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
         operation.nvlsOutputBufferType = bufferType;
         operation.nvlsOutputIndex = buff["switch_channel_id"];
       }
-      operation.outputOffsets[i] =
-          this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
-      operation.outputBufferSizes[i] =
-          this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      size_t outputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t outputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      outputOffset += calcOffset(outputBufferSize, tbId, tbgSize);
+      outputBufferSize = calcSize(outputBufferSize, tbId, tbgSize);
+      operation.outputOffsets[i] = outputOffset;
+      operation.outputBufferSizes[i] = outputBufferSize;
     }
   }
   if (op.contains("barrier_id")) {
@@ -601,6 +612,20 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSi
   return sizePerRank;
 }
 
+size_t ExecutionPlan::Impl::calcOffset(size_t size, uint32_t index, uint32_t slices) const {
+  uint32_t nelems = size / (this->bufferAlignment * sizeof(uint8_t));
+  uint32_t minNelems = nelems / slices;
+  uint32_t remainder = nelems % slices;
+  uint32_t offset = index * minNelems + (index % nelems < remainder ? index % nelems : remainder);
+  return static_cast<size_t>(offset) * this->bufferAlignment;
+}
+
+size_t ExecutionPlan::Impl::calcSize(size_t size, uint32_t index, uint32_t slices) const {
+  uint32_t beginOff = calcOffset(size, index, slices);
+  uint32_t endOff = calcOffset(size, index + 1, slices);
+  return endOff - beginOff;
+}
+
 size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
                                       BufferType bufferType) const {
   auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
@@ -613,11 +638,7 @@ size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint3
     return chunkIndex * this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
   }
 
-  uint32_t nelems = rankSizeAndChunks.first / (this->bufferAlignment * sizeof(uint8_t));
-  uint32_t minNelems = nelems / nChunks;
-  uint32_t remainder = nelems % nChunks;
-  uint32_t offset = chunkIndex * minNelems + (chunkIndex % nelems < remainder ? chunkIndex % nelems : remainder);
-  return static_cast<size_t>(offset) * this->bufferAlignment;
+  return calcOffset(rankSizeAndChunks.first, chunkIndex, nChunks);
 }
 
 size_t ExecutionPlan::Impl::getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const {

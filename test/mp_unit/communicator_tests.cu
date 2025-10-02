@@ -37,6 +37,7 @@ void CommunicatorTestBase::SetUp() {
 void CommunicatorTestBase::TearDown() {
   connections.clear();
   communicator.reset();
+  registeredMemories.clear();
   MultiProcessTest::TearDown();
 }
 

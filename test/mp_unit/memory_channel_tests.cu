@@ -61,6 +61,10 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
     memoryChannels.emplace_back(sema, remoteMemFutures[r].get(), inputBufRegMem,
                                 (isInPlace ? nullptr : outputBufRegMem.data()));
   }
+  // keep the registered memories alive until TearDown
+  if (!isInPlace) {
+    registeredMemories.push_back(outputBufRegMem);
+  }
 }
 
 __constant__ DeviceHandle<mscclpp::MemoryChannel> gChannelOneToOneTestConstMemChans;

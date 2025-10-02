@@ -42,6 +42,7 @@ struct AvoidCudaGraphCaptureGuard {
   AvoidCudaGraphCaptureGuard();
   ~AvoidCudaGraphCaptureGuard();
   cudaStreamCaptureMode mode_;
+  bool active_;
 };
 
 /// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.

@@ -12,6 +12,7 @@
 #include "api.h"
 #include "debug.h"
 #include "endpoint.hpp"
+#include "unix_socket.hpp"
 
 namespace mscclpp {
 
@@ -42,8 +43,11 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   size_t minMcGran_;
   size_t mcGran_;
   // These are only defined for multicast (NVLS) capability
-  pid_t rootPid_;
+  int rootFd_;
+  int rootPid_;
   int mcFileDesc_;
+
+  UnixSocketClient& socketClient_ = UnixSocketClient::instance();
 
   std::list<std::pair<size_t, size_t>> allocatedRanges_;
   std::list<std::pair<size_t, size_t>> freeRanges_;
@@ -60,16 +64,15 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&mcGran_, &mcProp_, CU_MULTICAST_GRANULARITY_RECOMMENDED));
   mcProp_.size = ((mcProp_.size + mcGran_ - 1) / mcGran_) * mcGran_;
   bufferSize_ = mcProp_.size;
+  INFO(MSCCLPP_COLL, "NVLS multicast properties: size=%ld, numDevices=%d, handleTypes=%lld", mcProp_.size,
+       mcProp_.numDevices, mcProp_.handleTypes);
   MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
   mcFileDesc_ = 0;
   MSCCLPP_CUTHROW(
       cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
   freeRanges_.emplace_back(0, bufferSize_);
-
   rootPid_ = getpid();
-  if (rootPid_ < 0) {
-    throw mscclpp::SysError("getpid() failed", errno);
-  }
+  rootFd_ = UnixSocketServer::instance().registerFd(mcFileDesc_);
 
   INFO(MSCCLPP_COLL,
        "NVLS handle created on root with size %ld. minGranularity %ld and recommendedGranularity %ld buffer size is "
@@ -89,20 +92,12 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   it += sizeof(this->mcGran_);
   std::copy_n(it, sizeof(this->rootPid_), reinterpret_cast<char*>(&this->rootPid_));
   it += sizeof(this->rootPid_);
-  std::copy_n(it, sizeof(this->mcFileDesc_), reinterpret_cast<char*>(&this->mcFileDesc_));
+  std::copy_n(it, sizeof(this->rootFd_), reinterpret_cast<char*>(&this->rootFd_));
 
   freeRanges_.emplace_back(0, bufferSize_);
-  int rootPidFd = syscall(SYS_pidfd_open, rootPid_, 0);
-  if (rootPidFd < 0) {
-    throw mscclpp::SysError("pidfd_open() failed", errno);
-  }
-  int mcRootFileDescFd = syscall(SYS_pidfd_getfd, rootPidFd, mcFileDesc_, 0);
-  if (mcRootFileDescFd < 0) {
-    throw mscclpp::SysError("pidfd_getfd() failed", errno);
-  }
+  int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootPid_), rootFd_);
   MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-  close(rootPidFd);
   close(mcRootFileDescFd);
 
   INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
@@ -110,8 +105,10 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
 
 NvlsConnection::Impl::~Impl() {
   // we don't need to free multicast handle object according to NCCL.
-  if (rootPid_ == getpid()) {
+  if (mcFileDesc_ >= 0) {
+    UnixSocketServer::instance().unregisterFd(rootFd_);
     close(mcFileDesc_);
+    mcFileDesc_ = -1;
   }
 }
 
@@ -122,7 +119,7 @@ std::vector<char> NvlsConnection::Impl::serialize() {
   std::copy_n(reinterpret_cast<char*>(&minMcGran_), sizeof(minMcGran_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&mcGran_), sizeof(mcGran_), std::back_inserter(result));
   std::copy_n(reinterpret_cast<char*>(&rootPid_), sizeof(rootPid_), std::back_inserter(result));
-  std::copy_n(reinterpret_cast<char*>(&mcFileDesc_), sizeof(mcFileDesc_), std::back_inserter(result));
+  std::copy_n(reinterpret_cast<char*>(&rootFd_), sizeof(rootFd_), std::back_inserter(result));
   return result;
 }
 
@@ -211,7 +208,8 @@ std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, si
   MSCCLPP_CUTHROW(cuMemAddressReserve((CUdeviceptr*)(&mcPtr), devBuffSize, minMcGran_, 0U, 0));
   MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)(mcPtr), devBuffSize, 0, mcHandle_, 0));
   detail::setReadWriteMemoryAccess(mcPtr, devBuffSize);
-  INFO(MSCCLPP_COLL, "NVLS connection bound memory at offset %ld, size %ld", offset, devBuffSize);
+  INFO(MSCCLPP_COLL, "NVLS connection bound memory %p to %p at offset %ld, size %ld", (void*)devicePtr, mcPtr, offset,
+       devBuffSize);
 
   auto deleter = [=, self = shared_from_this()](char* ptr) {
     int deviceId;
