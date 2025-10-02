@@ -56,6 +56,13 @@ IbCtx *Context::Impl::getIbContext(Transport ibTransport) {
   return it->second.get();
 }
 
+std::shared_ptr<uint64_t> Context::Impl::getToken() {
+  if (!tokenPool_) {
+    tokenPool_ = std::make_shared<TokenPool>(maxNumTokens_);
+  }
+  return tokenPool_->getToken();
+}
+
 MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
 
 MSCCLPP_API_CPP Context::~Context() = default;
