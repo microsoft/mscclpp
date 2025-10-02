@@ -151,6 +151,17 @@ static inline int mscclppNcclInFallbackList(const char* collOps, const char* fal
   return 0;
 }
 
+static bool tryLoadNcclSharedLib() {
+  if (mscclppNcclDlopenSharedLib) return true;
+  if (!mscclpp::env()->ncclSharedLibPath.empty()) {
+    if (mscclppNcclDlopenInit() == dlopenSuccess) {
+      mscclppNcclDlopenSharedLib = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 // Declare the global map to store associations between raw pointer and shared pointer
 static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
 
@@ -366,10 +377,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   const std::string ncclLibPath = mscclpp::env()->ncclSharedLibPath;
   if (!ncclLibPath.empty() && !mscclppNcclDlopenSharedLib) {
-    int dlopenStatus = mscclppNcclDlopenInit();
-    if (dlopenStatus == dlopenSuccess) {
-      mscclppNcclDlopenSharedLib = true;
-    } else {
+    if (!tryLoadNcclSharedLib()) {
       WARN("Failed to load the shared library for nccl/rccl");
       return ncclInternalError;
     }
@@ -867,13 +875,9 @@ NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  if (!mscclppNcclDlopenSharedLib && !mscclpp::env()->ncclSharedLibPath.empty()) {
-    if (mscclppNcclDlopenInit() == dlopenSuccess) {
-      mscclppNcclDlopenSharedLib = true;
-    } else {
-      WARN("Failed to load the shared library for nccl/rccl");
-      return ncclInternalError;
-    }
+  if (!tryLoadNcclSharedLib()) {
+    WARN("Failed to load the shared library for nccl/rccl");
+    return ncclInternalError;
   }
   if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.GroupStart();
