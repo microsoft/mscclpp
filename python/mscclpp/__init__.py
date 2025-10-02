@@ -16,6 +16,59 @@ import warnings
 from blake3 import blake3
 
 from .language.program import CollectiveProgram
+import re
+from functools import wraps
+
+
+# Get version
+def _get_version():
+    """Get version from the best available source"""
+
+    # Try setuptools-scm generated _version.py (most reliable)
+    try:
+        from ._version import __version__
+
+        return __version__
+    except ImportError:
+        raise RuntimeError("Could not determine MSCCL++ version from setuptools-scm generated _version.py.")
+
+
+# Parse version components
+def _parse_version(version_string):
+    """Parse version components from setuptools-scm generated version"""
+    # Pattern for versions like "0.7.0.dev36+g6e2360d69" (without .dYYYYMMDD)
+    pattern = r"^v?(?P<base>[\d\.]+)(?:\.dev(?P<distance>\d+))?(?:\+g(?P<commit>[a-f0-9]+))?(?P<dirty>\.dirty)?$"
+    match = re.match(pattern, version_string)
+
+    if match:
+        return {"base_version": match.group("base"), "git_commit": match.group("commit") or "unknown"}
+    else:
+        # Fallback parsing - try to extract what we can
+        base = version_string.split("+")[0].lstrip("v").split(".dev")[0]
+        commit = "unknown"
+
+        return {"base_version": base, "git_commit": commit}
+
+
+__version__ = _get_version()
+
+# Parse the version
+_version_info = _parse_version(__version__)
+__base_version__ = _version_info["base_version"]
+__git_commit__ = _version_info["git_commit"]
+
+
+def _version():
+    """Get complete version information as a dictionary"""
+    return {
+        "version": __version__,
+        "base_version": __base_version__,
+        "git_commit": __git_commit__,
+    }
+
+
+version: dict = _version()
+
 from ._mscclpp import (
     Env,
     ErrorCode,
@@ -50,13 +103,11 @@ from ._mscclpp import (
     PacketType,
     RawGpuBuffer,
     env,
-    version,
     is_nvls_supported,
     npkit,
     ExecutionPlanHandle as _ExecutionPlanHandle,
     ExecutionPlanRegistry as _ExecutionPlanRegistry,
 )
-
 
 __all__ = [
     "Device",
@@ -87,12 +138,12 @@ __all__ = [
     "is_nvls_supported",
     "alloc_shared_physical_cuda",
     "npkit",
+    # Version information
     "__version__",
+    "version",
     "get_include",
     "get_lib",
 ]
-
-__version__: str = str(version())
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
