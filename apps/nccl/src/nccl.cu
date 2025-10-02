@@ -592,7 +592,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclSuccess;
   }
   int rank = comm->comm->bootstrap()->getRank();
-  if (sendbuff == nullptr && root == rank || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
+  if ((sendbuff == nullptr && root == rank) || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
         "or comm is nullptr.");
