@@ -4,7 +4,6 @@
 """Custom build backend wrapper to ensure version generation."""
 
 import os
-import sys
 import re
 import logging
 from pathlib import Path
@@ -34,12 +33,12 @@ def _get_version():
         version = setuptools_scm.get_version(root=".")
 
         # Remove the .dYYYYMMDD timestamp if present
-        # Convert "0.7.1.dev36+g6e2360d69.d20250926" to "0.7.1.dev36+g6e2360d69"
+        # Convert "x.y.z.dev36+g6e2360d69.d20250926" to "x.y.z.dev36+g6e2360d69"
         version = re.sub(r"\.d\d{8}", "", version)
 
         # Use the value in VERSION as the base version
-        # Change to "0.7.0.dev36+g6e2360d69"
-        version = re.sub(r"^[0-9]+\.[0-9]+\.[0-9]+", base_version, version)
+        # Change x.y.z.dev36+g6e2360d69 or x.y.dev36+g6e2360d69 to "base_version.dev36+g6e2360d69"
+        version = re.sub(r"^.*(\.dev\d+\+g[0-9a-fA-F]+)$", rf"{base_version}\1", version)
 
         logging.info(f"Generated version with setuptools-scm: {version}")
         return version
