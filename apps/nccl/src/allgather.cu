@@ -18,9 +18,8 @@ AllgatherAlgo6::AllgatherAlgo6() : disableChannelCache_(false) {
 
 void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                 std::unordered_map<std::string, std::shared_ptr<void>>&) {
-  constexpr int nChannelsPerConnection = 35;
   this->conns_ = setupConnections(comm);
-  this->memorySemaphores_ = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
+  this->memorySemaphores_ = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_));
 }
 
 ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
@@ -63,8 +62,6 @@ ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::
 std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo6::initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
                                                                             const void*, void* output, size_t count,
                                                                             ncclDataType_t dtype) {
-  constexpr int nChannelsPerConnection = 35;
-
   auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -90,7 +87,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo6::initAllgatherContext(std:
       comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
   ctx->memoryChannels = std::move(
-      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection));
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection_));
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference
