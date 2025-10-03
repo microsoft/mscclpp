@@ -887,7 +887,8 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   int nChannelsPerConnection_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
   std::shared_ptr<char> scratchBuffer_;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> deviceSemaphores_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> outputSemaphores_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
   mscclpp::RegisteredMemory localScratchMemory_;
   std::unordered_map<const void*, std::pair<std::vector<mscclpp::MemoryChannel>,

@@ -875,10 +875,7 @@ NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  if (!tryLoadNcclSharedLib()) {
-    WARN("Failed to load the shared library for nccl/rccl");
-    return ncclInternalError;
-  }
+  tryLoadNcclSharedLib();
   if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.GroupStart();
   }
