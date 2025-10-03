@@ -217,6 +217,7 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
  private:
   bool disableChannelCache_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores_;
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
