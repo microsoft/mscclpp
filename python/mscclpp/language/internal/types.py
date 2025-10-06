@@ -6,6 +6,7 @@ from enum import Enum
 from typing import List, Set
 from collections import defaultdict
 
+
 @dataclass(frozen=True)
 class AlgoSpec:
     name: str
@@ -18,6 +19,7 @@ class AlgoSpec:
     min_message_size: int
     max_message_size: int
     tags: dict
+
 
 class SyncType(Enum):
     none = "none"
