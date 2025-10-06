@@ -45,6 +45,7 @@ class ExecutionPlan {
 struct ExecutionRequest {
   int worldSize;
   int nRanksPerNode;
+  int rank;
   const void* inputBuffer;
   void* outputBuffer;
   size_t messageSize;
@@ -52,7 +53,6 @@ struct ExecutionRequest {
   const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
 
   bool isInPlace() const;
-  bool isInPlace(int rank);
 };
 
 struct ExecutionPlanHandle {
@@ -81,7 +81,7 @@ class ExecutionPlanRegistry {
   void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
   std::vector<std::shared_ptr<ExecutionPlanHandle>> getPlans(const std::string& collective);
   std::shared_ptr<ExecutionPlanHandle> get(const std::string& id);
-  std::shared_ptr<ExecutionPlanHandle> select(const std::string& collective, int worldSize, int nRanksPerNode,
+  std::shared_ptr<ExecutionPlanHandle> select(const std::string& collective, int worldSize, int nRanksPerNode, int rank,
                                               const void* sendBuffer, void* recvBuffer, size_t messageSize,
                                               const std::unordered_map<std::string, std::vector<uint64_t>>& hints);
   void setSelector(ExecutionPlanSelector selector);

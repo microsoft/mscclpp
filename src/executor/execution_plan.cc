@@ -4,13 +4,13 @@
 #include "execution_plan.hpp"
 
 #include <cassert>
-#include <fstream>
-#include <set>
-#include <filesystem>
 #include <cstdlib>
-#include <sstream>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <regex>
+#include <set>
+#include <sstream>
 
 #include "debug.h"
 
@@ -32,34 +32,32 @@ struct DefaultAlgoConfig {
 };
 
 // Default algorithm configurations (equivalent to default_algo_configs in Python)
-static const std::vector<DefaultAlgoConfig> defaultAlgoConfigs = {
-  {
-    "allreduce_2nodes.json",
-    "allreduce_2nodes", 
-    "allreduce",
-    8, // nRanksPerNode
-    16, // worldSize  
-    1, // instances
-    "LL", // protocol
-    1024, // numThreadsPerBlock
-    0, // minMessageSize
-    2 << 20, // maxMessageSize
-    {{"default", 1}} // tags
-  },
-  {
-    "allreduce_naivy.json",
-    "allreduce_naivy",
-    "allreduce", 
-    8, // nRanksPerNode
-    8, // worldSize
-    1, // instances
-    "LL", // protocol
-    1024, // numThreadsPerBlock
-    0, // minMessageSize
-    2ULL << 30, // maxMessageSize
-    {{"default", 1}} // tags
-  }
-};
+static const std::vector<DefaultAlgoConfig> defaultAlgoConfigs = {{
+                                                                      "allreduce_2nodes.json",
+                                                                      "allreduce_2nodes",
+                                                                      "allreduce",
+                                                                      8,                // nRanksPerNode
+                                                                      16,               // worldSize
+                                                                      1,                // instances
+                                                                      "LL",             // protocol
+                                                                      1024,             // numThreadsPerBlock
+                                                                      0,                // minMessageSize
+                                                                      2 << 20,          // maxMessageSize
+                                                                      {{"default", 1}}  // tags
+                                                                  },
+                                                                  {
+                                                                      "allreduce_naivy.json",
+                                                                      "allreduce_naivy",
+                                                                      "allreduce",
+                                                                      8,                // nRanksPerNode
+                                                                      8,                // worldSize
+                                                                      1,                // instances
+                                                                      "LL",             // protocol
+                                                                      1024,             // numThreadsPerBlock
+                                                                      0,                // minMessageSize
+                                                                      2ULL << 30,       // maxMessageSize
+                                                                      {{"default", 1}}  // tags
+                                                                  }};
 
 // Helper function to generate stable JSON string for hashing
 std::string generateStableJson(const std::string& version, const DefaultAlgoConfig& config) {
@@ -783,17 +781,13 @@ size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSiz
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
 
-void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) {1
-  selector_ = selector; 
-}
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) { selector_ = selector; }
 
-void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) {
-  defaultSelector_ = selector; 
-}
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) { defaultSelector_ = selector; }
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
   std::vector<std::shared_ptr<ExecutionPlanHandle>> plans;
-  for(auto plan : planMap_[request.collective]){
+  for (auto plan : planMap_[request.collective]) {
     if (plan->match(request)) {
       plans.push_back(plan);
     }
@@ -823,59 +817,51 @@ void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPl
 }
 
 void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
-  // Get plan directory from environment variable or default
-  std::string planDir = getEnvVar("MSCCLPP_EXECUTION_PLAN_DIR", 
-                                  getHomeDir() + "/.cache/mscclpp_default");
-  
-  // Check if plan directory exists
+  std::string planDir = getEnvVar("MSCCLPP_EXECUTION_PLAN_DIR", getHomeDir() + "/.cache/mscclpp_default");
+
   if (!std::filesystem::exists(planDir)) {
     INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
     return;
   }
-  
+
   // TODO: Get actual version from build system
   std::string version = "0.7.0";  // This should come from a proper version header
-  
+
   for (const auto& config : defaultAlgoConfigs) {
     std::string planPath = planDir + "/" + config.filename;
-    
+
     INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
-    
+
     // Check if plan file exists
     if (!std::filesystem::exists(planPath)) {
       INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
       continue;
     }
-    
+
     // Generate plan ID (equivalent to blake3 hash in Python)
     std::string stableJson = generateStableJson(version, config);
     std::string planId = simpleHash(stableJson);
-    
+
     // Check if plan is already registered
     if (idMap_.find(planId) != idMap_.end()) {
       INFO(MSCCLPP_EXECUTOR, "Plan already registered: %s", planId.c_str());
       continue;
     }
-    
+
     try {
       // Create execution plan
       auto executionPlan = std::make_shared<ExecutionPlan>(planPath, rank);
-      
+
       // Create plan handle
-      auto handle = ExecutionPlanHandle::create(
-        planId,
-        config.worldSize,
-        config.nRanksPerNode,
-        executionPlan,
-        config.tags
-      );
-      
+      auto handle =
+          ExecutionPlanHandle::create(planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
+
       // Register the plan
       registerPlan(handle);
-      
-      INFO(MSCCLPP_EXECUTOR, "Successfully loaded plan: %s for collective: %s", 
-           planId.c_str(), config.collective.c_str());
-           
+
+      INFO(MSCCLPP_EXECUTOR, "Successfully loaded plan: %s for collective: %s", planId.c_str(),
+           config.collective.c_str());
+
     } catch (const std::exception& e) {
       WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
     }
@@ -896,9 +882,9 @@ void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) { impl_-
 void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) { impl_->setDefaultSelector(selector); }
 
 std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
-    const std::string& collective, int worldSize, int nRanksPerNode, const void* sendBuffer, void* recvBuffer,
+    const std::string& collective, int worldSize, int nRanksPerNode, int rank, const void* sendBuffer, void* recvBuffer,
     size_t messageSize, const std::unordered_map<std::string, std::vector<uint64_t>>& hints) {
-  ExecutionRequest request{worldSize, nRanksPerNode, sendBuffer, recvBuffer, messageSize, collective, hints};
+  ExecutionRequest request{worldSize, nRanksPerNode, rank, sendBuffer, recvBuffer, messageSize, collective, hints};
   return impl_->select(request);
 }
 
@@ -927,15 +913,9 @@ void ExecutionPlanRegistry::clear() {
   impl_->defaultSelector_ = nullptr;
 }
 
-void ExecutionPlanRegistry::loadDefaultPlans(int rank) {
-  impl_->loadDefaultPlans(rank);
-}
+void ExecutionPlanRegistry::loadDefaultPlans(int rank) { impl_->loadDefaultPlans(rank); }
 
 bool ExecutionRequest::isInPlace() const {
-  return inputBuffer == outputBuffer;
-}
-
-bool ExecutionRequest::isInPlace(int rank) {
   if (inputBuffer == outputBuffer) return true;
   if (collective == "allgather") {
     size_t rankOffset = rank * (messageSize / worldSize);
@@ -945,9 +925,9 @@ bool ExecutionRequest::isInPlace(int rank) {
   return false;
 }
 
-std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(const std::string& id, int worldSize,
-                                                                 int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
-                                                                 const std::unordered_map<std::string, uint64_t>& tags) {
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(
+    const std::string& id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+    const std::unordered_map<std::string, uint64_t>& tags) {
   std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
   return handle;
 }
@@ -959,9 +939,9 @@ bool ExecutionPlanHandle::match(const ExecutionRequest& request) {
   bool inPlaceMatch = plan->isInPlace() == request.isInPlace();
   bool minSizeMatch = request.messageSize >= plan->minMessageSize();
   bool maxSizeMatch = request.messageSize <= plan->maxMessageSize();
-  
+
   bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
   return result;
 }
- 
+
 }  // namespace mscclpp

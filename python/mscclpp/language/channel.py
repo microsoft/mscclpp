@@ -25,6 +25,11 @@ class MemoryChannel:
     """
 
     _channel_counts = defaultdict(int)
+    
+    @classmethod
+    def reset_channel_counts(cls):
+        """Reset all channel counts for this channel type."""
+        cls._channel_counts.clear()
 
     def __init__(self, dst_rank: int, src_rank: int):
         """Initialize a new MemoryChannel.
@@ -452,6 +457,11 @@ class PortChannel:
     """
 
     _channel_counts = defaultdict(int)
+    
+    @classmethod
+    def reset_channel_counts(cls):
+        """Reset all channel counts for this channel type."""
+        cls._channel_counts.clear()
 
     def __init__(self, dst_rank: int, src_rank: int):
         """Initialize a new PortChannel.
@@ -740,6 +750,11 @@ class SwitchChannel:
     """
 
     _channel_counts = defaultdict(int)
+
+    @classmethod
+    def reset_channel_counts(cls):
+        """Reset all channel counts for this channel type."""
+        cls._channel_counts.clear()
 
     def __init__(self, rank_list: List[int], buffer_type: BufferType):
         """Initialize a new SwitchChannel.

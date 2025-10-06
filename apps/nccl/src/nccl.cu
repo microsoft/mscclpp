@@ -304,9 +304,10 @@ static mscclpp::Algorithm algoSelector(
   return mscclpp::Algorithm();
 }
 
-std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest& request){
+std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(
+    const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest& request) {
   if (plans.empty()) {
-    WARN("No execution plans available for selection");
+    INFO("No execution plans available for selection");
     return nullptr;
   }
   return plans[0];
@@ -593,7 +594,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
   auto planHandle = comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, hints);
+                                                comm->comm->bootstrap()->getNranks(),
+                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, hints);
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandle->plan, stream);
   }
@@ -645,7 +647,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto planHandler = comm->planRegistry_->select("allreduce", comm->comm->bootstrap()->getNranksPerNode(),
-                                                 comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, {});
+                                                 comm->comm->bootstrap()->getNranks(),
+                                                 comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandler != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandler->plan, stream);
   }
@@ -700,7 +703,8 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   int nRank = comm->comm->bootstrap()->getNranks();
 
   auto planHandle = comm->planRegistry_->select("reducescatter", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, {});
+                                                comm->comm->bootstrap()->getNranks(),
+                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes * nRank, bytes, planHandle->plan,
                            stream);
@@ -743,7 +747,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto planHandle = comm->planRegistry_->select("allgather", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(), sendbuff, recvbuff, bytes, {});
+                                                comm->comm->bootstrap()->getNranks(),
+                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes * nRank, planHandle->plan,
                            stream);

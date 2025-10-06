@@ -5,6 +5,8 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.channel import *
+from mscclpp.language.rank import Semaphore
 from typing import List
 import json
 
@@ -123,6 +125,10 @@ class CollectiveProgram:
         This method is called when exiting the 'with' statement and removes
         this program from the global context.
         """
+        MemoryChannel.reset_channel_counts()
+        PortChannel.reset_channel_counts()
+        SwitchChannel.reset_channel_counts()
+        Semaphore.reset_semaphore_counts()
         set_program(None)
 
     def add_channel(self, channel):
@@ -177,6 +183,7 @@ class CollectiveProgram:
         self.loop_context = loop_context
 
     def to_json(self, indent=2, **kwargs):
+        self.post_process_operations()
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,

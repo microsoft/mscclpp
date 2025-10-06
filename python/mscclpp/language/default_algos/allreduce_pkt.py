@@ -16,7 +16,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size):
+def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size) -> CollectiveProgram:
     """
     Implements a multi-node AllReduce using a hierarchical approach:
     1. Intra-node allreduce
@@ -43,7 +43,7 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size):
         use_double_scratch_buffer=True,
         min_message_size=spec.min_message_size,
         max_message_size=spec.max_message_size,
-    ):
+    ) as prog:
         # Initialize communication channels and buffers
         intra_node_memory_channels = {}
         inter_node_port_channels = {}
@@ -175,4 +175,4 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size):
                             tb_group=thread_block_group,
                         )
 
-        return JSON()
+    return prog

@@ -11,7 +11,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def allreduce_naivy(spec: AlgoSpec):
+def allreduce_naivy(spec: AlgoSpec) -> CollectiveProgram:
     chunksperloop = 1
     gpu_size = spec.nranks_per_node
     collective = AllReduce(gpu_size, chunksperloop, True)
@@ -24,7 +24,7 @@ def allreduce_naivy(spec: AlgoSpec):
         use_double_scratch_buffer=False,
         min_message_size=spec.min_message_size,
         max_message_size=spec.max_message_size,
-    ):
+    ) as prog:
         # Creating Scratch Buffers
         scratch_buffer = []
         for gpu in range(gpu_size):
@@ -72,28 +72,4 @@ def allreduce_naivy(spec: AlgoSpec):
                         input_buffer[peer : peer + 1], scratch_buffer[gpu][gpu_size + peer : gpu_size + peer + 1], 0
                     )
 
-        return JSON()
-
-""" parser = argparse.ArgumentParser()
-
-parser.add_argument("--name", type=str, help="name of the program")
-parser.add_argument("--num_gpus", type=int, help="number of gpus")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
-parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
-
-args = parser.parse_args()
-
-print(allreduce_naivy(AlgoSpec(
-            name="allreduce_naivy",
-            collective="allreduce",
-            nranks_per_node=args.num_gpus,
-            world_size=8,
-            instances=1,
-            protocol="LL",
-            num_threads_per_block=1024,
-            min_message_size=0,
-            max_message_size=2 << 30,
-            tags={"default": 1},
-        )
-)) """
+    return prog
