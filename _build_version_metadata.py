@@ -41,7 +41,9 @@ def _get_version():
         # Use a more specific pattern to match the version prefix and ensure correct replacement
         new_version = re.sub(r"^[0-9]+(?:\.[0-9]+)*(\.dev\d+\+g[0-9a-fA-F]+)$", rf"{base_version}\1", version)
         if new_version == version:
-            logging.warning(f"Version string '{version}' did not match expected pattern; using original version string.")
+            logging.warning(
+                f"Version string '{version}' did not match expected pattern; using original version string."
+            )
         else:
             version = new_version
 
