@@ -460,7 +460,8 @@ void Allreduce8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
   nChannelsPerConnection_ = 64;
   comm_ = comm;
   // setup semaphores
-  this->deviceSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
+  this->outputSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
+  this->inputScratchSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
   mscclpp::RegisteredMemory localMemory =
       comm->registerMemory(scratchBuffer_.get(), scratchBufferSize_, mscclpp::Transport::CudaIpc);
   this->remoteScratchMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), localMemory);
@@ -483,8 +484,9 @@ ncclResult_t Allreduce8::allreduceKernelFunc(const std::shared_ptr<mscclpp::Algo
   } else {
     mscclpp::RegisteredMemory localMemory =
         comm_->registerMemory(const_cast<void*>(input), bytes, mscclpp::Transport::CudaIpc);
-    std::vector<mscclpp::MemoryChannel> channels = setupMemoryChannels(
-        this->conns_, this->deviceSemaphores_, this->remoteScratchMemories_, localMemory, nChannelsPerConnection_);
+    std::vector<mscclpp::MemoryChannel> channels =
+        setupMemoryChannels(this->conns_, this->inputScratchSemaphores_, this->remoteScratchMemories_, localMemory,
+                            nChannelsPerConnection_);
     this->memoryChannelsMap_[input] = std::make_pair(channels, setupMemoryChannelDeviceHandles(channels));
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
@@ -525,7 +527,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> Allreduce8::initAllreduceContext(std::sha
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
-  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
+  ctx->memorySemaphores = this->outputSemaphores_;
   // setup memories and channels
   size_t recvBytes;
   CUdeviceptr recvBasePtr;

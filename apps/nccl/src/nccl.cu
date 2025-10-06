@@ -58,6 +58,14 @@ typedef struct _mscclppNcclOps_t {
                             ncclComm_t comm, cudaStream_t stream);
   ncclResult_t (*ReduceScatter)(const void* sendbuff, void* recvbuff, size_t recvcount, ncclDataType_t datatype,
                                 ncclRedOp_t op, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Reduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
+                         int root, ncclComm_t comm, cudaStream_t stream);
+  ncclResult_t (*Send)(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                       cudaStream_t stream);
+  ncclResult_t (*Recv)(void* recvbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                       cudaStream_t stream);
+  ncclResult_t (*GroupStart)();
+  ncclResult_t (*GroupEnd)();
 } mscclppNcclOps_t;
 
 mscclppNcclOps_t mscclppNcclOps;
@@ -106,6 +114,14 @@ static inline int mscclppNcclDlopenInit() {
              ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
              ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Reduce,
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
+             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
+             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
 
   return dlopenSuccess;
 }
@@ -133,6 +149,17 @@ static inline int mscclppNcclInFallbackList(const char* collOps, const char* fal
 
   free(fallbackListCopy);
   return 0;
+}
+
+static bool tryLoadNcclSharedLib() {
+  if (mscclppNcclDlopenSharedLib) return true;
+  if (!mscclpp::env()->ncclSharedLibPath.empty()) {
+    if (mscclppNcclDlopenInit() == dlopenSuccess) {
+      mscclppNcclDlopenSharedLib = true;
+      return true;
+    }
+  }
+  return false;
 }
 
 // Declare the global map to store associations between raw pointer and shared pointer
@@ -243,15 +270,6 @@ static mscclpp::Algorithm algoSelector(
       mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
   bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
-  if (collective == "broadcast") {
-#if defined(__HIP_PLATFORM_AMD__)
-    return algoMapByCollective.at(collective).at("default_broadcast6");
-#else
-    if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_broadcast6");
-    }
-#endif
-  }
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
@@ -332,11 +350,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 #endif
 
   const std::string ncclLibPath = mscclpp::env()->ncclSharedLibPath;
-  if (!ncclLibPath.empty()) {
-    int dlopenStatus = mscclppNcclDlopenInit();
-    if (dlopenStatus == dlopenSuccess) {
-      mscclppNcclDlopenSharedLib = true;
-    } else {
+  if (!ncclLibPath.empty() && !mscclppNcclDlopenSharedLib) {
+    if (!tryLoadNcclSharedLib()) {
       WARN("Failed to load the shared library for nccl/rccl");
       return ncclInternalError;
     }
@@ -533,9 +548,13 @@ NCCL_API ncclResult_t ncclRedOpDestroy(ncclRedOp_t, ncclComm_t) {
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclReduce(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t,
-                                 cudaStream_t) {
+NCCL_API ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
+                                 ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream) {
   // TODO: implement this function
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Reduce(sendbuff, recvbuff, count, datatype, op, root,
+                                 *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
+  }
   WARN("ncclReduce is currently unavailable");
   return ncclInternalError;
 }
@@ -554,15 +573,14 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     }
     return ncclSuccess;
   }
-
-  if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
+  int rank = comm->comm->bootstrap()->getRank();
+  if ((sendbuff == nullptr && root == rank) || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
     WARN(
         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
         "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
-  int rank = comm->comm->bootstrap()->getRank();
   INFO(MSCCLPP_NCCL, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
        recvbuff, count, datatype, comm);
 
@@ -749,14 +767,22 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   return ncclInvalidUsage;
 }
 
-NCCL_API ncclResult_t ncclSend(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
+NCCL_API ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                               cudaStream_t stream) {
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Send(sendbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
+                               stream);
+  }
   WARN("ncclSend is currently unavailable");
   return ncclInternalError;
 }
 
-NCCL_API ncclResult_t ncclRecv(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t) {
-  // TODO: implement this function
+NCCL_API ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int peer, ncclComm_t comm,
+                               cudaStream_t stream) {
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.Recv(recvbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
+                               stream);
+  }
   WARN("ncclRecv is currently unavailable");
   return ncclInternalError;
 }
@@ -791,13 +817,18 @@ NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const
 }
 
 NCCL_API ncclResult_t ncclGroupStart() {
-  // TODO: Do nothing for now
+  tryLoadNcclSharedLib();
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.GroupStart();
+  }
   WARN("ncclGroupStart is currently unavailable, return success");
   return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclGroupEnd() {
-  // TODO: Do nothing for now
+  if (mscclppNcclDlopenSharedLib == true) {
+    return mscclppNcclOps.GroupEnd();
+  }
   WARN("ncclGroupEnd is currently unavailable, return success");
   return ncclSuccess;
 }
