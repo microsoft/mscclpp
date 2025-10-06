@@ -288,6 +288,7 @@ def _stable_json_bytes(obj: Any) -> bytes:
         separators=(",", ":"),
     ).encode("utf-8")
 
+
 def compile(
     algo,
     name: str,

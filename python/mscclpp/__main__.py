@@ -21,7 +21,7 @@ default_algo_configs = [
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
-        "additional_args": [4]  
+        "additional_args": [4],
     },
     {
         "filename": "allreduce_naivy.json",
@@ -37,9 +37,10 @@ default_algo_configs = [
             min_message_size=0,
             max_message_size=2 << 20,
             tags={"default": 1},
-        )
-    }
+        ),
+    },
 ]
+
 
 def create_default_plans():
     plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp_default")
@@ -54,7 +55,7 @@ def create_default_plans():
         spec = config["spec"]
         additional_args = config.get("additional_args", [])
         plan_path = os.path.join(plan_dir, filename)
-        
+
         try:
             if additional_args:
                 prog = func(spec, *additional_args)
@@ -64,13 +65,15 @@ def create_default_plans():
             with open(plan_path, "w", encoding="utf-8") as f:
                 f.write(prog.to_json())
                 f.flush()
-                    
+
         except Exception as e:
             print(f"Error creating plan for {spec.name}: {e}")
             continue
 
+
 def main():
     create_default_plans()
+
 
 if __name__ == "__main__":
     main()
