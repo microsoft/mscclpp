@@ -38,7 +38,12 @@ def _get_version():
 
         # Use the value in VERSION as the base version
         # Change x.y.z.dev36+g6e2360d69 or x.y.dev36+g6e2360d69 to "base_version.dev36+g6e2360d69"
-        version = re.sub(r"^.*(\.dev\d+\+g[0-9a-fA-F]+)$", rf"{base_version}\1", version)
+        # Use a more specific pattern to match the version prefix and ensure correct replacement
+        new_version = re.sub(r"^[0-9]+(?:\.[0-9]+)*(\.dev\d+\+g[0-9a-fA-F]+)$", rf"{base_version}\1", version)
+        if new_version == version:
+            logging.warning(f"Version string '{version}' did not match expected pattern; using original version string.")
+        else:
+            version = new_version
 
         logging.info(f"Generated version with setuptools-scm: {version}")
         return version
