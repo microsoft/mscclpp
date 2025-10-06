@@ -16,6 +16,8 @@ import warnings
 from blake3 import blake3
 
 from .language.program import CollectiveProgram
+from .language import default_algos as def_algo
+from .language.internal.types import AlgoSpec
 import re
 from functools import wraps
 
@@ -234,6 +236,10 @@ class ExecutionPlanRegistry:
         self._selector = selector
         self._instance._registry.set_selector(selector)
 
+    def set_default_selector(self, selector):
+        self._selector = selector
+        self._instance._registry.set_default_selector(selector)
+
     def get(self, id: str) -> ExecutionPlanHandle:
         return self._id_map.get(id, None)
 
@@ -282,21 +288,6 @@ def _stable_json_bytes(obj: Any) -> bytes:
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
-
-
-@dataclass(frozen=True)
-class AlgoSpec:
-    name: str
-    collective: str
-    nranks_per_node: int
-    world_size: int
-    instances: int
-    protocol: str
-    num_threads_per_block: int
-    min_message_size: int
-    max_message_size: int
-    tags: dict
-
 
 def compile(
     algo,
@@ -402,3 +393,123 @@ def compile(
         tags=tags,
     )
     return ExecutionPlanHandle(handle)
+
+default_algo_configs = [
+    {
+        "filename": "allreduce_2nodes.json",
+        "function": def_algo.allreduce_2nodes,
+        "spec": AlgoSpec(
+            name="allreduce_2nodes",
+            collective="allreduce",
+            nranks_per_node=8,
+            world_size=16,
+            instances=1,
+            protocol="LL",
+            num_threads_per_block=1024,
+            min_message_size=0,
+            max_message_size=2 << 20,
+            tags={"default": 1},  # Fixed: should be dict, not list
+        ),
+        "additional_args": [4]  # Extra arguments for the function
+    },
+    {
+        "filename": "allreduce_naivy.json",
+        "function": def_algo.allreduce_naivy,
+        "spec": AlgoSpec(
+            name="allreduce_naivy",
+            collective="allreduce",
+            nranks_per_node=8,
+            world_size=8,
+            instances=1,
+            protocol="LL",
+            num_threads_per_block=1024,
+            min_message_size=0,
+            max_message_size=2 << 30,
+            tags={"default": 1},  # Fixed: should be dict, not list
+        )
+    }
+]
+
+def create_default_plans():
+    plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp_default")
+    os.makedirs(plan_dir, exist_ok=True)
+
+    def selector(plans, req):
+        return plans[0]
+
+    registry = ExecutionPlanRegistry()
+    registry.set_default_selector(selector)
+
+    for config in default_algo_configs:
+        filename = config["filename"]
+        func = config["function"]
+        spec = config["spec"]
+        additional_args = config.get("additional_args", [])
+        
+        plan_path = os.path.join(plan_dir, filename)
+        
+        try:
+            # Call function with spec and additional arguments
+            if additional_args:
+                result = func(spec, *additional_args)
+            else:
+                result = func(spec)
+            
+            # Write the JSON string directly to file
+            with open(plan_path, "w", encoding="utf-8") as f:
+                # If result is already a JSON string, write it directly
+                if isinstance(result, str):
+                    f.write(result)
+                # If result is a CollectiveProgram object with to_json method
+                elif hasattr(result, 'to_json'):
+                    result.post_process_operations()
+                    json_content = result.to_json(indent=None, separators=(",", ":"), ensure_ascii=False)
+                    f.write(json_content)
+                # If result is a dict/list, convert to JSON string
+                else:
+                    json_content = json.dumps(result, indent=None, separators=(",", ":"), ensure_ascii=False)
+                    f.write(json_content)
+                    
+        except Exception as e:
+            print(f"Error creating plan for {spec.name}: {e}")
+            continue
+
+def load_default_plans(rank: int):
+    plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp_default")
+
+    if os.path.exists(plan_dir):
+        for config in default_algo_configs:
+            filename = config["filename"]
+            spec = config["spec"]
+            plan_path = os.path.join(plan_dir, filename)
+            
+            if not os.path.exists(plan_path):
+                continue
+                
+            plan_id = blake3(
+                _stable_json_bytes(
+                    {
+                        "version": __version__,
+                        "algo_name": spec.name,
+                        "collective": spec.collective,
+                        "tags": sorted(spec.tags.items()),
+                        "envs": {
+                            "nranks_per_node": spec.nranks_per_node,
+                            "world_size": spec.world_size,
+                            "instances": spec.instances,
+                            "protocol": spec.protocol,
+                        },
+                    }
+                )
+            ).hexdigest()
+            plan_handel = _execution_plan_registry.get(plan_id)
+            if plan_handel is None:
+                execution_plan = ExecutionPlan(plan_path, rank)
+                handle = _ExecutionPlanHandle.create(
+                    id=plan_id,
+                    world_size=spec.world_size,
+                    nranks_per_node=spec.nranks_per_node,
+                    plan=execution_plan,
+                    tags=spec.tags,
+                )
+                ExecutionPlanRegistry().register_plan(ExecutionPlanHandle(handle))

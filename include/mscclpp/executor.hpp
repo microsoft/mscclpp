@@ -42,6 +42,19 @@ class ExecutionPlan {
   friend class Executor;
 };
 
+struct ExecutionRequest {
+  int worldSize;
+  int nRanksPerNode;
+  const void* inputBuffer;
+  void* outputBuffer;
+  size_t messageSize;
+  const std::string& collective;
+  const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
+
+  bool isInPlace() const;
+  bool isInPlace(int rank);
+};
+
 struct ExecutionPlanHandle {
   struct Constraint {
     int worldSize;
@@ -55,16 +68,7 @@ struct ExecutionPlanHandle {
   static std::shared_ptr<ExecutionPlanHandle> create(const std::string& id, int worldSize, int nRanksPerNode,
                                                      std::shared_ptr<ExecutionPlan> plan,
                                                      const std::unordered_map<std::string, uint64_t>& tags = {});
-};
-
-struct ExecutionRequest {
-  int worldSize;
-  int nRanksPerNode;
-  const void* inputBuffer;
-  void* outputBuffer;
-  size_t messageSize;
-  const std::string& collective;
-  const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
+  bool match(const ExecutionRequest& request);
 };
 
 using ExecutionPlanSelector = std::function<std::shared_ptr<ExecutionPlanHandle>(
@@ -82,6 +86,7 @@ class ExecutionPlanRegistry {
                                               const std::unordered_map<std::string, std::vector<uint64_t>>& hints);
   void setSelector(ExecutionPlanSelector selector);
   void setDefaultSelector(ExecutionPlanSelector selector);
+  void loadDefaultPlans(int rank);
   void clear();
 
  private:

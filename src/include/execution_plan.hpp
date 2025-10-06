@@ -73,6 +73,7 @@ struct ExecutionPlanRegistry::Impl {
   std::shared_ptr<ExecutionPlanHandle> select(const ExecutionRequest& request);
   std::vector<ExecutionPlanHandle> getPlans(const std::string& collective);
   std::shared_ptr<ExecutionPlanHandle> get(const std::string& id);
+  void loadDefaultPlans(int rank);
 
   ExecutionPlanSelector selector_ = nullptr;
   ExecutionPlanSelector defaultSelector_ = nullptr;

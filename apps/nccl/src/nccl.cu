@@ -286,6 +286,14 @@ static mscclpp::Algorithm algoSelector(
   return mscclpp::Algorithm();
 }
 
+std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest& request){
+  if (plans.empty()) {
+    WARN("No execution plans available for selection");
+    return nullptr;
+  }
+  return plans[0];
+}
+
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
   INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
   if (comm == nullptr) {
@@ -308,12 +316,10 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
   commPtr->planRegistry_ = mscclpp::ExecutionPlanRegistry::getInstance();
 
-  mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
-  registerCustomizedAlgo();
-  commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
-
+  commPtr->planRegistry_->loadDefaultPlans(rank);
+  commPtr->planRegistry_->setDefaultSelector(executionPlanDefaultSelector);
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
   registerCustomizedAlgo();
   commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
