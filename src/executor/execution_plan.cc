@@ -16,75 +16,18 @@
 
 namespace {
 
-// Structure to hold default algorithm configurations
 struct DefaultAlgoConfig {
   std::string filename;
-  std::string algoName;
   std::string collective;
   int nRanksPerNode;
   int worldSize;
-  int instances;
-  std::string protocol;
-  int numThreadsPerBlock;
-  size_t minMessageSize;
-  size_t maxMessageSize;
   std::unordered_map<std::string, uint64_t> tags;
 };
 
-// Default algorithm configurations (equivalent to default_algo_configs in Python)
-static const std::vector<DefaultAlgoConfig> defaultAlgoConfigs = {{
-                                                                      "allreduce_2nodes.json",
-                                                                      "allreduce_2nodes",
-                                                                      "allreduce",
-                                                                      8,                // nRanksPerNode
-                                                                      16,               // worldSize
-                                                                      1,                // instances
-                                                                      "LL",             // protocol
-                                                                      1024,             // numThreadsPerBlock
-                                                                      0,                // minMessageSize
-                                                                      2 << 20,          // maxMessageSize
-                                                                      {{"default", 1}}  // tags
-                                                                  },
-                                                                  {
-                                                                      "allreduce_naivy.json",
-                                                                      "allreduce_naivy",
-                                                                      "allreduce",
-                                                                      8,                // nRanksPerNode
-                                                                      8,                // worldSize
-                                                                      1,                // instances
-                                                                      "LL",             // protocol
-                                                                      1024,             // numThreadsPerBlock
-                                                                      0,                // minMessageSize
-                                                                      2ULL << 30,       // maxMessageSize
-                                                                      {{"default", 1}}  // tags
-                                                                  }};
+static const std::vector<DefaultAlgoConfig> defaultAlgoConfigs = {
+    {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}},
+    {"allreduce_naivy.json", "allreduce", 8, 8, {{"default", 1}}}};
 
-// Helper function to generate stable JSON string for hashing
-std::string generateStableJson(const std::string& version, const DefaultAlgoConfig& config) {
-  std::ostringstream oss;
-  oss << "{";
-  oss << "\"algo_name\":\"" << config.algoName << "\",";
-  oss << "\"collective\":\"" << config.collective << "\",";
-  oss << "\"envs\":{";
-  oss << "\"instances\":" << config.instances << ",";
-  oss << "\"nranks_per_node\":" << config.nRanksPerNode << ",";
-  oss << "\"protocol\":\"" << config.protocol << "\",";
-  oss << "\"world_size\":" << config.worldSize;
-  oss << "},";
-  oss << "\"tags\":[";
-  bool first = true;
-  for (const auto& tag : config.tags) {
-    if (!first) oss << ",";
-    oss << "[\"" << tag.first << "\"," << tag.second << "]";
-    first = false;
-  }
-  oss << "],";
-  oss << "\"version\":\"" << version << "\"";
-  oss << "}";
-  return oss.str();
-}
-
-// Simple hash function (substitute for blake3)
 std::string simpleHash(const std::string& input) {
   std::hash<std::string> hasher;
   size_t hashValue = hasher(input);
@@ -93,17 +36,7 @@ std::string simpleHash(const std::string& input) {
   return oss.str();
 }
 
-// Get environment variable with default value
-std::string getEnvVar(const char* name, const std::string& defaultValue) {
-  const char* value = std::getenv(name);
-  return value ? std::string(value) : defaultValue;
-}
-
-// Get home directory
-std::string getHomeDir() {
-  const char* home = std::getenv("HOME");
-  return home ? std::string(home) : "/tmp";
-}
+std::string generateFileId(const std::string& filePath) { return simpleHash(filePath); }
 
 template <typename T, typename Predicate>
 std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
@@ -817,6 +750,15 @@ void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPl
 }
 
 void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
+  auto getEnvVar = [](const char* name, const std::string& defaultValue) -> std::string {
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : defaultValue;
+  };
+  auto getHomeDir = []() -> std::string {
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : "~";
+  };
+
   std::string planDir = getEnvVar("MSCCLPP_EXECUTION_PLAN_DIR", getHomeDir() + "/.cache/mscclpp_default");
 
   if (!std::filesystem::exists(planDir)) {
@@ -824,44 +766,27 @@ void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
     return;
   }
 
-  // TODO: Get actual version from build system
-  std::string version = "0.7.0";  // This should come from a proper version header
-
   for (const auto& config : defaultAlgoConfigs) {
     std::string planPath = planDir + "/" + config.filename;
-
     INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
-
-    // Check if plan file exists
     if (!std::filesystem::exists(planPath)) {
       INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
       continue;
     }
 
-    // Generate plan ID (equivalent to blake3 hash in Python)
-    std::string stableJson = generateStableJson(version, config);
-    std::string planId = simpleHash(stableJson);
-
-    // Check if plan is already registered
+    std::string planId = generateFileId(planPath);
     if (idMap_.find(planId) != idMap_.end()) {
       INFO(MSCCLPP_EXECUTOR, "Plan already registered: %s", planId.c_str());
       continue;
     }
 
     try {
-      // Create execution plan
       auto executionPlan = std::make_shared<ExecutionPlan>(planPath, rank);
-
-      // Create plan handle
       auto handle =
           ExecutionPlanHandle::create(planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
-
-      // Register the plan
       registerPlan(handle);
-
       INFO(MSCCLPP_EXECUTOR, "Successfully loaded plan: %s for collective: %s", planId.c_str(),
            config.collective.c_str());
-
     } catch (const std::exception& e) {
       WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
     }
