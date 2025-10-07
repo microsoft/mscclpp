@@ -593,8 +593,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
 
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
-  auto planHandle = comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(),
+  auto planHandle = comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranks(), comm->comm->bootstrap()->getNranksPerNode(),
                                                 comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, hints);
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandle->plan, stream);
@@ -646,8 +645,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  auto planHandler = comm->planRegistry_->select("allreduce", comm->comm->bootstrap()->getNranksPerNode(),
-                                                 comm->comm->bootstrap()->getNranks(),
+  auto planHandler = comm->planRegistry_->select("allreduce", comm->comm->bootstrap()->getNranks(), comm->comm->bootstrap()->getNranksPerNode(),
                                                  comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandler != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandler->plan, stream);
@@ -702,8 +700,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
 
-  auto planHandle = comm->planRegistry_->select("reducescatter", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(),
+  auto planHandle = comm->planRegistry_->select("reducescatter", comm->comm->bootstrap()->getNranks(), comm->comm->bootstrap()->getNranksPerNode(),
                                                 comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes * nRank, bytes, planHandle->plan,
@@ -746,8 +743,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  auto planHandle = comm->planRegistry_->select("allgather", comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getNranks(),
+  auto planHandle = comm->planRegistry_->select("allgather", comm->comm->bootstrap()->getNranks(), comm->comm->bootstrap()->getNranksPerNode(),
                                                 comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
   if (planHandle != nullptr) {
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes * nRank, planHandle->plan,
