@@ -8,6 +8,8 @@ import warnings
 import re
 from functools import wraps
 
+import _version
+
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
@@ -16,13 +18,7 @@ if os.environ.get("MSCCLPP_HOME", None) is None:
 # Get version
 def _get_version():
     """Get version from the best available source"""
-    # Try setuptools-scm generated _version.py (most reliable)
-    try:
-        from ._version import __version__
-
-        return __version__
-    except ImportError:
-        raise RuntimeError("Could not determine MSCCL++ version from setuptools-scm generated _version.py.")
+    return _version.__version__
 
 
 # Parse version components

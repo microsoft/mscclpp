@@ -3,8 +3,8 @@
 
 [build-system]
 requires = [
-    "scikit-build-core>=0.4.3",
-    "setuptools-scm[toml]>=6.2"
+    "scikit-build-core>=0.10.0",
+    "setuptools-scm[toml]>=8"
 ]
 build-backend = "scikit_build_core.build"
 
@@ -16,6 +16,7 @@ requires-python = ">=3.8"
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"
+version_scheme = "no-guess-dev"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
