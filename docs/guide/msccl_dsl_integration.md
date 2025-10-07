@@ -2,6 +2,21 @@
 
 MSCCL++ DSL (domain‑specific language) enables concise expression of collective algorithms as Python functions. We provides pythonic interfaces to help users author, JIT‑compile, register, and select collective execution plans. Two modes of usage are supported: native MSCCL++ collective calls, and NCCL interposition (transparent acceleration of existing PyTorch code).
 
+## Initial Setup
+
+After cloning the repository and completing the basic project setup, run the following at the mscclpp foulder:
+
+1. Install Python dependencies
+```bash
+pip install -r ./python/<requirements_file>
+```
+Replace <requirements_file> with the appropriate file for your environment (e.g., requirements_cuda11.txt, requirements_cuda11.txt or requirements_rocm6.txt).
+
+2. Install the module and generate default algorithm plans
+```bash
+pip install . && python3 -m mscclpp --install
+```
+
 ## User‑Facing API Surface
 
 Author a collective algorithm in the Python DSL (or reuse presets), JIT‑compile it into a single canonical JSON execution plan, register it, and let a selector pick the plan per collective call.

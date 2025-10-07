@@ -310,6 +310,11 @@ std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(
     INFO(MSCCLPP_NCCL, "No execution plans available for selection");
     return nullptr;
   }
+  for (auto plan: plans){
+    if(plan->tags.find("default") == plan->tags.end()){
+      return plan;
+    }
+  }
   return plans[0];
 }
 

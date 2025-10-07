@@ -1,5 +1,6 @@
 import os
 import shutil
+import argparse
 from pathlib import Path
 
 from .language import default_algos as def_algo
@@ -56,7 +57,12 @@ def create_default_plans():
 
 
 def main():
-    create_default_plans()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--install", action="store_true", help="flag to install default plans")
+    args = parser.parse_args()
+
+    if args.install:
+        create_default_plans()
 
 
 if __name__ == "__main__":
