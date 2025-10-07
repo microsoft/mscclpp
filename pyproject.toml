@@ -6,8 +6,7 @@ requires = [
     "scikit-build-core>=0.4.3",
     "setuptools-scm[toml]>=6.2"
 ]
-build-backend = "_build_version_metadata"
-backend-path = ["."]
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
@@ -17,14 +16,11 @@ requires-python = ">=3.8"
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"
-local_scheme = "node-and-date"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
-# Tell scikit-build-core to get version from setuptools-scm
-metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
 
 [tool.scikit-build.wheel]
 packages = ["python/mscclpp", "python/mscclpp_benchmark"]
