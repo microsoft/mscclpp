@@ -66,6 +66,14 @@ struct SemaphoreInfo {
   int initValue;
 };
 
+struct AlgoConfig {
+  std::string filename;
+  std::string collective;
+  int nRanksPerNode;
+  int worldSize;
+  std::unordered_map<std::string, uint64_t> tags;
+};
+
 struct ExecutionPlanRegistry::Impl {
   void setSelector(ExecutionPlanSelector selector);
   void setDefaultSelector(ExecutionPlanSelector selector);

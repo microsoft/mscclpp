@@ -16,15 +16,7 @@
 
 namespace {
 
-struct DefaultAlgoConfig {
-  std::string filename;
-  std::string collective;
-  int nRanksPerNode;
-  int worldSize;
-  std::unordered_map<std::string, uint64_t> tags;
-};
-
-static const std::vector<DefaultAlgoConfig> defaultAlgoConfigs = {
+static const std::vector<mscclpp::AlgoConfig> defaultAlgoConfigs = {
     {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}},
     {"allreduce_naivy.json", "allreduce", 8, 8, {{"default", 1}}}};
 
@@ -758,9 +750,7 @@ void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
     const char* home = std::getenv("HOME");
     return home ? std::string(home) : "~";
   };
-
   std::string planDir = getEnvVar("MSCCLPP_EXECUTION_PLAN_DIR", getHomeDir() + "/.cache/mscclpp_default");
-
   if (!std::filesystem::exists(planDir)) {
     INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
     return;
@@ -773,13 +763,11 @@ void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
       INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
       continue;
     }
-
     std::string planId = generateFileId(planPath);
     if (idMap_.find(planId) != idMap_.end()) {
       INFO(MSCCLPP_EXECUTOR, "Plan already registered: %s", planId.c_str());
       continue;
     }
-
     try {
       auto executionPlan = std::make_shared<ExecutionPlan>(planPath, rank);
       auto handle =
