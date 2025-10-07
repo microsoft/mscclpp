@@ -17,6 +17,7 @@ requires-python = ">=3.8"
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"
+local_scheme = "node-and-date"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
