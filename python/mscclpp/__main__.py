@@ -22,23 +22,7 @@ default_algo_configs = [
             tags={"default": 1},
         ),
         "additional_args": [4],
-    },
-    {
-        "filename": "allreduce_naivy.json",
-        "function": def_algo.allreduce_naivy,
-        "spec": AlgoSpec(
-            name="allreduce_naivy",
-            collective="allreduce",
-            nranks_per_node=8,
-            world_size=8,
-            instances=1,
-            protocol="LL",
-            num_threads_per_block=1024,
-            min_message_size=0,
-            max_message_size=2 << 20,
-            tags={"default": 1},
-        ),
-    },
+    }
 ]
 
 

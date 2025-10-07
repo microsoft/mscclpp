@@ -17,8 +17,7 @@
 namespace {
 
 static const std::vector<mscclpp::AlgoConfig> defaultAlgoConfigs = {
-    {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}},
-    {"allreduce_naivy.json", "allreduce", 8, 8, {{"default", 1}}}};
+    {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}}};
 
 std::string simpleHash(const std::string& input) {
   std::hash<std::string> hasher;
