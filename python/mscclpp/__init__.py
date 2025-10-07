@@ -17,58 +17,21 @@ from blake3 import blake3
 
 from .language.program import CollectiveProgram
 from .language.internal.types import AlgoSpec
-import re
 from functools import wraps
 
 
-# Get version
-def _get_version():
-    """Get version from the best available source"""
+if os.environ.get("MSCCLPP_HOME", None) is None:
+    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
-    # Try setuptools-scm generated _version.py (most reliable)
-    try:
-        from ._version import __version__
+from ._version import __version__, __commit_id__
 
-        return __version__
-    except ImportError:
-        raise RuntimeError("Could not determine MSCCL++ version from setuptools-scm generated _version.py.")
-
-
-# Parse version components
-def _parse_version(version_string):
-    """Parse version components from setuptools-scm generated version"""
-    # Pattern for versions like "0.7.0.dev36+g6e2360d69" (without .dYYYYMMDD)
-    pattern = r"^v?(?P<base>[\d\.]+)(?:\.dev(?P<distance>\d+))?(?:\+g(?P<commit>[a-f0-9]+))?(?P<dirty>\.dirty)?$"
-    match = re.match(pattern, version_string)
-
-    if match:
-        return {"base_version": match.group("base"), "git_commit": match.group("commit") or "unknown"}
-    else:
-        # Fallback parsing - try to extract what we can
-        base = version_string.split("+")[0].lstrip("v").split(".dev")[0]
-        commit = "unknown"
-
-        return {"base_version": base, "git_commit": commit}
-
-
-__version__ = _get_version()
 
 # Parse the version
-_version_info = _parse_version(__version__)
-__base_version__ = _version_info["base_version"]
-__git_commit__ = _version_info["git_commit"]
+version = {
+    "version": __version__,
+    "git_commit": __commit_id__,
+}
 
-
-def _version():
-    """Get complete version information as a dictionary"""
-    return {
-        "version": __version__,
-        "base_version": __base_version__,
-        "git_commit": __git_commit__,
-    }
-
-
-version: dict = _version()
 
 from ._mscclpp import (
     Env,
@@ -145,9 +108,6 @@ __all__ = [
     "get_include",
     "get_lib",
 ]
-
-if os.environ.get("MSCCLPP_HOME", None) is None:
-    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
 
 def get_include() -> str:
