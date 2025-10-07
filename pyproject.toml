@@ -31,6 +31,9 @@ install-dir = "mscclpp"
 license-files = ["VERSION", "LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
 exclude = ["mscclpp/*.cpp"]
 
+[tool.scikit-build.sdist]
+include= ["python/mscclpp/_version.py"]
+
 [tool.scikit-build.cmake.define]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
 MSCCLPP_BUILD_TESTS = "OFF"

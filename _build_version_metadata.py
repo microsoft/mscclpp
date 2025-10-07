@@ -96,9 +96,6 @@ def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
     # Call original function
     result = _orig_prepare_metadata_for_build_wheel(metadata_directory, config_settings)
 
-    # Patch the metadata with correct version
-    import configparser
-
     metadata_file = Path(metadata_directory) / f"{result}/METADATA"
     if metadata_file.exists():
         with open(metadata_file, "r") as f:
