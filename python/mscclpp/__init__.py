@@ -4,7 +4,6 @@
 """MSCCL++ Python API."""
 
 import os
-import re
 import warnings
 from functools import wraps
 
