@@ -14,9 +14,6 @@ if os.environ.get("MSCCLPP_HOME", None) is None:
 
 from ._version import __version__, __commit_id__
 
-# Remove the .dYYYYMMDD timestamp if present
-__version__ = re.sub(r"\.d\d{8}", "", __version__)
-
 
 # Parse the version
 version = {
