@@ -17,6 +17,7 @@
 #include <iostream>
 #include <mscclpp/core.hpp>
 #include <mscclpp/utils.hpp>
+#include <mscclpp/nccl.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <string>
@@ -25,6 +26,7 @@
 #include "utils_internal.hpp"
 
 int isMainProc = 0;
+ncclDataType_t dataType = ncclFloat16;  // Default to float16
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
