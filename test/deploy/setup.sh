@@ -20,6 +20,7 @@ else
 fi
 
 cd /root/mscclpp && pip3 install .
+python3 -m setuptools_scm --force-write-version-files
 
 mkdir -p /var/run/sshd
 /usr/sbin/sshd -p 22345
