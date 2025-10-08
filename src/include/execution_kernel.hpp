@@ -51,6 +51,32 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
   return __hadd2(a, b);
 }
 
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+// FP8 E4M3 addition
+template <>
+MSCCLPP_DEVICE_INLINE __nv_fp8_e4m3 add_elements(__nv_fp8_e4m3 a, __nv_fp8_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  float sum = static_cast<float>(a) + static_cast<float>(b);
+  sum = fminf(fmaxf(sum, -448.0f), 448.0f);  // Clamp to FP8 E4M3 range
+  return static_cast<__nv_fp8_e4m3>(sum);
+#else
+  return __nv_fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
+#endif
+}
+
+// FP8 E5M2 addition
+template <>
+MSCCLPP_DEVICE_INLINE __nv_fp8_e5m2 add_elements(__nv_fp8_e5m2 a, __nv_fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  float sum = static_cast<float>(a) + static_cast<float>(b);
+  sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);  // Clamp to FP8 E5M2 range
+  return static_cast<__nv_fp8_e5m2>(sum);
+#else
+  return __nv_fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
+#endif
+}
+#endif  // __CUDA_FP8_TYPES_EXIST__
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int4 add_vectors_helper(int4 a, int4 b) {
   int4 ret;
@@ -75,6 +101,62 @@ template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
+
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+// FP8 E4M3 vector helper - 4 FP8 values pack into one int
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e4m3>(int4 a, int4 b) {
+  int4 ret;
+  
+  auto process_int = [](int val_a, int val_b) -> int {
+    __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    memcpy(fp8_vals_a, &val_a, sizeof(int));
+    memcpy(fp8_vals_b, &val_b, sizeof(int));
+    
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
+    }
+    
+    int result;
+    memcpy(&result, fp8_result, sizeof(int));
+    return result;
+  };
+  
+  ret.w = process_int(a.w, b.w);
+  ret.x = process_int(a.x, b.x);
+  ret.y = process_int(a.y, b.y);
+  ret.z = process_int(a.z, b.z);
+  return ret;
+}
+
+// FP8 E5M2 vector helper - 4 FP8 values pack into one int
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e5m2>(int4 a, int4 b) {
+  int4 ret;
+  
+  auto process_int = [](int val_a, int val_b) -> int {
+    __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    memcpy(fp8_vals_a, &val_a, sizeof(int));
+    memcpy(fp8_vals_b, &val_b, sizeof(int));
+    
+    #pragma unroll
+    for (int i = 0; i < 4; i++) {
+      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
+    }
+    
+    int result;
+    memcpy(&result, fp8_result, sizeof(int));
+    return result;
+  };
+  
+  ret.w = process_int(a.w, b.w);
+  ret.x = process_int(a.x, b.x);
+  ret.y = process_int(a.y, b.y);
+  ret.z = process_int(a.z, b.z);
+  return ret;
+}
+#endif  // __CUDA_FP8_TYPES_EXIST__
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper(uint2 a, uint2 b) {
@@ -945,6 +1027,30 @@ class ExecutionKernel {
         );
 #endif
         break;
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+      case DataType::FP8_E4M3:
+        executionKernel<__nv_fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__nv_fp8_e4m3*)src, (__nv_fp8_e4m3*)dst, (__nv_fp8_e4m3*)scratch, scratchOffset, scratchChunkSize,
+            plan, semaphores, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::FP8_E5M2:
+        executionKernel<__nv_fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__nv_fp8_e5m2*)src, (__nv_fp8_e5m2*)dst, (__nv_fp8_e5m2*)scratch, scratchOffset, scratchChunkSize,
+            plan, semaphores, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+#endif  // __CUDA_FP8_TYPES_EXIST__
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
