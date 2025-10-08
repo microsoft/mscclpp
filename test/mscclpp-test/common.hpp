@@ -7,6 +7,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/nccl.h>
 #include <vector>
 
 #define CUDATHROW(cmd)                                                                                                \
@@ -37,6 +38,7 @@ struct TestArgs {
   int nRanksPerNode;
   int kernelNum;
   int reportErrors;
+  ncclDataType_t dataType;
 };
 
 struct KernelRestriction {

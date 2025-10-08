@@ -26,7 +26,7 @@
 #include "utils_internal.hpp"
 
 int isMainProc = 0;
-ncclDataType_t dataType = ncclFloat16;  // Default to float16
+ncclDataType_t dataType = ncclFloat32;  // Default to float32 (4 bytes, matches old behavior)
 
 mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
                             mscclpp::Transport::IB3, mscclpp::Transport::IB4, mscclpp::Transport::IB5,
@@ -194,9 +194,29 @@ BaseTestEngine::BaseTestEngine(const TestArgs& args, const std::string& name)
 
 BaseTestEngine::~BaseTestEngine() { (void)cudaStreamDestroy(stream_); }
 
+int getDataTypeSize(ncclDataType_t dtype) {
+  switch (dtype) {
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+    case ncclFp8E4M3:
+    case ncclFp8E5M2:
+      return 1;
+#endif
+    case ncclFloat16:
+#if defined(__CUDA_BF16_TYPES_EXIST__)
+    case ncclBfloat16:
+#endif
+      return 2;
+    case ncclInt32:
+    case ncclFloat32:
+      return 4;
+    default:
+      return 4;
+  }
+}
+
 void BaseTestColl::setupCollTest(const TestArgs& args, size_t size) {
   this->worldSize_ = args.totalRanks;
-  this->typeSize_ = sizeof(int);
+  this->typeSize_ = getDataTypeSize(args.dataType);
   this->kernelNum_ = args.kernelNum;
   this->setupCollTest(size);
 }
@@ -234,7 +254,8 @@ void BaseTestEngine::runTest() {
   // warm-up for large size
   this->coll_->setupCollTest(args_, args_.maxBytes);
   this->barrier();
-  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum,
+                              coll_->getParamBytes() / getDataTypeSize(args_.dataType),
                               args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
@@ -244,7 +265,8 @@ void BaseTestEngine::runTest() {
   // warm-up for small size
   this->coll_->setupCollTest(args_, args_.minBytes);
   this->barrier();
-  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+  validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum,
+                              coll_->getParamBytes() / getDataTypeSize(args_.dataType),
                               args_.totalRanks, args_.nRanksPerNode);
   for (int iter = 0; iter < warmup_iters; iter++) {
     this->coll_->runColl(args_, stream_);
@@ -267,9 +289,10 @@ void BaseTestEngine::runTest() {
     this->coll_->initData(this->args_, this->getSendBuff(), this->getExpectedBuff());
 
     ss << std::setw(12) << std::max(coll_->getSendBytes(), coll_->getExpectedBytes()) << "  " << std::setw(12)
-       << coll_->getParamBytes() / sizeof(int);
+       << coll_->getParamBytes() / getDataTypeSize(args_.dataType);
 
-    validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum, coll_->getParamBytes() / sizeof(int),
+    validateArgsForDeviceKernel(coll_->getKernelRestrictions(), args_.kernelNum,
+                                coll_->getParamBytes() / getDataTypeSize(args_.dataType),
                                 args_.totalRanks, args_.nRanksPerNode);
     double deltaSec = benchTime();
 
@@ -727,7 +750,7 @@ void run(int argc, char* argv[]) {
 
   CUDATHROW(cudaSetDevice(cudaDev));
   TestArgs args = {minBytes, maxBytes,  stepBytes,     stepFactor, totalRanks, rank,
-                   cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck};
+                   cudaDev,  localRank, nRanksPerNode, kernel_num, datacheck, dataType};
 
   PRINT("#\n# Initializing MSCCL++\n");
 
