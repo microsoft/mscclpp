@@ -6,12 +6,10 @@
 import os
 import warnings
 from functools import wraps
-
+from mscclpp._version import __version__, __commit_id__
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
-
-from ._version import __version__, __commit_id__
 
 
 # Parse the version
