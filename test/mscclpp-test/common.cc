@@ -555,12 +555,13 @@ int main(int argc, char* argv[]) {
                               {"average", required_argument, 0, 'a'},
                               {"kernel_num", required_argument, 0, 'k'},
                               {"output_file", required_argument, 0, 'o'},
+                              {"datatype", required_argument, 0, 'd'},
                               {"help", no_argument, 0, 'h'},
                               {}};
 
   while (1) {
     int c;
-    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:o:h:", longopts, &longindex);
+    c = getopt_long(argc, argv, "b:e:i:f:n:w:c:G:a:k:o:d:h:", longopts, &longindex);
 
     if (c == -1) break;
 
@@ -612,6 +613,26 @@ int main(int argc, char* argv[]) {
       case 'o':
         output_file = optarg;
         break;
+      case 'd':
+        if (strcmp(optarg, "float16") == 0 || strcmp(optarg, "fp16") == 0) {
+          dataType = ncclFloat16;
+        } else if (strcmp(optarg, "float32") == 0 || strcmp(optarg, "fp32") == 0) {
+          dataType = ncclFloat32;
+        } else if (strcmp(optarg, "bfloat16") == 0 || strcmp(optarg, "bf16") == 0) {
+          dataType = ncclBfloat16;
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+        } else if (strcmp(optarg, "fp8_e4m3") == 0) {
+          dataType = ncclFp8E4M3;
+        } else if (strcmp(optarg, "fp8_e5m2") == 0) {
+          dataType = ncclFp8E5M2;
+#endif
+        } else if (strcmp(optarg, "int32") == 0) {
+          dataType = ncclInt32;
+        } else {
+          fprintf(stderr, "invalid datatype '%s'\n", optarg);
+          return -1;
+        }
+        break;
       case 'h':
       default:
         if (c != 'h') printf("invalid option '%c'\n", c);
@@ -629,6 +650,7 @@ int main(int argc, char* argv[]) {
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-k,--kernel_num <kernel number of commnication primitive>] \n\t"
             "[-o, --output_file <output file name>] \n\t"
+            "[-d,--datatype <float16|float32|bfloat16|fp8_e4m3|fp8_e5m2|int32>] \n\t"
             "[-h,--help]\n",
             basename(argv[0]));
         return 0;

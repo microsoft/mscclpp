@@ -8,12 +8,23 @@
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
+// AMD FP8 support
+#if defined(__HIP_FP8_TYPES_EXIST__)
+#include <hip/hip_fp8.h>
+#endif
 
 using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
-#else
+// Define FP8 types for AMD
+#if defined(__HIP_FP8_TYPES_EXIST__)
+using __nv_fp8_e4m3 = __hip_fp8_e4m3_fnuz;
+using __nv_fp8_e5m2 = __hip_fp8_e5m2_fnuz;
+#define __CUDA_FP8_TYPES_EXIST__
+#endif
+
+#else  // NVIDIA
 
 #include <cuda_fp16.h>
 #include <cuda_runtime_api.h>
@@ -22,6 +33,7 @@ using __bfloat162 = __hip_bfloat162;
 #endif
 #if (CUDART_VERSION >= 11080)
 #include <cuda_fp8.h>
+#define __CUDA_FP8_TYPES_EXIST__
 #endif
 
 using __bfloat16 = __nv_bfloat16;
@@ -88,6 +100,16 @@ using bf16x4 = VectorType<__bfloat16, 4>;
 
 using f16x8 = VectorType<__half, 8>;
 using bf16x8 = VectorType<__bfloat16, 8>;
+
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+// FP8 vector types
+using fp8_e4m3x2 = VectorType<__nv_fp8_e4m3, 2>;
+using fp8_e4m3x4 = VectorType<__nv_fp8_e4m3, 4>;
+using fp8_e4m3x8 = VectorType<__nv_fp8_e4m3, 8>;
+using fp8_e5m2x2 = VectorType<__nv_fp8_e5m2, 2>;
+using fp8_e5m2x4 = VectorType<__nv_fp8_e5m2, 4>;
+using fp8_e5m2x8 = VectorType<__nv_fp8_e5m2, 8>;
+#endif
 
 }  // namespace mscclpp
 
