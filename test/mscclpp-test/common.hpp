@@ -22,6 +22,7 @@
 
 int getDeviceNumaNode(int cudaDev);
 void numaBind(int node);
+int getDataTypeSize(ncclDataType_t dtype);
 
 enum class ChannelSemantic { PUT, GET };
 
