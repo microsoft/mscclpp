@@ -830,9 +830,9 @@ void ExecutionPlanRegistry::loadDefaultPlans(int rank) { impl_->loadDefaultPlans
 bool ExecutionRequest::isInPlace() const {
   if (inputBuffer == outputBuffer) return true;
   if (collective == "allgather") {
-    size_t rankOffset = rank * (messageSize / worldSize);
-    const char* expectedOutputStart = static_cast<const char*>(outputBuffer) + rankOffset;
-    return static_cast<const void*>(expectedOutputStart) == inputBuffer;
+    size_t rankOffset = rank * messageSize;
+    const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
+    return static_cast<const void*>(expectedInput) == inputBuffer;
   }
   return false;
 }
@@ -849,8 +849,10 @@ bool ExecutionPlanHandle::match(const ExecutionRequest& request) {
   bool ranksPerNodeMatch = constraint.nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = plan->collective() == request.collective;
   bool inPlaceMatch = plan->isInPlace() == request.isInPlace();
-  bool minSizeMatch = request.messageSize >= plan->minMessageSize();
-  bool maxSizeMatch = request.messageSize <= plan->maxMessageSize();
+  bool minSizeMatch = (request.collective == "allgather" ? (request.messageSize * request.worldSize)
+                                                         : request.messageSize) >= plan->minMessageSize();
+  bool maxSizeMatch = (request.collective == "allgather" ? (request.messageSize * request.worldSize)
+                                                         : request.messageSize) <= plan->maxMessageSize();
 
   bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
   return result;

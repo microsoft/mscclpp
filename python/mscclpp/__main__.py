@@ -18,11 +18,27 @@ default_algo_configs = [
             instances=1,
             protocol="LL",
             num_threads_per_block=1024,
-            min_message_size=0,
+            min_message_size=1 << 10,
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
         "additional_args": [4],
+    },
+    {
+        "filename": "allgather.json",
+        "function": def_algo.allgather,
+        "spec": AlgoSpec(
+            name="allgather",
+            collective="allgather",
+            nranks_per_node=8,
+            world_size=16,
+            instances=1,
+            protocol="LL",
+            num_threads_per_block=1024,
+            min_message_size=1 << 10,
+            max_message_size=2 << 20,
+            tags={"default": 1},
+        )
     }
 ]
 

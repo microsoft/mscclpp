@@ -412,11 +412,6 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   }
 #endif
 
-  if (mscclppNcclDlopenSharedLib == true) {
-    mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm));
-    mscclppNcclDlopenFinalize();
-    delete static_cast<ncclComm_t*>(comm->mscclppNcclComm);
-  }
   delete comm;
   return ncclSuccess;
 }
