@@ -74,7 +74,11 @@ struct NvlsAdapter {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
     if constexpr (std::is_same_v<T, __nv_fp8_e4m3> || std::is_same_v<T, __nv_fp8_e5m2>) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else
 #endif
     {
@@ -99,7 +103,11 @@ struct NvlsWithCopyAdapter {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
     if constexpr (std::is_same_v<T, __nv_fp8_e4m3> || std::is_same_v<T, __nv_fp8_e5m2>) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else
 #endif
     {

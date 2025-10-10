@@ -145,7 +145,7 @@ set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPE
 if(MSCCLPP_USE_CUDA)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_CUDA)
 elseif(MSCCLPP_USE_ROCM)
-    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_ROCM)
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_ROCM __HIP_FP8_TYPES_EXIST__)
     foreach(arch ${MSCCLPP_GPU_ARCHS})
       target_compile_options(mscclpp_obj PRIVATE --offload-arch=${arch})
     endforeach()

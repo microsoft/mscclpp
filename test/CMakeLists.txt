@@ -14,6 +14,7 @@ set(TEST_INC_INTERNAL PRIVATE ${PROJECT_SOURCE_DIR}/src/include)
 if(MSCCLPP_USE_ROCM)
     file(GLOB_RECURSE CU_SOURCES CONFIGURE_DEPENDS *.cu)
     set_source_files_properties(${CU_SOURCES} PROPERTIES LANGUAGE CXX)
+    add_compile_definitions(__HIP_FP8_TYPES_EXIST__)
 endif()
 
 function(add_test_executable name sources)
