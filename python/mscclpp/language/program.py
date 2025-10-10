@@ -5,6 +5,8 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.channel import *
+from mscclpp.language.rank import Semaphore
 from typing import List
 import json
 
@@ -115,6 +117,7 @@ class CollectiveProgram:
         this program as the active program in the global context.
         """
         set_program(self)
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the program context and clear the active program.
@@ -122,6 +125,10 @@ class CollectiveProgram:
         This method is called when exiting the 'with' statement and removes
         this program from the global context.
         """
+        MemoryChannel.reset_channel_counts()
+        PortChannel.reset_channel_counts()
+        SwitchChannel.reset_channel_counts()
+        Semaphore.reset_semaphore_counts()
         set_program(None)
 
     def add_channel(self, channel):
@@ -175,7 +182,8 @@ class CollectiveProgram:
             raise RuntimeError("Nested Pipelines are not Supported.")
         self.loop_context = loop_context
 
-    def to_json(self):
+    def to_json(self, indent=2, **kwargs):
+        self.post_process_operations()
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
@@ -190,4 +198,4 @@ class CollectiveProgram:
             "max_message_size": self.max_message_size,
         }
 
-        return json.dumps(json_obj, indent=2)
+        return json.dumps(json_obj, indent=indent, **kwargs)
