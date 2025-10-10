@@ -412,7 +412,12 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   }
 #endif
 
+  ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
   delete comm;
+  if (mscclppNcclCommPtr != nullptr) {
+    mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(mscclppNcclCommPtr));
+    delete static_cast<ncclComm_t*>(mscclppNcclCommPtr);
+  }
   return ncclSuccess;
 }
 
