@@ -126,7 +126,8 @@ static inline int mscclppNcclDlopenInit() {
   return dlopenSuccess;
 }
 
-static inline void mscclppNcclDlopenFinalize() {
+// No need to call this function, handle will be closed at program exit
+[[maybe_unused]] static inline void mscclppNcclDlopenFinalize() {
   if (mscclppNcclDlHandle) {
     dlclose(mscclppNcclDlHandle);
   }
@@ -305,7 +306,7 @@ static mscclpp::Algorithm algoSelector(
 }
 
 std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(
-    const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest& request) {
+    const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest&) {
   if (plans.empty()) {
     INFO(MSCCLPP_NCCL, "No execution plans available for selection");
     return nullptr;

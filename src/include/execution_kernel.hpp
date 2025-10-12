@@ -161,6 +161,7 @@ __shared__ BufferType* portChannelBufferTypes_;
 __shared__ uint32_t flag_;
 __shared__ uint32_t scratchChunkSize_;
 __shared__ uint32_t scratchOffset_;
+__shared__ MemoryId localMemoryIdBegin_;
 #if defined(ENABLE_NPKIT)
 __shared__ NpKitEvent* eventBuffer_;
 #endif
@@ -293,7 +294,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
     if (tid < count) {
       uint32_t size = min(outputSizes[tid] - offset, unitSize);
       MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
-      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
+      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type) + localMemoryIdBegin_;
       uint32_t dstOffset =
           dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
       uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
@@ -451,8 +452,8 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
     uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
     uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
     MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
-    portChannels_[channelIndexes[chIdx]].put(dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH),
-                                             srcOffset, size << 1);
+    portChannels_[channelIndexes[chIdx]].put(
+        dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH) + localMemoryIdBegin_, srcOffset, size << 1);
   }
 }
 
@@ -803,9 +804,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 // Keep uint32_t arguments together to address torch hang issue (dist.all_reduce + dist.barrier), not sure the reason
 template <typename T, typename PacketType = LL16Packet, bool ReuseScratch = false>
 __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output,
-                                                           T* scratch, DeviceExecutionPlan* plan,
-                                                           DeviceSemaphore* semaphores, uint32_t scratchOffset,
-                                                           uint32_t scratchChunkSize, uint32_t flag
+                                                           T* scratch, uint32_t scratchOffset,
+                                                           uint32_t scratchChunkSize, DeviceExecutionPlan* plan,
+                                                           DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                                                           uint32_t flag
 #if defined(ENABLE_NPKIT)
                                                            ,
                                                            NpKitEventCollectContext* npKitEventCollectContexts,
@@ -845,6 +847,7 @@ __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int 
   flag_ = flag;
   scratchChunkSize_ = scratchChunkSize;
   scratchOffset_ = scratchOffset;
+  localMemoryIdBegin_ = localMemoryIdBegin;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -890,13 +893,13 @@ class ExecutionKernel {
   template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
-                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0) {
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                           uint32_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
-            flag
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -907,7 +910,7 @@ class ExecutionKernel {
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
-            flag
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -917,7 +920,8 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -927,7 +931,8 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -938,7 +943,7 @@ class ExecutionKernel {
       case DataType::BFLOAT16:
         executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchOffset, scratchChunkSize, plan,
-            semaphores, flag
+            semaphores, localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -952,8 +957,8 @@ class ExecutionKernel {
   template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
-                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0);
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                           uint32_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp

@@ -115,6 +115,7 @@ struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<int, std::shared_ptr<Connection>> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
+  MemoryId localMemoryIdBegin = MemoryId(0);
 
   // For registered memories, registeredMemoryAddresses is used for memoryChannel and registeredMemoryIds is used for
   // proxy channel
@@ -145,17 +146,21 @@ struct Executor::Impl {
   int nranksPerNode;
   int nranks;
   std::shared_ptr<Communicator> comm;
+  std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
   Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->nranks = comm->bootstrap()->getNranks();
+    this->proxyService = std::make_shared<ProxyService>();
+    this->proxyService->startProxy();
   }
   ~Impl() = default;
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
                                          size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
-                                         size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan) {
+                                         size_t sendMemRange, size_t recvMemRange,
+                                         const ExecutionPlan& plan, std::shared_ptr<ProxyService> proxyService) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
 
@@ -194,7 +199,7 @@ struct Executor::Impl {
     context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
     context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     context.scratchBufferSize = scratchBufferSize;
-    context.proxyService = std::make_shared<ProxyService>();
+    context.proxyService = proxyService;
     context.nthreadsPerBlock = plan.impl_->nThreadsPerBlock;
     this->setupConnections(context, rank, sendMemRange, recvMemRange, scratchBufferSize, plan);
     this->setupChannels(context, plan);
@@ -208,7 +213,6 @@ struct Executor::Impl {
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
-    context.proxyService->startProxy();
     this->contexts.insert({key, context});
     return context;
   }
@@ -265,6 +269,7 @@ struct Executor::Impl {
   void setupRegisteredMemories(ExecutionContext& context, void* sendbuff, void* recvbuff, size_t sendBufferSize,
                                size_t recvBufferSize, int rank, const ExecutionPlan& plan) {
     // Add local src,dst and scratch to registeredMemoryIds
+    context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
 #if defined(USE_IBVERBS)
@@ -441,12 +446,12 @@ struct Executor::Impl {
       ExecutionKernel::launchKernel<PacketType, true>(
           rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
           context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-          (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
+          (DeviceSemaphore*)context.smemaphores.get(), context.localMemoryIdBegin, sharedMemSize, stream, flag);
     } else {
       ExecutionKernel::launchKernel<PacketType, false>(
           rank, nthreadblocks, context.nthreadsPerBlock, sendbuff, recvbuff, scratchBuffer, scratchOffset,
           context.scratchChunkSize, dataType, (DeviceExecutionPlan*)context.deviceExecutionPlansBuffers[key].get(),
-          (DeviceSemaphore*)context.smemaphores.get(), sharedMemSize, stream, flag);
+          (DeviceSemaphore*)context.smemaphores.get(), context.localMemoryIdBegin, sharedMemSize, stream, flag);
     }
   }
 
@@ -495,9 +500,9 @@ void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuff
   size_t offsetIn = (char*)sendbuff - (char*)sendBasePtr;
   size_t offsetOut = (char*)recvbuff - (char*)recvBasePtr;
 
-  ExecutionContext context =
-      this->impl_->setupExecutionContext(rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize,
-                                         offsetIn, offsetOut, sendMemRange, recvMemRange, plan);
+  ExecutionContext context = this->impl_->setupExecutionContext(
+      rank, (void*)sendBasePtr, (void*)recvBasePtr, sendBuffSize, recvBuffSize, offsetIn, offsetOut, sendMemRange,
+      recvMemRange, plan, this->impl_->proxyService);
   this->impl_->launchKernel(context, rank, sendbuff, recvbuff, dataType, stream, packetType);
 }
 
