@@ -236,28 +236,22 @@ struct Executor::Impl {
                           const ExecutionPlan& plan) {
     size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendBuffSize, plan.impl_->maxMessageSize),
                                                                 std::min(recvBuffSize, plan.impl_->maxMessageSize));
-    size_t maxScratchBufferSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+    context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
     if (plan.impl_->reuseResources) {
       if (this->defaultScratchBuffer == nullptr) {
-        this->defaultScratchBuffer = GpuBuffer(scratchBufferSize).memory();
-        printf("Create Defatul Scratch Buffer: %p\n", this->defaultScratchBuffer.get());
-        INFO(MSCCLPP_EXECUTOR, "Create Defatul Scratch Buffer: %p", this->defaultScratchBuffer.get());
+        this->defaultScratchBuffer = GpuBuffer(this->defaultScratchBufferSize).memory();
       }
-      if (maxScratchBufferSize > this->defaultScratchBufferSize) {
+      if (scratchBufferSize > this->defaultScratchBufferSize) {
         throw Error(
             "DefaultScratchBuffer size not enough. Consider increasing the default scratch buffer size or disabling "
             "resource reuse.",
             ErrorCode::ExecutorError);
       }
-      context.scratchChunkSize = this->defaultScratchBufferSize;
+      context.scratchBufferSize = this->defaultScratchBufferSize;
       context.scratchBuffer = this->defaultScratchBuffer;
-      printf("Setting Defatul Scratch Buffer: %p\n", this->defaultScratchBuffer.get());
-      INFO(MSCCLPP_EXECUTOR, "Setting Defatul Scratch Buffer: %p", this->defaultScratchBuffer.get());
     } else {
-      context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+      context.scratchBufferSize  = scratchBufferSize;
       context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-      printf("Create Customized Scratch Buffer: %p\n", context.scratchBuffer.get());
-      INFO(MSCCLPP_EXECUTOR, "Create Customized Scratch Buffer: %p", context.scratchBuffer.get());
     }
   }
 
