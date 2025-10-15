@@ -250,7 +250,7 @@ struct Executor::Impl {
       context.scratchBufferSize = this->defaultScratchBufferSize;
       context.scratchBuffer = this->defaultScratchBuffer;
     } else {
-      context.scratchBufferSize  = scratchBufferSize;
+      context.scratchBufferSize = scratchBufferSize;
       context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
     }
   }
