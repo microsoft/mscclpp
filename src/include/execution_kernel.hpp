@@ -54,25 +54,25 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 addition
 template <>
-MSCCLPP_DEVICE_INLINE __nv_fp8_e4m3 add_elements(__nv_fp8_e4m3 a, __nv_fp8_e4m3 b) {
+MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__)
   float sum = static_cast<float>(a) + static_cast<float>(b);
   sum = fminf(fmaxf(sum, -448.0f), 448.0f);  // Clamp to FP8 E4M3 range
-  return static_cast<__nv_fp8_e4m3>(sum);
+  return static_cast<__fp8_e4m3>(sum);
 #else
-  return __nv_fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
+  return __fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
 #endif
 }
 
 // FP8 E5M2 addition
 template <>
-MSCCLPP_DEVICE_INLINE __nv_fp8_e5m2 add_elements(__nv_fp8_e5m2 a, __nv_fp8_e5m2 b) {
+MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(__HIP_PLATFORM_AMD__)
   float sum = static_cast<float>(a) + static_cast<float>(b);
   sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);  // Clamp to FP8 E5M2 range
-  return static_cast<__nv_fp8_e5m2>(sum);
+  return static_cast<__fp8_e5m2>(sum);
 #else
-  return __nv_fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
+  return __fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
 #endif
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
@@ -105,11 +105,11 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 vector helper - 4 FP8 values pack into one int
 template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e4m3>(int4 a, int4 b) {
+MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__fp8_e4m3>(int4 a, int4 b) {
   int4 ret;
   
   auto process_int = [](int val_a, int val_b) -> int {
-    __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(int));
     memcpy(fp8_vals_b, &val_b, sizeof(int));
     
@@ -132,11 +132,11 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e4m3>(int4 a, int4 b) {
 
 // FP8 E5M2 vector helper - 4 FP8 values pack into one int
 template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e5m2>(int4 a, int4 b) {
+MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__fp8_e5m2>(int4 a, int4 b) {
   int4 ret;
   
   auto process_int = [](int val_a, int val_b) -> int {
-    __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(int));
     memcpy(fp8_vals_b, &val_b, sizeof(int));
     
@@ -159,13 +159,13 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__nv_fp8_e5m2>(int4 a, int4 b) {
 
 // FP8 add_vectors specializations (call the specialized add_vectors_helper)
 template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__nv_fp8_e4m3>(int4 a, int4 b) {
-  return add_vectors_helper<__nv_fp8_e4m3>(a, b);
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e4m3>(int4 a, int4 b) {
+  return add_vectors_helper<__fp8_e4m3>(a, b);
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__nv_fp8_e5m2>(int4 a, int4 b) {
-  return add_vectors_helper<__nv_fp8_e5m2>(a, b);
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e5m2>(int4 a, int4 b) {
+  return add_vectors_helper<__fp8_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -195,11 +195,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 uint2 vector helper - 4 FP8 values pack into one uint/int
 template <>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__nv_fp8_e4m3>(uint2 a, uint2 b) {
+MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__fp8_e4m3>(uint2 a, uint2 b) {
   uint2 ret;
   
   auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
     memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
     
@@ -220,11 +220,11 @@ MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__nv_fp8_e4m3>(uint2 a, uint2 b) 
 
 // FP8 E5M2 uint2 vector helper
 template <>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__nv_fp8_e5m2>(uint2 a, uint2 b) {
+MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__fp8_e5m2>(uint2 a, uint2 b) {
   uint2 ret;
   
   auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
     memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
     
@@ -245,13 +245,13 @@ MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__nv_fp8_e5m2>(uint2 a, uint2 b) 
 
 // FP8 uint2 add_vectors specializations
 template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__nv_fp8_e4m3>(uint2 a, uint2 b) {
-  return add_vectors_helper<__nv_fp8_e4m3>(a, b);
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
+  return add_vectors_helper<__fp8_e4m3>(a, b);
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__nv_fp8_e5m2>(uint2 a, uint2 b) {
-  return add_vectors_helper<__nv_fp8_e5m2>(a, b);
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e5m2>(uint2 a, uint2 b) {
+  return add_vectors_helper<__fp8_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -278,8 +278,8 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a,
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 int vector helper - 4 FP8 values pack into one int
 template <>
-MSCCLPP_DEVICE_INLINE int add_vectors_helper<__nv_fp8_e4m3>(int a, int b) {
-  __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+MSCCLPP_DEVICE_INLINE int add_vectors_helper<__fp8_e4m3>(int a, int b) {
+  __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(int));
   memcpy(fp8_vals_b, &b, sizeof(int));
   
@@ -295,8 +295,8 @@ MSCCLPP_DEVICE_INLINE int add_vectors_helper<__nv_fp8_e4m3>(int a, int b) {
 
 // FP8 E5M2 int vector helper
 template <>
-MSCCLPP_DEVICE_INLINE int add_vectors_helper<__nv_fp8_e5m2>(int a, int b) {
-  __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+MSCCLPP_DEVICE_INLINE int add_vectors_helper<__fp8_e5m2>(int a, int b) {
+  __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(int));
   memcpy(fp8_vals_b, &b, sizeof(int));
   
@@ -312,13 +312,13 @@ MSCCLPP_DEVICE_INLINE int add_vectors_helper<__nv_fp8_e5m2>(int a, int b) {
 
 // FP8 int add_vectors specializations
 template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__nv_fp8_e4m3>(int a, int b) {
-  return add_vectors_helper<__nv_fp8_e4m3>(a, b);
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
+  return add_vectors_helper<__fp8_e4m3>(a, b);
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__nv_fp8_e5m2>(int a, int b) {
-  return add_vectors_helper<__nv_fp8_e5m2>(a, b);
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e5m2>(int a, int b) {
+  return add_vectors_helper<__fp8_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -345,8 +345,8 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 uint32_t vector helper - 4 FP8 values pack into one uint32_t
 template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__nv_fp8_e4m3>(uint32_t a, uint32_t b) {
-  __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__fp8_e4m3>(uint32_t a, uint32_t b) {
+  __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(uint32_t));
   memcpy(fp8_vals_b, &b, sizeof(uint32_t));
   
@@ -362,8 +362,8 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__nv_fp8_e4m3>(uint32_t a, uin
 
 // FP8 E5M2 uint32_t vector helper
 template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__nv_fp8_e5m2>(uint32_t a, uint32_t b) {
-  __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__fp8_e5m2>(uint32_t a, uint32_t b) {
+  __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(uint32_t));
   memcpy(fp8_vals_b, &b, sizeof(uint32_t));
   
@@ -379,13 +379,13 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__nv_fp8_e5m2>(uint32_t a, uin
 
 // FP8 uint32_t add_vectors specializations
 template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__nv_fp8_e4m3>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__nv_fp8_e4m3>(a, b);
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e4m3>(uint32_t a, uint32_t b) {
+  return add_vectors_helper<__fp8_e4m3>(a, b);
 }
 
 template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__nv_fp8_e5m2>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__nv_fp8_e5m2>(a, b);
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e5m2>(uint32_t a, uint32_t b) {
+  return add_vectors_helper<__fp8_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -1197,8 +1197,8 @@ class ExecutionKernel {
         break;
 #if defined(__CUDA_FP8_TYPES_EXIST__)
       case DataType::FP8_E4M3:
-        executionKernel<__nv_fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__nv_fp8_e4m3*)src, (__nv_fp8_e4m3*)dst, (__nv_fp8_e4m3*)scratch, scratchOffset, scratchChunkSize,
+        executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize,
             plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
@@ -1208,8 +1208,8 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FP8_E5M2:
-        executionKernel<__nv_fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__nv_fp8_e5m2*)src, (__nv_fp8_e5m2*)dst, (__nv_fp8_e5m2*)scratch, scratchOffset, scratchChunkSize,
+        executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize,
             plan, semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,

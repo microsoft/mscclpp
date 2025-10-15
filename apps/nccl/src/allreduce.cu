@@ -73,7 +73,7 @@ struct NvlsAdapter {
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
-    if constexpr (std::is_same_v<T, __nv_fp8_e4m3> || std::is_same_v<T, __nv_fp8_e5m2>) {
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
 #if defined(__HIP_PLATFORM_AMD__)
       return hipErrorNotSupported;
 #else
@@ -102,7 +102,7 @@ struct NvlsWithCopyAdapter {
                           uint32_t*, uint32_t) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
-    if constexpr (std::is_same_v<T, __nv_fp8_e4m3> || std::is_same_v<T, __nv_fp8_e5m2>) {
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
 #if defined(__HIP_PLATFORM_AMD__)
       return hipErrorNotSupported;
 #else
@@ -173,9 +173,9 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
 #endif
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     } else if (dtype == ncclFp8E4M3) {
-      return Adapter<SUM, __nv_fp8_e4m3>::call;
+      return Adapter<SUM, __fp8_e4m3>::call;
     } else if (dtype == ncclFp8E5M2) {
-      return Adapter<SUM, __nv_fp8_e5m2>::call;
+      return Adapter<SUM, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<SUM, int>::call;
@@ -193,9 +193,9 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
 #endif
 #if defined(__CUDA_FP8_TYPES_EXIST__)
     } else if (dtype == ncclFp8E4M3) {
-      return Adapter<MIN, __nv_fp8_e4m3>::call;
+      return Adapter<MIN, __fp8_e4m3>::call;
     } else if (dtype == ncclFp8E5M2) {
-      return Adapter<MIN, __nv_fp8_e5m2>::call;
+      return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<MIN, int>::call;

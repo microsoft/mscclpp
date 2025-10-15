@@ -130,7 +130,7 @@ __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // FP8 E4M3 clipping function
 template <>
-__forceinline__ __device__ __nv_fp8_e4m3 clip(__nv_fp8_e4m3 val) {
+__forceinline__ __device__ __fp8_e4m3 clip(__fp8_e4m3 val) {
   // FP8 E4M3 has range [-448, 448], no infinities
   // Clamp to max finite values
   return val;  // Built-in saturation in FP8 arithmetic
@@ -138,7 +138,7 @@ __forceinline__ __device__ __nv_fp8_e4m3 clip(__nv_fp8_e4m3 val) {
 
 // FP8 E5M2 clipping function
 template <>
-__forceinline__ __device__ __nv_fp8_e5m2 clip(__nv_fp8_e5m2 val) {
+__forceinline__ __device__ __fp8_e5m2 clip(__fp8_e5m2 val) {
   // FP8 E5M2 has range [-57344, 57344], has infinities
   // Clamp to max finite values to avoid infinities
   return val;  // Built-in saturation in FP8 arithmetic
@@ -146,7 +146,7 @@ __forceinline__ __device__ __nv_fp8_e5m2 clip(__nv_fp8_e5m2 val) {
 
 // FP8 E4M3 addition with optional clipping
 template <bool UseClip = true>
-__forceinline__ __device__ __nv_fp8_e4m3 add_elements(__nv_fp8_e4m3 a, __nv_fp8_e4m3 b) {
+__forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__)
   // AMD ROCm FP8 addition
   float sum = static_cast<float>(a) + static_cast<float>(b);
@@ -154,17 +154,17 @@ __forceinline__ __device__ __nv_fp8_e4m3 add_elements(__nv_fp8_e4m3 a, __nv_fp8_
     // Clamp to FP8 E4M3 range: [-448, 448]
     sum = fminf(fmaxf(sum, -448.0f), 448.0f);
   }
-  return static_cast<__nv_fp8_e4m3>(sum);
+  return static_cast<__fp8_e4m3>(sum);
 #else
   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
-  __nv_fp8_e4m3 result = __nv_fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
+  __fp8_e4m3 result = __fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
   return UseClip ? clip(result) : result;
 #endif
 }
 
 // FP8 E5M2 addition with optional clipping
 template <bool UseClip = true>
-__forceinline__ __device__ __nv_fp8_e5m2 add_elements(__nv_fp8_e5m2 a, __nv_fp8_e5m2 b) {
+__forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(__HIP_PLATFORM_AMD__)
   // AMD ROCm FP8 addition
   float sum = static_cast<float>(a) + static_cast<float>(b);
@@ -172,24 +172,24 @@ __forceinline__ __device__ __nv_fp8_e5m2 add_elements(__nv_fp8_e5m2 a, __nv_fp8_
     // Clamp to FP8 E5M2 range: [-57344, 57344]
     sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);
   }
-  return static_cast<__nv_fp8_e5m2>(sum);
+  return static_cast<__fp8_e5m2>(sum);
 #else
   // NVIDIA CUDA FP8 addition
-  __nv_fp8_e5m2 result = __nv_fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
+  __fp8_e5m2 result = __fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
   return UseClip ? clip(result) : result;
 #endif
 }
 
 // FP8 E4M3 min operation
 template <>
-__forceinline__ __device__ __nv_fp8_e4m3 min_elements(__nv_fp8_e4m3 a, __nv_fp8_e4m3 b) {
+__forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   // FP8 types don't have built-in comparison operators, convert to float
   return (static_cast<float>(a) < static_cast<float>(b)) ? a : b;
 }
 
 // FP8 E5M2 min operation
 template <>
-__forceinline__ __device__ __nv_fp8_e5m2 min_elements(__nv_fp8_e5m2 a, __nv_fp8_e5m2 b) {
+__forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   // FP8 types don't have built-in comparison operators, convert to float
   return (static_cast<float>(a) < static_cast<float>(b)) ? a : b;
 }
@@ -209,17 +209,17 @@ __forceinline__ __device__ T cal_elements(T a, T b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 // Specialized cal_vectors_helper for FP8 E4M3 (1 byte, so 4 elements fit in one int)
 template <Op OpType>
-__forceinline__ __device__ int4 cal_vectors_helper(__nv_fp8_e4m3, int4 a, int4 b) {
+__forceinline__ __device__ int4 cal_vectors_helper(__fp8_e4m3, int4 a, int4 b) {
   int4 ret;
 
   auto process_int = [](int val_a, int val_b) -> int {
-    __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(int));
     memcpy(fp8_vals_b, &val_b, sizeof(int));
 
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-      fp8_result[i] = cal_elements<__nv_fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+      fp8_result[i] = cal_elements<__fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
     }
 
     int result;
@@ -235,17 +235,17 @@ __forceinline__ __device__ int4 cal_vectors_helper(__nv_fp8_e4m3, int4 a, int4 b
 }
 
 template <Op OpType>
-__forceinline__ __device__ uint2 cal_vectors_helper(__nv_fp8_e4m3, uint2 a, uint2 b) {
+__forceinline__ __device__ uint2 cal_vectors_helper(__fp8_e4m3, uint2 a, uint2 b) {
   uint2 ret;
 
   auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
     memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
 
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-      fp8_result[i] = cal_elements<__nv_fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+      fp8_result[i] = cal_elements<__fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
     }
 
     unsigned int result;
@@ -259,14 +259,14 @@ __forceinline__ __device__ uint2 cal_vectors_helper(__nv_fp8_e4m3, uint2 a, uint
 }
 
 template <Op OpType>
-__forceinline__ __device__ int cal_vectors_helper(__nv_fp8_e4m3, int a, int b) {
-  __nv_fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+__forceinline__ __device__ int cal_vectors_helper(__fp8_e4m3, int a, int b) {
+  __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(int));
   memcpy(fp8_vals_b, &b, sizeof(int));
 
 #pragma unroll
   for (int i = 0; i < 4; i++) {
-    fp8_result[i] = cal_elements<__nv_fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+    fp8_result[i] = cal_elements<__fp8_e4m3, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
   }
 
   int result;
@@ -276,17 +276,17 @@ __forceinline__ __device__ int cal_vectors_helper(__nv_fp8_e4m3, int a, int b) {
 
 // Specialized cal_vectors_helper for FP8 E5M2 (same pattern as E4M3)
 template <Op OpType>
-__forceinline__ __device__ int4 cal_vectors_helper(__nv_fp8_e5m2, int4 a, int4 b) {
+__forceinline__ __device__ int4 cal_vectors_helper(__fp8_e5m2, int4 a, int4 b) {
   int4 ret;
 
   auto process_int = [](int val_a, int val_b) -> int {
-    __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(int));
     memcpy(fp8_vals_b, &val_b, sizeof(int));
 
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-      fp8_result[i] = cal_elements<__nv_fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+      fp8_result[i] = cal_elements<__fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
     }
 
     int result;
@@ -302,17 +302,17 @@ __forceinline__ __device__ int4 cal_vectors_helper(__nv_fp8_e5m2, int4 a, int4 b
 }
 
 template <Op OpType>
-__forceinline__ __device__ uint2 cal_vectors_helper(__nv_fp8_e5m2, uint2 a, uint2 b) {
+__forceinline__ __device__ uint2 cal_vectors_helper(__fp8_e5m2, uint2 a, uint2 b) {
   uint2 ret;
 
   auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
     memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
     memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
 
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-      fp8_result[i] = cal_elements<__nv_fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+      fp8_result[i] = cal_elements<__fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
     }
 
     unsigned int result;
@@ -326,14 +326,14 @@ __forceinline__ __device__ uint2 cal_vectors_helper(__nv_fp8_e5m2, uint2 a, uint
 }
 
 template <Op OpType>
-__forceinline__ __device__ int cal_vectors_helper(__nv_fp8_e5m2, int a, int b) {
-  __nv_fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
+__forceinline__ __device__ int cal_vectors_helper(__fp8_e5m2, int a, int b) {
+  __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
   memcpy(fp8_vals_a, &a, sizeof(int));
   memcpy(fp8_vals_b, &b, sizeof(int));
 
 #pragma unroll
   for (int i = 0; i < 4; i++) {
-    fp8_result[i] = cal_elements<__nv_fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
+    fp8_result[i] = cal_elements<__fp8_e5m2, OpType>(fp8_vals_a[i], fp8_vals_b[i]);
   }
 
   int result;
@@ -369,10 +369,10 @@ template <typename T, Op OpType, typename DataType>
 __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
   // For FP8 types, use the tag dispatch specializations
-  if constexpr (std::is_same_v<T, __nv_fp8_e4m3>) {
-    return cal_vectors_helper<OpType>(__nv_fp8_e4m3{}, a, b);
-  } else if constexpr (std::is_same_v<T, __nv_fp8_e5m2>) {
-    return cal_vectors_helper<OpType>(__nv_fp8_e5m2{}, a, b);
+  if constexpr (std::is_same_v<T, __fp8_e4m3>) {
+    return cal_vectors_helper<OpType>(__fp8_e4m3{}, a, b);
+  } else if constexpr (std::is_same_v<T, __fp8_e5m2>) {
+    return cal_vectors_helper<OpType>(__fp8_e5m2{}, a, b);
   } else
 #endif
   {
