@@ -146,10 +146,13 @@ struct Executor::Impl {
   int nranksPerNode;
   int nranks;
   std::shared_ptr<Communicator> comm;
+  const size_t defaultScratchBufferSize = (1 << 27);
+  std::shared_ptr<char> defaultScratchBuffer;
   std::shared_ptr<ProxyService> proxyService;
   std::unordered_map<ExecutionContextKey, ExecutionContext> contexts;
 
-  Impl(std::shared_ptr<Communicator> comm) : comm(comm) {
+  Impl(std::shared_ptr<Communicator> comm, std::shared_ptr<char> defaultScratchBuffer = nullptr)
+      : comm(comm), defaultScratchBuffer(defaultScratchBuffer) {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
@@ -159,8 +162,8 @@ struct Executor::Impl {
 
   ExecutionContext setupExecutionContext(int rank, void* sendbuff, void* recvbuff, size_t inputMessageSize,
                                          size_t outputMessageSize, size_t constSrcOffset, size_t constDstOffset,
-                                         size_t sendMemRange, size_t recvMemRange,
-                                         const ExecutionPlan& plan, std::shared_ptr<ProxyService> proxyService) {
+                                         size_t sendMemRange, size_t recvMemRange, const ExecutionPlan& plan,
+                                         std::shared_ptr<ProxyService> proxyService) {
     ExecutionContextKey key = {sendbuff, recvbuff, sendMemRange, recvMemRange, plan.impl_->name};
     DeviceExecutionPlanKey devicePlanKey = {inputMessageSize, outputMessageSize, constSrcOffset, constDstOffset};
 
@@ -194,17 +197,14 @@ struct Executor::Impl {
     ExecutionContext context;
     context.reuseResources = plan.impl_->reuseResources;
     context.doubleScratchBuff = plan.impl_->doubleScratchBuffer;
-    size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendMemRange, plan.impl_->maxMessageSize),
-                                                                std::min(recvMemRange, plan.impl_->maxMessageSize));
-    context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
-    context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
-    context.scratchBufferSize = scratchBufferSize;
     context.proxyService = proxyService;
     context.nthreadsPerBlock = plan.impl_->nThreadsPerBlock;
-    this->setupConnections(context, rank, sendMemRange, recvMemRange, scratchBufferSize, plan);
+    this->setupScratchBuffer(context, sendMemRange, recvMemRange, plan);
+    this->setupConnections(context, rank, sendMemRange, recvMemRange, context.scratchBufferSize, plan);
     this->setupChannels(context, plan);
     this->setupRegisteredMemories(context, sendbuff, recvbuff, sendMemRange, recvMemRange, rank, plan);
-    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, sendMemRange, recvMemRange, scratchBufferSize, plan);
+    this->setupNvlsChannels(context, sendbuff, recvbuff, rank, sendMemRange, recvMemRange, context.scratchBufferSize,
+                            plan);
     this->setupSemaphores(context, plan);
     this->setupDeviceExecutionPlan(context, devicePlanKey, plan);
     context.deviceExecutionPlansBuffers[devicePlanKey] =
@@ -231,6 +231,35 @@ struct Executor::Impl {
     }
     return flags;
   };
+
+  void setupScratchBuffer(ExecutionContext& context, size_t sendBuffSize, size_t recvBuffSize,
+                          const ExecutionPlan& plan) {
+    size_t scratchBufferSize = plan.impl_->calScratchBufferSize(std::min(sendBuffSize, plan.impl_->maxMessageSize),
+                                                                std::min(recvBuffSize, plan.impl_->maxMessageSize));
+    size_t maxScratchBufferSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+    if (plan.impl_->reuseResources) {
+      if (this->defaultScratchBuffer == nullptr) {
+        this->defaultScratchBuffer = GpuBuffer(scratchBufferSize).memory();
+        printf("Create Defatul Scratch Buffer: %p\n", this->defaultScratchBuffer.get());
+        INFO(MSCCLPP_EXECUTOR, "Create Defatul Scratch Buffer: %p", this->defaultScratchBuffer.get());
+      }
+      if (maxScratchBufferSize > this->defaultScratchBufferSize) {
+        throw Error(
+            "DefaultScratchBuffer size not enough. Consider increasing the default scratch buffer size or disabling "
+            "resource reuse.",
+            ErrorCode::ExecutorError);
+      }
+      context.scratchChunkSize = this->defaultScratchBufferSize;
+      context.scratchBuffer = this->defaultScratchBuffer;
+      printf("Setting Defatul Scratch Buffer: %p\n", this->defaultScratchBuffer.get());
+      INFO(MSCCLPP_EXECUTOR, "Setting Defatul Scratch Buffer: %p", this->defaultScratchBuffer.get());
+    } else {
+      context.scratchChunkSize = plan.impl_->calMaxScratchChunkSize(scratchBufferSize);
+      context.scratchBuffer = GpuBuffer(scratchBufferSize).memory();
+      printf("Create Customized Scratch Buffer: %p\n", context.scratchBuffer.get());
+      INFO(MSCCLPP_EXECUTOR, "Create Customized Scratch Buffer: %p", context.scratchBuffer.get());
+    }
+  }
 
   void setupConnections(ExecutionContext& context, int rank, size_t sendBuffSize, size_t recvBuffSize,
                         size_t scratchBuffSize, const ExecutionPlan& plan) {
@@ -486,7 +515,8 @@ struct Executor::Impl {
   }
 };
 
-Executor::Executor(std::shared_ptr<Communicator> comm) : impl_(std::make_unique<Impl>(comm)) {}
+Executor::Executor(std::shared_ptr<Communicator> comm, std::shared_ptr<char> defaultScratchBuffer)
+    : impl_(std::make_unique<Impl>(comm, defaultScratchBuffer)) {}
 
 void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize,
                        [[maybe_unused]] size_t recvBuffSize, DataType dataType, const ExecutionPlan& plan,

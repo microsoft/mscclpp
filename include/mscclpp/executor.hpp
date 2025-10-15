@@ -97,7 +97,7 @@ class ExecutionPlanRegistry {
 
 class Executor {
  public:
-  Executor(std::shared_ptr<Communicator> comm);
+  Executor(std::shared_ptr<Communicator> comm, std::shared_ptr<char> defaultScratchBuffer = nullptr);
   Executor(const Executor&) = delete;
   Executor& operator=(const Executor&) = delete;
   ~Executor();

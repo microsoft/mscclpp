@@ -338,7 +338,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   commPtr->comm = mscclppComm;
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
-  commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm);
+  commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
   commPtr->planRegistry_ = mscclpp::ExecutionPlanRegistry::getInstance();
 
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
