@@ -35,6 +35,8 @@ using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
 #include <cuda_fp8.h>
 using __fp8_e4m3 = __nv_fp8_e4m3;
 using __fp8_e5m2 = __nv_fp8_e5m2;
+using __fp8x2_e4m3 = __nv_fp8x2_e4m3;
+using __fp8x2_e5m2 = __nv_fp8x2_e5m2;
 #define __CUDA_FP8_TYPES_EXIST__
 #endif
 

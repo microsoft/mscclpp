@@ -132,19 +132,19 @@ __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b
 template <>
 __forceinline__ __device__ __fp8_e4m3 clip(__fp8_e4m3 val) {
   // FP8 E4M3 has range [-448, 448], no infinities
-  // Clamp to max finite values
-  return val;  // Built-in saturation in FP8 arithmetic
+  // Built-in saturation in FP8 arithmetic
+  return val;
 }
 
 // FP8 E5M2 clipping function
 template <>
 __forceinline__ __device__ __fp8_e5m2 clip(__fp8_e5m2 val) {
   // FP8 E5M2 has range [-57344, 57344], has infinities
-  // Clamp to max finite values to avoid infinities
-  return val;  // Built-in saturation in FP8 arithmetic
+  // Built-in saturation in FP8 arithmetic
+  return val;
 }
 
-// FP8 E4M3 addition with optional clipping
+// FP8 E4M3 addition using __hadd for efficiency (single element)
 template <bool UseClip = true>
 __forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -157,12 +157,20 @@ __forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   return static_cast<__fp8_e4m3>(sum);
 #else
   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
-  __fp8_e4m3 result = __fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
+  __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #endif
 }
 
-// FP8 E5M2 addition with optional clipping
+// FP8 E4M3 vectorized addition using __hadd2 for 2 elements
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+  // Convert to half2, add using optimized __hadd2, convert back
+  __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
+  return result;
+}
+
+// FP8 E5M2 vectorized addition using __hadd for 2 elements
 template <bool UseClip = true>
 __forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -175,23 +183,39 @@ __forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   return static_cast<__fp8_e5m2>(sum);
 #else
   // NVIDIA CUDA FP8 addition
-  __fp8_e5m2 result = __fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
+  __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #endif
 }
 
-// FP8 E4M3 min operation
-template <>
-__forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
-  // FP8 types don't have built-in comparison operators, convert to float
-  return (static_cast<float>(a) < static_cast<float>(b)) ? a : b;
+// FP8 E5M2 vectorized addition using __hadd2 for 2 elements
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  // Convert to half2, add using optimized __hadd2, convert back
+  __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+  return result;
 }
 
-// FP8 E5M2 min operation
+// FP8 E4M3 min operation using __hmin (single element)
+template <>
+__forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
+  return __fp8_e4m3(__hmin(__half(a), __half(b)));
+}
+
+// FP8 E4M3 vectorized min using __hmin2 for 2 elements
+__forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+  return __fp8x2_e4m3(__hmin2(__half2(a), __half2(b)));
+}
+
+// FP8 E5M2 min operation using __hmin (single element)
 template <>
 __forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-  // FP8 types don't have built-in comparison operators, convert to float
-  return (static_cast<float>(a) < static_cast<float>(b)) ? a : b;
+  return __fp8_e5m2(__hmin(__half(a), __half(b)));
+}
+
+// FP8 E5M2 vectorized min using __hmin2 for 2 elements
+__forceinline__ __device__ __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  return __fp8x2_e5m2(__hmin2(__half2(a), __half2(b)));
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
