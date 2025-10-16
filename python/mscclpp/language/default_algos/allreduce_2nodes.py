@@ -7,7 +7,6 @@ This implements a hierarchical AllReduce: intra-node allreduce followed by
 inter-node exchange and final intra-node allreduce.
 """
 
-import argparse
 from mscclpp.language.internal.types import AlgoSpec
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *

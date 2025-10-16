@@ -741,15 +741,7 @@ void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPl
 }
 
 void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
-  auto getEnvVar = [](const char* name, const std::string& defaultValue) -> std::string {
-    const char* value = std::getenv(name);
-    return value ? std::string(value) : defaultValue;
-  };
-  auto getHomeDir = []() -> std::string {
-    const char* home = std::getenv("HOME");
-    return home ? std::string(home) : "~";
-  };
-  std::string planDir = getEnvVar("MSCCLPP_EXECUTION_PLAN_DIR", getHomeDir() + "/.cache/mscclpp_default");
+  std::string planDir = mscclpp::env()->executionPlanDir;
   if (!std::filesystem::exists(planDir)) {
     INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
     return;
