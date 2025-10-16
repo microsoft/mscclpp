@@ -84,6 +84,47 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
 ```
 
 ### Typical Usage (MSCCL++ Native)
+This mode requires a high-level wrapper that provides PyTorch-compatible interface.
+
+```python
+class CustomizedComm:
+    def __init__(self, comm: mscclpp_comm.CommGroup):
+        self.comm = comm
+        self.rank = comm.my_rank
+        self.world_size = comm.nranks
+        self.local_rank = comm.my_rank % comm.nranks_per_node
+        self.n_ranks_per_node = comm.nranks_per_node
+        self.registry = mscclpp.ExecutionPlanRegistry()
+        self.executor = mscclpp.Executor(comm.communicator)
+
+    def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
+        assert op == torch.distributed.ReduceOp.SUM
+        plan = self.registry.select(
+            collective="allreduce",
+            world_size=self.world_size,
+            n_ranks_per_node=self.n_ranks_per_node,
+            send_buffer=tensor.data_ptr(),
+            recv_buffer=tensor.data_ptr(),
+            message_size=tensor.numel() * tensor.element_size(),
+        )
+        if plan is None:
+            raise ValueError(
+                f"No suitable plan found for collective allreduce with message size {tensor.numel() * tensor.element_size()}"
+            )
+        self.executor.execute(
+            self.rank,
+            tensor.data_ptr(),
+            tensor.data_ptr(),
+            tensor.numel() * tensor.element_size(),
+            tensor.numel() * tensor.element_size(),
+            dtype_to_mscclpp_dtype(tensor.dtype),
+            plan.plan,
+            stream.cuda_stream if stream is not None else 0,
+        )
+```
+
+Using the customized communicator allows to easily perform an allreduce operation.
+
 ```python
 from mscclpp.dsl import presets, jit
 import mscclpp
@@ -111,11 +152,9 @@ def selector(plans: Dict[str, mscclpp.PlanHandle], req: mscclpp.Request):
 
 mscclpp.plan.set_selector(selector)
 
-# Use it
-commGroup = mscclpp.comm.CommGroup(interfaceIpPortTrio=ifIpPortTrio, rank=rank, size=world_size)
-
-# Users can define their own communication collectives
-commGroup.all_reduce(x, out=y, op="sum", dtype="f16")
+mscclpp_group = mscclpp.comm.CommGroup(interfaceIpPortTrio=ifIpPortTrio, rank=rank, size=world_size)
+comm = CustomizedComm(mscclpp_group)
+comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)
 ```
 
 ### Typical Usage (NCCL Interposition)
