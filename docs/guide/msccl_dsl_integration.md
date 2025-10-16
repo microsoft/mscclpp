@@ -84,21 +84,32 @@ def allreduce_example(name, gpu_size, num_threads_per_block, min_message_size, m
 ```
 
 ### Typical Usage (MSCCL++ Native)
-This mode requires a high-level wrapper that provides PyTorch-compatible interface.
+When using MSCCL++ in native mode, you are not leveraging the existing NCCL communicator.
+Instead, you create and manage your own MSCCL++ communicator directly.
+To integrate this with PyTorch, it’s common to wrap the low-level communicator inside a high-level Python class that exposes a PyTorch-compatible interface for collective operations such as all_reduce.
+
+The example below shows how to build a simple wrapper that performs an AllReduce using MSCCL++ natively. Please note that in the allreduce function, you need to use the ExecutionPlanRegister to select the registered algorithms that best match the request and then call the mscclpp executor directly.
 
 ```python
 class CustomizedComm:
+    """High-level MSCCL++ wrapper compatible with PyTorch-style collectives."""
+
     def __init__(self, comm: mscclpp_comm.CommGroup):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
+        
+        # Initialize MSCCL++ components
         self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
 
     def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
+        """Performs an AllReduce operation using a native MSCCL++ plan."""
         assert op == torch.distributed.ReduceOp.SUM
+        
+        # Select an appropriate execution plan
         plan = self.registry.select(
             collective="allreduce",
             world_size=self.world_size,
@@ -111,6 +122,8 @@ class CustomizedComm:
             raise ValueError(
                 f"No suitable plan found for collective allreduce with message size {tensor.numel() * tensor.element_size()}"
             )
+        
+        # Execute the plan using the MSCCL++ executor
         self.executor.execute(
             self.rank,
             tensor.data_ptr(),
@@ -123,12 +136,15 @@ class CustomizedComm:
         )
 ```
 
-Using the customized communicator allows to easily perform an allreduce operation.
+Once the high-level wrapper (CustomizedComm) is defined, performing collective operations such as AllReduce becomes just as simple as using PyTorch’s native torch.distributed interface. To perform all_reduce, simply use ```comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)```.
+
+In native MSCCL++ mode, you explicitly create and manage your communicator, compile a DSL algorithm, and register it with the MSCCL++ runtime before launching collectives.
 
 ```python
 from mscclpp.dsl import presets, jit
 import mscclpp
 
+# Step 1. Compile and register a DSL plan
 plan = jit.compile(
     algo=allreduce_nvls,
     name="allreduce_nvls",
@@ -144,7 +160,7 @@ plan = jit.compile(
 )
 mscclpp.plan.register(plan)
 
-
+# Step 2. Define a plan selector (choose algorithm based on tags, message size, etc.)
 def selector(plans: Dict[str, mscclpp.PlanHandle], req: mscclpp.Request):
     collective_plans = plans.get(req.collective)
     nvls = [p for p in collective_plans if "nvls" in p.tags]
@@ -152,19 +168,35 @@ def selector(plans: Dict[str, mscclpp.PlanHandle], req: mscclpp.Request):
 
 mscclpp.plan.set_selector(selector)
 
+# Step 3. Initialize communicator and high-level wrapper
 mscclpp_group = mscclpp.comm.CommGroup(interfaceIpPortTrio=ifIpPortTrio, rank=rank, size=world_size)
 comm = CustomizedComm(mscclpp_group)
+
+# Step 4. Perform the AllReduce operation
+x = torch.randn(12<<20, dtype=torch.float16, device="cuda")
 comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)
 ```
 
+You can launch the script just like any other PyTorch distributed program, for example: 
+```bash
+MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  cusotmized_comm.py
+``` 
+
 ### Typical Usage (NCCL Interposition)
+In this mode, PyTorch continues to use the nccl backend, but the underlying NCCL calls are intercepted and executed by MSCCL++.
+This approach allows you to reuse the standard PyTorch distributed interface (dist.all_reduce, dist.all_gather, etc.) while transparently benefiting from optimized MSCCL++ collective algorithms.
+
+This is ideal when you want drop-in acceleration with no code changes to your training scripts.
+
 ```python
 import torch, torch.distributed as dist
 from mscclpp.dsl import presets, jit
 import mscclpp
 
+# Step 1. Initialize the PyTorch distributed process group using the NCCL backend
 dist.init_process_group(backend="nccl")
 
+# Step 2. Compile and register an MSCCL++ DSL plan
 plan = jit.compile(
     algo=allreduce_nvls,
     name="allreduce_nvls",
@@ -180,6 +212,7 @@ plan = jit.compile(
 )
 mscclpp.plan.register(plan)
 
+# Step 3. Define and set a selector to choose the appropriate plan at runtime
 def selector(plans, req):
     collective_plans = plans.get(req.collective)
     nvls = [p for p in collective_plans if "nvls" in p.tags]
@@ -187,9 +220,13 @@ def selector(plans, req):
 
 mscclpp.plan.set_selector(selector)
 
+# Step 4. Perform the AllReduce as usual
 x = torch.randn(12<<20, dtype=torch.float16, device="cuda")
-y = torch.empty_like(x)
 dist.all_reduce(x, op=dist.ReduceOp.SUM)
+```
+To run with NCCL interposition, you preload the MSCCL++ shim so it transparently intercepts NCCL calls made by PyTorch’s nccl backend. In practice, nothing in your training script changes—PyTorch still calls dist.all_reduce, etc.—but execution is routed through your registered MSCCL++ DSL plans. Example single-node launch:
+```bash
+LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so torchrun --nnodes=1 --nproc_per_node=8 dsl-torch-integration/dsl_with_nccl_api.py
 ```
 
 ### Compilation
@@ -247,12 +284,6 @@ mscclpp.plan.set_selector(selector: Selector) -> None
 mscclpp.plan.clear_selector() -> None
 ```
 If selector returns a string it is treated as a plan id.
-
-### Collective Call
-```python
-mscclpp.comm.CommGroup.allreduce(send, out=recv, op="sum", dtype="f16", plan: str | None = None)
-```
-If plan id supplied, selector is bypassed.
 
 ## Implementation Details
 
