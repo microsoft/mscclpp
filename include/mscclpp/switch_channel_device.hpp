@@ -14,6 +14,7 @@
 #include <mscclpp/gpu_data_types.hpp>
 
 #include "device.hpp"
+#include "packet_device.hpp"
 
 namespace mscclpp {
 
@@ -35,6 +36,11 @@ struct SwitchChannelDeviceHandle {
   template <typename T>
   MSCCLPP_DEVICE_INLINE void broadcast(uint64_t index, const T& val) {
     SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
+  }
+
+  template <typename>
+  MSCCLPP_DEVICE_INLINE void broadcast<LLPacket>(uint64_t index, const LLPacket& val) {
+    multimemStore(val, reinterpret_cast<LLPacket*>(mcPtr) + index);
   }
 
   template <typename VectorType>
@@ -128,6 +134,13 @@ struct SwitchChannelDeviceHandle {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
   };
+
+  template <typename T>
+  MSCCLPP_DEVICE_INLINE static void multimemStore(const LLPacket& val, T* ptr) {
+    asm volatile("multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.data1),
+                 "r"(val.flag1), "r"(val.data2), "r"(val.flag2)
+                 : "memory");
+  }
 
   template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStoreReduce(const TValue& val, T* ptr) {
