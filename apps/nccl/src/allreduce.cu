@@ -128,14 +128,15 @@ struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
-                          int rank, int nRanksPerNode, int worldSize, size_t nelems, cudaStream_t stream,
-                          uint32_t* deviceFlag, uint32_t*, uint32_t*, uint32_t) {
-    int nBlocks = nRanksPerNode;
+                          int rank, int, int worldSize, size_t nelems, cudaStream_t stream, uint32_t* deviceFlag,
+                          uint32_t*, uint32_t*, uint32_t) {
+    size_t size = nelems * sizeof(T);
+    int nBlocks = 8;
     int nThreadsPerBlock = 1024;
-    // [[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
-    //                     [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
-    //                     [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
-    //                     [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, uint32_t* deviceFlag
+    if (size <= (1 << 13)) {
+      nBlocks = 4;
+      nThreadsPerBlock = 512;
+    }
     allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (const T*)input, (T*)scratch, (T*)output, nvlsChannels, nelems, scratchBufferSize, rank, worldSize, deviceFlag);
     return cudaGetLastError();
@@ -623,7 +624,7 @@ ncclResult_t AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscc
   cudaError_t error =
       allreduce(input, this->scratchBuffer_.get(), output, nullptr, nullptr, ctx->switchChannelDeviceHandles.get(),
                 nullptr, 0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, count, stream,
-                nullptr, nullptr, nullptr, 0);
+                this->deviceFlag_.get(), nullptr, nullptr, 0);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
     return ncclUnhandledCudaError;

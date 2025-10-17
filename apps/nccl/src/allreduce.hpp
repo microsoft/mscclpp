@@ -798,45 +798,33 @@ __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                         [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
-                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, uint32_t* deviceFlag) {
+                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize,
+                        [[maybe_unused]] uint32_t* deviceFlag) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   uint32_t flag = deviceFlag[blockIdx.x];
   size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
   uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   uint32_t nPktPerRank = nelems / worldSize / (sizeof(mscclpp::LLPacket::Payload) / sizeof(T));
-  mscclpp::LLPacket* multiPkt = (mscclpp::LLPacket*)((char*)multicast->mcPtr + scratchBaseOffset) + rank * nPktPerRank;
-  mscclpp::LLPacket* multiOutPkt =
-      (mscclpp::LLPacket*)((char*)multicast->mcPtr + scratchBaseOffset) + (rank + worldSize) * nPktPerRank;
-  uint2* src2 = (uint2*)(input + rank * nelems);
+  mscclpp::LLPacket* multiPkt =
+      (mscclpp::LLPacket*)((char*)multicast->mcPtr + scratchBaseOffset) + rank * worldSize * nPktPerRank;
+  uint2* src2 = (uint2*)(input);
   uint2* dst2 = (uint2*)output;
   mscclpp::LLPacket* scratchPkt = (mscclpp::LLPacket*)((char*)scratch + scratchBaseOffset);
-  mscclpp::LLPacket* scratchPktOut = (mscclpp::LLPacket*)((char*)scratch + scratchBaseOffset) + (worldSize)*nPktPerRank;
-  for (uint32_t i = tid; i < nPktPerRank; i += blockDim.x * gridDim.x) {
+  for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
     mscclpp::LLPacket pkt(src2[i], flag);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(pkt, multiPkt + i);
   }
-  for (uint32_t i = tid; i < nPktPerRank; i += blockDim.x * gridDim.x) {
+  for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
     uint2 data = src2[i];
     for (int peer = 0; peer < worldSize; peer++) {
       if (peer == rank) {
         continue;
       }
-      uint2 val = scratchPkt[peer * nPktPerRank + i].read(flag);
+      uint2 val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
       data.x = cal_vectors<T, OpType>(data.x, val.x);
       data.y = cal_vectors<T, OpType>(data.y, val.y);
     }
-    dst2[rank * nPktPerRank + i] = data;
-    mscclpp::LLPacket pkt(src2[i], flag);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(pkt, multiOutPkt + i);
-  }
-  for (uint32_t i = tid; i < nPktPerRank; i += blockDim.x * gridDim.x) {
-    for (int peer = 0; peer < worldSize; peer++) {
-      if (peer == rank) {
-        continue;
-      }
-      uint2 data = scratchPktOut[peer * nPktPerRank + i].read(flag);
-      dst2[peer * nPktPerRank + i] = data;
-    }
+    dst2[i] = data;
   }
   if (threadIdx.x == 0) {
     deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
