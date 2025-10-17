@@ -23,7 +23,7 @@ find_path(IBVERBS_INCLUDE_DIRS
   ${IBVERBS_ROOT_DIR}/include)
 
 find_library(IBVERBS_LIBRARIES
-  NAMES ibverbs
+  NAMES ibverbs libibverbs.so.1
   HINTS
   ${IBVERBS_LIB_DIR}
   ${IBVERBS_ROOT_DIR}
