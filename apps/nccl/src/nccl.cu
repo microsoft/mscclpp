@@ -286,11 +286,11 @@ static mscclpp::Algorithm algoSelector(
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
-  static bool isCuMemMapAllocated =
-      mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
   static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   static bool isNvlsSupported = mscclpp::isNvlsSupported();
-  static bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
+  bool isCuMemMapAllocated =
+      mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
+  bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
