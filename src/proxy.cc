@@ -19,11 +19,16 @@ struct Proxy::Impl {
   ProxyHandler handler;
   std::function<void()> threadInit;
   std::shared_ptr<Fifo> fifo;
+  std::atomic_bool threadStarted;
   std::thread service;
   std::atomic_bool running;
 
   Impl(ProxyHandler handler, std::function<void()> threadInit, int fifoSize)
-      : handler(handler), threadInit(threadInit), fifo(std::make_shared<Fifo>(fifoSize)), running(false) {}
+      : handler(handler),
+        threadInit(threadInit),
+        fifo(std::make_shared<Fifo>(fifoSize)),
+        threadStarted(false),
+        running(false) {}
 };
 
 MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize) {
@@ -56,6 +61,7 @@ MSCCLPP_API_CPP void Proxy::start() {
     auto mode = cudaStreamCaptureModeRelaxed;
     MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
 
+    pimpl_->threadStarted = true;
     pimpl_->threadInit();
 
     ProxyHandler handler = this->pimpl_->handler;
@@ -88,6 +94,12 @@ MSCCLPP_API_CPP void Proxy::start() {
       }
     }
   });
+}
+
+MSCCLPP_API_CPP void Proxy::isStarted() {
+  while (!pimpl_->threadStarted) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
 }
 
 MSCCLPP_API_CPP void Proxy::stop() {

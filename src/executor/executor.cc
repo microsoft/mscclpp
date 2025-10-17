@@ -209,6 +209,7 @@ struct Executor::Impl {
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
     context.proxyService->startProxy();
+    context.proxyService->isStarted();
     this->contexts.insert({key, context});
     return context;
   }

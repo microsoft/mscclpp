@@ -70,6 +70,9 @@ class ProxyService : public BaseProxyService {
   /// Start the proxy service.
   void startProxy();
 
+  /// Wait for proxy thread to start and initialize.
+  void isStarted();
+
   /// Stop the proxy service.
   void stopProxy();
 

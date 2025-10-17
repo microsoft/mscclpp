@@ -44,6 +44,9 @@ class Proxy {
   /// Start proxy.
   void start();
 
+  /// Wait for proxy thread to start and initialize.
+  void isStarted();
+
   /// Stop proxy.
   void stop();
 

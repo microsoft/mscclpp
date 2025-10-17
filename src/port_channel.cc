@@ -76,6 +76,8 @@ MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId d
 
 MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
 
+MSCCLPP_API_CPP void ProxyService::isStarted() { proxy_->isStarted(); }
+
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
