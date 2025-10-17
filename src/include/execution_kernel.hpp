@@ -52,7 +52,7 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
 }
 
 #if defined(__CUDA_FP8_TYPES_EXIST__)
-// FP8 E4M3 addition
+// FP8 E4M3 addition using __hadd (single element)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -60,11 +60,30 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   sum = fminf(fmaxf(sum, -448.0f), 448.0f);  // Clamp to FP8 E4M3 range
   return static_cast<__fp8_e4m3>(sum);
 #else
-  return __fp8_e4m3(static_cast<float>(a) + static_cast<float>(b));
+  return __fp8_e4m3(__hadd(__half(a), __half(b)));
 #endif
 }
 
-// FP8 E5M2 addition
+// FP8 E4M3 vectorized addition using __hadd2 for 2 elements
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+  return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
+}
+
+// FP8 E4M3 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e4m3)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
+  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
+
+  __fp8x2_e4m3 result[2];
+  result[0] = add_elements(a_pair[0], b_pair[0]);
+  result[1] = add_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e4m3*>(result);
+}
+
+// FP8 E5M2 addition using __hadd (single element)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -72,8 +91,27 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);  // Clamp to FP8 E5M2 range
   return static_cast<__fp8_e5m2>(sum);
 #else
-  return __fp8_e5m2(static_cast<float>(a) + static_cast<float>(b));
+  return __fp8_e5m2(__hadd(__half(a), __half(b)));
 #endif
+}
+
+// FP8 E5M2 vectorized addition using __hadd2 for 2 elements
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  return __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+}
+
+// FP8 E5M2 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e5m2)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
+  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+
+  __fp8x2_e5m2 result[2];
+  result[0] = add_elements(a_pair[0], b_pair[0]);
+  result[1] = add_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e5m2*>(result);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -103,69 +141,14 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
 }
 
 #if defined(__CUDA_FP8_TYPES_EXIST__)
-// FP8 E4M3 vector helper - 4 FP8 values pack into one int
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__fp8_e4m3>(int4 a, int4 b) {
-  int4 ret;
-  
-  auto process_int = [](int val_a, int val_b) -> int {
-    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-    memcpy(fp8_vals_a, &val_a, sizeof(int));
-    memcpy(fp8_vals_b, &val_b, sizeof(int));
-    
-    #pragma unroll
-    for (int i = 0; i < 4; i++) {
-      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-    }
-    
-    int result;
-    memcpy(&result, fp8_result, sizeof(int));
-    return result;
-  };
-  
-  ret.w = process_int(a.w, b.w);
-  ret.x = process_int(a.x, b.x);
-  ret.y = process_int(a.y, b.y);
-  ret.z = process_int(a.z, b.z);
-  return ret;
-}
-
-// FP8 E5M2 vector helper - 4 FP8 values pack into one int
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors_helper<__fp8_e5m2>(int4 a, int4 b) {
-  int4 ret;
-  
-  auto process_int = [](int val_a, int val_b) -> int {
-    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-    memcpy(fp8_vals_a, &val_a, sizeof(int));
-    memcpy(fp8_vals_b, &val_b, sizeof(int));
-    
-    #pragma unroll
-    for (int i = 0; i < 4; i++) {
-      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-    }
-    
-    int result;
-    memcpy(&result, fp8_result, sizeof(int));
-    return result;
-  };
-  
-  ret.w = process_int(a.w, b.w);
-  ret.x = process_int(a.x, b.x);
-  ret.y = process_int(a.y, b.y);
-  ret.z = process_int(a.z, b.z);
-  return ret;
-}
-
-// FP8 add_vectors specializations (call the specialized add_vectors_helper)
 template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e4m3>(int4 a, int4 b) {
-  return add_vectors_helper<__fp8_e4m3>(a, b);
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e5m2>(int4 a, int4 b) {
-  return add_vectors_helper<__fp8_e5m2>(a, b);
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -193,65 +176,14 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint
 }
 
 #if defined(__CUDA_FP8_TYPES_EXIST__)
-// FP8 E4M3 uint2 vector helper - 4 FP8 values pack into one uint/int
-template <>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__fp8_e4m3>(uint2 a, uint2 b) {
-  uint2 ret;
-  
-  auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-    memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
-    memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
-    
-    #pragma unroll
-    for (int i = 0; i < 4; i++) {
-      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-    }
-    
-    unsigned int result;
-    memcpy(&result, fp8_result, sizeof(unsigned int));
-    return result;
-  };
-  
-  ret.x = process_int(a.x, b.x);
-  ret.y = process_int(a.y, b.y);
-  return ret;
-}
-
-// FP8 E5M2 uint2 vector helper
-template <>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper<__fp8_e5m2>(uint2 a, uint2 b) {
-  uint2 ret;
-  
-  auto process_int = [](unsigned int val_a, unsigned int val_b) -> unsigned int {
-    __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-    memcpy(fp8_vals_a, &val_a, sizeof(unsigned int));
-    memcpy(fp8_vals_b, &val_b, sizeof(unsigned int));
-    
-    #pragma unroll
-    for (int i = 0; i < 4; i++) {
-      fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-    }
-    
-    unsigned int result;
-    memcpy(&result, fp8_result, sizeof(unsigned int));
-    return result;
-  };
-  
-  ret.x = process_int(a.x, b.x);
-  ret.y = process_int(a.y, b.y);
-  return ret;
-}
-
-// FP8 uint2 add_vectors specializations
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
-  return add_vectors_helper<__fp8_e4m3>(a, b);
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e5m2>(uint2 a, uint2 b) {
-  return add_vectors_helper<__fp8_e5m2>(a, b);
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -276,49 +208,14 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a,
 }
 
 #if defined(__CUDA_FP8_TYPES_EXIST__)
-// FP8 E4M3 int vector helper - 4 FP8 values pack into one int
-template <>
-MSCCLPP_DEVICE_INLINE int add_vectors_helper<__fp8_e4m3>(int a, int b) {
-  __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-  memcpy(fp8_vals_a, &a, sizeof(int));
-  memcpy(fp8_vals_b, &b, sizeof(int));
-  
-  #pragma unroll
-  for (int i = 0; i < 4; i++) {
-    fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-  }
-  
-  int result;
-  memcpy(&result, fp8_result, sizeof(int));
-  return result;
-}
-
-// FP8 E5M2 int vector helper
-template <>
-MSCCLPP_DEVICE_INLINE int add_vectors_helper<__fp8_e5m2>(int a, int b) {
-  __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-  memcpy(fp8_vals_a, &a, sizeof(int));
-  memcpy(fp8_vals_b, &b, sizeof(int));
-  
-  #pragma unroll
-  for (int i = 0; i < 4; i++) {
-    fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-  }
-  
-  int result;
-  memcpy(&result, fp8_result, sizeof(int));
-  return result;
-}
-
-// FP8 int add_vectors specializations
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
-  return add_vectors_helper<__fp8_e4m3>(a, b);
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e5m2>(int a, int b) {
-  return add_vectors_helper<__fp8_e5m2>(a, b);
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -343,49 +240,14 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
 }
 
 #if defined(__CUDA_FP8_TYPES_EXIST__)
-// FP8 E4M3 uint32_t vector helper - 4 FP8 values pack into one uint32_t
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__fp8_e4m3>(uint32_t a, uint32_t b) {
-  __fp8_e4m3 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-  memcpy(fp8_vals_a, &a, sizeof(uint32_t));
-  memcpy(fp8_vals_b, &b, sizeof(uint32_t));
-  
-  #pragma unroll
-  for (int i = 0; i < 4; i++) {
-    fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-  }
-  
-  uint32_t result;
-  memcpy(&result, fp8_result, sizeof(uint32_t));
-  return result;
-}
-
-// FP8 E5M2 uint32_t vector helper
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper<__fp8_e5m2>(uint32_t a, uint32_t b) {
-  __fp8_e5m2 fp8_vals_a[4], fp8_vals_b[4], fp8_result[4];
-  memcpy(fp8_vals_a, &a, sizeof(uint32_t));
-  memcpy(fp8_vals_b, &b, sizeof(uint32_t));
-  
-  #pragma unroll
-  for (int i = 0; i < 4; i++) {
-    fp8_result[i] = add_elements(fp8_vals_a[i], fp8_vals_b[i]);
-  }
-  
-  uint32_t result;
-  memcpy(&result, fp8_result, sizeof(uint32_t));
-  return result;
-}
-
-// FP8 uint32_t add_vectors specializations
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e4m3>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__fp8_e4m3>(a, b);
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e5m2>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__fp8_e5m2>(a, b);
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
