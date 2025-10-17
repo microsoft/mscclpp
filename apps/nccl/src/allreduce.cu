@@ -615,8 +615,9 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext
 ncclResult_t AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx,
                                                       const void* input, void* output, size_t count,
                                                       ncclDataType_t dtype, cudaStream_t stream,
-                                                      std::unordered_map<std::string, std::shared_ptr<void>>&) {
-  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(ncclSum, dtype);
+                                                      std::unordered_map<std::string, std::shared_ptr<void>>& extra) {
+  int op = *static_cast<int*>(extra.at("op").get());
+  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(static_cast<ncclRedOp_t>(op), dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
     return ncclInvalidArgument;
