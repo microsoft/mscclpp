@@ -147,33 +147,57 @@ __forceinline__ __device__ __fp8_e5m2 clip(__fp8_e5m2 val) {
 // FP8 E4M3 addition using __hadd for efficiency (single element)
 template <bool UseClip = true>
 __forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
-#if defined(__HIP_PLATFORM_AMD__)
-  // AMD ROCm FP8 addition
-  float sum = static_cast<float>(a) + static_cast<float>(b);
-  if constexpr (UseClip) {
-    // Clamp to FP8 E4M3 range: [-448, 448]
-    sum = fminf(fmaxf(sum, -448.0f), 448.0f);
-  }
-  return static_cast<__fp8_e4m3>(sum);
-#else
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[0], ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
   __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
+  return UseClip ? clip(result) : result;
+#else
+  // Fallback for non-gfx942 HIP platforms
+  __fp8_e4m3 result = __fp8_e4m3(float(a) + float(b));
   return UseClip ? clip(result) : result;
 #endif
 }
 
-// FP8 E4M3 vectorized addition using __hadd2 for 2 elements
-template <bool UseClip = true>
+// FP8 E4M3 vectorized addition for 2 elements
+template <bool UseClip>
 __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
-  // Convert to half2, add using optimized __hadd2, convert back
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[1], ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
   return result;
+#else
+  // Fallback for non-gfx942 HIP: element-wise using single-element operations
+  union {
+    __fp8_e4m3 fp8[2];
+    __fp8x2_e4m3 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = add_elements<UseClip>(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = add_elements<UseClip>(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#endif
 }
 
-// FP8 E4M3 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e4m3)
-template <bool UseClip = true>
+// FP8 E4M3 vectorized addition for 4 elements (via 2x __fp8x2_e4m3)
+template <bool UseClip>
 __forceinline__ __device__ __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
-  // Process as two __fp8x2_e4m3 using __hadd2
+  // Process as two __fp8x2_e4m3 using add_elements for 2 elements
   __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
   __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
 
@@ -184,35 +208,18 @@ __forceinline__ __device__ __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m
   return *reinterpret_cast<__fp8x4_e4m3*>(result);
 }
 
-// FP8 E5M2 addition using __hadd for efficiency (single element)
-template <bool UseClip = true>
-__forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-#if defined(__HIP_PLATFORM_AMD__)
-  // AMD ROCm FP8 addition
-  float sum = static_cast<float>(a) + static_cast<float>(b);
-  if constexpr (UseClip) {
-    // Clamp to FP8 E5M2 range: [-57344, 57344]
-    sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);
-  }
-  return static_cast<__fp8_e5m2>(sum);
-#else
-  // NVIDIA CUDA FP8 addition
-  __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
-  return UseClip ? clip(result) : result;
-#endif
-}
-
-// FP8 E5M2 vectorized addition using __hadd2 for 2 elements
-template <bool UseClip = true>
+#if !defined(__HIP_PLATFORM_AMD__)
+template <bool UseClip>
 __forceinline__ __device__ __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
-  // Convert to half2, add using optimized __hadd2, convert back
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
   return result;
 }
 
-// FP8 E5M2 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e5m2)
-template <bool UseClip = true>
+// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
+template <bool UseClip>
 __forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  // Process as two __fp8x2_e5m2 using add_elements for 2 elements
   __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
   __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
 
@@ -222,31 +229,76 @@ __forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m
 
   return *reinterpret_cast<__fp8x4_e5m2*>(result);
 }
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 
-// FP8 E4M3 min operation using __hmin (single element)
+// FP8 E5M2 addition using __hadd for efficiency (single element)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942 (bfloat8)
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[0], ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
+  // NVIDIA CUDA FP8 addition
+  __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
+  return UseClip ? clip(result) : result;
+#else
+  // Fallback for non-gfx942 HIP platforms
+  __fp8_e5m2 result = __fp8_e5m2(float(a) + float(b));
+  return UseClip ? clip(result) : result;
+#endif
+}
+
+// FP8 E4M3 min operation (single element)
 template <>
 __forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return __fp8_e4m3(fminf(float(a), float(b)));
+#elif !defined(__HIP_PLATFORM_AMD__)
   return __fp8_e4m3(__hmin(__half(a), __half(b)));
+#else
+  // Fallback for non-gfx942 HIP platforms
+  return __fp8_e4m3(fminf(float(a), float(b)));
+#endif
 }
 
-// FP8 E4M3 vectorized min using __hmin2 for 2 elements
+// FP8 E4M3 vectorized min for 2 elements
 __forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP implementation: use union and process element-wise
+  union {
+    __fp8_e4m3 fp8[2];
+    __fp8x2_e4m3 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#elif !defined(__HIP_PLATFORM_AMD__)
   return __fp8x2_e4m3(__hmin2(__half2(a), __half2(b)));
+#else
+  // Fallback for non-gfx942 HIP: element-wise
+  union {
+    __fp8_e4m3 fp8[2];
+    __fp8x2_e4m3 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#endif
 }
 
-// FP8 E5M2 min operation using __hmin (single element)
-template <>
-__forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-  return __fp8_e5m2(__hmin(__half(a), __half(b)));
-}
-
-// FP8 E5M2 vectorized min using __hmin2 for 2 elements
-__forceinline__ __device__ __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
-  return __fp8x2_e5m2(__hmin2(__half2(a), __half2(b)));
-}
-
-// FP8 E4M3 vectorized min using __hmin2 for 4 elements
+// FP8 E4M3 vectorized min for 4 elements
 __forceinline__ __device__ __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+  // Process as two __fp8x2_e4m3 using min_elements for 2 elements
   __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
   __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
 
@@ -257,8 +309,28 @@ __forceinline__ __device__ __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m
   return *reinterpret_cast<__fp8x4_e4m3*>(result);
 }
 
-// FP8 E5M2 vectorized min using __hmin2 for 4 elements
+// FP8 E5M2 min operation (single element)
+template <>
+__forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return __fp8_e5m2(fminf(float(a), float(b)));
+#elif !defined(__HIP_PLATFORM_AMD__)
+  return __fp8_e5m2(__hmin(__half(a), __half(b)));
+#else
+  // Fallback for non-gfx942 HIP platforms
+  return __fp8_e5m2(fminf(float(a), float(b)));
+#endif
+}
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// FP8 E5M2 vectorized min for 2 elements (CUDA only)
+__forceinline__ __device__ __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  return __fp8x2_e5m2(__hmin2(__half2(a), __half2(b)));
+}
+
+// FP8 E5M2 vectorized min for 4 elements (CUDA only)
 __forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  // Process as two __fp8x2_e5m2 using min_elements for 2 elements
   __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
   __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
 
@@ -268,6 +340,7 @@ __forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m
 
   return *reinterpret_cast<__fp8x4_e5m2*>(result);
 }
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
 template <typename T, Op OpType>

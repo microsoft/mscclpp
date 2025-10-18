@@ -55,22 +55,96 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
 // FP8 E4M3 addition using __hadd (single element)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
-#if defined(__HIP_PLATFORM_AMD__)
-  float sum = static_cast<float>(a) + static_cast<float>(b);
-  sum = fminf(fmaxf(sum, -448.0f), 448.0f);  // Clamp to FP8 E4M3 range
-  return static_cast<__fp8_e4m3>(sum);
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[0], ival, false);
 #else
   return __fp8_e4m3(__hadd(__half(a), __half(b)));
 #endif
 }
 
-// FP8 E4M3 vectorized addition using __hadd2 for 2 elements
+// FP8 E5M2 addition using __hadd (single element) - must come before helper functions
+template <>
+MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942 (bfloat8)
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[0], ival, false);
+#else
+  return __fp8_e5m2(__hadd(__half(a), __half(b)));
+#endif
+}
+
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+// HIP gfx942 platform: Helper functions for vectorized FP8 operations
+// We use separate function names because __fp8x2_e4m3 and __fp8x2_e5m2 are both uint16_t
+
+// E4M3 vectorized addition for 2 elements
+MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[1], ival, false);
+}
+
+// E4M3 vectorized addition for 4 elements
+MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e4m3(uint32_t a, uint32_t b) {
+  uint16_t a_low = a & 0xFFFF;
+  uint16_t a_high = (a >> 16) & 0xFFFF;
+  uint16_t b_low = b & 0xFFFF;
+  uint16_t b_high = (b >> 16) & 0xFFFF;
+  uint16_t result_low = add_fp8x2_e4m3(a_low, b_low);
+  uint16_t result_high = add_fp8x2_e4m3(a_high, b_high);
+  return (static_cast<uint32_t>(result_high) << 16) | result_low;
+}
+
+// E5M2 vectorized addition for 2 elements
+MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)),
+               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[1], ival, false);
+}
+
+// E5M2 vectorized addition for 4 elements
+MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e5m2(uint32_t a, uint32_t b) {
+  uint16_t a_low = a & 0xFFFF;
+  uint16_t a_high = (a >> 16) & 0xFFFF;
+  uint16_t b_low = b & 0xFFFF;
+  uint16_t b_high = (b >> 16) & 0xFFFF;
+  uint16_t result_low = add_fp8x2_e5m2(a_low, b_low);
+  uint16_t result_high = add_fp8x2_e5m2(a_high, b_high);
+  return (static_cast<uint32_t>(result_high) << 16) | result_low;
+}
+#endif
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// CUDA platform: Template specializations for vectorized FP8 operations
+
+// FP8 E4M3 vectorized addition using __hadd2 for 2 elements (CUDA only)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
   return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
 }
 
-// FP8 E4M3 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e4m3)
+// FP8 E4M3 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e4m3)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
   __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
@@ -83,25 +157,13 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) 
   return *reinterpret_cast<__fp8x4_e4m3*>(result);
 }
 
-// FP8 E5M2 addition using __hadd (single element)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-#if defined(__HIP_PLATFORM_AMD__)
-  float sum = static_cast<float>(a) + static_cast<float>(b);
-  sum = fminf(fmaxf(sum, -57344.0f), 57344.0f);  // Clamp to FP8 E5M2 range
-  return static_cast<__fp8_e5m2>(sum);
-#else
-  return __fp8_e5m2(__hadd(__half(a), __half(b)));
-#endif
-}
-
-// FP8 E5M2 vectorized addition using __hadd2 for 2 elements
+// FP8 E5M2 vectorized addition for 2 elements (CUDA only)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
   return __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
 }
 
-// FP8 E5M2 vectorized addition using __hadd2 for 4 elements (via 2x __fp8x2_e5m2)
+// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
   __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
@@ -113,6 +175,7 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
 
   return *reinterpret_cast<__fp8x4_e5m2*>(result);
 }
+#endif
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
 template <typename T>
@@ -143,12 +206,32 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e4m3>(int4 a, int4 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  int4 ret;
+  ret.w = add_fp8x4_e4m3(a.w, b.w);
+  ret.x = add_fp8x4_e4m3(a.x, b.x);
+  ret.y = add_fp8x4_e4m3(a.y, b.y);
+  ret.z = add_fp8x4_e4m3(a.z, b.z);
+  return ret;
+#else
   return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e5m2>(int4 a, int4 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  int4 ret;
+  ret.w = add_fp8x4_e5m2(a.w, b.w);
+  ret.x = add_fp8x4_e5m2(a.x, b.x);
+  ret.y = add_fp8x4_e5m2(a.y, b.y);
+  ret.z = add_fp8x4_e5m2(a.z, b.z);
+  return ret;
+#else
   return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -178,12 +261,28 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  uint2 ret;
+  ret.x = add_fp8x4_e4m3(a.x, b.x);
+  ret.y = add_fp8x4_e4m3(a.y, b.y);
+  return ret;
+#else
   return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e5m2>(uint2 a, uint2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  uint2 ret;
+  ret.x = add_fp8x4_e5m2(a.x, b.x);
+  ret.y = add_fp8x4_e5m2(a.y, b.y);
+  return ret;
+#else
   return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -210,12 +309,20 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a,
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e4m3(a, b);
+#else
   return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e5m2>(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e5m2(a, b);
+#else
   return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 
@@ -242,12 +349,20 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
 #if defined(__CUDA_FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e4m3>(uint32_t a, uint32_t b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e4m3(a, b);
+#else
   return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e5m2>(uint32_t a, uint32_t b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e5m2(a, b);
+#else
   return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
 }
 #endif  // __CUDA_FP8_TYPES_EXIST__
 

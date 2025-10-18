@@ -21,6 +21,13 @@ using __bfloat162 = __hip_bfloat162;
 #if defined(__HIP_FP8_TYPES_EXIST__)
 using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
+
+// HIP doesn't have native FP8 vector types, use storage types like RCCL
+using __fp8x2_e4m3 = uint16_t;
+using __fp8x2_e5m2 = uint16_t;
+using __fp8x4_e4m3 = uint32_t;
+using __fp8x4_e5m2 = uint32_t;
+
 #define __CUDA_FP8_TYPES_EXIST__
 #endif
 
