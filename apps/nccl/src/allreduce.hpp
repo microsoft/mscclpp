@@ -168,7 +168,7 @@ __forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 }
 
 // FP8 E4M3 vectorized addition for 2 elements
-template <bool UseClip>
+template <bool UseClip = true>
 __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
   typedef float __attribute__((ext_vector_type(2))) float2_t;
@@ -195,7 +195,7 @@ __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m
 }
 
 // FP8 E4M3 vectorized addition for 4 elements (via 2x __fp8x2_e4m3)
-template <bool UseClip>
+template <bool UseClip = true>
 __forceinline__ __device__ __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
   // Process as two __fp8x2_e4m3 using add_elements for 2 elements
   __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
@@ -207,29 +207,6 @@ __forceinline__ __device__ __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m
 
   return *reinterpret_cast<__fp8x4_e4m3*>(result);
 }
-
-#if !defined(__HIP_PLATFORM_AMD__)
-template <bool UseClip>
-__forceinline__ __device__ __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
-  // CUDA: Convert to half2, add using optimized __hadd2, convert back
-  __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
-  return result;
-}
-
-// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
-template <bool UseClip>
-__forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
-  // Process as two __fp8x2_e5m2 using add_elements for 2 elements
-  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
-  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
-
-  __fp8x2_e5m2 result[2];
-  result[0] = add_elements<UseClip>(a_pair[0], b_pair[0]);
-  result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
-
-  return *reinterpret_cast<__fp8x4_e5m2*>(result);
-}
-#endif  // !defined(__HIP_PLATFORM_AMD__)
 
 // FP8 E5M2 addition using __hadd for efficiency (single element)
 template <bool UseClip = true>
@@ -253,6 +230,30 @@ __forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   return UseClip ? clip(result) : result;
 #endif
 }
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// FP8 E5M2 vectorized addition for 2 elements (CUDA only)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
+  __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+  return result;
+}
+
+// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  // Process as two __fp8x2_e5m2 using add_elements for 2 elements
+  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
+  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+
+  __fp8x2_e5m2 result[2];
+  result[0] = add_elements<UseClip>(a_pair[0], b_pair[0]);
+  result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e5m2*>(result);
+}
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 
 // FP8 E4M3 min operation (single element)
 template <>
