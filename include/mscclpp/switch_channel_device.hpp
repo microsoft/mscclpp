@@ -38,8 +38,7 @@ struct SwitchChannelDeviceHandle {
     SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
   }
 
-  template <typename>
-  MSCCLPP_DEVICE_INLINE void broadcast<LLPacket>(uint64_t index, const LLPacket& val) {
+  MSCCLPP_DEVICE_INLINE void broadcast(uint64_t index, const LLPacket& val) {
     multimemStore(val, reinterpret_cast<LLPacket*>(mcPtr) + index);
   }
 
