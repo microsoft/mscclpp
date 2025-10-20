@@ -258,19 +258,16 @@ __forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m
 // FP8 E4M3 min operation (single element)
 template <>
 __forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
-#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+#if defined(__HIP_PLATFORM_AMD__)
   return __fp8_e4m3(fminf(float(a), float(b)));
-#elif !defined(__HIP_PLATFORM_AMD__)
-  return __fp8_e4m3(__hmin(__half(a), __half(b)));
 #else
-  // Fallback for non-gfx942 HIP platforms
-  return __fp8_e4m3(fminf(float(a), float(b)));
+  return __fp8_e4m3(__hmin(__half(a), __half(b)));
 #endif
 }
 
 // FP8 E4M3 vectorized min for 2 elements
 __forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
-#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+#if defined(__HIP_PLATFORM_AMD__)
   // HIP implementation: use union and process element-wise
   union {
     __fp8_e4m3 fp8[2];
@@ -281,19 +278,8 @@ __forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m
   result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
   result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
   return result.fp8x2;
-#elif !defined(__HIP_PLATFORM_AMD__)
-  return __fp8x2_e4m3(__hmin2(__half2(a), __half2(b)));
 #else
-  // Fallback for non-gfx942 HIP: element-wise
-  union {
-    __fp8_e4m3 fp8[2];
-    __fp8x2_e4m3 fp8x2;
-  } ua, ub, result;
-  ua.fp8x2 = a;
-  ub.fp8x2 = b;
-  result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
-  result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
-  return result.fp8x2;
+  return __fp8x2_e4m3(__hmin2(__half2(a), __half2(b)));
 #endif
 }
 
@@ -313,13 +299,10 @@ __forceinline__ __device__ __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m
 // FP8 E5M2 min operation (single element)
 template <>
 __forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+#if defined(__HIP_PLATFORM_AMD__)
   return __fp8_e5m2(fminf(float(a), float(b)));
-#elif !defined(__HIP_PLATFORM_AMD__)
-  return __fp8_e5m2(__hmin(__half(a), __half(b)));
 #else
-  // Fallback for non-gfx942 HIP platforms
-  return __fp8_e5m2(fminf(float(a), float(b)));
+  return __fp8_e5m2(__hmin(__half(a), __half(b)));
 #endif
 }
 
