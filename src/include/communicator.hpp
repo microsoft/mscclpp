@@ -36,7 +36,7 @@ class RecvItem : public BaseRecvItem {
 
 class LocalRecvMemory {
  public:
-  LocalRecvMemory() : future_(std::move(promise_.get_future())) {}
+  LocalRecvMemory() : future_(promise_.get_future()) {}
 
   void set(RegisteredMemory memory) { promise_.set_value(std::move(memory)); }
 

@@ -4,6 +4,7 @@
 #include "context.hpp"
 
 #include <mscclpp/env.hpp>
+#include <sstream>
 
 #include "api.h"
 #include "connection.hpp"
@@ -76,21 +77,21 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &loc
   if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
     throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InvalidUsage);
   }
+  auto localTransport = localEndpoint.transport();
+  auto remoteTransport = remoteEndpoint.transport();
+  if (localTransport != remoteTransport &&
+      !(AllIBTransports.has(localTransport) && AllIBTransports.has(remoteTransport))) {
+    std::stringstream ss;
+    ss << "Transport mismatch between local (" << std::to_string(localTransport) << ") and remote ("
+       << std::to_string(remoteEndpoint.transport()) << ") endpoints";
+    throw Error(ss.str(), ErrorCode::InvalidUsage);
+  }
   std::shared_ptr<Connection> conn;
-  if (localEndpoint.transport() == Transport::CudaIpc) {
-    if (remoteEndpoint.transport() != Transport::CudaIpc) {
-      throw Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
-    }
+  if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (AllIBTransports.has(localEndpoint.transport())) {
-    if (!AllIBTransports.has(remoteEndpoint.transport())) {
-      throw Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
-    }
+  } else if (AllIBTransports.has(localTransport)) {
     conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (localEndpoint.transport() == Transport::Ethernet) {
-    if (remoteEndpoint.transport() != Transport::Ethernet) {
-      throw Error("Local transport is Ethernet but remote is not", ErrorCode::InvalidUsage);
-    }
+  } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {
     throw Error("Unsupported transport", ErrorCode::InternalError);
