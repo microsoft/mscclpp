@@ -1190,10 +1190,6 @@ void AllReduceTestColl::getBw(const double deltaSec, double& algBw /*OUT*/, doub
 }
 
 void AllReduceTestColl::setupCollTest(size_t size) {
-  // AllReduce kernels are hardcoded for sizeof(int) - they cannot handle other data types
-  // without significant kernel rewrites. Force typeSize to sizeof(int).
-  typeSize_ = sizeof(int);
-  
   size_t count = size / typeSize_;
   sendCount_ = count;
   recvCount_ = count;
@@ -1270,17 +1266,13 @@ bool AllReduceTestEngine::isInPlace() const {
 }
 
 void AllReduceTestEngine::allocateBuffer() {
-  // Always allocate in units of int (4 bytes) to match kernel expectations
-  // The kernels hardcode sizeof(int) in their offset calculations
-  const size_t nElements = args_.maxBytes / sizeof(int);
-  
-  inputBuff_ = mscclpp::GpuBuffer<int>(nElements).memory();
-  resultBuff_ = mscclpp::GpuBuffer<int>(nElements).memory();
+  inputBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  resultBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
   inputBuff = inputBuff_.get();
   resultBuff = resultBuff_.get();
 
   if (args_.kernelNum == 0 || args_.kernelNum == 1 || args_.kernelNum == 3 || args_.kernelNum == 4) {
-    scratchBuff_ = mscclpp::GpuBuffer<int>(nElements).memory();
+    scratchBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
     scratchBuff = scratchBuff_.get();
   } else if (args_.kernelNum == 2) {
     const size_t nPacket = (args_.maxBytes + sizeof(uint64_t) - 1) / sizeof(uint64_t);
@@ -1301,10 +1293,7 @@ void AllReduceTestEngine::allocateBuffer() {
     scratchPacketBuff = scratchPacketBuff_.get();
   }
 
-  // expectedBuff uses actual element count based on data type
-  const size_t dataTypeSize = getDataTypeSize(args_.dataType);
-  const size_t nElemsForDataType = args_.maxBytes / dataTypeSize;
-  expectedBuff_ = std::shared_ptr<int[]>(new int[nElemsForDataType]);
+  expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 }
 
 void AllReduceTestEngine::setupConnections() {

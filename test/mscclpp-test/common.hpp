@@ -7,7 +7,6 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
-#include <mscclpp/nccl.h>
 #include <vector>
 
 #define CUDATHROW(cmd)                                                                                                \
@@ -22,7 +21,6 @@
 
 int getDeviceNumaNode(int cudaDev);
 void numaBind(int node);
-int getDataTypeSize(ncclDataType_t dtype);
 
 enum class ChannelSemantic { PUT, GET };
 
@@ -39,7 +37,6 @@ struct TestArgs {
   int nRanksPerNode;
   int kernelNum;
   int reportErrors;
-  ncclDataType_t dataType;
 };
 
 struct KernelRestriction {
