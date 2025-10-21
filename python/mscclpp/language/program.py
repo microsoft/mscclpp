@@ -3,10 +3,12 @@
 
 from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
-from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
+from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
 from mscclpp.language.channel import *
 from mscclpp.language.rank import Semaphore
+from mscclpp.language.collectives import *
+from mscclpp.language.utils import AlgoSpec, ReplicationPolicy
 from typing import List
 import json
 
@@ -110,6 +112,77 @@ class CollectiveProgram:
 
         self.loop_context = None
 
+    def __init__(self, spec: AlgoSpec):
+        """Initialize a new CollectiveProgram from an algorithm specification.
+
+        This constructor provides an alternative way to create a CollectiveProgram
+        using an AlgoSpec object, which contains the complete algorithm specification
+        including collective type, protocol parameters, and optimization settings.
+        The collective operation is automatically instantiated based on the collective_name
+        specified in the spec.
+
+        Args:
+            spec (AlgoSpec): Algorithm specification containing all program parameters
+                and configuration settings.
+
+        Raises:
+            AssertionError: If protocol is not "Simple" or "LL".
+            ValueError: If collective_name is not supported.
+
+        Example:
+            >>> from mscclpp.language.utils import AlgoSpec
+            >>> spec = AlgoSpec(
+            ...     name="my_allreduce",
+            ...     collective_name="allreduce",
+            ...     world_size=4,
+            ...     instances=1,
+            ...     protocol="Simple",
+            ...     in_place=False
+            ... )
+            >>> with CollectiveProgram(spec) as prog:
+            ...     # Define communication operations
+            ...     pass
+        """
+        collective = self._create_collective_from_name(spec.collective_name, spec.world_size, spec.in_place)
+        self.name = spec.name
+        self.collective = collective
+        self.num_ranks = spec.world_size
+        self.in_place = spec.in_place
+        self.instances = spec.instances
+        self.protocol = spec.protocol
+        self.instr_fusion = spec.instr_fusion
+        self.auto_sync = spec.auto_sync
+        self.replication_policy = spec.replication_policy
+        self.reuse_resources = spec.reuse_resources
+        self.num_threads_per_block = spec.num_threads_per_block
+        self.use_double_scratch_buffer = spec.use_double_scratch_buffer
+        self.buffer_alignment = spec.buffer_alignment
+        self.min_message_size = spec.min_message_size
+        self.max_message_size = spec.max_message_size
+        assert self.protocol == "Simple" or self.protocol == "LL", f"Given protocol: {self.protocol}. Must be either Simple, LL"
+        self.buffers = self.collective.init_buffers()
+        self.gpus: List[Gpu] = []
+        for rank in range(self.num_ranks):
+            self.gpus.append(
+                Gpu(rank, self.buffers[rank][BufferType.input].size, self.buffers[rank][BufferType.output].size, 0)
+            )
+
+        self.loop_context = None
+
+    def _create_collective_from_name(self, collective_name: str, world_size: int, in_place: bool):
+        """Create a collective instance based on the collective name."""
+        chunk_factor = 1
+        if collective_name.lower() == "allgather":
+            return AllGather(world_size, chunk_factor, in_place)
+        elif collective_name.lower() == "allreduce":
+            return AllReduce(world_size, chunk_factor, in_place)
+        elif collective_name.lower() == "reducescatter":
+            return ReduceScatter(world_size, chunk_factor, in_place)
+        elif collective_name.lower() == "alltoall":
+            return AllToAll(world_size, chunk_factor, in_place)
+        else:
+            raise ValueError(f"Unknown collective name: {collective_name}. Supported collectives: allgather, allreduce, reducescatter, alltoall")
+
     def __enter__(self):
         """Enter the program context and set this as the active program.
 
@@ -125,10 +198,10 @@ class CollectiveProgram:
         This method is called when exiting the 'with' statement and removes
         this program from the global context.
         """
-        MemoryChannel.reset_channel_counts()
-        PortChannel.reset_channel_counts()
-        SwitchChannel.reset_channel_counts()
-        Semaphore.reset_semaphore_counts()
+        MemoryChannel.reset()
+        PortChannel.reset()
+        SwitchChannel.reset()
+        Semaphore.reset()
         set_program(None)
 
     def add_channel(self, channel):

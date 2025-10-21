@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 
 from mscclpp.language import default_algos as def_algo
-from mscclpp.language.internal.types import AlgoSpec
+from mscclpp.language.utils import AlgoSpec
 
 default_algo_configs = [
     {
@@ -12,12 +12,16 @@ default_algo_configs = [
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
             name="allreduce_2nodes",
-            collective="allreduce",
+            collective_name="allreduce",
             nranks_per_node=8,
             world_size=16,
+            in_place=True,
             instances=1,
             protocol="LL",
+            auto_sync=False,
             num_threads_per_block=1024,
+            reuse_resources=True,
+            use_double_scratch_buffer=True,
             min_message_size=1 << 10,
             max_message_size=2 << 20,
             tags={"default": 1},

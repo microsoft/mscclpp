@@ -13,19 +13,8 @@ from mscclpp.language.rank import Rank
 
 
 def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
-    chunksperloop = 1
     gpu_size = spec.world_size
-    collective = AllReduce(gpu_size, chunksperloop, True)
-    with CollectiveProgram(
-        spec.name,
-        collective,
-        gpu_size,
-        instances=8,
-        protocol=spec.protocol,
-        num_threads_per_block=spec.num_threads_per_block,
-        min_message_size=spec.min_message_size,
-        max_message_size=spec.max_message_size,
-    ) as program:
+    with CollectiveProgram(spec) as program:
         # Creating Channels
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
         channels = {}
@@ -74,19 +63,24 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
 
 
 def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
-    plan_handle = mscclpp.compile(
-        algo=allreduce_nvls,
+    spec = mscclpp.AlgoSpec(
         name="allreduce_nvls",
-        collective="allreduce",
-        rank=rank,
+        collective_name="allreduce",
         nranks_per_node=8,
         world_size=world_size,
+        in_place=True,
         instances=2,
         protocol="Simple",
         num_threads_per_block=1024,
         min_message_size=1 << 20,
         max_message_size=48 << 30,
-        tags={"nvls": 1},
+        tags={"nvls": 1}
+    )
+    
+    plan_handle = mscclpp.compile(
+        algo=allreduce_nvls,
+        algo_spec=spec,
+        rank=rank
     )
     registry.register_plan(plan_handle)
 

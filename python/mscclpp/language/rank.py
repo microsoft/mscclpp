@@ -368,7 +368,7 @@ class Semaphore:
     _semaphore_counts = defaultdict(int)
 
     @classmethod
-    def reset_semaphore_counts(cls):
+    def reset(cls):
         """Reset all semaphore counts."""
         cls._semaphore_counts.clear()
 

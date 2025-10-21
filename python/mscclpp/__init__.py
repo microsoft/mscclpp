@@ -16,7 +16,7 @@ import warnings
 from blake3 import blake3
 
 from mscclpp.language.program import CollectiveProgram
-from mscclpp.language.internal.types import AlgoSpec
+from mscclpp.language.utils import AlgoSpec
 from functools import wraps
 from mscclpp._version import __version__, __commit_id__
 
@@ -249,17 +249,8 @@ def _stable_json_bytes(obj: Any) -> bytes:
 
 def compile(
     algo,
-    name: str,
-    collective: str,
+    algo_spec: AlgoSpec,
     rank: int,
-    nranks_per_node: int,
-    world_size: int,
-    instances: int,
-    protocol: str,
-    num_threads_per_block: int = 1024,
-    min_message_size: int = 0,
-    max_message_size: int = 2**64 - 1,
-    tags: dict = {},
     **kwargs,
 ) -> ExecutionPlanHandle:
     """Compile a MSCCL++ program from a high-level algorithm description.
@@ -285,18 +276,7 @@ def compile(
     if not callable(algo):
         raise ValueError("The 'algo' argument must be a callable (e.g., a function or class).")
     prog: CollectiveProgram = algo(
-        AlgoSpec(
-            name=name,
-            collective=collective,
-            nranks_per_node=nranks_per_node,
-            world_size=world_size,
-            instances=instances,
-            protocol=protocol,
-            num_threads_per_block=num_threads_per_block,
-            min_message_size=min_message_size,
-            max_message_size=max_message_size,
-            tags=tags,
-        ),
+        algo_spec,
         **kwargs,
     )
     source = inspect.getsource(algo)
@@ -306,15 +286,15 @@ def compile(
         _stable_json_bytes(
             {
                 "version": __version__,
-                "algo_name": name,
-                "collective": collective,
-                "tags": sorted(tags.items()),
+                "algo_name": algo_spec.name,
+                "collective": algo_spec.collective_name,
+                "tags": sorted(algo_spec.tags.items()),
                 "source_hash": source_hash,
                 "envs": {
-                    "nranks_per_node": nranks_per_node,
-                    "world_size": world_size,
-                    "instances": instances,
-                    "protocol": protocol,
+                    "nranks_per_node": algo_spec.nranks_per_node,
+                    "world_size": algo_spec.world_size,
+                    "instances": algo_spec.instances,
+                    "protocol": algo_spec.protocol,
                 },
             }
         )
@@ -345,9 +325,9 @@ def compile(
     execution_plan = ExecutionPlan(plan_path, rank)
     handle = _ExecutionPlanHandle.create(
         id=plan_id,
-        world_size=world_size,
-        nranks_per_node=nranks_per_node,
+        world_size=algo_spec.world_size,
+        nranks_per_node=algo_spec.nranks_per_node,
         plan=execution_plan,
-        tags=tags,
+        tags=algo_spec.tags,
     )
     return ExecutionPlanHandle(handle)

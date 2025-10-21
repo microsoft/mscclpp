@@ -7,7 +7,7 @@ This implements a hierarchical AllReduce: intra-node allreduce followed by
 inter-node exchange and final intra-node allreduce.
 """
 
-from mscclpp.language.internal.types import AlgoSpec
+from mscclpp.language.utils import AlgoSpec
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
@@ -26,23 +26,9 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size) -> CollectiveProgr
     num_nodes = 2
     gpus_per_node = spec.nranks_per_node
     total_gpus = num_nodes * gpus_per_node
-    chunks_per_loop = 1
-    packets_per_gpu = 2  # Each GPU handles 2 data packets
-
-    # Initialize collective operation
-    collective = AllReduce(total_gpus, chunks_per_loop, True)
-
-    with CollectiveProgram(
-        name=spec.name,
-        collective=collective,
-        num_ranks=spec.world_size,
-        protocol=spec.protocol,
-        num_threads_per_block=spec.num_threads_per_block,
-        reuse_resources=False,
-        use_double_scratch_buffer=True,
-        min_message_size=spec.min_message_size,
-        max_message_size=spec.max_message_size,
-    ) as prog:
+    packets_per_gpu = 2
+    
+    with CollectiveProgram(spec) as prog:
         # Initialize communication channels and buffers
         intra_node_memory_channels = {}
         inter_node_port_channels = {}

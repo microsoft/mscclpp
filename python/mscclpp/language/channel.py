@@ -27,7 +27,7 @@ class MemoryChannel:
     _channel_counts = defaultdict(int)
 
     @classmethod
-    def reset_channel_counts(cls):
+    def reset(cls):
         """Reset all channel counts for this channel type."""
         cls._channel_counts.clear()
 
@@ -459,7 +459,7 @@ class PortChannel:
     _channel_counts = defaultdict(int)
 
     @classmethod
-    def reset_channel_counts(cls):
+    def reset(cls):
         """Reset all channel counts for this channel type."""
         cls._channel_counts.clear()
 
@@ -752,7 +752,7 @@ class SwitchChannel:
     _channel_counts = defaultdict(int)
 
     @classmethod
-    def reset_channel_counts(cls):
+    def reset(cls):
         """Reset all channel counts for this channel type."""
         cls._channel_counts.clear()
 
