@@ -151,7 +151,7 @@ int main() {
   CUCHECK(cuMemMap((CUdeviceptr)uc_va, mcSize, 0, memhandle, 0));
   // set access on UC address
   CUCHECK(cuMemSetAccess((CUdeviceptr)uc_va, mcSize, &accessDesc, 1));
-  //Memset uc space
+  // Memset uc space
   cudaMemset(uc_va, 0, mcSize);
 
   // everyone binds memory to the multicast
