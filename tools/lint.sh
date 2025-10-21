@@ -4,6 +4,7 @@ PROJECT_ROOT=$(dirname "$(realpath "$0")")/..
 LINT_CPP=false
 LINT_PYTHON=false
 DRY_RUN=false
+EXIT_CODE=0
 
 usage() {
     echo "Usage: $0 [cpp] [py] [dry]"
@@ -48,6 +49,9 @@ if $LINT_CPP; then
         else
             clang-format -style=file -i $files
         fi
+        if [ $? -ne 0 ]; then
+            EXIT_CODE=1
+        fi
     fi
 fi
 
@@ -61,5 +65,10 @@ if $LINT_PYTHON; then
         else
             python3 -m black $files
         fi
+        if [ $? -ne 0 ]; then
+            EXIT_CODE=1
+        fi
     fi
 fi
+
+exit $EXIT_CODE
