@@ -14,7 +14,6 @@
 #include <mscclpp/gpu_data_types.hpp>
 
 #include "device.hpp"
-#include "packet_device.hpp"
 
 namespace mscclpp {
 
