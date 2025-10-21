@@ -361,8 +361,77 @@ __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
   return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
 
+#if defined(__HIP_PLATFORM_AMD__) && defined(__CUDA_FP8_TYPES_EXIST__) && defined(__gfx942__)
+// Helper function to perform FP8 vector addition - dispatches based on scalar type
+template <typename ScalarT>
+__forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
+  uint32_t a32 = static_cast<uint32_t>(a);
+  uint32_t b32 = static_cast<uint32_t>(b);
+
+  typedef float __attribute__((ext_vector_type(2))) float2_t;
+  float2_t v_low, v_high;
+  uint32_t ival = 0;
+
+  if constexpr (std::is_same_v<ScalarT, __fp8_e4m3>) {
+    // E4M3 using fp8 conversion - process low word (false) and high word (true)
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_low) :
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
+    uint16_t result_low = __builtin_amdgcn_cvt_pk_fp8_f32(v_low[0], v_low[1], ival, false);
+
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_high) :
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
+    uint16_t result_high = __builtin_amdgcn_cvt_pk_fp8_f32(v_high[0], v_high[1], ival, false);
+
+    uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
+    return static_cast<int>(result);
+  } else { // __fp8_e5m2
+    // E5M2 using bf8 conversion - process low word (false) and high word (true)
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_low) :
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
+    uint16_t result_low = __builtin_amdgcn_cvt_pk_bf8_f32(v_low[0], v_low[1], ival, false);
+
+    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_high) :
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
+    uint16_t result_high = __builtin_amdgcn_cvt_pk_bf8_f32(v_high[0], v_high[1], ival, false);
+
+    uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
+    return static_cast<int>(result);
+  }
+}
+#endif
+
 template <typename T, Op OpType, typename DataType>
 __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__CUDA_FP8_TYPES_EXIST__) && defined(__gfx942__)
+  // For FP8 types on HIP gfx942, use specialized helper that dispatches based on scalar type
+  if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    if constexpr (OpType == SUM) {
+      if constexpr (std::is_same_v<DataType, int> || std::is_same_v<DataType, uint32_t>) {
+        // Handle int/uint32_t (4 FP8 elements)
+        return add_fp8x4_hip<T>(a, b);
+      } else if constexpr (std::is_same_v<DataType, int4>) {
+        // Handle int4 (16 FP8 elements) - process as 4 ints
+        int4 ret;
+        ret.w = add_fp8x4_hip<T>(a.w, b.w);
+        ret.x = add_fp8x4_hip<T>(a.x, b.x);
+        ret.y = add_fp8x4_hip<T>(a.y, b.y);
+        ret.z = add_fp8x4_hip<T>(a.z, b.z);
+        return ret;
+      } else if constexpr (std::is_same_v<DataType, uint2>) {
+        // Handle uint2 (8 FP8 elements) - process as 2 ints
+        uint2 ret;
+        ret.x = add_fp8x4_hip<T>(a.x, b.x);
+        ret.y = add_fp8x4_hip<T>(a.y, b.y);
+        return ret;
+      }
+    }
+  }
+#endif
+
   // Define the vectorized computation type based on the element type
   using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
                    std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162,
@@ -386,7 +455,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
                                   int worldSize, size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+  if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
   uint32_t flag = deviceFlag[blockIdx.x];
@@ -464,7 +533,7 @@ __global__ void __launch_bounds__(1024, 1)
                             &event_buffer_head);
 #endif
 
-  if (sizeof(T) == 2)
+  if (sizeof(T) == 2 || sizeof(T) == 1)
     nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   else
     nelems = nelems / (sizeof(int) / sizeof(T));
