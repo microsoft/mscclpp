@@ -38,10 +38,6 @@ struct SwitchChannelDeviceHandle {
     SwitchChannelDeviceHandle::multimemStore(val, reinterpret_cast<T*>(mcPtr) + index);
   }
 
-  MSCCLPP_DEVICE_INLINE void broadcast(uint64_t index, const LLPacket& val) {
-    multimemStore(val, reinterpret_cast<LLPacket*>(mcPtr) + index);
-  }
-
   template <typename VectorType>
   MSCCLPP_DEVICE_INLINE static VectorType multimemLoadReduce(VectorType* ptr) {
     VectorType val;
@@ -133,13 +129,6 @@ struct SwitchChannelDeviceHandle {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
   };
-
-  template <typename T>
-  MSCCLPP_DEVICE_INLINE static void multimemStore(const LLPacket& val, T* ptr) {
-    asm volatile("multimem.st.relaxed.sys.global.v4.f32 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.data1),
-                 "r"(val.flag1), "r"(val.data2), "r"(val.flag2)
-                 : "memory");
-  }
 
   template <typename TValue, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStoreReduce(const TValue& val, T* ptr) {

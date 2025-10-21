@@ -804,27 +804,26 @@ __global__ void __launch_bounds__(1024, 1)
   uint32_t flag = deviceFlag[blockIdx.x];
   size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
   uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
-  uint32_t nPktPerRank = nelems / worldSize / (sizeof(mscclpp::LLPacket::Payload) / sizeof(T));
-  mscclpp::LLPacket* multiPkt =
-      (mscclpp::LLPacket*)((char*)multicast->mcPtr + scratchBaseOffset) + rank * worldSize * nPktPerRank;
-  uint2* src2 = (uint2*)(input);
-  uint2* dst2 = (uint2*)output;
-  mscclpp::LLPacket* scratchPkt = (mscclpp::LLPacket*)((char*)scratch + scratchBaseOffset);
+  uint32_t nPktPerRank = nelems / worldSize / (sizeof(mscclpp::LL8Packet::Payload) / sizeof(T));
+  mscclpp::LL8Packet* multiPkt =
+      (mscclpp::LL8Packet*)((char*)multicast->mcPtr + scratchBaseOffset) + rank * worldSize * nPktPerRank;
+  uint* src = (uint*)(input);
+  uint* dst = (uint*)(output);
+  mscclpp::LL8Packet* scratchPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchBaseOffset);
   for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
-    mscclpp::LLPacket pkt(src2[i], flag);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(pkt, multiPkt + i);
+    mscclpp::LL8Packet pkt(src[i], flag);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x2*)(&pkt), multiPkt + i);
   }
   for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
-    uint2 data = src2[i];
+    uint data = src[i];
     for (int peer = 0; peer < worldSize; peer++) {
       if (peer == rank) {
         continue;
       }
-      uint2 val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
-      data.x = cal_vectors<T, OpType>(data.x, val.x);
-      data.y = cal_vectors<T, OpType>(data.y, val.y);
+      uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
+      data = cal_vectors<T, OpType>(data, val);
     }
-    dst2[i] = data;
+    dst[i] = data;
   }
   if (threadIdx.x == 0) {
     deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
