@@ -58,17 +58,17 @@ typedef struct ncclConfig_v21700 {
 
 /* Config initializer must be assigned to initialize config structure when it is created.
  * Not initialized config will result in NCCL error. */
-#define NCCL_CONFIG_INITIALIZER                                              \
-  {                                                                          \
-      sizeof(ncclConfig_t),                             /* size */           \
-      0xcafebeef,                                       /* magic */          \
-      NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
-      NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
-      NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
-      NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
-      NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
-      NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
-      NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
+#define NCCL_CONFIG_INITIALIZER                                                \
+  {                                                                            \
+    sizeof(ncclConfig_t),                                 /* size */           \
+        0xcafebeef,                                       /* magic */          \
+        NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
+        NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
+        NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
+        NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
+        NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
+        NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
+        NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
   }
 
 /* This struct will be used by ncclGroupSimulateEnd() API to query information about simulation. */
