@@ -15,15 +15,15 @@ import warnings
 
 from blake3 import blake3
 
-from .language.program import CollectiveProgram
-from .language.internal.types import AlgoSpec
+from mscclpp.language.program import CollectiveProgram
+from mscclpp.language.internal.types import AlgoSpec
 from functools import wraps
 
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
-from ._version import __version__, __commit_id__
+from mscclpp._version import __version__, __commit_id__
 
 
 # Parse the version

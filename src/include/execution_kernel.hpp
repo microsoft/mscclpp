@@ -801,7 +801,6 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   return;
 }
 
-// Keep uint32_t arguments together to address torch hang issue (dist.all_reduce + dist.barrier), not sure the reason
 template <typename T, typename PacketType = LL16Packet, bool ReuseScratch = false>
 __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output,
                                                            T* scratch, uint32_t scratchOffset,

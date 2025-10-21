@@ -3,8 +3,8 @@ import shutil
 import argparse
 from pathlib import Path
 
-from .language import default_algos as def_algo
-from .language.internal.types import AlgoSpec
+from mscclpp.language import default_algos as def_algo
+from mscclpp.language.internal.types import AlgoSpec
 
 default_algo_configs = [
     {
