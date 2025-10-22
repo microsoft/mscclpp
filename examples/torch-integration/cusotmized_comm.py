@@ -88,14 +88,10 @@ def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: i
         num_threads_per_block=1024,
         min_message_size=1 << 20,
         max_message_size=48 << 30,
-        tags={"nvls": 1}
+        tags={"nvls": 1},
     )
-    
-    plan_handle = mscclpp.compile(
-        algo=allreduce_nvls,
-        algo_spec=spec,
-        rank=rank
-    )
+
+    plan_handle = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
     registry.register_plan(plan_handle)
 
 
