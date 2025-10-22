@@ -91,9 +91,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
   this->size = pages * pageSize;
 }
 
-IbMr::~IbMr() {
-  IBVerbs::ibv_dereg_mr(this->mr); 
-}
+IbMr::~IbMr() { IBVerbs::ibv_dereg_mr(this->mr); }
 
 IbMrInfo IbMr::getInfo() const {
   IbMrInfo info;

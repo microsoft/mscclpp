@@ -159,7 +159,9 @@ class CollectiveProgram:
         self.buffer_alignment = spec.buffer_alignment
         self.min_message_size = spec.min_message_size
         self.max_message_size = spec.max_message_size
-        assert self.protocol == "Simple" or self.protocol == "LL", f"Given protocol: {self.protocol}. Must be either Simple, LL"
+        assert (
+            self.protocol == "Simple" or self.protocol == "LL"
+        ), f"Given protocol: {self.protocol}. Must be either Simple, LL"
         self.buffers = self.collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
@@ -181,7 +183,9 @@ class CollectiveProgram:
         elif collective_name.lower() == "alltoall":
             return AllToAll(world_size, chunk_factor, in_place)
         else:
-            raise ValueError(f"Unknown collective name: {collective_name}. Supported collectives: allgather, allreduce, reducescatter, alltoall")
+            raise ValueError(
+                f"Unknown collective name: {collective_name}. Supported collectives: allgather, allreduce, reducescatter, alltoall"
+            )
 
     def __enter__(self):
         """Enter the program context and set this as the active program.

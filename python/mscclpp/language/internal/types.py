@@ -4,21 +4,6 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Set
-from collections import defaultdict
-
-
-@dataclass(frozen=True)
-class AlgoSpec:
-    name: str
-    collective: str
-    nranks_per_node: int
-    world_size: int
-    instances: int
-    protocol: str
-    num_threads_per_block: int
-    min_message_size: int
-    max_message_size: int
-    tags: dict
 
 
 class SyncType(Enum):

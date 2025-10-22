@@ -9,6 +9,7 @@ class ReplicationPolicy(Enum):
     def __str__(self):
         return self.value
 
+
 @dataclass(frozen=True)
 class AlgoSpec:
     name: str
