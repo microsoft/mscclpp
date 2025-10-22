@@ -3,6 +3,16 @@
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
+
+# -- Path setup --------------------------------------------------------------
+import sys
+from pathlib import Path
+
+# Add the python package to sys.path so Sphinx can find it
+project_root = Path(__file__).parent.parent
+python_path = project_root / "python"
+sys.path.insert(0, str(python_path))
+
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
