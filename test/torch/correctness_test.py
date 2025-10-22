@@ -62,8 +62,10 @@ def _init_dist():
     if "RANK" not in os.environ or "WORLD_SIZE" not in os.environ:
         raise RuntimeError("Distributed environment variables not set. Run with torchrun.")
     backend = "nccl"
-    dist.init_process_group(backend=backend)
+    rank = int(os.environ["RANK"])
+    world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ["RANK"]))
+    dist.init_process_group(backend=backend, rank=rank, world_size=world_size, device_id=local_rank)
     torch.cuda.set_device(local_rank)
 
 
@@ -174,6 +176,10 @@ def main():
         run_reducescatter_test(args.num_elems, args.iters, dtype, rtol, atol)
     else:
         raise ValueError("Unknown collective")
+    dist.barrier()
+    if dist.get_rank() == 0:
+        print(f"{args.collective} test passed for dtype={dtype} num_elems={args.num_elems} iters={args.iters}")
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":
