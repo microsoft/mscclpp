@@ -60,9 +60,9 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
   return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[0], ival, false);
 #else
   return __fp8_e4m3(__hadd(__half(a), __half(b)));
@@ -77,9 +77,9 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
   return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[0], ival, false);
 #else
   return __fp8_e5m2(__hadd(__half(a), __half(b)));
@@ -95,9 +95,9 @@ MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
   return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[1], ival, false);
 }
 
@@ -117,9 +117,9 @@ MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
   return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[1], ival, false);
 }
 
@@ -1175,8 +1175,8 @@ class ExecutionKernel {
 #if defined(__FP8_TYPES_EXIST__)
       case DataType::FP8_E4M3:
         executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize,
-            plan, semaphores, flag
+            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -1186,8 +1186,8 @@ class ExecutionKernel {
         break;
       case DataType::FP8_E5M2:
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize,
-            plan, semaphores, flag
+            rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());

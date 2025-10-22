@@ -152,9 +152,9 @@ __forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
   return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[0], ival, false);
 #elif !defined(__HIP_PLATFORM_AMD__)
   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
@@ -174,7 +174,9 @@ __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
   return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[1], ival, false);
 #elif !defined(__HIP_PLATFORM_AMD__)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
@@ -216,9 +218,9 @@ __forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   typedef float __attribute__((ext_vector_type(2))) float2_t;
   float2_t v;
   uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v) :
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)),
-               "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
   return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[0], ival, false);
 #elif !defined(__HIP_PLATFORM_AMD__)
   // NVIDIA CUDA FP8 addition
@@ -378,28 +380,28 @@ __forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
 
   if constexpr (std::is_same_v<ScalarT, __fp8_e4m3>) {
     // E4M3 using fp8 conversion - process low word (false) and high word (true)
-    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_low) :
-                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)),
-                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_low)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
     uint16_t result_low = __builtin_amdgcn_cvt_pk_fp8_f32(v_low[0], v_low[1], ival, false);
 
-    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_high) :
-                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)),
-                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_high)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
     uint16_t result_high = __builtin_amdgcn_cvt_pk_fp8_f32(v_high[0], v_high[1], ival, false);
 
     uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
     return static_cast<int>(result);
-  } else { // __fp8_e5m2
+  } else {  // __fp8_e5m2
     // E5M2 using bf8 conversion - process low word (false) and high word (true)
-    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_low) :
-                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)),
-                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_low)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
     uint16_t result_low = __builtin_amdgcn_cvt_pk_bf8_f32(v_low[0], v_low[1], ival, false);
 
-    asm volatile("v_pk_add_f32 %0, %1, %2" : "=v"(v_high) :
-                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)),
-                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_high)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
     uint16_t result_high = __builtin_amdgcn_cvt_pk_bf8_f32(v_high[0], v_high[1], ival, false);
 
     uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
@@ -437,17 +439,18 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 #endif
 
   // Define the vectorized computation type based on the element type
-  using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
-                   std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162,
+  using CompType = typename std::conditional_t<
+      std::is_same_v<T, __half>, __half2,
+      std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162,
 #if defined(__FP8_TYPES_EXIST__)
-                   std::conditional_t<std::is_same_v<T, __fp8_e4m3>, __fp8x4_e4m3,
-                   std::conditional_t<std::is_same_v<T, __fp8_e5m2>, __fp8x4_e5m2,
+                         std::conditional_t<std::is_same_v<T, __fp8_e4m3>, __fp8x4_e4m3,
+                                            std::conditional_t<std::is_same_v<T, __fp8_e5m2>, __fp8x4_e5m2,
 #endif
-                   T
+                                                               T
 #if defined(__FP8_TYPES_EXIST__)
-                   >>>>;
+                                                               >>>>;
 #else
-                   >>;
+                         >>;
 #endif
   return cal_vectors_helper<CompType, OpType>(a, b);
 }

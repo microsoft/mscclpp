@@ -85,9 +85,9 @@ struct NvlsAdapter {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       int nBlocks = nRanksPerNode;
       int nThreadsPerBlock = 1024;
-      allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
-                                                              channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-                                                              nRanksPerNode);
+      allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
+                                                              nvlsOutChannels, channelInOffset, channelOutOffset,
+                                                              nelems * sizeof(T), rank, nRanksPerNode);
       return cudaGetLastError();
     }
   }
@@ -150,11 +150,11 @@ struct Allreduce8Adapter {
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
   Op reduceOp = getReduceOp(op);
-  
+
 #if defined(__FP8_TYPES_EXIST__)
   // NVLS adapters don't support FP8 types (multimem instructions don't support FP8)
   constexpr bool isNvlsAdapter = std::is_same_v<Adapter<SUM, float>, NvlsAdapter<SUM, float>> ||
-                                  std::is_same_v<Adapter<SUM, float>, NvlsWithCopyAdapter<SUM, float>>;
+                                 std::is_same_v<Adapter<SUM, float>, NvlsWithCopyAdapter<SUM, float>>;
   if constexpr (isNvlsAdapter) {
     if (dtype == ncclFp8E4M3 || dtype == ncclFp8E5M2) {
       return nullptr;  // FP8 not supported by NVLS hardware
