@@ -40,6 +40,7 @@ jobs:
           cd docs
           rm -rf doxygen _build py_api
           doxygen
+          ls -al ../python/mscclpp
           PYTHONPATH=../python make html
           touch _build/html/.nojekyll
       - name: Upload artifacts
