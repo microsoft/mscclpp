@@ -31,6 +31,6 @@ jobs:
           cd docs
           rm -rf doxygen _build py_api
           doxygen
-          ls -al ../python/mscclpp
-          PYTHONPATH=../python sphinx-build -M html . _build
+          python3 -m pip list | grep breathe
+          make html
           touch _build/html/.nojekyll

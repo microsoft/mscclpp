@@ -13,22 +13,6 @@ project_root = Path(__file__).parent.parent
 python_path = project_root / "python"
 sys.path.insert(0, str(python_path))
 
-# Debug: Print the paths to see what's happening
-print(f"DEBUG: __file__ = {__file__}")
-print(f"DEBUG: project_root = {project_root}")
-print(f"DEBUG: python_path = {python_path}")
-print(f"DEBUG: python_path exists = {python_path.exists()}")
-print(f"DEBUG: mscclpp dir exists = {(python_path / 'mscclpp').exists()}")
-print(f"DEBUG: sys.path[0] = {sys.path[0]}")
-
-# # Try to import mscclpp to see what happens
-# try:
-#     import mscclpp
-#     print("DEBUG: Successfully imported mscclpp")
-# except Exception as e:
-#     import os
-#     print(f"DEBUG: Failed to import mscclpp: {e}")
-#     print(f"DEBUG: Current working directory: {os.getcwd()}")
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
