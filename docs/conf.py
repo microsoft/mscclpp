@@ -9,14 +9,10 @@
 project = "mscclpp"
 copyright = "2025, MSCCL++ Team"
 author = "MSCCL++ Team"
-release = "v0.8.0"
+release = "v" + open("../VERSION").read().strip()
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
-
-import os, sys
-
-sys.path.insert(0, os.path.abspath("../python"))
 
 extensions = [
     "breathe",
