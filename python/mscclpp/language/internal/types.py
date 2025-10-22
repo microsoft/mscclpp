@@ -4,7 +4,6 @@
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Set
-from collections import defaultdict
 
 
 class SyncType(Enum):

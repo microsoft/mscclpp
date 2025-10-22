@@ -50,6 +50,11 @@ class ProxyService : public BaseProxyService {
   /// @return The ID of the memory region.
   MemoryId addMemory(RegisteredMemory memory);
 
+  /// Get the next available memory ID.
+  /// @param count The number of consecutive IDs required.
+  /// @return The first ID of an available range [first, first + count).
+  MemoryId nextMemoryId(uint32_t count) const;
+
   /// Get a semaphore by ID.
   /// @param id The ID of the semaphore.
   /// @return The semaphore.
