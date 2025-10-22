@@ -4,3 +4,4 @@ myst_parser==4.0.1
 sphinx_rtd_theme
 sphinxcontrib-mermaid
 sphinx-autodoc-typehints
+setuptools_scm
