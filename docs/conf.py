@@ -21,13 +21,14 @@ print(f"DEBUG: python_path exists = {python_path.exists()}")
 print(f"DEBUG: mscclpp dir exists = {(python_path / 'mscclpp').exists()}")
 print(f"DEBUG: sys.path[0] = {sys.path[0]}")
 
-# Try to import mscclpp to see what happens
-try:
-    import mscclpp
-    print("DEBUG: Successfully imported mscclpp")
-except Exception as e:
-    print(f"DEBUG: Failed to import mscclpp: {e}")
-    print(f"DEBUG: Current working directory: {os.getcwd()}")
+# # Try to import mscclpp to see what happens
+# try:
+#     import mscclpp
+#     print("DEBUG: Successfully imported mscclpp")
+# except Exception as e:
+#     import os
+#     print(f"DEBUG: Failed to import mscclpp: {e}")
+#     print(f"DEBUG: Current working directory: {os.getcwd()}")
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
@@ -57,7 +58,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 # only mock the C-extension when using the source tree
-autodoc_mock_imports = ["mscclpp._mscclpp", "cupy", "mpi4py", "numpy", "sortedcontainers"]
+autodoc_mock_imports = ["mscclpp._version", "mscclpp._mscclpp", "cupy", "mpi4py", "numpy", "sortedcontainers"]
 autodoc_typehints = "description"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
