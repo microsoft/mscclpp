@@ -8,28 +8,29 @@
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
-// AMD FP8 support
-#if defined(__HIP_FP8_TYPES_EXIST__)
-#include <hip/hip_fp8.h>
-#endif
 
 using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
-// Define FP8 types for AMD
-#if defined(__HIP_FP8_TYPES_EXIST__)
+// AMD FP8 support - hip_fp8.h provides __hip_fp8_e4m3_fnuz and __hip_fp8_e5m2_fnuz
+// Only available on gfx942 and newer architectures
+// Check if hip/hip_fp8.h is available (ROCm 6.0+)
+#if __has_include(<hip/hip_fp8.h>)
+#include <hip/hip_fp8.h>
+
+// Create aliases matching CUDA naming convention for cross-platform compatibility
 using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
 
-// HIP doesn't have native FP8 vector types, use storage types like RCCL
-using __fp8x2_e4m3 = uint16_t;
-using __fp8x2_e5m2 = uint16_t;
-using __fp8x4_e4m3 = uint32_t;
-using __fp8x4_e5m2 = uint32_t;
+// HIP FP8 vector types use storage types (from hip/amd_detail/amd_hip_fp8.h):
+using __fp8x2_e4m3 = __hip_fp8x2_storage_t;  // uint16_t
+using __fp8x2_e5m2 = __hip_fp8x2_storage_t;  // uint16_t
+using __fp8x4_e4m3 = __hip_fp8x4_storage_t;  // uint32_t
+using __fp8x4_e5m2 = __hip_fp8x4_storage_t;  // uint32_t
 
 #define __CUDA_FP8_TYPES_EXIST__
-#endif
+#endif  // __has_include(<hip/hip_fp8.h>)
 
 #else  // NVIDIA
 

@@ -363,6 +363,10 @@ __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
 
 #if defined(__HIP_PLATFORM_AMD__) && defined(__CUDA_FP8_TYPES_EXIST__) && defined(__gfx942__)
 // Helper function to perform FP8 vector addition - dispatches based on scalar type
+// Uses AMD builtins from hip/amd_detail/amd_hip_fp8.h:
+//   - __builtin_amdgcn_cvt_pk_f32_fp8/bf8: Convert 2 FP8 values to 2 floats
+//   - __builtin_amdgcn_cvt_pk_fp8/bf8_f32: Convert 2 floats to 2 FP8 values
+// The 'word' parameter (false/true) selects low/high 16-bit word from uint32_t
 template <typename ScalarT>
 __forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
   uint32_t a32 = static_cast<uint32_t>(a);
