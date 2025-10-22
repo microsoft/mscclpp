@@ -29,6 +29,8 @@ jobs:
       - name: Build docs
         run: |
           cd docs
+          rm -rf doxygen _build py_api
           doxygen
-          make html
+          ls -al ../python/mscclpp
+          PYTHONPATH=../python make html
           touch _build/html/.nojekyll
