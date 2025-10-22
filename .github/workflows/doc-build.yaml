@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
+          sudo apt-get install -y doxygen=1.9.1-* graphviz
           pip install -r docs/requirements.txt
 
       - name: Build docs
