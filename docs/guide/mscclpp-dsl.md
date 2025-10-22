@@ -258,7 +258,6 @@ If different ranks allocate their input or output buffers at different offsets, 
 :alt: diagram zero copy offset executor
 :align: center
 ```
-Input/Output Offset Consistency Across Ranks
 
 As shown in the figure, each channel stores only the base address of the registered memory region (RegMem) and assumes that the buffer pointer (e.g., sendbuff) is at the same offset (DIFF) from the base pointer (SrcBasePtr) across all ranks. This design removes the need for offset synchronization, preserving zero-copy efficiency and minimizing setup overhead.
 
