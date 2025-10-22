@@ -71,7 +71,7 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -100,7 +100,7 @@ struct NvlsWithCopyAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     // FP8 types are not supported by NVLS hardware
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
 #if defined(__HIP_PLATFORM_AMD__)
@@ -151,7 +151,7 @@ template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
   Op reduceOp = getReduceOp(op);
   
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
   // NVLS adapters don't support FP8 types (multimem instructions don't support FP8)
   constexpr bool isNvlsAdapter = std::is_same_v<Adapter<SUM, float>, NvlsAdapter<SUM, float>> ||
                                   std::is_same_v<Adapter<SUM, float>, NvlsWithCopyAdapter<SUM, float>>;
@@ -171,7 +171,7 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
     } else if (dtype == ncclBfloat16) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     } else if (dtype == ncclFp8E4M3) {
       return Adapter<SUM, __fp8_e4m3>::call;
     } else if (dtype == ncclFp8E5M2) {
@@ -191,7 +191,7 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
     } else if (dtype == ncclBfloat16) {
       return Adapter<MIN, __bfloat16>::call;
 #endif
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     } else if (dtype == ncclFp8E4M3) {
       return Adapter<MIN, __fp8_e4m3>::call;
     } else if (dtype == ncclFp8E5M2) {

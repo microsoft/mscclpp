@@ -127,7 +127,7 @@ __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b
   return __hmin2(a, b);
 }
 
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
 // FP8 E4M3 clipping function
 template <>
 __forceinline__ __device__ __fp8_e4m3 clip(__fp8_e4m3 val) {
@@ -325,7 +325,7 @@ __forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m
   return *reinterpret_cast<__fp8x4_e5m2*>(result);
 }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-#endif  // __CUDA_FP8_TYPES_EXIST__
+#endif  // __FP8_TYPES_EXIST__
 
 template <typename T, Op OpType>
 __forceinline__ __device__ T cal_elements(T a, T b) {
@@ -361,7 +361,7 @@ __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
   return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
 
-#if defined(__HIP_PLATFORM_AMD__) && defined(__CUDA_FP8_TYPES_EXIST__) && defined(__gfx942__)
+#if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
 // Helper function to perform FP8 vector addition - dispatches based on scalar type
 // Uses AMD builtins from hip/amd_detail/amd_hip_fp8.h:
 //   - __builtin_amdgcn_cvt_pk_f32_fp8/bf8: Convert 2 FP8 values to 2 floats
@@ -410,7 +410,7 @@ __forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
 
 template <typename T, Op OpType, typename DataType>
 __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
-#if defined(__HIP_PLATFORM_AMD__) && defined(__CUDA_FP8_TYPES_EXIST__) && defined(__gfx942__)
+#if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
   // For FP8 types on HIP gfx942, use specialized helper that dispatches based on scalar type
   if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
     if constexpr (OpType == SUM) {
@@ -439,12 +439,12 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
   // Define the vectorized computation type based on the element type
   using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
                    std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162,
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
                    std::conditional_t<std::is_same_v<T, __fp8_e4m3>, __fp8x4_e4m3,
                    std::conditional_t<std::is_same_v<T, __fp8_e5m2>, __fp8x4_e5m2,
 #endif
                    T
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
                    >>>>;
 #else
                    >>;

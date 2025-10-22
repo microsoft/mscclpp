@@ -248,7 +248,7 @@ typedef enum {
   ncclFloat = 7,
   ncclFloat64 = 8,
   ncclDouble = 8,
-#if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__FP8_TYPES_EXIST__)
   ncclBfloat16 = 9,
   ncclFp8E4M3 = 10,
   ncclFp8E5M2 = 11,
@@ -282,11 +282,11 @@ static inline size_t ncclTypeSize(ncclDataType_t type) {
     case ncclBfloat16:
       return 2;
 #endif  // defined(__CUDA_BF16_TYPES_EXIST__)
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     case ncclFp8E4M3:
     case ncclFp8E5M2:
       return 1;
-#endif  // defined(__CUDA_FP8_TYPES_EXIST__)
+#endif  // defined(__FP8_TYPES_EXIST__)
     case ncclNumTypes:
       return 0;
   }

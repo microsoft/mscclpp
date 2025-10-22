@@ -29,7 +29,7 @@ using __fp8x2_e5m2 = __hip_fp8x2_storage_t;  // uint16_t
 using __fp8x4_e4m3 = __hip_fp8x4_storage_t;  // uint32_t
 using __fp8x4_e5m2 = __hip_fp8x4_storage_t;  // uint32_t
 
-#define __CUDA_FP8_TYPES_EXIST__
+#define __FP8_TYPES_EXIST__
 #endif  // __has_include(<hip/hip_fp8.h>)
 
 #else  // NVIDIA
@@ -47,7 +47,7 @@ using __fp8x2_e4m3 = __nv_fp8x2_e4m3;
 using __fp8x2_e5m2 = __nv_fp8x2_e5m2;
 using __fp8x4_e4m3 = __nv_fp8x4_e4m3;
 using __fp8x4_e5m2 = __nv_fp8x4_e5m2;
-#define __CUDA_FP8_TYPES_EXIST__
+#define __FP8_TYPES_EXIST__
 #endif
 
 using __bfloat16 = __nv_bfloat16;
@@ -115,7 +115,7 @@ using bf16x4 = VectorType<__bfloat16, 4>;
 using f16x8 = VectorType<__half, 8>;
 using bf16x8 = VectorType<__bfloat16, 8>;
 
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
 // FP8 vector types
 using fp8_e4m3x2 = VectorType<__fp8_e4m3, 2>;
 using fp8_e4m3x4 = VectorType<__fp8_e4m3, 4>;

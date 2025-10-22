@@ -218,7 +218,7 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
       executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::BFLOAT16, *plan, stream);
       break;
-#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if defined(__FP8_TYPES_EXIST__)
     case ncclFp8E4M3:
       executor->execute(rank, (__fp8_e4m3*)sendbuff, (__fp8_e4m3*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::FP8_E4M3, *plan, stream);
