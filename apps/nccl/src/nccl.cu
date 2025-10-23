@@ -102,26 +102,26 @@ static inline int mscclppNcclDlopenInit() {
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
-             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t (*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t (*)(ncclComm_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t (*)(ncclComm_t, int*));
+             ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllGather,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Broadcast,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Reduce,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
-             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
-             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
+             ncclResult_t(*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t(*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t(*)());
 
   return dlopenSuccess;
 }
@@ -281,10 +281,12 @@ static void registerCustomizedAlgo() {
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
+  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo = std::make_shared<AllreduceNvlsPacket>();
   collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
+  collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -294,10 +296,11 @@ static mscclpp::Algorithm algoSelector(
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
+  static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+  static bool isNvlsSupported = mscclpp::isNvlsSupported();
   bool isCuMemMapAllocated =
       mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
-  bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
+  bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
@@ -312,21 +315,25 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
+    if (messageSize <= (1 << 15) && isNvlsSupported) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
+    }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    } else if (useNvlsWithZeroCopy) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
-    } else if (mscclpp::isNvlsSupported()) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
-    } else {
-#if defined(__HIP_PLATFORM_AMD__)
-      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-#else
-      if (!mscclppNcclDlopenSharedLib) {
-        return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-      }
-#endif
     }
+    if (useNvlsWithZeroCopy) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
+    }
+    if (mscclpp::isNvlsSupported()) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
+    }
+#if defined(__HIP_PLATFORM_AMD__)
+    return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+#else
+    if (!mscclppNcclDlopenSharedLib) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+    }
+#endif
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl/rccl");
   return mscclpp::Algorithm();
