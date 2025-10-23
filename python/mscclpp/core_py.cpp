@@ -144,6 +144,7 @@ void register_core(nb::module_& m) {
       .def_static("deserialize", &RegisteredMemory::deserialize, nb::arg("data"));
 
   nb::class_<Endpoint>(m, "Endpoint")
+      .def("config", &Endpoint::config)
       .def("transport", &Endpoint::transport)
       .def("device", &Endpoint::device)
       .def("max_write_queue_size", &Endpoint::maxWriteQueueSize)
@@ -192,7 +193,7 @@ void register_core(nb::module_& m) {
       .def_static("create", &Context::create)
       .def(
           "register_memory",
-          [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
+          [](Context* self, uintptr_t ptr, size_t size, TransportFlags transports) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
@@ -228,10 +229,6 @@ void register_core(nb::module_& m) {
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
       .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag") = 0)
-      .def("connect",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(const Endpoint&, int, int)>(
-               &Communicator::connect),
-           nb::arg("localEndpoint"), nb::arg("remoteRank"), nb::arg("tag") = 0)
       .def("connect", [](Communicator* self, const EndpointConfig& localConfig, int remoteRank,
                          int tag = 0) { return self->connect(localConfig, remoteRank, tag); })
       .def(
