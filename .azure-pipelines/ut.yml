@@ -8,6 +8,14 @@ pr:
     - main
     - release/*
   drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - apps/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
 
 jobs:
 - job: UnitTestA100
