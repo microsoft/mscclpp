@@ -13,6 +13,7 @@ You can find the followings from this documentation.
 - **Tutorials:** A step-by-step guide for GPU communication using MSCCL++. :doc:`🔗 <tutorials>`
 - **Programming Guide:** Advanced topics and best practices for using MSCCL++. :doc:`🔗 <programming_guide>`
 - **C++ API Reference:** Detailed documentation of the MSCCL++ C++ API. :doc:`🔗 <cpp_api>`
+- **Python API Reference:** Detailed documentation of the MSCCL++ Python API. :doc:`🔗 <py_api>`
 
 .. toctree::
    :maxdepth: 1
