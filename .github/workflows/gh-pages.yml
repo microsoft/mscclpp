@@ -26,6 +26,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Fetch full history for accurate version info
+          fetch-depth: 0
       - name: Setup python
         uses: actions/setup-python@v5
         with:
