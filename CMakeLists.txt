@@ -1,6 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+cmake_minimum_required(VERSION 3.25)
+project(mscclpp LANGUAGES CXX)
+
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" MSCCLPP_VERSION_CONTENT)
 if(MSCCLPP_VERSION_CONTENT MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)")
     set(MSCCLPP_MAJOR "${CMAKE_MATCH_1}")
@@ -13,8 +16,27 @@ endif()
 set(MSCCLPP_SOVERSION ${MSCCLPP_MAJOR})
 set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 
-cmake_minimum_required(VERSION 3.25)
-project(mscclpp LANGUAGES CXX)
+find_package(Git)
+set(GIT_HASH "UNKNOWN")
+if(Git_FOUND)
+  execute_process(
+    COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE _git_out
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if(NOT _git_out STREQUAL "")
+    set(GIT_HASH "${_git_out}")
+  endif()
+else()
+    message(WARNING "Git not found, setting GIT_HASH to 'UNKNOWN'")
+endif()
+
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/include/mscclpp/version.hpp.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/include/mscclpp/version.hpp"
+  @ONLY
+)
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
