@@ -330,6 +330,7 @@ static mscclpp::Algorithm algoSelector(
     bool isFp8 = dtype == ncclFp8E4M3 || dtype == ncclFp8E5M2;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
+      // NVLS does not support FP8 on devices with compute capability < 10
       useNvls = false;
     }
 #endif
