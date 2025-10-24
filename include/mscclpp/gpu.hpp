@@ -93,6 +93,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaIpcGetMemHandle(...) hipIpcGetMemHandle(__VA_ARGS__)
 #define cudaIpcOpenMemHandle(...) hipIpcOpenMemHandle(__VA_ARGS__)
 #define cudaIpcCloseMemHandle(...) hipIpcCloseMemHandle(__VA_ARGS__)
+#define cudaLaunchKernel(...) hipLaunchKernel(__VA_ARGS__)
 
 #define cuGetErrorString(...) hipDrvGetErrorString(__VA_ARGS__)
 #define cuMemAddressReserve(...) hipMemAddressReserve(__VA_ARGS__)

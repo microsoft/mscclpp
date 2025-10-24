@@ -36,6 +36,11 @@ void CudaIpcStream::memcpyH2D(void *dst, const void *src, size_t nbytes) {
   dirty_ = true;
 }
 
+void CudaIpcStream::launch(const void *func, dim3 gridDim, dim3 blockDim, void **args, size_t sharedMem) {
+  setStreamIfNeeded();
+  MSCCLPP_CUDATHROW(cudaLaunchKernel(func, gridDim, blockDim, args, sharedMem, *stream_));
+}
+
 void CudaIpcStream::sync() {
   setStreamIfNeeded();
   if (dirty_) {
