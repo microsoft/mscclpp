@@ -13,8 +13,8 @@
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/packet_device.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <type_traits>
 
 #if defined(ENABLE_NPKIT)
