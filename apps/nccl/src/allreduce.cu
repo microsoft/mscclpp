@@ -71,14 +71,9 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-#if defined(__FP8_TYPES_EXIST__)
-    // FP8 types are not supported by NVLS hardware
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1000
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-#if defined(__HIP_PLATFORM_AMD__)
-      return hipErrorNotSupported;
-#else
       return cudaErrorNotSupported;
-#endif
     } else
 #endif
     {
@@ -100,14 +95,9 @@ struct NvlsWithCopyAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
-#if defined(__FP8_TYPES_EXIST__)
-    // FP8 types are not supported by NVLS hardware
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1000
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-#if defined(__HIP_PLATFORM_AMD__)
-      return hipErrorNotSupported;
-#else
       return cudaErrorNotSupported;
-#endif
     } else
 #endif
     {
@@ -170,18 +160,6 @@ struct AllreduceNvlsPacketAdapter {
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
   Op reduceOp = getReduceOp(op);
-
-#if defined(__FP8_TYPES_EXIST__)
-  // NVLS adapters don't support FP8 types (multimem instructions don't support FP8)
-  constexpr bool isNvlsAdapter = std::is_same_v<Adapter<SUM, float>, NvlsAdapter<SUM, float>> ||
-                                 std::is_same_v<Adapter<SUM, float>, NvlsWithCopyAdapter<SUM, float>>;
-  if constexpr (isNvlsAdapter) {
-    if (dtype == ncclFp8E4M3 || dtype == ncclFp8E5M2) {
-      return nullptr;  // FP8 not supported by NVLS hardware
-    }
-  }
-#endif
-
   if (reduceOp == SUM) {
     if (dtype == ncclFloat16) {
       return Adapter<SUM, half>::call;
