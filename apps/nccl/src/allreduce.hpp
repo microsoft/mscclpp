@@ -136,12 +136,15 @@ __forceinline__ __device__ __fp8_e4m3 clip(__fp8_e4m3 val) {
   return val;
 }
 
-// FP8 E5M2 clipping function
+// FP8 E5M2 clipping function - prevent infinities by clamping to max finite value
 template <>
 __forceinline__ __device__ __fp8_e5m2 clip(__fp8_e5m2 val) {
-  // FP8 E5M2 has range [-57344, 57344], has infinities
-  // Built-in saturation in FP8 arithmetic
-  return val;
+  // FP8 E5M2 has infinities - clamp to max finite value to prevent overflow
+  // Max finite value for E5M2 is 57344.0f (0x7B), min is -57344.0f (0xFB)
+  float fval = float(val);
+  fval = fmaxf(fval, -57344.0f);
+  fval = fminf(fval, 57344.0f);
+  return __fp8_e5m2(fval);
 }
 
 // FP8 E4M3 addition using __hadd for efficiency (single element)
