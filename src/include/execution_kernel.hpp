@@ -57,8 +57,7 @@ template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
   // Optimized assembly for gfx942
-  typedef float __attribute__((ext_vector_type(2))) float2_t;
-  float2_t v;
+  float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
@@ -74,8 +73,7 @@ template <>
 MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
   // Optimized assembly for gfx942 (bfloat8)
-  typedef float __attribute__((ext_vector_type(2))) float2_t;
-  float2_t v;
+  float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
@@ -92,8 +90,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 
 // E4M3 vectorized addition for 2 elements
 MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
-  typedef float __attribute__((ext_vector_type(2))) float2_t;
-  float2_t v;
+  float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
@@ -114,8 +111,7 @@ MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e4m3(uint32_t a, uint32_t b) {
 
 // E5M2 vectorized addition for 2 elements
 MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
-  typedef float __attribute__((ext_vector_type(2))) float2_t;
-  float2_t v;
+  float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
