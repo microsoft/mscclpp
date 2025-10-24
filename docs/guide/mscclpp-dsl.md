@@ -244,5 +244,22 @@ The following picture shows the overall workflow for running with MSCCL++ DSL:
 Overall workflow for running with MSCCL++ DSL
 ```
 
+## Executor limitations
+In MSCCL++, the executor does not communicate or synchronize memory offsets between ranks. This means that for zero-copy algorithms, all ranks must use identical offsets when specifying the base address of their input and output buffers. For non–zero-copy algorithms, where communication occurs exclusively through a scratch buffer, symmetric memory layout is not required.
+
+More concretely, for zero copy:
+- The input and output buffer offset (the distance from the base memory region to where the input data begins) must be the same across all ranks.
+- The offset between the input and output buffers may differ (i.e., input and output regions can be located at different positions, as long as these positions are consistent across ranks).
+
+If different ranks allocate their input or output buffers at different offsets, the executor will not be able to correctly interpret the shared memory layout, which will likely lead to incorrect behavior or runtime errors.
+
+```{figure} ../figs/zero_copy_offset_diagram.png
+:name: diagram zero copy offset executor
+:alt: diagram zero copy offset executor
+:align: center
+```
+
+As shown in the figure, each channel stores only the base address of the registered memory region (RegMem) and assumes that the buffer pointer (e.g., sendbuff) is at the same offset (DIFF) from the base pointer (SrcBasePtr) across all ranks. This design removes the need for offset synchronization, preserving zero-copy efficiency and minimizing setup overhead.
+
 ## All2All support
 Currently, the DSL only supports the static all2all algorithm. To support all2allv, we need to obtain the send/receive sizes at runtime. This may require using placeholders in the JSON execution plan, which would be replaced with the actual sizes during execution. If we can make the chunk size variable, the same approach could be used to support all2allv.
