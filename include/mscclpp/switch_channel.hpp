@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef MSCCLPP_NVLS_HPP_
-#define MSCCLPP_NVLS_HPP_
+#ifndef MSCCLPP_SWITCH_CHANNEL_HPP_
+#define MSCCLPP_SWITCH_CHANNEL_HPP_
 
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/switch_channel_device.hpp>
@@ -68,4 +68,4 @@ std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicat
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_NVLS_HPP_
+#endif  // MSCCLPP_SWITCH_CHANNEL_HPP_
