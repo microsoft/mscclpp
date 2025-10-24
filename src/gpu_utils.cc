@@ -176,7 +176,8 @@ size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
   prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
   prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   prop.location.id = deviceId;
-  prop.requestedHandleTypes = (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
+  prop.requestedHandleTypes =
+      (CUmemAllocationHandleType)(CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC);
   cuMemGetAllocationGranularity(&gran, &prop, granFlag);
   return gran;
 }
