@@ -62,7 +62,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[0], ival, false);
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false);
 #else
   return __fp8_e4m3(__hadd(__half(a), __half(b)));
 #endif
@@ -78,7 +78,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[0], ival, false);
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false);
 #else
   return __fp8_e5m2(__hadd(__half(a), __half(b)));
 #endif
@@ -95,7 +95,7 @@ MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v[0], v[1], ival, false);
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
 }
 
 // E4M3 vectorized addition for 4 elements
@@ -116,7 +116,7 @@ MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v[0], v[1], ival, false);
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false);
 }
 
 // E5M2 vectorized addition for 4 elements
