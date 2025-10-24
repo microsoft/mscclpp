@@ -256,22 +256,14 @@ def compile(
     """Compile a MSCCL++ program from a high-level algorithm description.
     Args:
         algo: The high-level algorithm description (e.g., a function or class).
-        name (str): The name of the program.
-        collective (str): The collective operation type (e.g., "allreduce").
+        algo_spec (AlgoSpec): Algorithm specification containing collective type, 
+            world size, ranks per node, instances, protocol, and other configuration.
         rank (int): The rank of the current process.
-        nranks_per_node (int): Number of ranks per node.
-        world_size (int): Total number of ranks in the program.
-        instances (int): Number of instances to replicate.
-        protocol (str): Communication protocol ("Simple" or "LL").
-        num_threads_per_block (int): Number of threads per GPU thread block.
-        min_msg_size (int): Minimum message size for this program.
-        max_msg_size (int): Maximum message size for this program.
-        tags (dict): Additional tags or metadata for the program.
-        **kwargs: Additional keyword arguments for future extensions.
+        **kwargs: Additional keyword arguments passed to the algorithm function.
     Returns:
-        The compiled program object.
+        ExecutionPlanHandle: The compiled execution plan handle.
     Raises:
-        NotImplementedError: If the compilation logic is not implemented.
+        ValueError: If the 'algo' argument is not callable.
     """
     if not callable(algo):
         raise ValueError("The 'algo' argument must be a callable (e.g., a function or class).")
