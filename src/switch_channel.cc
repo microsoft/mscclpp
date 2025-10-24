@@ -6,7 +6,7 @@
 
 #include <algorithm>
 #include <mscclpp/core.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/utils.hpp>
 
 #include "api.h"

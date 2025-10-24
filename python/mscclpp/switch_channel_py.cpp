@@ -9,7 +9,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
