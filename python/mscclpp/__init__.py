@@ -287,7 +287,7 @@ def compile(
             {
                 "version": __version__,
                 "algo_name": algo_spec.name,
-                "collective": algo_spec.collective_name,
+                "collective": algo_spec.collective.name,
                 "tags": sorted(algo_spec.tags.items()),
                 "source_hash": source_hash,
                 "envs": {

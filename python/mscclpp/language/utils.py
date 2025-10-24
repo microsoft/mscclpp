@@ -1,5 +1,6 @@
 from enum import Enum
 from dataclasses import dataclass, field
+from mscclpp.language.collectives import Collective
 
 
 class ReplicationPolicy(Enum):
@@ -13,7 +14,7 @@ class ReplicationPolicy(Enum):
 @dataclass(frozen=True)
 class AlgoSpec:
     name: str
-    collective_name: str
+    collective: Collective
     nranks_per_node: int
     world_size: int
     in_place: bool

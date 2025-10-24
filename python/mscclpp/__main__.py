@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from mscclpp.language import default_algos as def_algo
+from mscclpp.language.collectives import *
 from mscclpp.language.utils import AlgoSpec
 
 default_algo_configs = [
@@ -12,7 +13,7 @@ default_algo_configs = [
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
             name="allreduce_2nodes",
-            collective_name="allreduce",
+            collective=AllReduce(16, 1, True),
             nranks_per_node=8,
             world_size=16,
             in_place=True,

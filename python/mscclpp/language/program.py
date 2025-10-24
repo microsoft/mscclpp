@@ -117,23 +117,23 @@ class CollectiveProgram:
 
         This constructor provides an alternative way to create a CollectiveProgram
         using an AlgoSpec object, which contains the complete algorithm specification
-        including collective type, protocol parameters, and optimization settings.
-        The collective operation is automatically instantiated based on the collective_name
-        specified in the spec.
+        including collective instance, protocol parameters, and optimization settings.
+        The collective operation is directly provided through the spec's collective attribute.
 
         Args:
             spec (AlgoSpec): Algorithm specification containing all program parameters
-                and configuration settings.
+                and configuration settings, including a Collective instance.
 
         Raises:
             AssertionError: If protocol is not "Simple" or "LL".
-            ValueError: If collective_name is not supported.
 
         Example:
             >>> from mscclpp.language.utils import AlgoSpec
+            >>> from mscclpp.language.collectives import AllReduce
+            >>> collective = AllReduce(num_ranks=4, chunk_factor=1, inplace=False)
             >>> spec = AlgoSpec(
             ...     name="my_allreduce",
-            ...     collective_name="allreduce",
+            ...     collective=collective,
             ...     world_size=4,
             ...     instances=1,
             ...     protocol="Simple",
@@ -143,9 +143,8 @@ class CollectiveProgram:
             ...     # Define communication operations
             ...     pass
         """
-        collective = self._create_collective_from_name(spec.collective_name, spec.world_size, spec.in_place)
         self.name = spec.name
-        self.collective = collective
+        self.collective = spec.collective
         self.num_ranks = spec.world_size
         self.in_place = spec.in_place
         self.instances = spec.instances

@@ -79,7 +79,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
 def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
     spec = mscclpp.AlgoSpec(
         name="allreduce_nvls",
-        collective_name="allreduce",
+        collective=AllReduce(8, 1, True),
         nranks_per_node=8,
         world_size=world_size,
         in_place=True,
