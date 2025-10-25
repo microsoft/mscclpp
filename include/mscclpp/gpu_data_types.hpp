@@ -8,15 +8,15 @@
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
+#include <hip/hip_version.h>
 
 using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
 // AMD FP8 support - hip_fp8.h provides __hip_fp8_e4m3_fnuz and __hip_fp8_e5m2_fnuz
-// Only available on gfx942 and newer architectures
-// Check if hip/hip_fp8.h is available (ROCm 6.0+)
-#if __has_include(<hip/hip_fp8.h>)
+// Only available on gfx942 and newer architectures (ROCm 6.0+)
+#if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
 #include <hip/hip_fp8.h>
 
 // Create aliases matching CUDA naming convention for cross-platform compatibility
@@ -30,7 +30,7 @@ using __fp8x4_e4m3 = __hip_fp8x4_storage_t;  // uint32_t
 using __fp8x4_e5m2 = __hip_fp8x4_storage_t;  // uint32_t
 
 #define __FP8_TYPES_EXIST__
-#endif  // __has_include(<hip/hip_fp8.h>)
+#endif  // HIP_VERSION_MAJOR >= 6
 
 #else  // NVIDIA
 
