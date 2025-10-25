@@ -170,9 +170,9 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == ncclFp8E4M3) {
+    } else if (dtype == ncclFloat8e4m3) {
       return Adapter<SUM, __fp8_e4m3>::call;
-    } else if (dtype == ncclFp8E5M2) {
+    } else if (dtype == ncclFloat8e5m2) {
       return Adapter<SUM, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
@@ -190,9 +190,9 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
       return Adapter<MIN, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == ncclFp8E4M3) {
+    } else if (dtype == ncclFloat8e4m3) {
       return Adapter<MIN, __fp8_e4m3>::call;
-    } else if (dtype == ncclFp8E5M2) {
+    } else if (dtype == ncclFloat8e5m2) {
       return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {

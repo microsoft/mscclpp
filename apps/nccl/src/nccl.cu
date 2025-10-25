@@ -219,11 +219,11 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
                         mscclpp::DataType::BFLOAT16, *plan, stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
-    case ncclFp8E4M3:
+    case ncclFloat8e4m3:
       executor->execute(rank, (__fp8_e4m3*)sendbuff, (__fp8_e4m3*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::FP8_E4M3, *plan, stream);
       break;
-    case ncclFp8E5M2:
+    case ncclFloat8e5m2:
       executor->execute(rank, (__fp8_e5m2*)sendbuff, (__fp8_e5m2*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::FP8_E5M2, *plan, stream);
       break;
@@ -327,7 +327,7 @@ static mscclpp::Algorithm algoSelector(
   }
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
-    bool isFp8 = dtype == ncclFp8E4M3 || dtype == ncclFp8E5M2;
+    bool isFp8 = dtype == ncclFloat8e4m3 || dtype == ncclFloat8e5m2;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
