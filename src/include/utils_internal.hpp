@@ -74,7 +74,7 @@ class TokenPool : public std::enable_shared_from_this<TokenPool> {
   uint64_t* baseAddr_;
   uint64_t tailMask_;
   std::shared_ptr<uint64_t> tokens_;
-  std::vector<uint64_t> allocationMap_;
+  std::vector<std::bitset<UINT64_WIDTH>> allocationMap_;
 };
 
 }  // namespace mscclpp

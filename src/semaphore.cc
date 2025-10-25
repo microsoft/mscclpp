@@ -29,7 +29,6 @@ struct SemaphoreStub::Impl {
 };
 
 std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Context> context) {
-  // NVLS is not supported in ROCm/HIP
 #if (CUDA_NVLS_API_AVAILABLE)
   if (isNvlsSupported()) {
     return context->pimpl_->getToken();
