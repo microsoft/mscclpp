@@ -533,6 +533,7 @@ class Context : public std::enable_shared_from_this<Context> {
   friend class Endpoint;
   friend class Connection;
   friend class RegisteredMemory;
+  friend class SemaphoreStub;
 };
 
 /// Block of memory that has been registered to a Context.

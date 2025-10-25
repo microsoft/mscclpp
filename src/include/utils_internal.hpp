@@ -64,6 +64,19 @@ struct PairHash {
   }
 };
 
+class TokenPool : public std::enable_shared_from_this<TokenPool> {
+ public:
+  TokenPool(size_t nTokens);
+  std::shared_ptr<uint64_t> getToken();
+
+ private:
+  size_t nToken_;
+  uint64_t* baseAddr_;
+  uint64_t tailMask_;
+  std::shared_ptr<uint64_t> tokens_;
+  std::vector<std::bitset<UINT64_WIDTH>> allocationMap_;
+};
+
 }  // namespace mscclpp
 
 #endif
