@@ -201,7 +201,7 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>&
              algoMapByCollective,
-         std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode,
+         std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
          int worldSize) {
         if (collective != "allgather") {
           return mscclpp::Algorithm();

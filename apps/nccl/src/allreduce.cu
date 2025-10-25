@@ -71,13 +71,20 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-    using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-    int nBlocks = nRanksPerNode;
-    int nThreadsPerBlock = 1024;
-    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
-                                                            channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-                                                            nRanksPerNode);
-    return cudaGetLastError();
+#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#endif
+    {
+      using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
+      int nBlocks = nRanksPerNode;
+      int nThreadsPerBlock = 1024;
+      allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
+                                                              nvlsOutChannels, channelInOffset, channelOutOffset,
+                                                              nelems * sizeof(T), rank, nRanksPerNode);
+      return cudaGetLastError();
+    }
   }
 };
 
@@ -88,21 +95,28 @@ struct NvlsWithCopyAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
-    using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-    if (sizeof(T) * nelems < (1 << 24)) {
-      int nBlocks = nRanksPerNode * 4;
-      int nThreadsPerBlock = 1024;
-      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                               nvlsChannels, nelems * sizeof(T), scratchBufferSize,
-                                                               rank, nRanksPerNode);
-    } else {
-      int nBlocks = nRanksPerNode * 5;
-      int nThreadsPerBlock = 1024;
-      allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                               nvlsChannels, nelems * sizeof(T), scratchBufferSize,
-                                                               rank, nRanksPerNode);
+#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#endif
+    {
+      using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
+      if (sizeof(T) * nelems < (1 << 24)) {
+        int nBlocks = nRanksPerNode * 4;
+        int nThreadsPerBlock = 1024;
+        allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                                 nvlsChannels, nelems * sizeof(T), scratchBufferSize,
+                                                                 rank, nRanksPerNode);
+      } else {
+        int nBlocks = nRanksPerNode * 5;
+        int nThreadsPerBlock = 1024;
+        allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                                 nvlsChannels, nelems * sizeof(T), scratchBufferSize,
+                                                                 rank, nRanksPerNode);
+      }
+      return cudaGetLastError();
     }
-    return cudaGetLastError();
   }
 };
 
@@ -155,6 +169,12 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
     } else if (dtype == ncclBfloat16) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
+#if defined(__FP8_TYPES_EXIST__)
+    } else if (dtype == ncclFloat8e4m3) {
+      return Adapter<SUM, __fp8_e4m3>::call;
+    } else if (dtype == ncclFloat8e5m2) {
+      return Adapter<SUM, __fp8_e5m2>::call;
+#endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<SUM, int>::call;
     } else {
@@ -168,6 +188,12 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == ncclBfloat16) {
       return Adapter<MIN, __bfloat16>::call;
+#endif
+#if defined(__FP8_TYPES_EXIST__)
+    } else if (dtype == ncclFloat8e4m3) {
+      return Adapter<MIN, __fp8_e4m3>::call;
+    } else if (dtype == ncclFloat8e5m2) {
+      return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<MIN, int>::call;

@@ -66,14 +66,14 @@ void AlgorithmCollection::registerAlgorithm(const std::string collective, const 
 }
 
 Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                               size_t messageSize, int nRanksPerNode, int worldSize) {
+                                               size_t messageSize, int dtype, int nRanksPerNode, int worldSize) {
   Algorithm algo;
   if (algoSelector_) {
-    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode, worldSize);
   }
   if (algo.isEmpty()) {
-    algo =
-        fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode,
+                                 worldSize);
   }
   return algo;
 }

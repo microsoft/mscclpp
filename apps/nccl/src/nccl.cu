@@ -212,6 +212,16 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
       executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::BFLOAT16, *plan, stream);
       break;
+#if defined(__FP8_TYPES_EXIST__)
+    case ncclFloat8e4m3:
+      executor->execute(rank, (__fp8_e4m3*)sendbuff, (__fp8_e4m3*)recvbuff, sendBytes, recvBytes,
+                        mscclpp::DataType::FP8_E4M3, *plan, stream);
+      break;
+    case ncclFloat8e5m2:
+      executor->execute(rank, (__fp8_e5m2*)sendbuff, (__fp8_e5m2*)recvbuff, sendBytes, recvBytes,
+                        mscclpp::DataType::FP8_E5M2, *plan, stream);
+      break;
+#endif
     case ncclInt32:
     case ncclUint32:
       executor->execute(rank, (int*)sendbuff, (int*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT32, *plan,
@@ -273,15 +283,26 @@ static void registerCustomizedAlgo() {
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
 }
 
+static std::pair<int, int> getDeviceComputeCapability() {
+  int device;
+  CUDACHECK(cudaGetDevice(&device));
+  int major = 0, minor = 0;
+  CUDACHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+  CUDACHECK(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device));
+  return std::make_pair(major, minor);
+}
+
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode, int worldSize) {
+    std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
+    int worldSize) {
   if (nRanksPerNode != worldSize) {
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
-  static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
-  static bool isNvlsSupported = mscclpp::isNvlsSupported();
+  static const bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+  static const bool isNvlsSupported = mscclpp::isNvlsSupported();
+  static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
   bool isCuMemMapAllocated =
       mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
   bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
@@ -299,16 +320,24 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
-    if (messageSize <= (1 << 15) && isNvlsSupported) {
+    bool useNvls = isNvlsSupported;
+    bool isFp8 = dtype == ncclFloat8e4m3 || dtype == ncclFloat8e5m2;
+#if !defined(__HIP_PLATFORM_AMD__)
+    if (isFp8 && deviceComputeCapability.first < 10) {
+      // NVLS does not support FP8 on devices with compute capability < 10
+      useNvls = false;
+    }
+#endif
+    if (messageSize <= (1 << 15) && useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
     }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
     }
-    if (useNvlsWithZeroCopy) {
+    if (useNvls && useNvlsWithZeroCopy) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls");
     }
-    if (mscclpp::isNvlsSupported()) {
+    if (useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
     }
 #if defined(__HIP_PLATFORM_AMD__)
@@ -631,8 +660,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
-      comm->comm->bootstrap()->getNranks());
+      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), datatype,
+      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"root", std::make_shared<int>(root)},
@@ -692,8 +721,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
-      comm->comm->bootstrap()->getNranks());
+      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), datatype,
+      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"op", std::make_shared<int>(reductionOperation)},
@@ -809,7 +838,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype),
+      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype), datatype,
       comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras = {
