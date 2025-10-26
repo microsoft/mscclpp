@@ -177,9 +177,6 @@ class OperationDependencyGraph:
             node.reset()
 
     def print(self):
-        """
-        Returns the order of operations in the DAG.
-        """
         self.reset()
         self.check()
         
