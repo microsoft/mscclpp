@@ -148,10 +148,11 @@ int main() {
 
   // Map a VA to UC space
   CUCHECK(cuMemAddressReserve((CUdeviceptr*)&uc_va, mcSize, minGran, 0U, 0));
-  cudaMemset(uc_va, 0, mcSize);
   CUCHECK(cuMemMap((CUdeviceptr)uc_va, mcSize, 0, memhandle, 0));
   // set access on UC address
   CUCHECK(cuMemSetAccess((CUdeviceptr)uc_va, mcSize, &accessDesc, 1));
+  // Memset uc space
+  cudaMemset(uc_va, 0, mcSize);
 
   // everyone binds memory to the multicast
   CUCHECK(cuMulticastBindAddr(handle, 0 /*mcOffset*/, (CUdeviceptr)uc_va, mcSize, 0));

@@ -162,6 +162,7 @@ $ python3 -m pip install -r ./python/requirements_cuda12.txt
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
+(nccl-benchmark)=
 ### NCCL/RCCL Benchmark over MSCCL++
 
 We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
@@ -198,3 +199,38 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 ```
 
 On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with the fallback features.
+
+**NOTE:** We also provide an NCCL audit shim library that can be used as a drop-in replacement for `libnccl.so` without modifying the original application. Set `LD_PRELOAD` as a global environment variable will cause applications to load cuda libraries from the host system, which may lead to errors in some environments (such as building pipeline in the CPU machine). To avoid this, you can use the audit shim library instead of setting `LD_PRELOAD` directly.
+```bash
+export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
+export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
+torchrun --nnodes=1 --nproc_per_node=8 your_script.py
+```
+
+## Version Tracking
+
+The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
+
+### Version Format
+
+The package version includes the git commit hash directly in the version string for development builds:
+- **Release version**: `0.7.0`
+- **Development version**: `mscclpp-0.8.0.post1.dev0+gc632fee37.d20251007`
+
+### Checking Version Information
+
+After installation, you can check the version information in several ways:
+
+**From Python:**
+```python
+import mscclpp
+
+# Access individual attributes
+print(f"Version: {mscclpp.__version__}")           # Full version with commit
+Version: 0.8.0.post1.dev0+gc632fee37.d20251007
+
+# Get as dictionary
+mscclpp.version
+{'version': '0.8.0.post1.dev0+gc632fee37.d20251007', 'git_commit': 'g50382c567'}
+```
+

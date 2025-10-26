@@ -16,7 +16,7 @@ void register_port_channel(nb::module_& m) {
       .def("stop_proxy", &BaseProxyService::stopProxy);
 
   nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
-      .def(nb::init<int>(), nb::arg("fifoSize") = DEFAULT_FIFO_SIZE)
+      .def(nb::init<int>(), nb::arg("fifo_size") = DEFAULT_FIFO_SIZE)
       .def("start_proxy", &ProxyService::startProxy)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
@@ -34,12 +34,12 @@ void register_port_channel(nb::module_& m) {
   nb::class_<BasePortChannel>(m, "BasePortChannel")
       .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>>(),
-           nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"))
+           nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"))
       .def("device_handle", &BasePortChannel::deviceHandle);
 
   nb::class_<BasePortChannel::DeviceHandle>(m, "BasePortChannelDeviceHandle")
       .def(nb::init<>())
-      .def_rw("semaphoreId_", &BasePortChannel::DeviceHandle::semaphoreId_)
+      .def_rw("semaphore_id_", &BasePortChannel::DeviceHandle::semaphoreId_)
       .def_rw("semaphore_", &BasePortChannel::DeviceHandle::semaphore_)
       .def_rw("fifo_", &BasePortChannel::DeviceHandle::fifo_)
       .def_prop_ro("raw", [](const BasePortChannel::DeviceHandle& self) -> nb::bytes {
@@ -49,12 +49,12 @@ void register_port_channel(nb::module_& m) {
   nb::class_<PortChannel>(m, "PortChannel")
       .def(nb::init<>())
       .def(nb::init<SemaphoreId, std::shared_ptr<Host2DeviceSemaphore>, std::shared_ptr<Proxy>, MemoryId, MemoryId>(),
-           nb::arg("semaphoreId"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
+           nb::arg("semaphore_id"), nb::arg("semaphore"), nb::arg("proxy"), nb::arg("dst"), nb::arg("src"))
       .def("device_handle", &PortChannel::deviceHandle);
 
   nb::class_<PortChannel::DeviceHandle>(m, "PortChannelDeviceHandle")
       .def(nb::init<>())
-      .def_rw("semaphoreId_", &PortChannel::DeviceHandle::semaphoreId_)
+      .def_rw("semaphore_id_", &PortChannel::DeviceHandle::semaphoreId_)
       .def_rw("semaphore_", &PortChannel::DeviceHandle::semaphore_)
       .def_rw("fifo_", &PortChannel::DeviceHandle::fifo_)
       .def_rw("src_", &PortChannel::DeviceHandle::src_)

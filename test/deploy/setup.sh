@@ -13,6 +13,10 @@ for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
     nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
 done
 
+make -C /root/mscclpp/tools/peer-access-test
+/root/mscclpp/tools/peer-access-test/peer_access_test
+make -C /root/mscclpp/tools/peer-access-test clean
+
 if [[ "${CUDA_VERSION}" == *"11."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda11.txt
 else
@@ -20,6 +24,8 @@ else
 fi
 
 cd /root/mscclpp && pip3 install .
+pip3 install setuptools_scm
+python3 -m setuptools_scm --force-write-version-files
 
 mkdir -p /var/run/sshd
 /usr/sbin/sshd -p 22345

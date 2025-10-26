@@ -6,6 +6,18 @@
 import os
 import warnings
 from functools import wraps
+from mscclpp._version import __version__, __commit_id__
+
+if os.environ.get("MSCCLPP_HOME", None) is None:
+    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
+
+
+# Parse the version
+version = {
+    "version": __version__,
+    "git_commit": __commit_id__,
+}
+
 
 from ._mscclpp import (
     Env,
@@ -40,11 +52,9 @@ from ._mscclpp import (
     PacketType,
     RawGpuBuffer,
     env,
-    version,
     is_nvls_supported,
     npkit,
 )
-
 
 __all__ = [
     "Device",
@@ -69,11 +79,12 @@ __all__ = [
     "Executor",
     "ExecutionPlan",
     "PacketType",
-    "version",
     "is_nvls_supported",
     "alloc_shared_physical_cuda",
     "npkit",
+    # Version information
     "__version__",
+    "version",
     "get_include",
     "get_lib",
     ### Deprecated ###
@@ -81,11 +92,6 @@ __all__ = [
     "SmChannel",
     "SmDevice2DeviceSemaphore",
 ]
-
-__version__: str = str(version())
-
-if os.environ.get("MSCCLPP_HOME", None) is None:
-    os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
 
 
 def get_include() -> str:

@@ -3,9 +3,8 @@
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/port_channel.hpp>
-#include <set>
+#include <mscclpp/switch_channel.hpp>
 
 #include "debug.h"
 #include "execution_kernel.hpp"
@@ -66,7 +65,7 @@ inline void hash_combine(std::size_t& seed, const T& value) {
 template <>
 struct hash<std::pair<mscclpp::BufferType, int>> {
   std::size_t operator()(const std::pair<mscclpp::BufferType, int>& key) const {
-    std::size_t seed = 0;
+    std::size_t seed = 42;
     hash_combine(seed, static_cast<int>(key.first));
     hash_combine(seed, key.second);
     return seed;
@@ -76,7 +75,7 @@ struct hash<std::pair<mscclpp::BufferType, int>> {
 template <>
 struct hash<mscclpp::ExecutionContextKey> {
   std::size_t operator()(const mscclpp::ExecutionContextKey& key) const {
-    size_t seed = 0;
+    size_t seed = 42;
     hash_combine(seed, key.sendBuff);
     hash_combine(seed, key.recvBuff);
     hash_combine(seed, key.sendBuffSize);
@@ -89,7 +88,7 @@ struct hash<mscclpp::ExecutionContextKey> {
 template <>
 struct hash<mscclpp::DeviceExecutionPlanKey> {
   std::size_t operator()(const mscclpp::DeviceExecutionPlanKey& key) const {
-    std::size_t seed = 0;
+    std::size_t seed = 42;
     hash_combine(seed, key.inputMessageSize);
     hash_combine(seed, key.outputMessageSize);
     hash_combine(seed, key.constSrcOffset);
