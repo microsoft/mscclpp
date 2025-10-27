@@ -15,7 +15,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size) -> CollectiveProgram:
+def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> CollectiveProgram:
     """
     Implements a multi-node AllReduce using a hierarchical approach:
     1. Intra-node allreduce
