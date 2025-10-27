@@ -105,7 +105,7 @@ def main():
     _, _, local = init_dist()
     torch.cuda.set_device(local)
     buffer = mscclpp.RawGpuBuffer(24 << 20)
-    dlpack = buffer.to_dlpack(dataType=str(torch.bfloat16))
+    dlpack = buffer.to_dlpack(data_type=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
