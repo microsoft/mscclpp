@@ -256,7 +256,7 @@ def compile(
     """Compile a MSCCL++ program from a high-level algorithm description.
     Args:
         algo: The high-level algorithm description (e.g., a function or class).
-        algo_spec (AlgoSpec): Algorithm specification containing collective type, 
+        algo_spec (AlgoSpec): Algorithm specification containing collective type,
             world size, ranks per node, instances, protocol, and other configuration.
         rank (int): The rank of the current process.
         **kwargs: Additional keyword arguments passed to the algorithm function.

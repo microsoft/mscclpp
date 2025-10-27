@@ -16,12 +16,10 @@ import ipaddress
 
 
 def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
-    chunksperloop = 1
     gpu_size = spec.world_size
-    collective = AllReduce(gpu_size, chunksperloop, True)
     with CollectiveProgram(
         spec.name,
-        collective,
+        spec.collective,
         gpu_size,
         instances=8,
         protocol=spec.protocol,
@@ -191,7 +189,7 @@ def main():
     comm = init_dist()
     comm.barrier_cpu()
     buffer = mscclpp.RawGpuBuffer(24 << 20)
-    dlpack = buffer.to_dlpack(dataType=str(torch.bfloat16))
+    dlpack = buffer.to_dlpack(data_type=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()
     comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)
