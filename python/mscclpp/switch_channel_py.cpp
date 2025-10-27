@@ -21,17 +21,17 @@ void register_nvls(nb::module_& m) {
 
   nb::class_<SwitchChannel::DeviceHandle>(m, "DeviceHandle")
       .def(nb::init<>())
-      .def_rw("devicePtr", &SwitchChannel::DeviceHandle::devicePtr)
-      .def_rw("mcPtr", &SwitchChannel::DeviceHandle::mcPtr)
+      .def_rw("device_ptr", &SwitchChannel::DeviceHandle::devicePtr)
+      .def_rw("mc_ptr", &SwitchChannel::DeviceHandle::mcPtr)
       .def_rw("size", &SwitchChannel::DeviceHandle::bufferSize)
       .def_prop_ro("raw", [](const SwitchChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
   nb::class_<NvlsConnection>(m, "NvlsConnection")
-      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("devicePtr"), nb::arg("size"))
+      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("device_ptr"), nb::arg("size"))
       .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
 
-  m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("allRanks"),
-        nb::arg("bufferSize"));
+  m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("all_ranks"),
+        nb::arg("buffer_size"));
 }
