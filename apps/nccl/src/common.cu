@@ -1,7 +1,7 @@
 #include <algorithm>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 
 #include "common.hpp"
 
@@ -98,8 +98,8 @@ std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_pt
 
   for (int idx = 0; idx < nSwitchChannels; ++idx) {
     std::shared_ptr<mscclpp::NvlsConnection> nvlsConnection = conns[idx];
-    mscclpp::SwitchChannel SwitchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
-    channels.push_back(SwitchChannel);
+    mscclpp::SwitchChannel switchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
+    channels.push_back(switchChannel);
   }
   return channels;
 }

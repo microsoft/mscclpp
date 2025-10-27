@@ -70,9 +70,9 @@ void register_core(nb::module_& m) {
       .def_static("create_unique_id", &TcpBootstrap::createUniqueId)
       .def("get_unique_id", &TcpBootstrap::getUniqueId)
       .def("initialize", static_cast<void (TcpBootstrap::*)(UniqueId, int64_t)>(&TcpBootstrap::initialize),
-           nb::call_guard<nb::gil_scoped_release>(), nb::arg("uniqueId"), nb::arg("timeoutSec") = 30)
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("unique_id"), nb::arg("timeout_sec") = 30)
       .def("initialize", static_cast<void (TcpBootstrap::*)(const std::string&, int64_t)>(&TcpBootstrap::initialize),
-           nb::call_guard<nb::gil_scoped_release>(), nb::arg("ifIpPortTrio"), nb::arg("timeoutSec") = 30);
+           nb::call_guard<nb::gil_scoped_release>(), nb::arg("if_ip_port_trio"), nb::arg("timeout_sec") = 30);
 
   nb::enum_<Transport>(m, "Transport")
       .value("Unknown", Transport::Unknown)
@@ -126,10 +126,10 @@ void register_core(nb::module_& m) {
 
   nb::class_<EndpointConfig::Ib>(m, "EndpointConfigIb")
       .def(nb::init<>())
-      .def(nb::init<int, int, int, int>(), nb::arg("maxCqSize") = EndpointConfig::Ib::DefaultMaxCqSize,
-           nb::arg("maxCqPollNum") = EndpointConfig::Ib::DefaultMaxCqPollNum,
-           nb::arg("maxSendWr") = EndpointConfig::Ib::DefaultMaxSendWr,
-           nb::arg("maxWrPerSend") = EndpointConfig::Ib::DefaultMaxWrPerSend)
+      .def(nb::init<int, int, int, int>(), nb::arg("max_cq_size") = EndpointConfig::Ib::DefaultMaxCqSize,
+           nb::arg("max_cq_poll_num") = EndpointConfig::Ib::DefaultMaxCqPollNum,
+           nb::arg("max_send_wr") = EndpointConfig::Ib::DefaultMaxSendWr,
+           nb::arg("max_wr_per_send") = EndpointConfig::Ib::DefaultMaxWrPerSend)
       .def_rw("max_cq_size", &EndpointConfig::Ib::maxCqSize)
       .def_rw("max_cq_poll_num", &EndpointConfig::Ib::maxCqPollNum)
       .def_rw("max_send_wr", &EndpointConfig::Ib::maxSendWr)
@@ -144,6 +144,7 @@ void register_core(nb::module_& m) {
       .def_static("deserialize", &RegisteredMemory::deserialize, nb::arg("data"));
 
   nb::class_<Endpoint>(m, "Endpoint")
+      .def("config", &Endpoint::config)
       .def("transport", &Endpoint::transport)
       .def("device", &Endpoint::device)
       .def("max_write_queue_size", &Endpoint::maxWriteQueueSize)
@@ -158,8 +159,9 @@ void register_core(nb::module_& m) {
           [](Connection* self, RegisteredMemory dst, uint64_t dstOffset, uintptr_t src, uint64_t newValue) {
             self->updateAndSync(dst, dstOffset, (uint64_t*)src, newValue);
           },
-          nb::arg("dst"), nb::arg("dstOffset"), nb::arg("src"), nb::arg("newValue"))
-      .def("flush", &Connection::flush, nb::call_guard<nb::gil_scoped_release>(), nb::arg("timeoutUsec") = (int64_t)3e7)
+          nb::arg("dst"), nb::arg("dst_offset"), nb::arg("src"), nb::arg("new_value"))
+      .def("flush", &Connection::flush, nb::call_guard<nb::gil_scoped_release>(),
+           nb::arg("timeout_usec") = (int64_t)3e7)
       .def("transport", &Connection::transport)
       .def("remote_transport", &Connection::remoteTransport)
       .def("context", &Connection::context)
@@ -170,7 +172,7 @@ void register_core(nb::module_& m) {
       .def(nb::init<>())
       .def(nb::init_implicit<Transport>(), nb::arg("transport"))
       .def(nb::init<Transport, Device, int, EndpointConfig::Ib>(), nb::arg("transport"), nb::arg("device"),
-           nb::arg("maxWriteQueueSize") = -1, nb::arg("ib") = EndpointConfig::Ib{})
+           nb::arg("max_write_queue_size") = -1, nb::arg("ib") = EndpointConfig::Ib{})
       .def_rw("transport", &EndpointConfig::transport)
       .def_rw("device", &EndpointConfig::device)
       .def_rw("ib", &EndpointConfig::ib)
@@ -192,7 +194,7 @@ void register_core(nb::module_& m) {
       .def_static("create", &Context::create)
       .def(
           "register_memory",
-          [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {
+          [](Context* self, uintptr_t ptr, size_t size, TransportFlags transports) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
@@ -207,7 +209,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<Semaphore>(m, "Semaphore")
       .def(nb::init<>())
-      .def(nb::init<const SemaphoreStub&, const SemaphoreStub&>(), nb::arg("localStub"), nb::arg("remoteStub"))
+      .def(nb::init<const SemaphoreStub&, const SemaphoreStub&>(), nb::arg("local_stub"), nb::arg("remote_stub"))
       .def("connection", &Semaphore::connection)
       .def("local_memory", &Semaphore::localMemory)
       .def("remote_memory", &Semaphore::remoteMemory);
@@ -226,29 +228,21 @@ void register_core(nb::module_& m) {
             return self->registerMemory((void*)ptr, size, transports);
           },
           nb::arg("ptr"), nb::arg("size"), nb::arg("transports"))
-      .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag") = 0)
-      .def("recv_memory", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag") = 0)
+      .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remote_rank"), nb::arg("tag") = 0)
+      .def("recv_memory", &Communicator::recvMemory, nb::arg("remote_rank"), nb::arg("tag") = 0)
       .def("connect",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(const Endpoint&, int, int)>(
-               &Communicator::connect),
-           nb::arg("localEndpoint"), nb::arg("remoteRank"), nb::arg("tag") = 0)
-      .def("connect", [](Communicator* self, const EndpointConfig& localConfig, int remoteRank,
-                         int tag = 0) { return self->connect(localConfig, remoteRank, tag); })
-      .def(
-          "connect",
-          [](Communicator* self, int remoteRank, int tag, const EndpointConfig& localConfig) {
-            return self->connect(localConfig, remoteRank, tag);
-          },
-          nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
+           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(const EndpointConfig&, int,
+                                                                                         int)>(&Communicator::connect),
+           nb::arg("local_config"), nb::arg("remote_rank"), nb::arg("tag") = 0)
       .def(
           "connect_on_setup",
           [](Communicator* self, int remoteRank, int tag, EndpointConfig localConfig) {
             return self->connect(std::move(localConfig), remoteRank, tag);
           },
-          nb::arg("remoteRank"), nb::arg("tag"), nb::arg("localConfig"))
-      .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remoteRank"), nb::arg("tag"))
-      .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remoteRank"), nb::arg("tag"))
-      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("localFlag"), nb::arg("remoteRank"),
+          nb::arg("remote_rank"), nb::arg("tag"), nb::arg("local_config"))
+      .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remote_rank"), nb::arg("tag"))
+      .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remote_rank"), nb::arg("tag"))
+      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("local_flag"), nb::arg("remote_rank"),
            nb::arg("tag") = 0)
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)

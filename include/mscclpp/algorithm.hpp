@@ -6,8 +6,8 @@
 
 #include <memory>
 #include <mscclpp/memory_channel.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <vector>
 
 namespace mscclpp {
