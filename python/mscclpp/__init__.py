@@ -291,9 +291,9 @@ def compile(
             }
         )
     ).hexdigest()
-    plan_handel = _execution_plan_registry.get(plan_id)
-    if plan_handel is not None:
-        return plan_handel
+    plan_handle = _execution_plan_registry.get(plan_id)
+    if plan_handle is not None:
+        return plan_handle
 
     plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp")
     os.makedirs(plan_dir, exist_ok=True)
