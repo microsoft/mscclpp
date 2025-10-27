@@ -41,6 +41,9 @@ constexpr auto cudaMemcpyHostToDevice = hipMemcpyHostToDevice;
 constexpr auto cudaMemcpyDeviceToHost = hipMemcpyDeviceToHost;
 constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 
+constexpr auto cudaDevAttrComputeCapabilityMajor = hipDeviceAttributeComputeCapabilityMajor;
+constexpr auto cudaDevAttrComputeCapabilityMinor = hipDeviceAttributeComputeCapabilityMinor;
+
 constexpr auto CU_MEM_ALLOCATION_TYPE_PINNED = hipMemAllocationTypePinned;
 constexpr auto CU_MEM_LOCATION_TYPE_DEVICE = hipMemLocationTypeDevice;
 constexpr auto CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR = hipMemHandleTypePosixFileDescriptor;
@@ -64,6 +67,7 @@ constexpr auto CU_MEM_ALLOC_GRANULARITY_MINIMUM = hipMemAllocationGranularityMin
 #define cudaGetDevice(...) hipGetDevice(__VA_ARGS__)
 #define cudaGetDeviceCount(...) hipGetDeviceCount(__VA_ARGS__)
 #define cudaGetDeviceProperties(...) hipGetDeviceProperties(__VA_ARGS__)
+#define cudaDeviceGetAttribute(...) hipDeviceGetAttribute(__VA_ARGS__)
 #define cudaGetLastError(...) hipGetLastError(__VA_ARGS__)
 #define cudaSetDevice(...) hipSetDevice(__VA_ARGS__)
 #define cudaDeviceSynchronize(...) hipDeviceSynchronize(__VA_ARGS__)
