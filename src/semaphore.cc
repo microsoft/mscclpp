@@ -20,18 +20,20 @@ struct SemaphoreStub::Impl {
 
   Impl(const std::vector<char>& data);
 
+  std::shared_ptr<uint64_t> gpuCallocToken(std::shared_ptr<Context> context);
+
   std::shared_ptr<Connection> connection_;
   std::shared_ptr<uint64_t> token_;
   RegisteredMemory idMemory_;
   Device device_;
 };
 
-static std::shared_ptr<uint64_t> gpuCallocToken() {
-// #if (CUDA_NVLS_API_AVAILABLE)
-//   if (isNvlsSupported()) {
-//     return detail::gpuCallocPhysicalShared<uint64_t>(1, 0);
-//   }
-// #endif  // CUDA_NVLS_API_AVAILABLE
+std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Context> context) {
+#if (CUDA_NVLS_API_AVAILABLE)
+  if (isNvlsSupported()) {
+    return context->pimpl_->getToken();
+  }
+#endif  // CUDA_NVLS_API_AVAILABLE
 #if defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocUncachedShared<uint64_t>();
 #else   // !defined(MSCCLPP_DEVICE_HIP)
@@ -49,7 +51,7 @@ SemaphoreStub::Impl::Impl(std::shared_ptr<Connection> connection) : connection_(
       throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
     }
     MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
-    token_ = gpuCallocToken();
+    token_ = gpuCallocToken(connection_->context());
   } else {
     throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
   }

@@ -24,6 +24,7 @@ using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
 using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
 using CUmemAllocationHandleType = hipMemAllocationHandleType;
+using CUmemAllocationGranularity_flags = hipMemAllocationGranularity_flags;
 
 constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
 constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
@@ -47,6 +48,7 @@ constexpr auto CU_MEM_ALLOCATION_TYPE_PINNED = hipMemAllocationTypePinned;
 constexpr auto CU_MEM_LOCATION_TYPE_DEVICE = hipMemLocationTypeDevice;
 constexpr auto CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR = hipMemHandleTypePosixFileDescriptor;
 constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWrite;
+constexpr auto CU_MEM_ALLOC_GRANULARITY_MINIMUM = hipMemAllocationGranularityMinimum;
 
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
@@ -110,6 +112,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cuMemRetainAllocationHandle(...) hipMemRetainAllocationHandle(__VA_ARGS__)
 #define cuMemExportToShareableHandle(...) hipMemExportToShareableHandle(__VA_ARGS__)
 #define cuMemImportFromShareableHandle(...) hipMemImportFromShareableHandle(__VA_ARGS__)
+#define cuMemGetAllocationGranularity(...) hipMemGetAllocationGranularity(__VA_ARGS__)
 
 #else
 
