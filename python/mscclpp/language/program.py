@@ -112,7 +112,8 @@ class CollectiveProgram:
 
         self.loop_context = None
 
-    def __init__(self, spec: AlgoSpec):
+    @classmethod
+    def from_spec(cls, spec: AlgoSpec):
         """Initialize a new CollectiveProgram from an algorithm specification.
 
         This constructor provides an alternative way to create a CollectiveProgram
@@ -139,52 +140,26 @@ class CollectiveProgram:
             ...     protocol="Simple",
             ...     in_place=False
             ... )
-            >>> with CollectiveProgram(spec) as prog:
+            >>> with CollectiveProgram.from_spec(spec) as prog:
             ...     # Define communication operations
             ...     pass
         """
-        self.name = spec.name
-        self.collective = spec.collective
-        self.num_ranks = spec.world_size
-        self.in_place = spec.in_place
-        self.instances = spec.instances
-        self.protocol = spec.protocol
-        self.instr_fusion = spec.instr_fusion
-        self.auto_sync = spec.auto_sync
-        self.replication_policy = spec.replication_policy
-        self.reuse_resources = spec.reuse_resources
-        self.num_threads_per_block = spec.num_threads_per_block
-        self.use_double_scratch_buffer = spec.use_double_scratch_buffer
-        self.buffer_alignment = spec.buffer_alignment
-        self.min_message_size = spec.min_message_size
-        self.max_message_size = spec.max_message_size
-        assert (
-            self.protocol == "Simple" or self.protocol == "LL"
-        ), f"Given protocol: {self.protocol}. Must be either Simple, LL"
-        self.buffers = self.collective.init_buffers()
-        self.gpus: List[Gpu] = []
-        for rank in range(self.num_ranks):
-            self.gpus.append(
-                Gpu(rank, self.buffers[rank][BufferType.input].size, self.buffers[rank][BufferType.output].size, 0)
-            )
-
-        self.loop_context = None
-
-    def _create_collective_from_name(self, collective_name: str, world_size: int, in_place: bool):
-        """Create a collective instance based on the collective name."""
-        chunk_factor = 1
-        if collective_name.lower() == "allgather":
-            return AllGather(world_size, chunk_factor, in_place)
-        elif collective_name.lower() == "allreduce":
-            return AllReduce(world_size, chunk_factor, in_place)
-        elif collective_name.lower() == "reducescatter":
-            return ReduceScatter(world_size, chunk_factor, in_place)
-        elif collective_name.lower() == "alltoall":
-            return AllToAll(world_size, chunk_factor, in_place)
-        else:
-            raise ValueError(
-                f"Unknown collective name: {collective_name}. Supported collectives: allgather, allreduce, reducescatter, alltoall"
-            )
+        return cls(
+            spec.name,
+            spec.collective,
+            spec.world_size,
+            instances=spec.instances,
+            protocol=spec.protocol,
+            instr_fusion=spec.instr_fusion,
+            auto_sync=spec.auto_sync,
+            replication_policy=spec.replication_policy,
+            reuse_resources=spec.reuse_resources,
+            num_threads_per_block=spec.num_threads_per_block,
+            use_double_scratch_buffer=spec.use_double_scratch_buffer,
+            buffer_alignment=spec.buffer_alignment,
+            min_message_size=spec.min_message_size,
+            max_message_size=spec.max_message_size,
+        )
 
     def __enter__(self):
         """Enter the program context and set this as the active program.

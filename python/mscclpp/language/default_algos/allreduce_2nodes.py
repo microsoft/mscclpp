@@ -28,7 +28,7 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size) -> CollectiveProgr
     total_gpus = num_nodes * gpus_per_node
     packets_per_gpu = 2
 
-    with CollectiveProgram(spec) as prog:
+    with CollectiveProgram.from_spec(spec) as prog:
         # Initialize communication channels and buffers
         intra_node_memory_channels = {}
         inter_node_port_channels = {}

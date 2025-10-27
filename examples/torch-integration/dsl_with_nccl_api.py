@@ -14,7 +14,7 @@ from mscclpp.language.rank import Rank
 
 def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     gpu_size = spec.world_size
-    with CollectiveProgram(spec) as program:
+    with CollectiveProgram.from_spec(spec) as program:
         # Creating Channels
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.input)
         channels = {}
