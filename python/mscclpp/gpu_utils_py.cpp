@@ -112,5 +112,5 @@ void register_gpu_utils(nb::module_& m) {
           [](GpuBuffer<char>& self, std::string dataType, std::vector<int64_t> shape, std::vector<int64_t> strides) {
             return toDlpack(self, dataType, shape, strides);
           },
-          nb::arg("dataType"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
+          nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
 }
