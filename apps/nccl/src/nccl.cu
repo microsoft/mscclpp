@@ -4,16 +4,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
-#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
-#include <mscclpp/memory_channel.hpp>
-#include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/utils.hpp>
-#include <queue>
-#include <sstream>
 #include <unordered_map>
 #include <vector>
 #if defined(ENABLE_NPKIT)
@@ -254,10 +248,12 @@ static void registerCustomizedAlgo() {
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
+  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo = std::make_shared<AllreduceNvlsPacket>();
   collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
+  collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
 }
 
 static mscclpp::Algorithm algoSelector(
@@ -267,10 +263,11 @@ static mscclpp::Algorithm algoSelector(
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
+  static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+  static bool isNvlsSupported = mscclpp::isNvlsSupported();
   bool isCuMemMapAllocated =
       mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
-  bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
+  bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
@@ -285,21 +282,25 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
+    if (messageSize <= (1 << 15) && isNvlsSupported) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
+    }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    } else if (useNvlsWithZeroCopy) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
-    } else if (mscclpp::isNvlsSupported()) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
-    } else {
-#if defined(__HIP_PLATFORM_AMD__)
-      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-#else
-      if (!mscclppNcclDlopenSharedLib) {
-        return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-      }
-#endif
     }
+    if (useNvlsWithZeroCopy) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
+    }
+    if (mscclpp::isNvlsSupported()) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
+    }
+#if defined(__HIP_PLATFORM_AMD__)
+    return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+#else
+    if (!mscclppNcclDlopenSharedLib) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+    }
+#endif
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl/rccl");
   return mscclpp::Algorithm();
