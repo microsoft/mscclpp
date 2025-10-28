@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 from enum import Enum
 from dataclasses import dataclass, field
 from mscclpp.language.collectives import Collective
