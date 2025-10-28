@@ -63,9 +63,9 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
 }
 
 MSCCLPP_API_CPP MemoryId ProxyService::nextMemoryId([[maybe_unused]] uint32_t count) const {
-  if (count == 0) {  
+  if (count == 0) {
     throw Error("count must be greater than 0", ErrorCode::InvalidUsage);
-  }  
+  }
   MemoryId firstId = memories_.size();
   return firstId;
 }

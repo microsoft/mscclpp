@@ -840,7 +840,8 @@ bool ExecutionPlanHandle::match(const ExecutionRequest& request) {
   bool ranksPerNodeMatch = constraint.nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = plan->collective() == request.collective;
   bool inPlaceMatch = plan->isInPlace() == request.isInPlace();
-  size_t effectiveSize = (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
+  size_t effectiveSize =
+      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
   bool minSizeMatch = effectiveSize >= plan->minMessageSize();
   bool maxSizeMatch = effectiveSize <= plan->maxMessageSize();
 
