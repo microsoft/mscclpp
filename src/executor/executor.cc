@@ -241,10 +241,10 @@ struct Executor::Impl {
         this->defaultScratchBuffer = GpuBuffer(this->defaultScratchBufferSize).memory();
       }
       if (scratchBufferSize > this->defaultScratchBufferSize) {
-        throw Error(
-            "DefaultScratchBuffer size not enough. Consider increasing the default scratch buffer size or disabling "
-            "resource reuse.",
-            ErrorCode::ExecutorError);
+        throw Error("Scratch buffer size (" + std::to_string(scratchBufferSize) +
+                        " bytes) exceeds default buffer size (" + std::to_string(this->defaultScratchBufferSize) +
+                        " bytes). Consider increasing the default scratch buffer size or disabling resource reuse.",
+                    ErrorCode::ExecutorError);
       }
       context.scratchBufferSize = this->defaultScratchBufferSize;
       context.scratchBuffer = this->defaultScratchBuffer;
