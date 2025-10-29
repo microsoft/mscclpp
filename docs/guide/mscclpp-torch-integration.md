@@ -53,6 +53,10 @@ def is_dsl_based() -> bool:
 
 def is_kernel_based() -> bool:
     pass
+
+def clean_cached_contexts():
+    # clear all cached contexts
+    pass
 ```
 
 ## Workflow in user application
@@ -129,5 +133,5 @@ for msg_size in message_sizes:
                     }
 # clear all contexts after tuning
 for algo in algo_collection:
-    algo.clear_cached_contexts()
+    algo.clean_cached_contexts()
 ```
