@@ -154,6 +154,16 @@ endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+function(msg_red text)
+  string(ASCII 27 ESC)
+  message("${ESC}[31m${text}${ESC}[0m")
+endfunction()
+
+if(NOT IBVERBS_FOUND)
+  msg_red("libibverbs not found. Install libibverbs-dev or rdma-core-devel.")
+endif()
+
 include(FetchContent)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
 FetchContent_MakeAvailable(json)
