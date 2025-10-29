@@ -83,7 +83,7 @@ class AllreduceAlgoBuilder : public mscclpp::AlgorithmBuilder {
 ```
 Build the algorithm in python code
 ```python
-native_handle = ops.build_mscclpp_algorithm(...) # user define the customized op via python binding
+native_handle = mscclpp.compile(file="allreduce_kernel_based_algo.cu") # jit compilation
 algorithm = mscclpp.Algorithm.from_native_handle(native_handle=native_handle, ...)
 
 # if you want to share the algorithm with nccl API
@@ -104,8 +104,8 @@ for algo_name, algo_config in dsl_algo_configs_to_try.items():
     algorithm = mscclpp.Algorithm.from_execution_plan(spec=spec, plan_handle=plan_handle)
     algo_collection.add_algorithm(algorithm)
 
-native_handle_list = ops.build_mscclpp_algorithms(...)
-for native_handle in native_handle_list:
+mscclpp_native_handle = mscclpp.compile(file="allreduce_kernel_based_algo.cu")
+for native_handle in mscclpp_native_handle.handles:
     algorithm = mscclpp.Algorithm.from_native_handle(native_handle=native_handle, ...)
     algo_collection.add_algorithm(algorithm)
 
