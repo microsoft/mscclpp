@@ -62,7 +62,7 @@ Get the algorithm via MSCCL++ DSL
 import mscclpp
 collective_program = your_dsl_program_definition()
 plan_handle = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
-algorithm = mscclpp.Algorithm.from_spec(spec=spec, plan_handle=plan_handle ...)
+algorithm = mscclpp.Algorithm.from_execution_plan(spec=spec, plan_handle=plan_handle ...)
 
 # if you want to share the algorithm with nccl API
 mscclpp.register_algorithm(algorithm)
@@ -97,7 +97,7 @@ dsl_algo_configs_to_try = {"allreduce2nodes": {"ninstances": [1, 2, 4]}}
 for algo_name, algo_config in dsl_algo_configs_to_try.items():
     spec = mscclpp.ExecutionPlanSpec(..dsl_algo_configs_to_try)
     plan_handle = mscclpp.compile(algo_name=algo_name, algo_spec=spec)
-    algorithm = mscclpp.Algorithm.from_spec(spec=spec, plan_handle=plan_handle)
+    algorithm = mscclpp.Algorithm.from_execution_plan(spec=spec, plan_handle=plan_handle)
     algo_collection.add_algorithm(algorithm)
 
 native_handle_list = ops.build_mscclpp_algorithms(...)
