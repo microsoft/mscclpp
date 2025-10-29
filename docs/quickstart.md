@@ -162,6 +162,7 @@ $ python3 -m pip install -r ./python/requirements_cuda12.txt
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
+(nccl-benchmark)=
 ### NCCL/RCCL Benchmark over MSCCL++
 
 We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:

@@ -374,41 +374,53 @@ struct Device {
   int id;
 };
 
-/// Used to configure an endpoint.
+/// Configuration for creating communication endpoints.
 struct EndpointConfig {
-  static const int DefaultMaxCqSize = 1024;
-  static const int DefaultMaxCqPollNum = 1;
-  static const int DefaultMaxSendWr = 8192;
-  static const int DefaultMaxWrPerSend = 64;
+  /// InfiniBand-specific configuration options that control queue pair behavior and performance characteristics.
+  /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
+  /// transports.
+  struct Ib {
+    static const int DefaultMaxCqSize = 1024;
+    static const int DefaultMaxCqPollNum = 1;
+    static const int DefaultMaxSendWr = 8192;
+    static const int DefaultMaxWrPerSend = 64;
 
+    /// Maximum size of the completion queue.
+    int maxCqSize;
+    /// Maximum number of completion queue polls per operation.
+    int maxCqPollNum;
+    /// Maximum number of outstanding send work requests.
+    int maxSendWr;
+    /// Maximum number of work requests per send operation.
+    int maxWrPerSend;
+
+    /// Constructor.
+    /// @param maxCqSize Maximum completion queue size.
+    /// @param maxCqPollNum Maximum completion queue poll count.
+    /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxWrPerSend Maximum work requests per send operation.
+    Ib(int maxCqSize = DefaultMaxCqSize, int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr,
+       int maxWrPerSend = DefaultMaxWrPerSend)
+        : maxCqSize(maxCqSize), maxCqPollNum(maxCqPollNum), maxSendWr(maxSendWr), maxWrPerSend(maxWrPerSend) {}
+  };
+
+  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
   Transport transport;
+  /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
-  int ibMaxCqSize;
-  int ibMaxCqPollNum;
-  int ibMaxSendWr;
-  int ibMaxWrPerSend;
+  /// Maximum number of write requests that can be queued (-1 for default).
   int maxWriteQueueSize;
+  /// InfiniBand-specific options (used only for Transport::IBx).
+  Ib ib;
 
-  /// Constructor that takes a transport and sets the other fields to their default values.
-  ///
-  /// @param transport The transport to use.
-  /// @param device The device to use.
-  /// @param ibMaxCqSize The maximum completion queue size.
-  /// @param ibMaxCqPollNum The maximum completion queue poll number.
-  /// @param ibMaxSendWr The maximum send work requests.
-  /// @param ibMaxWrPerSend The maximum work requests per send.
-  /// @param maxWriteQueueSize The maximum write queue size.
-  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
-                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
-                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
-                 int maxWriteQueueSize = -1)
-      : transport(transport),
-        device(device),
-        ibMaxCqSize(ibMaxCqSize),
-        ibMaxCqPollNum(ibMaxCqPollNum),
-        ibMaxSendWr(ibMaxSendWr),
-        ibMaxWrPerSend(ibMaxWrPerSend),
-        maxWriteQueueSize(maxWriteQueueSize) {}
+  /// Constructs endpoint configuration with specified transport, device, and optional settings.
+  /// @param transport Communication transport to use.
+  /// @param device Target device for the endpoint.
+  /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
+  /// @param ib IB-specific configuration.
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, int maxWriteQueueSize = -1,
+                 Ib ib = {})
+      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib) {}
 };
 
 class Context;
@@ -422,6 +434,10 @@ class Endpoint {
  public:
   /// Constructor.
   Endpoint() = default;
+
+  /// Get the configuration used to create the endpoint.
+  /// @return The configuration used to create the endpoint.
+  const EndpointConfig& config() const;
 
   /// Get the transport used.
   /// @return The transport used.
@@ -517,6 +533,7 @@ class Context : public std::enable_shared_from_this<Context> {
   friend class Endpoint;
   friend class Connection;
   friend class RegisteredMemory;
+  friend class SemaphoreStub;
 };
 
 /// Block of memory that has been registered to a Context.
@@ -685,9 +702,9 @@ class Semaphore {
   std::shared_ptr<Impl> pimpl_;
 };
 
+/// Deprecated.
 template <typename T>
-using NonblockingFuture [[deprecated("Use std::shared_future instead. This will be removed in a future release.")]] =
-    std::shared_future<T>;
+using NonblockingFuture = std::shared_future<T>;
 
 /// A class that sets up all registered memories and connections between processes.
 ///
@@ -853,12 +870,20 @@ class Communicator {
   /// on the last future, it will start receiving the five RegisteredMemory or Connection objects in order,
   /// back to back.
   ///
-  /// @param localConfig The configuration for the local endpoint.
+  /// @param localEndpoint The local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
   /// @return A future of shared pointer to the connection.
   ///
-  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0);
+  std::shared_future<std::shared_ptr<Connection>> connect(const Endpoint& localEndpoint, int remoteRank, int tag = 0);
+
+  /// Connect to a remote rank. Wrapper of `connect(localEndpoint, remoteRank, tag)`.
+  /// @param localConfig The configuration for the local endpoint.
+  /// @param remoteRank The rank of the remote process.
+  /// @param tag The tag to use for identifying the send and receive.
+  /// @return A future of shared pointer to the connection.
+  std::shared_future<std::shared_ptr<Connection>> connect(const EndpointConfig& localConfig, int remoteRank,
+                                                          int tag = 0);
 
   [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
       shared_future<std::shared_ptr<Connection>>

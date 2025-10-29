@@ -71,13 +71,20 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-    using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-    int nBlocks = nRanksPerNode;
-    int nThreadsPerBlock = 1024;
-    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
-                                                            channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-                                                            nRanksPerNode);
-    return cudaGetLastError();
+#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#endif
+    {
+      using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
+      int nBlocks = nRanksPerNode;
+      int nThreadsPerBlock = 1024;
+      allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
+                                                              nvlsOutChannels, channelInOffset, channelOutOffset,
+                                                              nelems * sizeof(T), rank, nRanksPerNode);
+      return cudaGetLastError();
+    }
   }
 };
 
@@ -88,21 +95,28 @@ struct NvlsWithCopyAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
-    using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-    if (sizeof(T) * nelems < (1 << 24)) {
-      int nBlocks = nRanksPerNode * 4;
-      int nThreadsPerBlock = 1024;
-      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                               nvlsChannels, nelems * sizeof(T), scratchBufferSize,
-                                                               rank, nRanksPerNode);
-    } else {
-      int nBlocks = nRanksPerNode * 5;
-      int nThreadsPerBlock = 1024;
-      allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                               nvlsChannels, nelems * sizeof(T), scratchBufferSize,
-                                                               rank, nRanksPerNode);
+#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#endif
+    {
+      using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
+      if (sizeof(T) * nelems < (1 << 24)) {
+        int nBlocks = nRanksPerNode * 4;
+        int nThreadsPerBlock = 1024;
+        allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                                 nvlsChannels, nelems * sizeof(T), scratchBufferSize,
+                                                                 rank, nRanksPerNode);
+      } else {
+        int nBlocks = nRanksPerNode * 5;
+        int nThreadsPerBlock = 1024;
+        allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                                 nvlsChannels, nelems * sizeof(T), scratchBufferSize,
+                                                                 rank, nRanksPerNode);
+      }
+      return cudaGetLastError();
     }
-    return cudaGetLastError();
   }
 };
 
@@ -123,6 +137,26 @@ struct Allreduce8Adapter {
   }
 };
 
+template <Op OpType, typename T>
+struct AllreduceNvlsPacketAdapter {
+  static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
+                          mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
+                          mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
+                          int rank, int, int worldSize, size_t nelems, cudaStream_t stream, uint32_t* deviceFlag,
+                          uint32_t*, uint32_t*, uint32_t) {
+    size_t size = nelems * sizeof(T);
+    int nBlocks = 8;
+    int nThreadsPerBlock = 1024;
+    if (size <= (1 << 13)) {
+      nBlocks = 4;
+      nThreadsPerBlock = 512;
+    }
+    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (const T*)input, (T*)scratch, (T*)output, nvlsChannels, nelems, scratchBufferSize, rank, worldSize, deviceFlag);
+    return cudaGetLastError();
+  }
+};
+
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
   Op reduceOp = getReduceOp(op);
@@ -134,6 +168,12 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == ncclBfloat16) {
       return Adapter<SUM, __bfloat16>::call;
+#endif
+#if defined(__FP8_TYPES_EXIST__)
+    } else if (dtype == ncclFloat8e4m3) {
+      return Adapter<SUM, __fp8_e4m3>::call;
+    } else if (dtype == ncclFloat8e5m2) {
+      return Adapter<SUM, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<SUM, int>::call;
@@ -148,6 +188,12 @@ AllreduceFunc dispatch(ncclRedOp_t op, ncclDataType_t dtype) {
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == ncclBfloat16) {
       return Adapter<MIN, __bfloat16>::call;
+#endif
+#if defined(__FP8_TYPES_EXIST__)
+    } else if (dtype == ncclFloat8e4m3) {
+      return Adapter<MIN, __fp8_e4m3>::call;
+    } else if (dtype == ncclFloat8e5m2) {
+      return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == ncclInt32 || dtype == ncclUint32) {
       return Adapter<MIN, int>::call;
@@ -545,6 +591,78 @@ mscclpp::Algorithm Allreduce8::build() {
   auto self = std::make_shared<Allreduce8>();
   mscclpp::Algorithm allreduceAlgo(
       "default_allreduce_allreduce8", "allreduce",
+      [self](std::shared_ptr<mscclpp::Communicator> comm,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
+             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+        return self->allreduceKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
+      },
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
+        return self->initAllreduceContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
+      },
+      [self](const void* input, void* output, size_t count, int dtype) {
+        return self->generateAllreduceContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+      });
+  return allreduceAlgo;
+}
+
+void AllreduceNvlsPacket::initialize(std::shared_ptr<mscclpp::Communicator>,
+                                     std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+  this->scratchBuffer_ = std::static_pointer_cast<char>(extras.at("scratch"));
+  this->scratchBufferSize_ = *(size_t*)(extras.at("scratch_size").get());
+  deviceFlag_ = mscclpp::detail::gpuCallocShared<uint32_t>(16);
+  std::vector<uint32_t> initFlag(16);
+  for (int i = 0; i < 16; ++i) {
+    initFlag[i] = 1;
+  }
+  mscclpp::gpuMemcpy<uint32_t>(deviceFlag_.get(), initFlag.data(), 16, cudaMemcpyHostToDevice);
+}
+
+mscclpp::AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t) {
+  return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
+}
+
+std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext(
+    std::shared_ptr<mscclpp::Communicator> comm, const void*, void*, size_t, ncclDataType_t) {
+  auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+  ctx->rank = comm->bootstrap()->getRank();
+  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+
+  // setup channels
+  int nSwitchChannels = 1;
+  ctx->nvlsConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels);
+  ctx->switchChannels =
+      setupNvlsChannels(ctx->nvlsConnections, this->scratchBuffer_.get(), this->scratchBufferSize_, nSwitchChannels);
+  ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
+  return ctx;
+}
+
+ncclResult_t AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx,
+                                                      const void* input, void* output, size_t count,
+                                                      ncclDataType_t dtype, cudaStream_t stream,
+                                                      std::unordered_map<std::string, std::shared_ptr<void>>& extra) {
+  int op = *static_cast<int*>(extra.at("op").get());
+  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(static_cast<ncclRedOp_t>(op), dtype);
+  if (!allreduce) {
+    WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
+    return ncclInvalidArgument;
+  }
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_.get(), output, nullptr, nullptr, ctx->switchChannelDeviceHandles.get(),
+                nullptr, 0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, count, stream,
+                this->deviceFlag_.get(), nullptr, nullptr, 0);
+  if (error != cudaSuccess) {
+    WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
+    return ncclUnhandledCudaError;
+  }
+  return ncclSuccess;
+}
+
+mscclpp::Algorithm AllreduceNvlsPacket::build() {
+  auto self = std::make_shared<AllreduceNvlsPacket>();
+  mscclpp::Algorithm allreduceAlgo(
+      "default_allreduce_nvls_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,

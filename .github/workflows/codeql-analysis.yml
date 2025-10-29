@@ -5,10 +5,22 @@ on:
     branches:
       - main
       - release/*
+    paths:
+      - 'cmake/**'
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/codeql-analysis.yml'
   pull_request:
     branches:
       - main
       - release/*
+    paths:
+      - 'cmake/**'
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/codeql-analysis.yml'
   schedule:
     - cron: "30 1 * * 1"
 

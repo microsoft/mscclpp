@@ -12,6 +12,7 @@
 #include <memory>
 #include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <sstream>
 #include <string>
 
@@ -230,6 +231,44 @@ void getRandomData(void* buffer, size_t bytes) {
     }
     if (fp) fclose(fp);
   }
+}
+
+TokenPool::TokenPool(size_t nToken) : nToken_(nToken) {
+#if (CUDA_NVLS_API_AVAILABLE)
+  tokens_ = detail::gpuCallocPhysicalShared<uint64_t>(
+      nToken, detail::getCuAllocationGranularity(CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+  MSCCLPP_CUTHROW(cuMemGetAddressRange((CUdeviceptr*)(&baseAddr_), NULL, (CUdeviceptr)tokens_.get()));
+  size_t nElems = (nToken + (UINT64_WIDTH - 1)) / UINT64_WIDTH;
+  allocationMap_.resize(nElems, 0);
+  tailMask_ = (nToken % UINT64_WIDTH) ? ((1UL << (nToken % UINT64_WIDTH)) - 1) : ~0UL;
+#else
+  throw Error("TokenPool only available on GPUs with NVLS support", ErrorCode::InvalidUsage);
+#endif
+}
+
+std::shared_ptr<uint64_t> TokenPool::getToken() {
+  auto deleter = [self = shared_from_this()](uint64_t* token) {
+    size_t index = (token - self->baseAddr_) / UINT64_WIDTH;
+    size_t bit = (token - self->baseAddr_) % UINT64_WIDTH;
+    uint64_t mask = 1UL << bit;
+    self->allocationMap_[index] &= ~mask;
+  };
+
+  size_t size = allocationMap_.size();
+  for (size_t i = 0; i < size; i++) {
+    uint64_t ullong = allocationMap_[i].to_ullong();
+    uint64_t mask = (i + 1 == size) ? tailMask_ : ~0ULL;
+    uint64_t holes = (~ullong) & mask;
+    if (!holes) continue;
+    for (int bit = 0; bit < UINT64_WIDTH; bit++) {
+      if (holes & (1UL << bit)) {
+        allocationMap_[i].set(bit);
+        INFO(MSCCLPP_ALLOC, "TokenPool allocated token at addr %p", baseAddr_ + i * UINT64_WIDTH + bit);
+        return std::shared_ptr<uint64_t>(baseAddr_ + i * UINT64_WIDTH + bit, deleter);
+      }
+    }
+  }
+  throw Error("TokenPool is exhausted", ErrorCode::InternalError);
 }
 
 }  // namespace mscclpp

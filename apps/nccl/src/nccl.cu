@@ -4,16 +4,10 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
-#include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
-#include <mscclpp/memory_channel.hpp>
-#include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/utils.hpp>
-#include <queue>
-#include <sstream>
 #include <unordered_map>
 #include <vector>
 #if defined(ENABLE_NPKIT)
@@ -102,26 +96,26 @@ static inline int mscclppNcclDlopenInit() {
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
-             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t (*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t (*)(ncclComm_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t (*)(ncclComm_t, int*));
+             ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllGather,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Broadcast,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Reduce,
-             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
-             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t(*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
-             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
+             ncclResult_t(*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t(*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t(*)());
 
   return dlopenSuccess;
 }
@@ -218,6 +212,16 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
       executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, sendBytes, recvBytes,
                         mscclpp::DataType::BFLOAT16, *plan, stream);
       break;
+#if defined(__FP8_TYPES_EXIST__)
+    case ncclFloat8e4m3:
+      executor->execute(rank, (__fp8_e4m3*)sendbuff, (__fp8_e4m3*)recvbuff, sendBytes, recvBytes,
+                        mscclpp::DataType::FP8_E4M3, *plan, stream);
+      break;
+    case ncclFloat8e5m2:
+      executor->execute(rank, (__fp8_e5m2*)sendbuff, (__fp8_e5m2*)recvbuff, sendBytes, recvBytes,
+                        mscclpp::DataType::FP8_E5M2, *plan, stream);
+      break;
+#endif
     case ncclInt32:
     case ncclUint32:
       executor->execute(rank, (int*)sendbuff, (int*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT32, *plan,
@@ -271,23 +275,37 @@ static void registerCustomizedAlgo() {
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
   std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
   std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
+  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo = std::make_shared<AllreduceNvlsPacket>();
   collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
+  collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
+}
+
+static std::pair<int, int> getDeviceComputeCapability() {
+  int device;
+  CUDACHECK(cudaGetDevice(&device));
+  int major = 0, minor = 0;
+  CUDACHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+  CUDACHECK(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device));
+  return std::make_pair(major, minor);
 }
 
 static mscclpp::Algorithm algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, int nRanksPerNode, int worldSize) {
+    std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
+    int worldSize) {
   if (nRanksPerNode != worldSize) {
     // Fallback to nccl/rccl when multi-node
     return mscclpp::Algorithm();
   }
+  static const bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+  static const bool isNvlsSupported = mscclpp::isNvlsSupported();
+  static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
   bool isCuMemMapAllocated =
       mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
-  bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache && isCuMemMapAllocated;
+  bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather6");
@@ -302,21 +320,33 @@ static mscclpp::Algorithm algoSelector(
     }
   }
   if (collective == "allreduce") {
+    bool useNvls = isNvlsSupported;
+    bool isFp8 = dtype == ncclFloat8e4m3 || dtype == ncclFloat8e5m2;
+#if !defined(__HIP_PLATFORM_AMD__)
+    if (isFp8 && deviceComputeCapability.first < 10) {
+      // NVLS does not support FP8 on devices with compute capability < 10
+      useNvls = false;
+    }
+#endif
+    if (messageSize <= (1 << 15) && useNvls) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
+    }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    } else if (useNvlsWithZeroCopy) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
-    } else if (mscclpp::isNvlsSupported()) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
-    } else {
-#if defined(__HIP_PLATFORM_AMD__)
-      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-#else
-      if (!mscclppNcclDlopenSharedLib) {
-        return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
-      }
-#endif
     }
+    if (useNvls && useNvlsWithZeroCopy) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
+    }
+    if (useNvls) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
+    }
+#if defined(__HIP_PLATFORM_AMD__)
+    return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+#else
+    if (!mscclppNcclDlopenSharedLib) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+    }
+#endif
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl/rccl");
   return mscclpp::Algorithm();
@@ -630,8 +660,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, plan, stream);
   }
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
-      comm->comm->bootstrap()->getNranks());
+      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), datatype,
+      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"root", std::make_shared<int>(root)},
@@ -691,8 +721,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), comm->comm->bootstrap()->getNranksPerNode(),
-      comm->comm->bootstrap()->getNranks());
+      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), datatype,
+      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras{
         {"op", std::make_shared<int>(reductionOperation)},
@@ -808,7 +838,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype),
+      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype), datatype,
       comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
   if (!algo.isEmpty()) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras = {

@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <algorithm>
-#include <mscclpp/nvls.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "mp_unit_tests.hpp"
