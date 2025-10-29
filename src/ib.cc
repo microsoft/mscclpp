@@ -25,7 +25,7 @@
 #if !defined(__HIP_PLATFORM_AMD__)
 
 // Check if nvidia_peermem kernel module is loaded
-static bool checkNvPeerMemLoaded() {
+[[maybe_unused]] static bool checkNvPeerMemLoaded() {
   std::ifstream file("/proc/modules");
   std::string line;
   while (std::getline(file, line)) {
@@ -68,6 +68,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     this->mr = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, (uint64_t)dptr, fd,
                                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                               IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    close(fd);
     if (this->mr == nullptr) {
       std::stringstream err;
       err << "ibv_reg_dmabuf_mr failed (errno " << errno << ")";
@@ -77,6 +78,12 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : buff(buff) {
     throw Error("Registeration of dma-buf based memory region failed on HIP platform", ErrorCode::InvalidUsage);
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
+#if !defined(__HIP_PLATFORM_AMD__)
+    // nvidia-peermem is needed only when DMABUF is not supported
+    if (!checkNvPeerMemLoaded()) {
+      throw Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
+    }
+#endif  // !defined(__HIP_PLATFORM_AMD__)
     this->mr = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
                                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                         IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
@@ -329,11 +336,6 @@ int IbQp::getWcStatus(int idx) const { return (*this->wcs)[idx].status; }
 int IbQp::getNumCqItems() const { return this->numSignaledPostedItems; }
 
 IbCtx::IbCtx(const std::string& devName) : devName(devName) {
-#if !defined(__HIP_PLATFORM_AMD__)
-  if (!checkNvPeerMemLoaded()) {
-    throw Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
-  }
-#endif  // !defined(__HIP_PLATFORM_AMD__)
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {

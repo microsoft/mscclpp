@@ -16,5 +16,4 @@ def JSON():
         str: A JSON string representation of the current MSCCL++ program,
             including all ranks, operations, channels, and configuration.
     """
-    get_program().post_process_operations()
     return get_program().to_json()
