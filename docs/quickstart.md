@@ -19,7 +19,7 @@
             * AMD MI250X GPUs + ROCm >= 5.7
             * AMD MI300X GPUs + ROCm >= 6.0
 * OS
-    * Tested on Ubuntu 18.04 and later
+    * Tested on Ubuntu 20.04 and later
 * Libraries
     * [libnuma](https://github.com/numactl/numactl)
         ```bash
@@ -32,10 +32,7 @@
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
 * Others
-    * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
-        ```bash
-        lsmod | grep nvidia_peermem
-        ```
+    * For RDMA (InfiniBand or RoCE) support on NVIDIA platforms, [GPUDirect RDMA](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#gpudirect-rdma-and-gpudirect-storage) should be supported by the system. See the detailed prerequisites from [this NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#common-prerequisites).
     * For NVLink SHARP (NVLS) support on NVIDIA platforms, the Linux kernel version should be 5.6 or above.
 
 (docker-images)=
