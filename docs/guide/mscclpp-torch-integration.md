@@ -29,11 +29,11 @@ class Algorithm:
     name: str
     collective: mscclpp.Collective
     plan_handle: mscclpp.PlanHandle
-    native_handle # The handle for cuda algorithm
+    native_handle # The handle for cpp algorithm
     min_size: int
     max_size: int
     architectures: List[str]
-    placement: mscclpp.Placement
+    buffer_mode: mscclpp.BufferMode # in-place/out-of-place/all
     constraint: mscclpp.AlgorithmConstraint
     tags: Dict[str, str]
 
