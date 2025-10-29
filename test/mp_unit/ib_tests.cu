@@ -18,6 +18,10 @@ void IbTestBase::SetUp() {
 }
 
 void IbPeerToPeerTest::SetUp() {
+#if !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+
   IbTestBase::SetUp();
 
   mscclpp::UniqueId id;

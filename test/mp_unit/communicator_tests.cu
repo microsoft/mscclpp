@@ -104,7 +104,11 @@ void CommunicatorTest::SetUp() {
 
   ASSERT_EQ((deviceBufferSize / sizeof(int)) % gEnv->worldSize, 0);
 
+#if defined(USE_IBVERBS)
   connectMesh(true, true, false);
+#else
+  connectMesh(true, false, false);
+#endif
 
   devicePtr.resize(numBuffers);
   localMemory.resize(numBuffers);
@@ -117,10 +121,16 @@ void CommunicatorTest::SetUp() {
     }
   }
 
+#if defined(USE_IBVERBS)
+  auto transport = mscclpp::Transport::CudaIpc | ibTransport;
+#else
+  auto transport = mscclpp::Transport::CudaIpc;
+#endif
+
   for (size_t n = 0; n < numBuffers; n++) {
     devicePtr[n] = mscclpp::detail::gpuCallocShared<int>(deviceBufferSize / sizeof(int));
-    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, mscclpp::Transport::CudaIpc | ibTransport, 0, remoteRanks,
-                        localMemory[n], remoteMemory[n]);
+    registerMemoryPairs(devicePtr[n].get(), deviceBufferSize, transport, 0, remoteRanks, localMemory[n],
+                        remoteMemory[n]);
   }
 }
 
