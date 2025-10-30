@@ -74,22 +74,18 @@ static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
 namespace detail {
 
 // Return the full path of the detected project root directory, or empty string if not found.
-static std::string guessFindProjectRoot(const std::string& filePath) {
+static std::filesystem::path guessFindProjectRoot(const std::filesystem::path& filePath) {
   const std::string rootIndicators[] = {".git", "VERSION", "README.md"};
 
   // Start from the directory containing the file
-  size_t lastSlashInitial = filePath.find_last_of('/');
-  if (lastSlashInitial == std::string::npos) {
-    return "";  // No directory structure
-  }
-  std::string currentDir = filePath.substr(0, lastSlashInitial);
+  std::filesystem::path currentDir = filePath.parent_path();
+  if (currentDir.empty()) return {};
 
   // Walk up the directory tree towards root
-  while (!currentDir.empty() && currentDir != "/") {
-    // Check indicators in currentDir
+  while (!currentDir.empty() && currentDir != currentDir.root_path()) {
     bool foundRoot = false;
     for (const auto& indicator : rootIndicators) {
-      std::filesystem::path potential = std::filesystem::path(currentDir) / indicator;
+      std::filesystem::path potential = currentDir / indicator;
       std::error_code ec;  // non-throwing exists
       if (std::filesystem::exists(potential, ec)) {
         foundRoot = true;
@@ -97,37 +93,40 @@ static std::string guessFindProjectRoot(const std::string& filePath) {
       }
     }
     if (foundRoot) {
-      return currentDir;  // Full path to root directory
+      return currentDir;  // Found root directory path
     }
-    size_t lastSlash = currentDir.find_last_of('/');
-    if (lastSlash == std::string::npos) break;
-    currentDir = currentDir.substr(0, lastSlash);
+    currentDir = currentDir.parent_path();
   }
-  return "";  // Not found
+  return {};  // Not found
 }
 
 // Remove the project root prefix (including trailing '/') from filePath if present.
-static std::string removeProjectRootPrefix(const std::string& filePath, const std::string& projectRoot) {
-  if (projectRoot.empty()) return filePath;   // Nothing to remove
-  if (filePath.rfind(projectRoot, 0) == 0) {  // starts with projectRoot
-    size_t cut = projectRoot.size();
-    if (cut < filePath.size() && filePath[cut] == '/') {
-      ++cut;  // Skip slash after root
+static std::string removeProjectRootPrefix(const std::filesystem::path& filePath,
+                                           const std::filesystem::path& projectRoot) {
+  if (projectRoot.empty()) return filePath.generic_string();
+
+  std::error_code ec;
+  std::filesystem::path rel = std::filesystem::relative(filePath, projectRoot, ec);
+  if (!ec && !rel.empty()) {
+    std::string relStr = rel.generic_string();
+    if (!(relStr.size() >= 2 && relStr[0] == '.' && relStr[1] == '.')) {
+      return relStr;  // Within project root.
     }
-    return filePath.substr(cut);
   }
-  // projectRoot not a prefix, return original
-  return filePath;
+
+  // Fallback: not within project root.
+  return filePath.generic_string();
 }
 
-static std::string globalProjectRoot;
+static std::filesystem::path globalProjectRoot;
 static std::mutex globalProjectRootMutex;
 
-std::string guessRemoveProjectPrefix(const std::string& filePath) {
+std::string guessRemoveProjectPrefix(const std::string& filePathStr) {
+  std::filesystem::path filePath(filePathStr);
   if (globalProjectRoot.empty()) {
     std::lock_guard<std::mutex> lock(globalProjectRootMutex);
     if (globalProjectRoot.empty()) {
-      std::string candidate = guessFindProjectRoot(filePath);
+      auto candidate = guessFindProjectRoot(filePath);
       if (!candidate.empty()) {
         globalProjectRoot = std::move(candidate);
       }

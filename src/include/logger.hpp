@@ -15,7 +15,7 @@
 namespace mscclpp {
 
 namespace detail {
-std::string guessRemoveProjectPrefix(const std::string& filePath);
+std::string guessRemoveProjectPrefix(const std::string& filePathStr);
 std::string timestamp(const char* format = "%Y-%m-%d %X");
 std::string subsysFlagToString(unsigned int flag);
 }  // namespace detail
