@@ -117,35 +117,35 @@ std::string guessRemoveProjectPrefix(const std::string& filePath) {
 }
 
 std::string timestamp(const char* format) {
-  // Cache formatted UTC timestamp per second to reduce formatting overhead
-  static std::atomic<time_t> cachedSecond{0};
-  static std::string cachedString;
+  // Thread-safe per-second UTC timestamp cache.
+  // Uses mutex + shared_ptr (atomic<T> requires trivially copyable T in C++17).
+  struct TimeCache { time_t second; std::string str; };
+  static std::shared_ptr<const TimeCache> cachePtr;  // guarded by cacheMutex
   static std::mutex cacheMutex;
 
   auto now = std::chrono::system_clock::now();
   time_t currentTime = std::chrono::system_clock::to_time_t(now);
 
-  // Fast path: same second, return cached value
-  time_t last = cachedSecond.load(std::memory_order_acquire);
-  if (last == currentTime && !cachedString.empty()) {
-    return cachedString;
+  {
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    if (cachePtr && cachePtr->second == currentTime) {
+      return cachePtr->str;  // Safe stale/current value.
+    }
   }
 
-  // Compute new formatted time in UTC
+  // Build new formatted timestamp (UTC) for this second.
   std::tm tmBuf;
   if (::gmtime_r(&currentTime, &tmBuf) == nullptr) {
-    return "";  // Fallback on conversion failure
+    return "";  // Conversion failure fallback.
   }
   std::stringstream ss;
   ss << std::put_time(&tmBuf, format);
-  std::string newString = ss.str();
+  auto newCache = std::make_shared<TimeCache>(TimeCache{currentTime, ss.str()});
 
-  // Update cache
   {
     std::lock_guard<std::mutex> lock(cacheMutex);
-    cachedString = std::move(newString);
-    cachedSecond.store(currentTime, std::memory_order_release);
-    return cachedString;
+    cachePtr = std::move(newCache);
+    return cachePtr->str;
   }
 }
 
