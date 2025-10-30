@@ -173,6 +173,23 @@ std::string timestamp(const char* format) {
   }
 }
 
+std::string logLevelToString(LogLevel level) {
+  switch (level) {
+    case LogLevel::NONE:
+      return "NONE";
+    case LogLevel::DEBUG:
+      return "DEBUG";
+    case LogLevel::INFO:
+      return "INFO";
+    case LogLevel::WARN:
+      return "WARN";
+    case LogLevel::ERROR:
+      return "ERROR";
+    default:
+      return "UNKNOWN";
+  }
+}
+
 std::string logSubsysToString(LogSubsys subsys) {
   switch (subsys) {
     case LogSubsys::ENV:
