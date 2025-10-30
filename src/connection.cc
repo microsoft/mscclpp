@@ -14,8 +14,8 @@
 
 #include "api.h"
 #include "context.hpp"
-#include "debug.h"
 #include "endpoint.hpp"
+#include "logger.hpp"
 
 namespace mscclpp {
 
@@ -114,7 +114,7 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
 
   stream_->memcpyD2D(dstPtr + dstOffset, srcPtr + srcOffset, size);
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
+  INFO(CONN, "CudaIpcConnection write: from ", srcPtr + srcOffset, " to ", dstPtr + dstOffset, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -133,7 +133,7 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
 
   stream_->memcpyH2D(dstPtr + dstOffset, src, sizeof(uint64_t));
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+  INFO(CONN, "CudaIpcConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_UPDATE_AND_SYNC_EXIT)
@@ -147,12 +147,12 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #endif
 
   if (timeoutUsec >= 0) {
-    INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
+    INFO(CONN, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
 
   stream_->sync();
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
+  INFO(CONN, "CudaIpcConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -173,7 +173,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
   dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   validateTransport(dummyAtomicSourceMem_, transport_);
   dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
-  INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
+  INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created");
 }
 
 Transport IBConnection::transport() const { return transport_; }
@@ -205,8 +205,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
                         /*signaled=*/true);
 
   qp_.lock()->postSend();
-  INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
-       (uint8_t*)dstMrInfo.addr + dstOffset, size);
+  INFO(CONN, "IBConnection write: from ", (uint8_t*)srcMr->getBuff() + srcOffset, " to ",
+       (uint8_t*)dstMrInfo.addr + dstOffset, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -233,8 +233,8 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
                              /*signaled=*/true);
 
   qp_.lock()->postSend();
-  INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
-       oldValue, newValue);
+  INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
+       " -> ", newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -266,7 +266,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
       }
     }
   }
-  INFO(MSCCLPP_NET, "IBConnection flushing connection");
+  INFO(CONN, "IBConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -313,7 +313,7 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const E
     this->recvMessages();
   });
 
-  INFO(MSCCLPP_NET, "Ethernet connection created");
+  INFO(CONN, "Ethernet connection created");
 }
 
 EthernetConnection::~EthernetConnection() {
@@ -362,7 +362,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
     headerSize = 0;
   }
 
-  INFO(MSCCLPP_NET, "EthernetConnection write: from %p to %p, size %lu", srcPtr, dstPtr, size);
+  INFO(CONN, "EthernetConnection write: from ", srcPtr, " to ", dstPtr, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -398,7 +398,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   // Sending Message
   sendSocket_->send(sendBuffer_.data(), messageSize);
 
-  INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+  INFO(CONN, "EthernetConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_EXIT)
@@ -411,7 +411,7 @@ void EthernetConnection::flush(int64_t) {
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  INFO(MSCCLPP_NET, "EthernetConnection flushing connection");
+  INFO(CONN, "EthernetConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);

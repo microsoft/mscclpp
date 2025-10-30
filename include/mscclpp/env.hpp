@@ -32,6 +32,19 @@ class Env {
   /// Env name: `MSCCLPP_DEBUG_FILE`. A file path to write debug logs to. Unset by default.
   const std::string debugFile;
 
+  /// Env name: `MSCCLPP_LOG_LEVEL`. One of DEBUG, INFO, WARN, or ERROR, in the order of severity
+  /// (lower to higher level). A lower level is a superset of a higher level. Default is ERROR.
+  const std::string logLevel;
+
+  /// Env name: `MSCCLPP_LOG_SUBSYS`. The log subsystem, a comma-separated list of subsystems to enable
+  /// logging for. Possible values are ENV, NET, CONN, EXEC, NCCL, ALL (default).
+  /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
+  /// For example, "^NET,CONN" enables all subsystems except NET and CONN.
+  const std::string logSubsys;
+
+  /// Env name: `MSCCLPP_LOG_FILE`. A file path to write log messages to. Unset by default.
+  const std::string logFile;
+
   /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of HCA devices to use for IB transport. i-th device
   /// in the list will be used for the i-th GPU in the system. If unset, it will use ibverbs APIs to find the
   /// devices automatically.

@@ -37,9 +37,9 @@ class IbMr {
  private:
   IbMr(ibv_pd* pd, void* buff, std::size_t size);
 
-  ibv_mr* mr;
-  void* buff;
-  std::size_t size;
+  ibv_mr* mr_;
+  void* buff_;
+  std::size_t size_;
 
   friend class IbCtx;
 };
@@ -80,7 +80,7 @@ class IbQp {
   virtual void postSend();
   virtual int pollCq();
 
-  IbQpInfo& getInfo() { return this->info; }
+  IbQpInfo& getInfo() { return info_; }
   virtual int getWcStatus([[maybe_unused]] int idx) const;
   virtual int getNumCqItems() const;
 
@@ -94,19 +94,19 @@ class IbQp {
        int maxWrPerSend);
   WrInfo getNewWrInfo();
 
-  IbQpInfo info;
+  IbQpInfo info_;
 
-  ibv_qp* qp;
-  ibv_cq* cq;
-  std::shared_ptr<std::vector<ibv_wc>> wcs;
-  std::shared_ptr<std::vector<ibv_send_wr>> wrs;
-  std::shared_ptr<std::vector<ibv_sge>> sges;
-  int wrn;
-  int numSignaledPostedItems;
-  int numSignaledStagedItems;
+  ibv_qp* qp_;
+  ibv_cq* cq_;
+  std::shared_ptr<std::vector<ibv_wc>> wcs_;
+  std::shared_ptr<std::vector<ibv_send_wr>> wrs_;
+  std::shared_ptr<std::vector<ibv_sge>> sges_;
+  int wrn_;
+  int numSignaledPostedItems_;
+  int numSignaledStagedItems_;
 
-  const int maxCqPollNum;
-  const int maxWrPerSend;
+  const int maxCqPollNum_;
+  const int maxWrPerSend_;
 
   friend class IbCtx;
 };
@@ -134,15 +134,15 @@ class IbCtx {
   }
 #endif
 
-  const std::string& getDevName() const { return this->devName; };
+  const std::string& getDevName() const { return devName_; };
 
  private:
   bool isPortUsable(int port) const;
   int getAnyActivePort() const;
 
-  const std::string devName;
-  ibv_context* ctx;
-  ibv_pd* pd;
+  const std::string devName_;
+  ibv_context* ctx_;
+  ibv_pd* pd_;
 };
 
 }  // namespace mscclpp
