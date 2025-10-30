@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_LOGGER_HPP_
 #define MSCCLPP_LOGGER_HPP_
 
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -59,6 +60,7 @@ class Logger {
   LogLevel level_;
   char delimeter_;
   unsigned int subsysFlags_;
+  std::ofstream logFileStream_;
 
  public:
   Logger(const std::string& header, const LogLevel level, const char delimeter);
@@ -121,7 +123,11 @@ class Logger {
   template <typename... Args>
   void log(LogLevel level, LogSubsysFlag flag, Args&&... args) {
     auto msg = message<true>(level, flag, std::forward<Args>(args)...);
-    if (!msg.empty()) {
+    if (msg.empty()) return;
+    if (logFileStream_.is_open()) {
+      logFileStream_ << msg;
+    } else {
+      // Fallback to stdout if no file stream
       std::cout << msg;
     }
   }

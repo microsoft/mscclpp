@@ -1,10 +1,11 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "logger.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <unordered_map>
 
 namespace mscclpp {
@@ -140,6 +141,14 @@ static std::unordered_map<std::string, std::unique_ptr<Logger>> allLoggers;
 Logger::Logger(const std::string& header, const LogLevel level, const char delimeter)
     : header_(header), level_(level), delimeter_(delimeter) {
   subsysFlags_ = stringToSubsysFlags(env()->logSubsys);
+  const std::string& path = env()->logFile;
+  if (!path.empty()) {
+    logFileStream_.open(path, std::ios::out | std::ios::app);
+    if (!logFileStream_.is_open()) {
+      // Fallback notice
+      std::cerr << "MSCCLPP Logger: failed to open log file '" << path << "', using stdout." << std::endl;
+    }
+  }
 }
 
 Logger& logger(const std::string& name, const std::string& header, const std::string& levelStr, char delimeter) {
