@@ -19,6 +19,11 @@ enum class DataType {
   BFLOAT16,
   FP8_E4M3,  // Add FP8 E4M3 type
   FP8_E5M2,  // Add FP8 E5M2 type
+  INT8,
+  UINT8,
+  INT64,
+  UINT64,
+  FLOAT64,
 };
 
 enum class PacketType {

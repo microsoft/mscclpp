@@ -5,6 +5,7 @@
 #define MSCCLPP_ALGORITHM_HPP_
 
 #include <memory>
+#include <mscclpp/executor.hpp>  // Add this include for DataType
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
@@ -51,17 +52,17 @@ class Algorithm {
  public:
   using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>,
                                       std::unordered_map<std::string, std::shared_ptr<void>>&)>;
-  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, int,
+  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, DataType,
                                        cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
-                                                                      const void*, void*, size_t, int)>;
-  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, int dtype)>;
+                                                                      const void*, void*, size_t, DataType)>;
+  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, DataType dtype)>;
   Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
             ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
   Algorithm() = default;
 
   /// @brief Launch the algorithm.
-  /// @brief comm The communicator.
+  /// @param comm The communicator.
   /// @param input The input buffer.
   /// @param output The output buffer.
   /// @param count The number of elements.
@@ -70,7 +71,7 @@ class Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
+  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, DataType dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   bool isEmpty();
   std::string name() const;
@@ -115,7 +116,7 @@ class AlgorithmBuilder {
 
 using AlgoSelectFunc = std::function<Algorithm(
     const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
+    std::string collective, const void* input, void* output, size_t messageSize, DataType dtype, int nRanksPerNode,
     int worldSize)>;
 
 class AlgorithmCollection {
@@ -127,12 +128,12 @@ class AlgorithmCollection {
   /// @param input The input buffer.
   /// @param output The output buffer.
   /// @param messageSize The message size.
-  /// @param dtype The data type. Please refer to ncclDataType_t for the definition.
+  /// @param dtype The data type.
   /// @param nRanksPerNode The number of ranks per node.
   /// @param worldSize The total number of ranks.
   /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
   Algorithm selectAlgorithm(const std::string& collective, const void* input, void* output, size_t messageSize,
-                            int dtype, int nRanksPerNode, int worldSize);
+                            DataType dtype, int nRanksPerNode, int worldSize);
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.

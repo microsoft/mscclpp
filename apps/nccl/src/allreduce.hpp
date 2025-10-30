@@ -9,6 +9,7 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
@@ -178,7 +179,7 @@ __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
+  return __builtin_amdgcn_cvt_pk_f32_fp8(v.x, v.y, ival, false);
 #elif !defined(__HIP_PLATFORM_AMD__)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
@@ -342,12 +343,27 @@ __forceinline__ __device__ T cal_elements(T a, T b) {
 
 template <typename T, Op OpType>
 __forceinline__ __device__ int4 cal_vectors_helper(int4 a, int4 b) {
-  int4 ret;
-  ret.w = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
-  ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  ret.z = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
-  return ret;
+  if constexpr (sizeof(T) == 8) {
+    // For 8-byte types, int4 contains 2 elements of type T
+    // We need to process them as pairs
+    int4 ret;
+    // Cast int4 to array of T (which will be 2 elements)
+    T* a_vals = reinterpret_cast<T*>(&a);
+    T* b_vals = reinterpret_cast<T*>(&b);
+    T* ret_vals = reinterpret_cast<T*>(&ret);
+    
+    ret_vals[0] = cal_elements<T, OpType>(a_vals[0], b_vals[0]);
+    ret_vals[1] = cal_elements<T, OpType>(a_vals[1], b_vals[1]);
+    
+    return ret;
+  } else {
+    int4 ret;
+    ret.w = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
+    ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
+    ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+    ret.z = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
+    return ret;
+  }
 }
 
 template <typename T, Op OpType>
@@ -360,7 +376,14 @@ __forceinline__ __device__ uint2 cal_vectors_helper(uint2 a, uint2 b) {
 
 template <typename T, Op OpType>
 __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
-  return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+  if constexpr (sizeof(T) == 8) {
+    // For 8-byte types, we can't bit_cast between int (4 bytes) and T (8 bytes)
+    // This function shouldn't be called for 8-byte types
+    // Return a to avoid compilation error, but this path should never execute
+    return a;
+  } else {
+    return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+  }
 }
 
 #if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
@@ -461,6 +484,48 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
                                   int worldSize, size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
+  
+  // For 8-byte types, handle them differently
+  if constexpr (sizeof(T) == 8) {
+    // Process as T directly, not as uint32_t
+    const int nPeers = nRanksPerNode - 1;
+    uint32_t flag = deviceFlag[blockIdx.x];
+    size_t scratchBaseOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
+    
+    const int nBlocksPerPeer = gridDim.x / nPeers;
+    const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
+    const int tid = threadIdx.x + localBlockIdx * blockDim.x;
+    const int peerIdx = blockIdx.x / nBlocksPerPeer;
+    
+    T* src = buff;
+    T* dst = resultBuff;
+    
+    // step 1: write data to each peer's scratch buffer using raw copy
+    for (size_t idx = tid; idx < nelems; idx += blockDim.x * nBlocksPerPeer) {
+      ((T*)((char*)scratch + scratchBaseOffset + rank * nelems * sizeof(T)))[idx] = src[idx];
+    }
+    __threadfence();
+    __syncthreads();
+    
+    // step 2: Reduce Data
+    for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
+      T data = src[idx];
+      for (int index = 0; index < nPeers; index++) {
+        const int remoteRank = index < rank ? index : index + 1;
+        T* remoteScratch = (T*)((char*)scratch + scratchBaseOffset + remoteRank * nelems * sizeof(T));
+        T val = remoteScratch[idx];
+        data = cal_elements<T, OpType>(data, val);
+      }
+      dst[idx] = data;
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+    }
+    return;
+  }
+  
+  // Original code for types <= 4 bytes
   if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
@@ -1127,12 +1192,12 @@ class AllreducePacket : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
@@ -1153,12 +1218,12 @@ class AllreduceNvls : public mscclpp::AlgorithmBuilder {
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   const size_t nvlsBufferSize_ = (1 << 30);
   uint32_t nSwitchChannels_;
@@ -1175,12 +1240,12 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   const size_t nvlsBufferSize_ = (1 << 30);
   size_t scratchBufferSize_;
@@ -1199,12 +1264,12 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
   std::shared_ptr<mscclpp::Communicator> comm_;
@@ -1228,12 +1293,12 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
