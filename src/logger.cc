@@ -3,6 +3,8 @@
 
 #include "logger.hpp"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -189,6 +191,8 @@ std::string logSubsysToString(LogSubsys subsys) {
       return "UNKNOWN";
   }
 }
+
+int pid() { return static_cast<int>(::getpid()); }
 
 }  // namespace detail
 
