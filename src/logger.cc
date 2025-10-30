@@ -152,8 +152,8 @@ std::string subsysFlagToString(unsigned int flag) {
 
 static std::unordered_map<std::string, std::unique_ptr<Logger>> allLoggers;
 
-Logger::Logger(const std::string& header, const LogLevel level, const char delimeter)
-    : header_(header), level_(level), delimeter_(delimeter) {
+Logger::Logger(const std::string& header, const LogLevel level, const char delimiter)
+    : header_(header), level_(level), delimiter_(delimiter) {
   subsysFlags_ = stringToSubsysFlags(env()->logSubsys);
   const std::string& path = env()->logFile;
   if (!path.empty()) {
@@ -165,13 +165,13 @@ Logger::Logger(const std::string& header, const LogLevel level, const char delim
   }
 }
 
-Logger& logger(const std::string& name, const std::string& header, const std::string& levelStr, char delimeter) {
+Logger& logger(const std::string& name, const std::string& header, const std::string& levelStr, char delimiter) {
   auto it = allLoggers.find(name);
   if (it != allLoggers.end()) {
     return *(it->second);
   }
   LogLevel level = stringToLogLevel(levelStr);
-  allLoggers[name] = std::make_unique<Logger>(header, level, delimeter);
+  allLoggers[name] = std::make_unique<Logger>(header, level, delimiter);
   return *(allLoggers[name]);
 }
 
