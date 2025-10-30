@@ -32,7 +32,7 @@ class Env {
   /// Env name: `MSCCLPP_DEBUG_FILE`. A file path to write debug logs to. Unset by default.
   const std::string debugFile;
 
-  /// Env name: `MSCCLPP_LOG_LEVEL`. One of DEBUG, INFO, VERSION, WARN, or ERROR, in the order of severity
+  /// Env name: `MSCCLPP_LOG_LEVEL`. One of DEBUG, INFO, WARN, or ERROR, in the order of severity
   /// (lower to higher level). A lower level is a superset of a higher level. Default is ERROR.
   const std::string logLevel;
 
