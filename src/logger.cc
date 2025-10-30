@@ -4,9 +4,12 @@
 #include "logger.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <unordered_map>
 
 namespace mscclpp {
@@ -113,20 +116,37 @@ std::string guessRemoveProjectPrefix(const std::string& filePath) {
   return filePath;
 }
 
-[[maybe_unused]] std::string removeProjectPrefix(const std::string& filePath, const std::string& projectPrefix = "/") {
-  size_t pos = filePath.find(projectPrefix);
-  if (pos != std::string::npos) {
-    return filePath.substr(pos + projectPrefix.length());
-  }
-  return filePath;  // No prefix found, return original path
-}
-
 std::string timestamp(const char* format) {
+  // Cache formatted UTC timestamp per second to reduce formatting overhead
+  static std::atomic<time_t> cachedSecond{0};
+  static std::string cachedString;
+  static std::mutex cacheMutex;
+
   auto now = std::chrono::system_clock::now();
-  auto inTime = std::chrono::system_clock::to_time_t(now);
+  time_t currentTime = std::chrono::system_clock::to_time_t(now);
+
+  // Fast path: same second, return cached value
+  time_t last = cachedSecond.load(std::memory_order_acquire);
+  if (last == currentTime && !cachedString.empty()) {
+    return cachedString;
+  }
+
+  // Compute new formatted time in UTC
+  std::tm tmBuf;
+  if (::gmtime_r(&currentTime, &tmBuf) == nullptr) {
+    return "";  // Fallback on conversion failure
+  }
   std::stringstream ss;
-  ss << std::put_time(std::localtime(&inTime), format);
-  return ss.str();
+  ss << std::put_time(&tmBuf, format);
+  std::string newString = ss.str();
+
+  // Update cache
+  {
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    cachedString = std::move(newString);
+    cachedSecond.store(currentTime, std::memory_order_release);
+    return cachedString;
+  }
 }
 
 std::string subsysFlagToString(unsigned int flag) {
@@ -150,7 +170,8 @@ std::string subsysFlagToString(unsigned int flag) {
 
 }  // namespace detail
 
-static std::unordered_map<std::string, std::unique_ptr<Logger>> allLoggers;
+static std::once_flag globalLoggerInitFlag;
+static std::shared_ptr<Logger> globalLoggerPtr;
 
 Logger::Logger(const std::string& header, const LogLevel level, const char delimiter)
     : header_(header), level_(level), delimiter_(delimiter) {
@@ -165,14 +186,12 @@ Logger::Logger(const std::string& header, const LogLevel level, const char delim
   }
 }
 
-Logger& logger(const std::string& name, const std::string& header, const std::string& levelStr, char delimiter) {
-  auto it = allLoggers.find(name);
-  if (it != allLoggers.end()) {
-    return *(it->second);
-  }
-  LogLevel level = stringToLogLevel(levelStr);
-  allLoggers[name] = std::make_unique<Logger>(header, level, delimiter);
-  return *(allLoggers[name]);
+Logger& logger(const std::string& header, const std::string& levelStr, char delimiter) {
+  std::call_once(globalLoggerInitFlag, [&]() {
+    LogLevel level = stringToLogLevel(levelStr);
+    globalLoggerPtr = std::make_shared<Logger>(header, level, delimiter);
+  });
+  return *globalLoggerPtr;
 }
 
 }  // namespace mscclpp
