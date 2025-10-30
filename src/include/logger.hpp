@@ -151,12 +151,13 @@ Logger& logger(const std::string& header, const std::string& level, char delimit
 #define ERROR(subsys__, ...) LOGGER_LOG(::mscclpp::LogLevel::ERROR, subsys__, __VA_ARGS__)
 #define THROW(subsys__, exception__, errorCode__, ...)                                                       \
   do {                                                                                                       \
+    const auto errorCodeCopy__ = errorCode__;                                                                \
     throw exception__(                                                                                       \
         ::mscclpp::logger("%@ %@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                               \
             .message<false>(::mscclpp::LogLevel::ERROR, subsys__, ::mscclpp::detail::timestamp(), "MSCCLPP", \
                             ::mscclpp::detail::pid(), ::mscclpp::detail::logSubsysToString(subsys__),        \
                             ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), __LINE__, __VA_ARGS__),   \
-        errorCode__);                                                                                        \
+        errorCodeCopy__);                                                                                    \
   } while (0)
 
 #endif  // MSCCLPP_LOGGER_HPP_
