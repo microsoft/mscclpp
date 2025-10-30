@@ -20,7 +20,7 @@ std::string timestamp(const char* format = "%Y-%m-%d %X");
 std::string subsysFlagToString(unsigned int flag);
 }  // namespace detail
 
-typedef enum : unsigned int { NONE = 0, DEBUG, INFO, VERSION, WARN, ERROR } LogLevel;
+typedef enum : unsigned int { NONE = 0, DEBUG, INFO, WARN, ERROR } LogLevel;
 typedef enum : unsigned int {
   ENV = 0x1,
   NET = 0x2,
@@ -97,8 +97,8 @@ class Logger {
     size_t argIndex = 0;
     size_t pos = 0;
 
-    // Replace "%s" placeholders
-    while ((pos = formattedHeader.find("%s", pos)) != std::string::npos && argIndex < argStrings.size()) {
+    // Replace "%@" placeholders
+    while ((pos = formattedHeader.find("%@", pos)) != std::string::npos && argIndex < argStrings.size()) {
       formattedHeader.replace(pos, 2, argStrings[argIndex]);
       pos += argStrings[argIndex].length();
       ++argIndex;
@@ -140,7 +140,7 @@ Logger& logger(const std::string& header, const std::string& level, char delimit
 
 #define LOGGER_LOG(level__, flag__, ...)                                                                           \
   do {                                                                                                             \
-    ::mscclpp::logger("%s %s %s %s:%s ", ::mscclpp::env()->logLevel, 0)                                            \
+    ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                            \
         .log(level__, flag__, ::mscclpp::detail::timestamp(), "MSCCLPP",                                           \
              ::mscclpp::detail::subsysFlagToString(flag__), ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), \
              __LINE__, __VA_ARGS__);                                                                               \
@@ -154,7 +154,7 @@ Logger& logger(const std::string& header, const std::string& level, char delimit
 #define THROW(flag__, exception__, errorCode__, ...)                                                       \
   do {                                                                                                     \
     throw exception__(                                                                                     \
-        ::mscclpp::logger("%s %s %s %s:%s ", ::mscclpp::env()->logLevel, 0)                                \
+        ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                \
             .message<false>(::mscclpp::LogLevel::ERROR, flag__, ::mscclpp::detail::timestamp(), "MSCCLPP", \
                             ::mscclpp::detail::subsysFlagToString(flag__),                                 \
                             ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), __LINE__, __VA_ARGS__), \

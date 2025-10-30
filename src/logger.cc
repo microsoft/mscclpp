@@ -24,8 +24,6 @@ static LogLevel stringToLogLevel(const std::string& levelStr) {
     return LogLevel::DEBUG;
   } else if (upperStr == "INFO") {
     return LogLevel::INFO;
-  } else if (upperStr == "VERSION") {
-    return LogLevel::VERSION;
   } else if (upperStr == "WARN") {
     return LogLevel::WARN;
   } else if (upperStr == "ERROR") {
@@ -75,14 +73,14 @@ static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
 
 namespace detail {
 
-std::string guessRemoveProjectPrefix(const std::string& filePath) {
-  // Common project root indicators
+// Return the full path of the detected project root directory, or empty string if not found.
+static std::string guessFindProjectRoot(const std::string& filePath) {
   const std::string rootIndicators[] = {".git", "VERSION", "README.md"};
 
   // Start from the directory containing the file
   size_t lastSlashInitial = filePath.find_last_of('/');
   if (lastSlashInitial == std::string::npos) {
-    return filePath;  // No directory separators
+    return "";  // No directory structure
   }
   std::string currentDir = filePath.substr(0, lastSlashInitial);
 
@@ -99,27 +97,52 @@ std::string guessRemoveProjectPrefix(const std::string& filePath) {
       }
     }
     if (foundRoot) {
-      // Return path relative to the detected root directory (exclude the root directory name)
-      // currentDir = /path/to/repo  filePath = /path/to/repo/src/file.cpp -> want src/file.cpp
-      if (filePath.size() > currentDir.size() + 1) {
-        return filePath.substr(currentDir.size() + 1);  // skip trailing '/'
-      }
-      return filePath;  // Fallback / unexpected (file directly at root)
+      return currentDir;  // Full path to root directory
     }
-
-    // Move up one directory
     size_t lastSlash = currentDir.find_last_of('/');
     if (lastSlash == std::string::npos) break;
     currentDir = currentDir.substr(0, lastSlash);
   }
-  // No project root indicator found; return original path
+  return "";  // Not found
+}
+
+// Remove the project root prefix (including trailing '/') from filePath if present.
+static std::string removeProjectRootPrefix(const std::string& filePath, const std::string& projectRoot) {
+  if (projectRoot.empty()) return filePath;   // Nothing to remove
+  if (filePath.rfind(projectRoot, 0) == 0) {  // starts with projectRoot
+    size_t cut = projectRoot.size();
+    if (cut < filePath.size() && filePath[cut] == '/') {
+      ++cut;  // Skip slash after root
+    }
+    return filePath.substr(cut);
+  }
+  // projectRoot not a prefix, return original
   return filePath;
+}
+
+static std::string globalProjectRoot;
+static std::mutex globalProjectRootMutex;
+
+std::string guessRemoveProjectPrefix(const std::string& filePath) {
+  if (globalProjectRoot.empty()) {
+    std::lock_guard<std::mutex> lock(globalProjectRootMutex);
+    if (globalProjectRoot.empty()) {
+      std::string candidate = guessFindProjectRoot(filePath);
+      if (!candidate.empty()) {
+        globalProjectRoot = std::move(candidate);
+      }
+    }
+  }
+  return removeProjectRootPrefix(filePath, globalProjectRoot);
 }
 
 std::string timestamp(const char* format) {
   // Thread-safe per-second UTC timestamp cache.
   // Uses mutex + shared_ptr (atomic<T> requires trivially copyable T in C++17).
-  struct TimeCache { time_t second; std::string str; };
+  struct TimeCache {
+    time_t second;
+    std::string str;
+  };
   static std::shared_ptr<const TimeCache> cachePtr;  // guarded by cacheMutex
   static std::mutex cacheMutex;
 

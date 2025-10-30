@@ -108,8 +108,12 @@ uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
            int maxWrPerSend)
-    : qp_(nullptr),
+    : info_(),
+      qp_(nullptr),
       cq_(nullptr),
+      wcs_(),
+      wrs_(),
+      sges_(),
       wrn_(0),
       numSignaledPostedItems_(0),
       numSignaledStagedItems_(0),
@@ -167,7 +171,6 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
   }
   qp_ = qp;
-  wrn_ = 0;
   wrs_ = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend_);
   sges_ = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend_);
   wcs_ = std::make_shared<std::vector<ibv_wc>>(maxCqPollNum_);
