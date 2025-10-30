@@ -58,24 +58,24 @@ class Logger {
 
   std::string header_;
   LogLevel level_;
-  char delimeter_;
+  char delimiter_;
   unsigned int subsysFlags_;
   std::ofstream logFileStream_;
 
  public:
-  Logger(const std::string& header, const LogLevel level, const char delimeter);
+  Logger(const std::string& header, const LogLevel level, const char delimiter);
 
   const std::string& header() const { return header_; }
 
   const LogLevel& level() const { return level_; }
 
-  const char& delimeter() const { return delimeter_; }
+  const char& delimiter() const { return delimiter_; }
 
   void setHeader(const std::string& header) { header_ = header; }
 
   void setLevel(LogLevel level) { level_ = level; }
 
-  void setDelimeter(char delimeter) { delimeter_ = delimeter; }
+  void setDelimiter(char delimiter) { delimiter_ = delimiter; }
 
   template <bool NewLine, typename... Args>
   std::string message(LogLevel level, LogSubsysFlag flag, Args&&... args) {
@@ -108,8 +108,8 @@ class Logger {
 
     // Append remaining arguments
     for (size_t i = argIndex; i < argStrings.size(); ++i) {
-      if (delimeter_) {
-        ss << delimeter_;
+      if (delimiter_) {
+        ss << delimiter_;
       }
       ss << argStrings[i];
     }
@@ -134,7 +134,7 @@ class Logger {
 };
 
 Logger& logger(const std::string& name, const std::string& header = "", const std::string& level = "ERROR",
-               char delimeter = 0);
+               char delimiter = 0);
 
 }  // namespace mscclpp
 
