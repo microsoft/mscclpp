@@ -10,6 +10,8 @@
 #include <iostream>
 #include <mscclpp/errors.hpp>
 
+#include "logger.hpp"
+
 namespace mscclpp {
 
 struct IBVerbs {
@@ -63,7 +65,7 @@ struct IBVerbs {
     }
 
     if (!ibv_reg_dmabuf_mr_lib) {
-      WARN("ibv_reg_dmabuf_mr is not support in current ibverbs.");
+      WARN(NET, "ibv_reg_dmabuf_mr is not support in current ibverbs.");
     }
   }
 

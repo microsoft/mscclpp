@@ -9,7 +9,7 @@
 #include <mscclpp/errors.hpp>
 // clang-format on
 
-#include "debug.h"
+#include "logger.hpp"
 
 template <typename T>
 T readEnv(const std::string& envName, const T& defaultValue) {
@@ -39,13 +39,7 @@ void readAndSetEnv(const std::string& envName, T& env) {
 template <typename T>
 void logEnv(const std::string& envName, const T& env) {
   if (!getenv(envName.c_str())) return;
-  INFO(MSCCLPP_ENV, "%s=%d", envName.c_str(), env);
-}
-
-template <>
-void logEnv(const std::string& envName, const std::string& env) {
-  if (!getenv(envName.c_str())) return;
-  INFO(MSCCLPP_ENV, "%s=%s", envName.c_str(), env.c_str());
+  INFO(mscclpp::ENV, envName, "=", env);
 }
 
 namespace mscclpp {
@@ -54,6 +48,9 @@ Env::Env()
     : debug(readEnv<std::string>("MSCCLPP_DEBUG", "")),
       debugSubsys(readEnv<std::string>("MSCCLPP_DEBUG_SUBSYS", "")),
       debugFile(readEnv<std::string>("MSCCLPP_DEBUG_FILE", "")),
+      logLevel(readEnv<std::string>("MSCCLPP_LOG_LEVEL", "ERROR")),
+      logSubsys(readEnv<std::string>("MSCCLPP_LOG_SUBSYS", "ALL")),
+      logFile(readEnv<std::string>("MSCCLPP_LOG_FILE", "")),
       hcaDevices(readEnv<std::string>("MSCCLPP_HCA_DEVICES", "")),
       hostid(readEnv<std::string>("MSCCLPP_HOSTID", "")),
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
@@ -77,6 +74,9 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_DEBUG", globalEnv->debug);
     logEnv("MSCCLPP_DEBUG_SUBSYS", globalEnv->debugSubsys);
     logEnv("MSCCLPP_DEBUG_FILE", globalEnv->debugFile);
+    logEnv("MSCCLPP_LOG_LEVEL", globalEnv->logLevel);
+    logEnv("MSCCLPP_LOG_SUBSYS", globalEnv->logSubsys);
+    logEnv("MSCCLPP_LOG_FILE", globalEnv->logFile);
     logEnv("MSCCLPP_HCA_DEVICES", globalEnv->hcaDevices);
     logEnv("MSCCLPP_HOSTID", globalEnv->hostid);
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
