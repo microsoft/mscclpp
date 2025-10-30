@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <unordered_map>
 
@@ -27,7 +28,7 @@ static LogLevel stringToLogLevel(const std::string& levelStr) {
   } else if (upperStr == "ERROR") {
     return LogLevel::ERROR;
   }
-  return LogLevel::ERROR;  // Won't reach here
+  return LogLevel::ERROR;  // Shouldn't reach here
 }
 
 static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
@@ -73,30 +74,43 @@ namespace detail {
 
 std::string guessRemoveProjectPrefix(const std::string& filePath) {
   // Common project root indicators
-  const std::string root_indicators[] = {".git", "README.md", "README", "readme"};
+  const std::string rootIndicators[] = {".git", "VERSION", "README.md"};
 
-  std::string currentDir = filePath;
+  // Start from the directory containing the file
+  size_t lastSlashInitial = filePath.find_last_of('/');
+  if (lastSlashInitial == std::string::npos) {
+    return filePath;  // No directory separators
+  }
+  std::string currentDir = filePath.substr(0, lastSlashInitial);
 
-  // Walk up the directory tree
+  // Walk up the directory tree towards root
   while (!currentDir.empty() && currentDir != "/") {
-    // Get parent directory
-    size_t lastSlash = currentDir.find_last_of('/');
-    if (lastSlash == std::string::npos) break;
-
-    currentDir = currentDir.substr(0, lastSlash);
-
-    // Check if any root indicator exists in this directory
-    for (const auto& indicator : root_indicators) {
-      std::string potentialFile = currentDir + "/" + indicator;
-      // You'd need to check if file exists (using filesystem or stat)
-      // If found, return the filePath excluding the directory name
-      size_t nameStart = currentDir.find_last_of('/');
-      if (nameStart != std::string::npos) {
-        return filePath.substr(nameStart + 1);
+    // Check indicators in currentDir
+    bool foundRoot = false;
+    for (const auto& indicator : rootIndicators) {
+      std::filesystem::path potential = std::filesystem::path(currentDir) / indicator;
+      std::error_code ec;  // non-throwing exists
+      if (std::filesystem::exists(potential, ec)) {
+        foundRoot = true;
+        break;
       }
     }
+    if (foundRoot) {
+      // Return path relative to the detected root directory (exclude the root directory name)
+      // currentDir = /path/to/repo  filePath = /path/to/repo/src/file.cpp -> want src/file.cpp
+      if (filePath.size() > currentDir.size() + 1) {
+        return filePath.substr(currentDir.size() + 1);  // skip trailing '/'
+      }
+      return filePath;  // Fallback / unexpected (file directly at root)
+    }
+
+    // Move up one directory
+    size_t lastSlash = currentDir.find_last_of('/');
+    if (lastSlash == std::string::npos) break;
+    currentDir = currentDir.substr(0, lastSlash);
   }
-  return filePath;  // No project root found
+  // No project root indicator found; return original path
+  return filePath;
 }
 
 [[maybe_unused]] std::string removeProjectPrefix(const std::string& filePath, const std::string& projectPrefix = "/") {

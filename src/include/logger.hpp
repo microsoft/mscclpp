@@ -126,6 +126,7 @@ class Logger {
     if (msg.empty()) return;
     if (logFileStream_.is_open()) {
       logFileStream_ << msg;
+      logFileStream_.flush();
     } else {
       // Fallback to stdout if no file stream
       std::cout << msg;
