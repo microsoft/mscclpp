@@ -32,7 +32,7 @@ static LogLevel stringToLogLevel(const std::string& levelStr) {
   return LogLevel::ERROR;  // Shouldn't reach here
 }
 
-static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
+static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
   bool invert = false;
   std::string str = subsysStr;
   if (!str.empty() && str[0] == '^') {
@@ -41,7 +41,7 @@ static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
   }
   std::string upperStr = str;
   std::transform(upperStr.begin(), upperStr.end(), upperStr.begin(), ::toupper);
-  unsigned int flag = 0;
+  LogSubsysSet set;  // all bits start cleared
   size_t start = 0;
   size_t end = upperStr.find(',');
   if (end == std::string::npos && !upperStr.empty()) {
@@ -50,25 +50,25 @@ static unsigned int stringToSubsysFlags(const std::string& subsysStr) {
   while (end != std::string::npos) {
     std::string token = upperStr.substr(start, end - start);
     if (token == "ENV") {
-      flag |= LogSubsysFlag::ENV;
+      set.set(static_cast<size_t>(LogSubsys::ENV));
     } else if (token == "NET") {
-      flag |= LogSubsysFlag::NET;
+      set.set(static_cast<size_t>(LogSubsys::NET));
     } else if (token == "CONN") {
-      flag |= LogSubsysFlag::CONN;
+      set.set(static_cast<size_t>(LogSubsys::CONN));
     } else if (token == "EXEC") {
-      flag |= LogSubsysFlag::EXEC;
+      set.set(static_cast<size_t>(LogSubsys::EXEC));
     } else if (token == "NCCL") {
-      flag |= LogSubsysFlag::NCCL;
+      set.set(static_cast<size_t>(LogSubsys::NCCL));
     } else if (token == "ALL") {
-      flag |= LogSubsysFlag::ALL;
+      set.set();  // all bits
     }
     start = end + 1;
     end = upperStr.find(',', start);
   }
   if (invert) {
-    flag = ~flag;
+    set.flip();
   }
-  return flag;
+  return set;
 }
 
 namespace detail {
@@ -171,20 +171,20 @@ std::string timestamp(const char* format) {
   }
 }
 
-std::string subsysFlagToString(unsigned int flag) {
-  switch (flag) {
-    case LogSubsysFlag::ENV:
+std::string logSubsysToString(LogSubsys subsys) {
+  switch (subsys) {
+    case LogSubsys::ENV:
       return "ENV";
-    case LogSubsysFlag::NET:
+    case LogSubsys::NET:
       return "NET";
-    case LogSubsysFlag::CONN:
+    case LogSubsys::CONN:
       return "CONN";
-    case LogSubsysFlag::EXEC:
+    case LogSubsys::EXEC:
       return "EXEC";
-    case LogSubsysFlag::NCCL:
+    case LogSubsys::NCCL:
       return "NCCL";
-    case LogSubsysFlag::ALL:
-      return "ALL";
+    case LogSubsys::COUNT:
+      return "ALL";  // COUNT isn't a subsystem; treat only if misused.
     default:
       return "UNKNOWN";
   }
@@ -197,7 +197,7 @@ static std::shared_ptr<Logger> globalLoggerPtr;
 
 Logger::Logger(const std::string& header, const LogLevel level, const char delimiter)
     : header_(header), level_(level), delimiter_(delimiter) {
-  subsysFlags_ = stringToSubsysFlags(env()->logSubsys);
+  subsysSet_ = stringToLogSubsysSet(env()->logSubsys);
   const std::string& path = env()->logFile;
   if (!path.empty()) {
     logFileStream_.open(path, std::ios::out | std::ios::app);

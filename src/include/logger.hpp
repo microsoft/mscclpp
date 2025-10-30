@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_LOGGER_HPP_
 #define MSCCLPP_LOGGER_HPP_
 
+#include <bitset>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -14,21 +15,17 @@
 
 namespace mscclpp {
 
+typedef enum : unsigned int { NONE = 0, DEBUG, INFO, WARN, ERROR } LogLevel;
+typedef enum : std::size_t { ENV = 0, NET, CONN, EXEC, NCCL, COUNT } LogSubsys;
+
 namespace detail {
 std::string guessRemoveProjectPrefix(const std::string& filePathStr);
 std::string timestamp(const char* format = "%Y-%m-%d %X");
-std::string subsysFlagToString(unsigned int flag);
+std::string logSubsysToString(LogSubsys subsys);
 }  // namespace detail
 
-typedef enum : unsigned int { NONE = 0, DEBUG, INFO, WARN, ERROR } LogLevel;
-typedef enum : unsigned int {
-  ENV = 0x1,
-  NET = 0x2,
-  CONN = 0x4,
-  EXEC = 0x8,
-  NCCL = 0x10,
-  ALL = 0xFFFFFFFF
-} LogSubsysFlag;
+// Bitset holding enabled subsystems.
+using LogSubsysSet = std::bitset<static_cast<std::size_t>(LogSubsys::COUNT)>;
 
 class Logger {
  private:
@@ -59,7 +56,7 @@ class Logger {
   std::string header_;
   LogLevel level_;
   char delimiter_;
-  unsigned int subsysFlags_;
+  LogSubsysSet subsysSet_;
   std::ofstream logFileStream_;
 
  public:
@@ -78,9 +75,9 @@ class Logger {
   void setDelimiter(char delimiter) { delimiter_ = delimiter; }
 
   template <bool NewLine, typename... Args>
-  std::string message(LogLevel level, LogSubsysFlag flag, Args&&... args) {
+  std::string message(LogLevel level, LogSubsys subsys, Args&&... args) {
     if (level < level_) return "";
-    if ((flag & subsysFlags_) == 0) return "";
+    if (!subsysSet_.test(static_cast<std::size_t>(subsys))) return "";
 
     if (sizeof...(args) == 0) {
       if constexpr (NewLine) {
@@ -121,8 +118,8 @@ class Logger {
   }
 
   template <typename... Args>
-  void log(LogLevel level, LogSubsysFlag flag, Args&&... args) {
-    auto msg = message<true>(level, flag, std::forward<Args>(args)...);
+  void log(LogLevel level, LogSubsys subsys, Args&&... args) {
+    auto msg = message<true>(level, subsys, std::forward<Args>(args)...);
     if (msg.empty()) return;
     if (logFileStream_.is_open()) {
       logFileStream_ << msg;
@@ -138,27 +135,27 @@ Logger& logger(const std::string& header, const std::string& level, char delimit
 
 }  // namespace mscclpp
 
-#define LOGGER_LOG(level__, flag__, ...)                                                                           \
-  do {                                                                                                             \
-    ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                            \
-        .log(level__, flag__, ::mscclpp::detail::timestamp(), "MSCCLPP",                                           \
-             ::mscclpp::detail::subsysFlagToString(flag__), ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), \
-             __LINE__, __VA_ARGS__);                                                                               \
+#define LOGGER_LOG(level__, subsys__, ...)                                                                          \
+  do {                                                                                                              \
+    ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                             \
+        .log(level__, subsys__, ::mscclpp::detail::timestamp(), "MSCCLPP",                                          \
+             ::mscclpp::detail::logSubsysToString(subsys__), ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), \
+             __LINE__, __VA_ARGS__);                                                                                \
   } while (0)
 
-#define LOG(level__, flag__, ...) LOGGER_LOG(level__, flag__, __VA_ARGS__)
-#define DEBUG(flag__, ...) LOGGER_LOG(::mscclpp::LogLevel::DEBUG, flag__, __VA_ARGS__)
-#define INFO(flag__, ...) LOGGER_LOG(::mscclpp::LogLevel::INFO, flag__, __VA_ARGS__)
-#define WARN(flag__, ...) LOGGER_LOG(::mscclpp::LogLevel::WARN, flag__, __VA_ARGS__)
-#define ERROR(flag__, ...) LOGGER_LOG(::mscclpp::LogLevel::ERROR, flag__, __VA_ARGS__)
-#define THROW(flag__, exception__, errorCode__, ...)                                                       \
-  do {                                                                                                     \
-    throw exception__(                                                                                     \
-        ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                \
-            .message<false>(::mscclpp::LogLevel::ERROR, flag__, ::mscclpp::detail::timestamp(), "MSCCLPP", \
-                            ::mscclpp::detail::subsysFlagToString(flag__),                                 \
-                            ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), __LINE__, __VA_ARGS__), \
-        errorCode__);                                                                                      \
+#define LOG(level__, subsys__, ...) LOGGER_LOG(level__, subsys__, __VA_ARGS__)
+#define DEBUG(subsys__, ...) LOGGER_LOG(::mscclpp::LogLevel::DEBUG, subsys__, __VA_ARGS__)
+#define INFO(subsys__, ...) LOGGER_LOG(::mscclpp::LogLevel::INFO, subsys__, __VA_ARGS__)
+#define WARN(subsys__, ...) LOGGER_LOG(::mscclpp::LogLevel::WARN, subsys__, __VA_ARGS__)
+#define ERROR(subsys__, ...) LOGGER_LOG(::mscclpp::LogLevel::ERROR, subsys__, __VA_ARGS__)
+#define THROW(subsys__, exception__, errorCode__, ...)                                                       \
+  do {                                                                                                       \
+    throw exception__(                                                                                       \
+        ::mscclpp::logger("%@ %@ %@ %@:%@ ", ::mscclpp::env()->logLevel, 0)                                  \
+            .message<false>(::mscclpp::LogLevel::ERROR, subsys__, ::mscclpp::detail::timestamp(), "MSCCLPP", \
+                            ::mscclpp::detail::logSubsysToString(subsys__),                                  \
+                            ::mscclpp::detail::guessRemoveProjectPrefix(__FILE__), __LINE__, __VA_ARGS__),   \
+        errorCode__);                                                                                        \
   } while (0)
 
 #endif  // MSCCLPP_LOGGER_HPP_
