@@ -92,18 +92,19 @@ class Logger {
     std::array<std::string, sizeof...(args)> argStrings = {toStringHelper(std::forward<Args>(args))...};
 
     std::stringstream ss;
-    std::string formattedHeader = header_;
     size_t argIndex = 0;
-    size_t pos = 0;
 
-    // Replace "%@" placeholders
-    while ((pos = formattedHeader.find("%@", pos)) != std::string::npos && argIndex < argStrings.size()) {
-      formattedHeader.replace(pos, 2, argStrings[argIndex]);
-      pos += argStrings[argIndex].length();
-      ++argIndex;
+    // Replace "%@" placeholders by iterating through header_
+    for (size_t i = 0; i < header_.size(); ++i) {
+      if (i + 1 < header_.size() && header_[i] == '%' && header_[i + 1] == '@' &&
+          argIndex < argStrings.size()) {
+        ss << argStrings[argIndex];
+        ++argIndex;
+        ++i;  // Skip the '@' character
+      } else {
+        ss << header_[i];
+      }
     }
-
-    ss << formattedHeader;
 
     // Append remaining arguments
     for (size_t i = argIndex; i < argStrings.size(); ++i) {
