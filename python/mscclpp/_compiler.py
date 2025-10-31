@@ -7,6 +7,10 @@ import json
 import os
 from typing import Any, Callable
 from pathlib import Path
+import pybind11
+from shutil import which
+import sys
+import sysconfig
 
 from blake3 import blake3
 
@@ -18,6 +22,7 @@ from mscclpp.language.utils import AlgoSpec
 from ._mscclpp import (
     ExecutionPlan,
     ExecutionPlanHandle as _ExecutionPlanHandle,
+    utils
 )
 
 
@@ -107,31 +112,72 @@ def compile(
         tags=algo_spec.tags,
     )
     return ExecutionPlanHandle(handle)
+class NativeCodeCompiler:
+    def __init__(self):
+        self._hip_available = which("hipcc") is not None
+        self._cuda_available = which("nvcc") is not None
+        if not (self._hip_available or self._cuda_available):
+            raise RuntimeError("No suitable compiler found (nvcc or hipcc).")
+        self._compiler = "nvcc" if self._cuda_available else "hipcc"
+        self._default_options = ["-std=c++17", "-O3", "--shared"]
+        python_include = sysconfig.get_path('include')
+        pybind11_include = pybind11.get_include()
+        self._default_options += [
+            f"-I{python_include}",
+            f"-I{pybind11_include}"
+        ]
+
+        python_lib = f"-lpython{sys.version_info.major}.{sys.version_info.minor}"
+        self._default_options.append(python_lib)
+
+        if self._cuda_available:
+            # Format: -gencode=arch=compute_90,code=sm_90
+            compute_arch = self._device_arch.replace("sm_", "compute_")
+            arch_flag = f"-gencode=arch={compute_arch},code={self._device_arch}"
+            self._default_options.append(arch_flag)
+            self._default_options += ["--compiler-options", "-fPIC"]
+        else:
+            # Format for HIP: --offload-arch=gfx90a
+            arch_flag = f"--offload-arch={self._device_arch}"
+            self._default_options.append(arch_flag)
+            self._default_options += ["-fPIC"]
+
+        self._lib_home = os.path.abspath(os.path.dirname(__file__))
+        self._default_options = self._default_options + ["-I" + os.path.join(self._lib_home, "include"),
+                                                         "-L" + os.path.join(self._lib_home, "lib"),
+                                                         "-lmscclpp",]
 
 
-def compile_native(file: str):
-    """Compile a MSCCL++ native program from a CUDA source file.
-    Args:
-        file (str): The path to the CUDA source file.
-        **kwargs: Additional keyword arguments for future extensions.
-    Returns:
-        Any: The compiled native program object.
-    Raises:
-        FileNotFoundError: If the specified CUDA source file does not exist.
-    """
-    compiler = None
-    if "nvidia":
-        compiler = "nvcc"
-    elif "amd":
-        compiler = "hipcc"
-    else:
-        raise ValueError("Unsupported platform for native compilation.")
-    if not os.path.isfile(file):
-        raise FileNotFoundError(f"The specified CUDA source file does not exist: {file}")
-    compile_options = ["-std=c++17", "-O3"]
-    # run the compiler
-    output_file = file + ".out"
-    compile_command = f"{compiler} {' '.join(compile_options)} -o {output_file} {file}"
-    ret = os.system(compile_command)
-    if ret != 0:
-        raise RuntimeError(f"Compilation failed with return code {ret}. Command: {compile_command}")
+    def is_hip(self) -> bool:
+        return self._hip_available
+
+    def is_cuda(self) -> bool:
+        return self._cuda_available
+    
+    def get_arch(self):
+        return self._device_arch
+
+    def __call__(self, *args, **kwds):
+        pass
+
+    def compile_native(self, file: str):
+        """Compile a MSCCL++ native program from a CUDA/HIP source file.
+        Args:
+            file (str): The path to the CUDA/HIP source file.
+            **kwargs: Additional keyword arguments for future extensions.
+        Returns:
+            str: The path to the compiled shared library.
+        Raises:
+            FileNotFoundError: If the specified source file does not exist.
+            RuntimeError: If compilation fails.
+        """
+        if not os.path.isfile(file):
+            raise FileNotFoundError(f"The specified source file does not exist: {file}")
+        compile_options = self._default_options
+        # run the compiler
+        output_file = file + ".so"
+        compile_command = f"{self._compiler} {' '.join(compile_options)} -o {output_file} {file}"
+        ret = os.system(compile_command)
+        if ret != 0:
+            raise RuntimeError(f"Compilation failed with return code {ret}. Command: {compile_command}")
+        return output_file
