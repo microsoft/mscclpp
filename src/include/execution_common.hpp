@@ -52,6 +52,7 @@ enum class OperationType : uint8_t {
   FLUSH,
   REDUCE,
   REDUCE_PACKETS,
+  REDUCE_COPY_PACKETS,
   REDUCE_SEND,
   REDUCE_SEND_PACKETS,
   READ_REDUCE,

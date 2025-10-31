@@ -719,6 +719,32 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
   }
 }
 
+template <typename T, typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleReduceCopyPackets(const Operation& op, void* input, void* output, void* scratch) {
+  uint32_t size = op.inputBufferSizes[0];
+  const uint32_t nSrcs = op.nInputs - 1;
+  const uint32_t srcOffsetByBytes = op.inputOffsets[0];
+  const uint32_t dstOffsetByBytes = op.outputOffsets[0];
+  const uint32_t* inputOffsets = op.inputOffsets + 1;
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
+  const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
+  PacketPayload<PacketType>* srcPacketPayload =
+      (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + srcOffset;
+  PacketType* dstPacketPayload = (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type) + (dstOffsetByBytes << 1));
+  for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    PacketPayload<PacketType> data = {};
+    for (uint32_t index = 0; index < nSrcs; ++index) {
+      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
+      PacketPayload<PacketType> val = pkt[idx].read(flag_);
+      data = add_vectors<T>(data, val);
+    }
+    data = add_vectors<T>(data, srcPacketPayload[idx]);
+    srcPacketPayload[idx] = data;
+    PacketType* dst_val = &dstPacketPayload[idx];
+    dst_val->write(data, flag_);
+  }
+}
+
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleUnpackPackets(const Operation& op, void* input, void* output, void* scratch) {
   const uint32_t size = op.inputBufferSizes[0];
@@ -993,6 +1019,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleReduceSendPackets<T, PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::REDUCE_PACKETS) {
     handleReduceSendPackets<T, PacketType, false>(op, input, output, scratch);
+  } else if (opType == OperationType::REDUCE_COPY_PACKETS) {
+    handleReduceCopyPackets<T, PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::UNPACK_PACKETS) {
     handleUnpackPackets<PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::COPY_PACKETS) {
