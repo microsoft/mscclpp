@@ -458,26 +458,26 @@ static ncclResult_t ncclAllReduceFallback(const void* sendbuff, void* recvbuff, 
     }
 
     auto recvIt = comm->channelOutInfos.find(recvKey);
-    if (mscclppDisableChannelCache == true || recvIt == comm->channelOutInfos.end()) {
-      if (mscclppDisableChannelCache == true) {
-        recvBytes = bytes;
-        recvBasePtr = (CUdeviceptr)recvbuff;
-        offsetOut = 0;
-      }
-      mscclpp::RegisteredMemory localMemory =
-          comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
-      remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
-      std::vector<mscclpp::MemoryChannel> outChannels = setupMemoryChannels(comm, remoteMemories, localMemory);
-      ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
-      recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
-      if (mscclppDisableChannelCache == true) {
-        comm->channelInfos.push_back(channelInfo);
-      }
-    }
+    // if (mscclppDisableChannelCache == true || recvIt == comm->channelOutInfos.end()) {
+    //   if (mscclppDisableChannelCache == true) {
+    //     recvBytes = bytes;
+    //     recvBasePtr = (CUdeviceptr)recvbuff;
+    //     offsetOut = 0;
+    //   }
+    //   mscclpp::RegisteredMemory localMemory =
+    //       comm->comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
+    //   remoteMemories = setupRemoteMemories(comm->comm, rank, localMemory);
+    //   std::vector<mscclpp::MemoryChannel> outChannels = setupMemoryChannels(comm, remoteMemories, localMemory);
+    //   ChannelInfo channelInfo{outChannels, setupMemoryChannelDeviceHandles(outChannels)};
+    //   recvIt = comm->channelOutInfos.emplace(recvKey, channelInfo).first;
+    //   if (mscclppDisableChannelCache == true) {
+    //     comm->channelInfos.push_back(channelInfo);
+    //   }
+    // }
 
     memoryChannels = sendIt->second.memoryChannelDeviceHandles.get();
-    memoryOutChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
-                                                           : recvIt->second.memoryChannelDeviceHandles.get();
+    // memoryOutChannels = mscclppDisableChannelCache == true ? comm->channelInfos.back().memoryChannelDeviceHandles.get()
+    //                                                        : recvIt->second.memoryChannelDeviceHandles.get();
   }
 
   Op reduceOp = getReduceOp(op);
