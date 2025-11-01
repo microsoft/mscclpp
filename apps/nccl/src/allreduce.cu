@@ -74,12 +74,20 @@ struct NvlsAdapter {
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else
 #endif
     // NVLS does not support 8-byte types (int64_t, uint64_t, double)
     if constexpr (sizeof(T) == 8) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       int nBlocks = nRanksPerNode;
@@ -101,12 +109,20 @@ struct NvlsWithCopyAdapter {
                           uint32_t*, uint32_t) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else
 #endif
     // NVLS does not support 8-byte types (int64_t, uint64_t, double)
     if constexpr (sizeof(T) == 8) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       if (sizeof(T) * nelems < (1 << 24)) {
@@ -153,7 +169,11 @@ struct AllreduceNvlsPacketAdapter {
                           uint32_t*, uint32_t*, uint32_t) {
     // NVLS does not support 8-byte types (int64_t, uint64_t, double)
     if constexpr (sizeof(T) == 8) {
+#if defined(__HIP_PLATFORM_AMD__)
+      return hipErrorNotSupported;
+#else
       return cudaErrorNotSupported;
+#endif
     } else {
       size_t size = nelems * sizeof(T);
       int nBlocks = 8;

@@ -5,7 +5,7 @@
 #define DATATYPE_CONVERSION_HPP_
 
 #include <mscclpp/executor.hpp>
-#include <nccl.h>
+#include <mscclpp/nccl.h>
 
 // Convert ncclDataType_t to mscclpp::DataType
 inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {

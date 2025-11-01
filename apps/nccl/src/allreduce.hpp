@@ -179,7 +179,7 @@ __forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_f32_fp8(v.x, v.y, ival, false);
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
 #elif !defined(__HIP_PLATFORM_AMD__)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
