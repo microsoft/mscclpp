@@ -96,8 +96,7 @@ class Logger {
 
     // Replace "%@" placeholders by iterating through header_
     for (size_t i = 0; i < header_.size(); ++i) {
-      if (i + 1 < header_.size() && header_[i] == '%' && header_[i + 1] == '@' &&
-          argIndex < argStrings.size()) {
+      if (i + 1 < header_.size() && header_[i] == '%' && header_[i + 1] == '@' && argIndex < argStrings.size()) {
         ss << argStrings[argIndex];
         ++argIndex;
         ++i;  // Skip the '@' character
