@@ -153,9 +153,10 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 };
 
-mscclpp::Algorithm createAllgatherAlgorithm() {
+uintptr_t* createAllgatherAlgorithm() {
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
-  return allgatherAlgoBuilder->build();
+  mscclpp::Algorithm* algoPtr = new mscclpp::Algorithm(allgatherAlgoBuilder->build());
+  return reinterpret_cast<uintptr_t*>(algoPtr);
 }
 
 PYBIND11_MODULE(mscclpp_native, m) {

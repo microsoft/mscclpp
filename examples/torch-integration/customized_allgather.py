@@ -29,11 +29,11 @@ class CustomizedComm:
         self.n_ranks_per_node = comm.nranks_per_node
         self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
-        mscclpp_native = mscclpp.compile(file = os.path.join(_abs_path, "customized_allgather.cu"))
-        self.algo = mscclpp_native.create_allgather_algorithm()
+        mscclpp_native = mscclpp.compile_native(name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu"))
+        self.algorithm = mscclpp.create_algorithm_from_handle(mscclpp_native.create_allgather_algorithm())
 
     def all_gather(self, tensor: torch.Tensor, stream: torch.cuda.Stream = None):
-        self.algo.launch()
+        self.algorithm.launch()
 
 
     def barrier_cpu(self):

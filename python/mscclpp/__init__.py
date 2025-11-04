@@ -114,5 +114,5 @@ def deprecated(new_cls):
     return decorator
 
 
-compile = mscclpp._compiler.compile
-compile_native = mscclpp._compiler.compile_native
+compile = mscclpp._compiler.DslCompiler()
+compile_native = mscclpp._compiler.NativeCodeCompiler()
