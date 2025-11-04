@@ -42,7 +42,7 @@ namespace mscclpp {
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff), size_(0) {
   if (size == 0) {
-    throw std::invalid_argument("invalid size: " + std::to_string(size));
+    THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
   }
   static __thread uintptr_t pageSize = 0;
   if (pageSize == 0) {
