@@ -41,15 +41,18 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
     invert = true;
     str = str.substr(1);
   }
+
+  auto posNextCommaOrTheEnd = [](const std::string& str, size_t start) {
+    size_t pos = str.find(',', start);
+    return (pos == std::string::npos) ? str.length() : pos;
+  };
+
   std::string upperStr = str;
   std::transform(upperStr.begin(), upperStr.end(), upperStr.begin(), ::toupper);
   LogSubsysSet set;  // all bits start cleared
   size_t start = 0;
-  size_t end = upperStr.find(',');
-  if (end == std::string::npos && !upperStr.empty()) {
-    end = upperStr.length();
-  }
-  while (end != std::string::npos) {
+  size_t end = posNextCommaOrTheEnd(upperStr, start);
+  while (end > start) {
     std::string token = upperStr.substr(start, end - start);
     if (token == "ENV") {
       set.set(static_cast<size_t>(LogSubsys::ENV));
@@ -65,7 +68,7 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
       set.set();  // all bits
     }
     start = end + 1;
-    end = upperStr.find(',', start);
+    end = posNextCommaOrTheEnd(upperStr, start);
   }
   if (invert) {
     set.flip();
