@@ -73,13 +73,16 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
 #else
-    throw Error("Registeration of dma-buf based memory region failed on HIP platform", ErrorCode::InvalidUsage);
+    THROW(NET, Error, ErrorCode::InvalidUsage, "Registeration of DMA_BUF based memory region failed on HIP platform");
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
 #if !defined(__HIP_PLATFORM_AMD__)
-    // nvidia-peermem is needed only when DMABUF is not supported
+    // nvidia-peermem is needed only when DMA_BUF is not supported
+    if (cuMemAlloc) {
+      WARN(NET, "DMA_BUF is not supported; falling back to nvidia_peermem");
+    }
     if (!checkNvPeerMemLoaded()) {
-      throw Error("nvidia_peermem kernel module is not loaded", ErrorCode::InternalError);
+      THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
     }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
     mr_ = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
