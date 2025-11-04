@@ -114,7 +114,7 @@ class Logger {
     }
 
     if constexpr (NewLine) {
-      ss << std::endl;
+      ss << '\n';
     }
     return ss.str();
   }

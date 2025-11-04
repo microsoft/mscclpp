@@ -73,7 +73,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
 #else
-    THROW(NET, Error, ErrorCode::InvalidUsage, "Registeration of DMA_BUF based memory region failed on HIP platform");
+    THROW(NET, Error, ErrorCode::InvalidUsage, "Registration of DMA_BUF based memory region failed on HIP platform");
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
 #if !defined(__HIP_PLATFORM_AMD__)

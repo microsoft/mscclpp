@@ -6,13 +6,11 @@
 #include <unistd.h>
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
-#include <unordered_map>
 
 namespace mscclpp {
 
@@ -142,7 +140,6 @@ std::string guessRemoveProjectPrefix(const std::string& filePathStr) {
 
 std::string timestamp(const char* format) {
   // Thread-safe per-second UTC timestamp cache.
-  // Uses mutex + shared_ptr (atomic<T> requires trivially copyable T in C++17).
   struct TimeCache {
     time_t second;
     std::string str;
