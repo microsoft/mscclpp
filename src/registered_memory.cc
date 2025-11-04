@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 
 #include "api.h"
@@ -28,7 +29,22 @@
     }                                                       \
   } while (false)
 
+namespace std {
+template <>
+struct hash<cudaIpcMemHandle_t> {
+  size_t operator()(const cudaIpcMemHandle_t& handle) const {
+    std::string_view view(handle.reserved, sizeof(handle.reserved));
+    return std::hash<std::string_view>{}(view);
+  }
+};
+}  // namespace std
+
+inline bool operator==(const cudaIpcMemHandle_t& lhs, const cudaIpcMemHandle_t& rhs) {
+  return std::memcmp(lhs.reserved, rhs.reserved, sizeof(lhs.reserved)) == 0;
+}
+
 namespace {
+
 CUmemAllocationHandleType getNvlsMemHandleType() {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (mscclpp::detail::nvlsCompatibleMemHandleType & CU_MEM_HANDLE_TYPE_FABRIC) {
@@ -38,6 +54,37 @@ CUmemAllocationHandleType getNvlsMemHandleType() {
   }
 #else
   throw mscclpp::Error("Only support GPU with NVLS support", mscclpp::ErrorCode::InvalidUsage);
+#endif
+}
+
+std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
+  void* addr;
+  auto deleter = [](void* p) {
+    cudaError_t err = cudaIpcCloseMemHandle(p);
+    if (err != cudaSuccess) {
+      WARN("Failed to close CUDA IPC handle at pointer %p: %s", p, cudaGetErrorString(err));
+    } else {
+      INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", p);
+    }
+  };
+#if defined(__HIP_PLATFORM_AMD__)
+  static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>> peerMemoryHandleMap;
+  std::mutex mutex;
+  std::lock_guard<std::mutex> lock(mutex);
+  auto it = peerMemoryHandleMap.find(ipcHandle);
+  if (it != peerMemoryHandleMap.end()) {
+    if (auto ptr = it->second.lock()) {
+      return ptr;
+    }
+    throw mscclpp::Error("Failed to get peer memory handle, may already be closed", mscclpp::ErrorCode::InvalidUsage);
+  }
+  MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
+  std::shared_ptr<void> ptr = std::shared_ptr<void>(addr, deleter);
+  peerMemoryHandleMap[ipcHandle] = ptr;
+  return ptr;
+#else
+  MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
+  return std::shared_ptr<void>(addr, deleter);
 #endif
 }
 
@@ -256,8 +303,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       throw Error("Unexpected error", ErrorCode::InternalError);
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
     } else if (getHostHash() == this->hostHash) {
-      MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
-      this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
+      this->peerHandle = getPeerMemoryHandle(entry.cudaIpcBaseHandle);
+      this->data = static_cast<char*>(this->peerHandle.get()) + entry.cudaIpcOffsetFromBase;
     }
   }
   if (this->data != nullptr) {
@@ -291,13 +338,6 @@ RegisteredMemory::Impl::~Impl() {
       MSCCLPP_CULOG_WARN(cuMemUnmap((CUdeviceptr)base, size));
       MSCCLPP_CULOG_WARN(cuMemRelease(handle));
       MSCCLPP_CULOG_WARN(cuMemAddressFree((CUdeviceptr)base, size));
-    } else {
-      cudaError_t err = cudaIpcCloseMemHandle(base);
-      if (err != cudaSuccess) {
-        WARN("Failed to close CUDA IPC handle at pointer %p: %s", base, cudaGetErrorString(err));
-      } else {
-        INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", base);
-      }
     }
     data = nullptr;
     fileDesc = -1;
