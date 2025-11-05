@@ -40,6 +40,27 @@ namespace mscclpp {
 
 #if defined(USE_IBVERBS)
 
+static inline bool isGpuAddr(void* ptr) {
+  CUmemorytype memType;
+  auto res = cuPointerGetAttribute(&memType, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, reinterpret_cast<CUdeviceptr>(ptr));
+  if (res == CUDA_ERROR_INVALID_VALUE) {
+    return false;
+  } else if (res != CUDA_SUCCESS) {
+    MSCCLPP_CUTHROW(res);
+  }
+  return (memType == CU_MEMORYTYPE_DEVICE);
+}
+
+static inline bool isDmaBufSupported() {
+  int dmaBufSupported = 0;
+#if !defined(__HIP_PLATFORM_AMD__)
+  CUdevice dev;
+  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+  return dmaBufSupported != 0;
+}
+
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff), size_(0) {
   if (size == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
@@ -48,24 +69,19 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   if (pageSize == 0) {
     pageSize = sysconf(_SC_PAGESIZE);
   }
-  uintptr_t addr = reinterpret_cast<uintptr_t>(buff_) & -pageSize;
-  std::size_t pages = (size + (reinterpret_cast<uintptr_t>(buff_) - addr) + pageSize - 1) / pageSize;
+  uintptr_t buffIntPtr = reinterpret_cast<uintptr_t>(buff_);
+  uintptr_t addr = buffIntPtr & -pageSize;
+  std::size_t pages = (size + (buffIntPtr - addr) + pageSize - 1) / pageSize;
 
-  CUdeviceptr dptr = reinterpret_cast<CUdeviceptr>(buff_);
-  bool cuMemAlloc = isCuMemMapAllocated((void*)dptr);
-  int dmaBufSupported = 0;
-#if !defined(__HIP_PLATFORM_AMD__)
-  CUdevice dev;
-  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
-  MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
-#endif  // !defined(__HIP_PLATFORM_AMD__)
-  if (cuMemAlloc && dmaBufSupported) {
+  bool isGpuAddrVal = isGpuAddr(buff_);
+  bool isDmaBufSupportedVal = isDmaBufSupported();
+  if (isGpuAddrVal && isDmaBufSupportedVal) {
 #if !defined(__HIP_PLATFORM_AMD__)
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
 
-    size_t offsetInDmaBuf = dptr % pageSize;
-    mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, (uint64_t)dptr, fd,
+    size_t offsetInDmaBuf = buffIntPtr % pageSize;
+    mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd,
                                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                          IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
     close(fd);
@@ -77,12 +93,14 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
 #endif  // !defined(__HIP_PLATFORM_AMD__)
   } else {
 #if !defined(__HIP_PLATFORM_AMD__)
-    // nvidia-peermem is needed only when DMA_BUF is not supported
-    if (cuMemAlloc) {
-      WARN(NET, "DMA_BUF is not supported; falling back to nvidia_peermem");
-    }
-    if (!checkNvPeerMemLoaded()) {
-      THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
+    if (isGpuAddrVal) {
+      // nvidia-peermem is needed only when DMA_BUF is not supported
+      if (isCuMemMapAllocated(buff_)) {
+        WARN(NET, "DMA_BUF is not supported; falling back to nvidia_peermem");
+      }
+      if (!checkNvPeerMemLoaded()) {
+        THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
+      }
     }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
     mr_ = IBVerbs::ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,

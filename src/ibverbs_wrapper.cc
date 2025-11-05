@@ -2,22 +2,20 @@
 // Licensed under the MIT License.
 
 #include "ibverbs_wrapper.hpp"
-#include "logger.hpp"
 
 #include <dlfcn.h>
+
 #include <memory>
+
+#include "logger.hpp"
 
 namespace mscclpp {
 
-static std::unique_ptr<void, int(*)(void*)> globalIBVerbsHandle(nullptr, &::dlclose);
+static std::unique_ptr<void, int (*)(void*)> globalIBVerbsHandle(nullptr, &::dlclose);
 
 void* IBVerbs::dlsym(const std::string& symbol) {
   if (!globalIBVerbsHandle) {
-    const char* possibleLibNames[] = {
-        "libibverbs.so",
-        "libibverbs.so.1",
-        nullptr
-    };
+    const char* possibleLibNames[] = {"libibverbs.so", "libibverbs.so.1", nullptr};
     for (int i = 0; possibleLibNames[i] != nullptr; i++) {
       void* handle = ::dlopen(possibleLibNames[i], RTLD_NOW);
       if (handle) {
