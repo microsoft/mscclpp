@@ -69,17 +69,20 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
   };
 #if defined(__HIP_PLATFORM_AMD__)
   static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>> peerMemoryHandleMap;
-  std::mutex mutex;
+  static std::mutex mutex;
   std::lock_guard<std::mutex> lock(mutex);
   auto it = peerMemoryHandleMap.find(ipcHandle);
   if (it != peerMemoryHandleMap.end()) {
     if (auto ptr = it->second.lock()) {
       return ptr;
     }
-    throw mscclpp::Error("Failed to get peer memory handle, may already be closed", mscclpp::ErrorCode::InvalidUsage);
   }
   MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
-  std::shared_ptr<void> ptr = std::shared_ptr<void>(addr, deleter);
+  std::shared_ptr<void> ptr = std::shared_ptr<void>(addr, [ipcHandle, deleter](void* p) {
+    deleter(p);
+    std::lock_guard<std::mutex> lock(mutex);
+    peerMemoryHandleMap.erase(ipcHandle);
+  });
   peerMemoryHandleMap[ipcHandle] = ptr;
   return ptr;
 #else
@@ -304,6 +307,9 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
     } else if (getHostHash() == this->hostHash) {
       this->peerHandle = getPeerMemoryHandle(entry.cudaIpcBaseHandle);
+      if (!this->peerHandle) {
+        throw Error("Failed to open CUDA IPC handle, may already be closed", ErrorCode::InvalidUsage);
+      }
       this->data = static_cast<char*>(this->peerHandle.get()) + entry.cudaIpcOffsetFromBase;
     }
   }
