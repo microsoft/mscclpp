@@ -322,6 +322,8 @@ int IbQp::pollCq() {
 
 int IbQp::getWcStatus(int idx) const { return (*wcs_)[idx].status; }
 
+std::string IbQp::getWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*wcs_)[idx].status); }
+
 int IbQp::getNumCqItems() const { return numSignaledPostedItems_; }
 
 IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr) {

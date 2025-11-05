@@ -44,6 +44,7 @@ struct IBVerbs {
   REGISTER_IBV_FUNC(ibv_reg_dmabuf_mr)
   REGISTER_IBV_FUNC(ibv_dereg_mr)
   REGISTER_IBV_FUNC(ibv_query_gid)
+  REGISTER_IBV_FUNC(ibv_wc_status_str)
 
   ///
   /// Below is for cases where the API (may be / is) a macro. Refer to `infiniband/verbs.h`.

@@ -82,6 +82,7 @@ class IbQp {
 
   IbQpInfo& getInfo() { return info_; }
   virtual int getWcStatus([[maybe_unused]] int idx) const;
+  virtual std::string getWcStatusString([[maybe_unused]] int idx) const;
   virtual int getNumCqItems() const;
 
  private:
