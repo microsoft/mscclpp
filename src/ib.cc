@@ -59,7 +59,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-  if (cuMemAlloc && dmaBufSupported) {
+  if (dmaBufSupported) {
 #if !defined(__HIP_PLATFORM_AMD__)
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
@@ -85,9 +85,9 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
       THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
     }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-    mr_ = IBVerbs::ibv_reg_mr2(pd, reinterpret_cast<void*>(addr), pages * pageSize,
-                               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                                   IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    mr_ = IBVerbs::ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
+                              IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                                  IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_mr failed (errno ", errno, ")");
     }
@@ -127,8 +127,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
   }
 
-  struct ibv_qp_init_attr qpInitAttr;
-  std::memset(&qpInitAttr, 0, sizeof(qpInitAttr));
+  struct ibv_qp_init_attr qpInitAttr = {};
   qpInitAttr.sq_sig_all = 0;
   qpInitAttr.send_cq = cq_;
   qpInitAttr.recv_cq = cq_;
@@ -145,7 +144,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
 
   struct ibv_port_attr portAttr;
-  if (IBVerbs::ibv_query_port_w(ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port(ctx, port, &portAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ")");
   }
   info_.lid = portAttr.lid;
@@ -156,16 +155,20 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   info_.is_grh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
 
   if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.is_grh) {
-    union ibv_gid gid;
+    // portAttr.gid_tbl_len contains the number of valid GID entries
+    if (portAttr.gid_tbl_len == 0) {
+      THROW(NET, Error, ErrorCode::SystemError, "No GID table entries available for port ", port);
+    }
+
+    union ibv_gid gid = {};
     if (IBVerbs::ibv_query_gid(ctx, port, 0, &gid) != 0) {
-      THROW(NET, IbError, errno, "ibv_query_gid failed (errno ", errno, ")");
+      THROW(NET, IbError, errno, "ibv_query_gid failed for port ", port, " index 0 (errno ", errno, ")");
     }
     info_.spn = gid.global.subnet_prefix;
     info_.iid = gid.global.interface_id;
   }
 
-  struct ibv_qp_attr qpAttr;
-  memset(&qpAttr, 0, sizeof(qpAttr));
+  struct ibv_qp_attr qpAttr = {};
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
   qpAttr.port_num = port;
@@ -185,8 +188,7 @@ IbQp::~IbQp() {
 }
 
 void IbQp::rtr(const IbQpInfo& info) {
-  struct ibv_qp_attr qp_attr;
-  std::memset(&qp_attr, 0, sizeof(struct ibv_qp_attr));
+  struct ibv_qp_attr qp_attr = {};
   qp_attr.qp_state = IBV_QPS_RTR;
   qp_attr.path_mtu = static_cast<ibv_mtu>(info.mtu);
   qp_attr.dest_qp_num = info.qpn;
@@ -217,8 +219,7 @@ void IbQp::rtr(const IbQpInfo& info) {
 }
 
 void IbQp::rts() {
-  struct ibv_qp_attr qp_attr;
-  std::memset(&qp_attr, 0, sizeof(struct ibv_qp_attr));
+  struct ibv_qp_attr qp_attr = {};
   qp_attr.qp_state = IBV_QPS_RTS;
   qp_attr.timeout = 18;
   qp_attr.retry_cnt = 7;
@@ -352,15 +353,35 @@ IbCtx::~IbCtx() {
 }
 
 bool IbCtx::isPortUsable(int port) const {
-  struct ibv_port_attr portAttr;
-  if (IBVerbs::ibv_query_port_w(ctx_, port, &portAttr) != 0) {
+  struct ibv_port_attr portAttr = {};
+  if (IBVerbs::ibv_query_port(ctx_, port, &portAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ", port ", port, ")");
   }
-  return portAttr.state == IBV_PORT_ACTIVE &&
-         (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || portAttr.link_layer == IBV_LINK_LAYER_INFINIBAND);
+
+  // Check if port is active and has a supported link layer
+  if (portAttr.state != IBV_PORT_ACTIVE) {
+    return false;
+  }
+  if (portAttr.link_layer != IBV_LINK_LAYER_ETHERNET && portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND) {
+    return false;
+  }
+
+  // For Ethernet/RoCE or InfiniBand with GRH, check if GID table has entries
+  if (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || (portAttr.flags & IBV_QPF_GRH_REQUIRED)) {
+    if (portAttr.gid_tbl_len == 0) {
+      return false;
+    }
+    // Verify that at least one GID entry is queryable
+    union ibv_gid gid = {};
+    if (IBVerbs::ibv_query_gid(ctx_, port, 0, &gid) != 0) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
-int IbCtx::getAnyActivePort() const {
+int IbCtx::getAnyUsablePort() const {
   struct ibv_device_attr devAttr;
   if (IBVerbs::ibv_query_device(ctx_, &devAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_device failed (errno ", errno, ")");
@@ -376,9 +397,9 @@ int IbCtx::getAnyActivePort() const {
 std::shared_ptr<IbQp> IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
                                       int port /*=-1*/) {
   if (port == -1) {
-    port = this->getAnyActivePort();
+    port = this->getAnyUsablePort();
     if (port == -1) {
-      THROW(NET, Error, ErrorCode::InvalidUsage, "No active port found");
+      THROW(NET, Error, ErrorCode::InvalidUsage, "No usable port found (device: ", devName_, ")");
     }
   } else if (!this->isPortUsable(port)) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);

@@ -138,7 +138,7 @@ class IbCtx {
 
  private:
   bool isPortUsable(int port) const;
-  int getAnyActivePort() const;
+  int getAnyUsablePort() const;
 
   const std::string devName_;
   ibv_context* ctx_;

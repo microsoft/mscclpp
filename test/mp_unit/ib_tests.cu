@@ -326,7 +326,7 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
           int status = qp->getWcStatus(i);
-          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
+          ASSERT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
         }
