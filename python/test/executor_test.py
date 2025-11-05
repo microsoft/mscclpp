@@ -187,7 +187,7 @@ def main(
     if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
     execution_plan = ExecutionPlan(execution_plan_path, mscclpp_group.my_rank)
-    collective = execution_plan.collective()
+    collective = execution_plan.collective
 
     dtype = parse_dtype(dtype_str)
     input_buf, result_buf, test_buf = build_bufs(

@@ -4,10 +4,30 @@
 #include "execution_plan.hpp"
 
 #include <cassert>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <set>
+#include <sstream>
+
+#include "debug.h"
 
 namespace {
+
+static const std::vector<mscclpp::AlgoConfig> defaultAlgoConfigs = {
+    {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}}};
+
+std::string simpleHash(const std::string& input) {
+  std::hash<std::string> hasher;
+  size_t hashValue = hasher(input);
+  std::ostringstream oss;
+  oss << std::hex << hashValue;
+  return oss.str();
+}
+
+std::string generateFileId(const std::string& filePath) { return simpleHash(filePath); }
+
 template <typename T, typename Predicate>
 std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
   std::vector<T> filtered;
@@ -69,7 +89,7 @@ auto getOpType = [](const std::string& str) {
   } else if (str == "sem_release") {
     return mscclpp::OperationType::SEM_RELEASE;
   } else {
-    throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
+    throw mscclpp::Error("Invalid operation type: " + str, mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -683,5 +703,150 @@ size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSiz
 size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSize; }
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
+
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) { selector_ = selector; }
+
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) { defaultSelector_ = selector; }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
+  std::vector<std::shared_ptr<ExecutionPlanHandle>> plans;
+  for (auto plan : planMap_[request.collective]) {
+    if (plan->match(request)) {
+      plans.push_back(plan);
+    }
+  }
+  if (selector_) {
+    auto plan = selector_(plans, request);
+    if (plan) {
+      return plan;
+    }
+  }
+  if (defaultSelector_) {
+    auto plan = defaultSelector_(plans, request);
+    if (plan) {
+      return plan;
+    }
+  }
+  INFO(MSCCLPP_EXECUTOR, "No suitable execution plan found for collective: %s", request.collective.c_str());
+  return nullptr;
+}
+
+void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  if (!planHandle) {
+    throw Error("Cannot register a null plan", ErrorCode::ExecutorError);
+  }
+  planMap_[planHandle->plan->collective()].push_back(planHandle);
+  idMap_[planHandle->id] = planHandle;
+}
+
+void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
+  std::string planDir = mscclpp::env()->executionPlanDir;
+  if (!std::filesystem::exists(planDir)) {
+    INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
+    return;
+  }
+
+  for (const auto& config : defaultAlgoConfigs) {
+    std::string planPath = planDir + "/" + config.filename;
+    INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
+    if (!std::filesystem::exists(planPath)) {
+      INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
+      continue;
+    }
+    std::string planId = generateFileId(planPath);
+    if (idMap_.find(planId) != idMap_.end()) {
+      INFO(MSCCLPP_EXECUTOR, "Plan already registered: %s", planId.c_str());
+      continue;
+    }
+    try {
+      auto executionPlan = std::make_shared<ExecutionPlan>(planPath, rank);
+      auto handle =
+          ExecutionPlanHandle::create(planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
+      registerPlan(handle);
+      INFO(MSCCLPP_EXECUTOR, "Successfully loaded plan: %s for collective: %s", planId.c_str(),
+           config.collective.c_str());
+    } catch (const std::exception& e) {
+      WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
+    }
+  }
+}
+
+std::shared_ptr<ExecutionPlanRegistry> ExecutionPlanRegistry::getInstance() {
+  static std::shared_ptr<ExecutionPlanRegistry> instance(new ExecutionPlanRegistry);
+  return instance;
+}
+
+void ExecutionPlanRegistry::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  impl_->registerPlan(planHandle);
+}
+
+void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) { impl_->setSelector(selector); }
+
+void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) { impl_->setDefaultSelector(selector); }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
+    const std::string& collective, int worldSize, int nRanksPerNode, int rank, const void* sendBuffer, void* recvBuffer,
+    size_t messageSize, const std::unordered_map<std::string, std::vector<uint64_t>>& hints) {
+  ExecutionRequest request{worldSize, nRanksPerNode, rank, sendBuffer, recvBuffer, messageSize, collective, hints};
+  return impl_->select(request);
+}
+
+std::vector<std::shared_ptr<ExecutionPlanHandle>> ExecutionPlanRegistry::getPlans(const std::string& collective) {
+  if (impl_->planMap_.find(collective) != impl_->planMap_.end()) {
+    return impl_->planMap_[collective];
+  }
+  return {};
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::get(const std::string& id) {
+  if (impl_->idMap_.find(id) != impl_->idMap_.end()) {
+    return impl_->idMap_[id];
+  }
+  return nullptr;
+}
+
+ExecutionPlanRegistry::ExecutionPlanRegistry() : impl_(std::make_unique<Impl>()) {}
+
+ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
+
+void ExecutionPlanRegistry::clear() {
+  impl_->planMap_.clear();
+  impl_->idMap_.clear();
+  impl_->selector_ = nullptr;
+  impl_->defaultSelector_ = nullptr;
+}
+
+void ExecutionPlanRegistry::loadDefaultPlans(int rank) { impl_->loadDefaultPlans(rank); }
+
+bool ExecutionRequest::isInPlace() const {
+  if (inputBuffer == outputBuffer) return true;
+  if (collective == "allgather") {
+    size_t rankOffset = rank * messageSize;
+    const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
+    return static_cast<const void*>(expectedInput) == inputBuffer;
+  }
+  return false;
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(
+    const std::string& id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+    const std::unordered_map<std::string, uint64_t>& tags) {
+  std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
+  return handle;
+}
+
+bool ExecutionPlanHandle::match(const ExecutionRequest& request) {
+  bool worldSizeMatch = constraint.worldSize == request.worldSize;
+  bool ranksPerNodeMatch = constraint.nRanksPerNode == request.nRanksPerNode;
+  bool collectiveMatch = plan->collective() == request.collective;
+  bool inPlaceMatch = plan->isInPlace() == request.isInPlace();
+  size_t effectiveSize =
+      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
+  bool minSizeMatch = effectiveSize >= plan->minMessageSize();
+  bool maxSizeMatch = effectiveSize <= plan->maxMessageSize();
+
+  bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
+  return result;
+}
 
 }  // namespace mscclpp

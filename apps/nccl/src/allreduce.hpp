@@ -1239,7 +1239,6 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
 
   size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
-  const int nSegmentsForScratchBuffer_ = 2;
   const size_t nvlsBufferSize_ = (1 << 30);
 
   std::shared_ptr<uint32_t> deviceFlag_;

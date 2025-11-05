@@ -7,7 +7,7 @@ This implements a hierarchical AllReduce: intra-node allreduce followed by
 inter-node exchange and final intra-node allreduce.
 """
 
-import argparse
+from mscclpp.language.utils import AlgoSpec
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
@@ -15,9 +15,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def allreduce_example(
-    program_name, gpus_per_node, thread_block_group_size, num_threads_per_block, min_message_size, max_message_size
-):
+def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> CollectiveProgram:
     """
     Implements a multi-node AllReduce using a hierarchical approach:
     1. Intra-node allreduce
@@ -26,24 +24,11 @@ def allreduce_example(
     """
     # Configuration constants
     num_nodes = 2
+    gpus_per_node = spec.nranks_per_node
     total_gpus = num_nodes * gpus_per_node
-    chunks_per_loop = 1
-    packets_per_gpu = 2  # Each GPU handles 2 data packets
+    packets_per_gpu = 2
 
-    # Initialize collective operation
-    collective = AllReduce(total_gpus, chunks_per_loop, True)
-
-    with CollectiveProgram(
-        program_name,
-        collective,
-        total_gpus,
-        protocol="LL",
-        num_threads_per_block=num_threads_per_block,
-        reuse_resources=False,
-        use_double_scratch_buffer=True,
-        min_message_size=min_message_size,
-        max_message_size=max_message_size,
-    ):
+    with CollectiveProgram.from_spec(spec) as prog:
         # Initialize communication channels and buffers
         intra_node_memory_channels = {}
         inter_node_port_channels = {}
@@ -175,25 +160,4 @@ def allreduce_example(
                             tb_group=thread_block_group,
                         )
 
-        print(JSON())
-
-
-parser = argparse.ArgumentParser()
-
-parser.add_argument("--name", type=str, help="name of the program")
-parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
-parser.add_argument("--tbg_size", type=int, help="number of thread blocks in the thread block group")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
-parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2 * 2**20, help="maximum message size")
-
-args = parser.parse_args()
-
-allreduce_example(
-    args.name,
-    args.gpus_per_node,
-    args.tbg_size,
-    args.num_threads_per_block,
-    args.min_message_size,
-    args.max_message_size,
-)
+    return prog

@@ -19,23 +19,23 @@ set(MSCCLPP_VERSION "${MSCCLPP_MAJOR}.${MSCCLPP_MINOR}.${MSCCLPP_PATCH}")
 find_package(Git)
 set(GIT_HASH "UNKNOWN")
 if(Git_FOUND)
-  execute_process(
-    COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
-    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    OUTPUT_VARIABLE _git_out
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-  if(NOT _git_out STREQUAL "")
-    set(GIT_HASH "${_git_out}")
-  endif()
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _git_out
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT _git_out STREQUAL "")
+        set(GIT_HASH "${_git_out}")
+    endif()
 else()
     message(WARNING "Git not found, setting GIT_HASH to 'UNKNOWN'")
 endif()
 
 configure_file(
-  "${CMAKE_CURRENT_SOURCE_DIR}/include/mscclpp/version.hpp.in"
-  "${CMAKE_CURRENT_BINARY_DIR}/include/mscclpp/version.hpp"
-  @ONLY
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/mscclpp/version.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/mscclpp/version.hpp"
+    @ONLY
 )
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -47,6 +47,7 @@ option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_APPS_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
+option(MSCCLPP_USE_IB "Use InfiniBand." ON)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
@@ -141,22 +142,17 @@ else()
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  add_compile_definitions(DEBUG_BUILD)
+    add_compile_definitions(DEBUG_BUILD)
 endif()
 
-find_package(IBVerbs)
+if(MSCCLPP_USE_IB)
+    find_package(IBVerbs)
+    if(NOT IBVERBS_FOUND)
+        message(FATAL_ERROR "IBVerbs not found. Install libibverbs-dev or rdma-core-devel. If you want to disable InfiniBand, add `-DMSCCLPP_USE_IB=OFF` in your cmake command.")
+    endif()
+endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
-
-set(CMAKE_COLOR_DIAGNOSTICS ON)
-function(msg_red text)
-  string(ASCII 27 ESC)
-  message("${ESC}[31m${text}${ESC}[0m")
-endfunction()
-
-if(NOT IBVERBS_FOUND)
-  msg_red("libibverbs not found. Install libibverbs-dev or rdma-core-devel.")
-endif()
 
 include(FetchContent)
 FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
@@ -168,7 +164,7 @@ target_include_directories(mscclpp_obj
     ${GPU_INCLUDE_DIRS}
     ${NUMA_INCLUDE_DIRS})
 target_link_libraries(mscclpp_obj PRIVATE ${GPU_LIBRARIES} ${NUMA_LIBRARIES} nlohmann_json::nlohmann_json Threads::Threads dl)
-if(IBVERBS_FOUND)
+if(MSCCLPP_USE_IB)
     target_include_directories(mscclpp_obj SYSTEM PRIVATE ${IBVERBS_INCLUDE_DIRS})
     target_link_libraries(mscclpp_obj PRIVATE ${IBVERBS_LIBRARIES})
     target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
@@ -179,7 +175,7 @@ if(MSCCLPP_USE_CUDA)
 elseif(MSCCLPP_USE_ROCM)
     target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_ROCM)
     foreach(arch ${MSCCLPP_GPU_ARCHS})
-      target_compile_options(mscclpp_obj PRIVATE --offload-arch=${arch})
+        target_compile_options(mscclpp_obj PRIVATE --offload-arch=${arch})
     endforeach()
 endif()
 if(MSCCLPP_ENABLE_TRACE)
