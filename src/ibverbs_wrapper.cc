@@ -9,7 +9,7 @@
 
 namespace mscclpp {
 
-static std::unique_ptr<void, int(*)(void*)> globalIBVerbsHandle(nullptr, &dlclose);
+static std::unique_ptr<void, int(*)(void*)> globalIBVerbsHandle(nullptr, &::dlclose);
 
 void* IBVerbs::dlsym(const std::string& symbol) {
   if (!globalIBVerbsHandle) {
@@ -19,14 +19,14 @@ void* IBVerbs::dlsym(const std::string& symbol) {
         nullptr
     };
     for (int i = 0; possibleLibNames[i] != nullptr; i++) {
-      void* handle = dlopen(possibleLibNames[i], RTLD_NOW);
+      void* handle = ::dlopen(possibleLibNames[i], RTLD_NOW);
       if (handle) {
         globalIBVerbsHandle.reset(handle);
         break;
       }
     }
     if (!globalIBVerbsHandle) {
-      THROW(NET, SysError, errno, "Failed to open libibverbs: ", std::string(dlerror()));
+      THROW(NET, SysError, errno, "Failed to open libibverbs: ", std::string(::dlerror()));
     }
   }
   void* ptr = ::dlsym(globalIBVerbsHandle.get(), symbol.c_str());

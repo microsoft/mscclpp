@@ -59,7 +59,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-  if (dmaBufSupported) {
+  if (cuMemAlloc && dmaBufSupported) {
 #if !defined(__HIP_PLATFORM_AMD__)
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
