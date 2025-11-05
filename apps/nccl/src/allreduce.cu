@@ -81,14 +81,7 @@ struct NvlsAdapter {
 #endif
     } else
 #endif
-    // NVLS does not support 8-byte types (int64_t, uint64_t, double)
-    if constexpr (sizeof(T) == 8) {
-#if defined(__HIP_PLATFORM_AMD__)
-      return hipErrorNotSupported;
-#else
-      return cudaErrorNotSupported;
-#endif
-    } else {
+    {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       int nBlocks = nRanksPerNode;
       int nThreadsPerBlock = 1024;
@@ -116,14 +109,7 @@ struct NvlsWithCopyAdapter {
 #endif
     } else
 #endif
-    // NVLS does not support 8-byte types (int64_t, uint64_t, double)
-    if constexpr (sizeof(T) == 8) {
-#if defined(__HIP_PLATFORM_AMD__)
-      return hipErrorNotSupported;
-#else
-      return cudaErrorNotSupported;
-#endif
-    } else {
+    {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       if (sizeof(T) * nelems < (1 << 24)) {
         int nBlocks = nRanksPerNode * 4;
@@ -167,32 +153,23 @@ struct AllreduceNvlsPacketAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int, int worldSize, size_t nelems, cudaStream_t stream, uint32_t* deviceFlag,
                           uint32_t*, uint32_t*, uint32_t) {
-    // NVLS does not support 8-byte types (int64_t, uint64_t, double)
-    if constexpr (sizeof(T) == 8) {
-#if defined(__HIP_PLATFORM_AMD__)
-      return hipErrorNotSupported;
-#else
-      return cudaErrorNotSupported;
-#endif
-    } else {
-      size_t size = nelems * sizeof(T);
-      int nBlocks = 8;
-      int nThreadsPerBlock = 1024;
-      if (size <= (1 << 13)) {
-        nBlocks = 4;
-        nThreadsPerBlock = 512;
-      }
-      allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-          (const T*)input, (T*)scratch, (T*)output, nvlsChannels, nelems, scratchBufferSize, rank, worldSize, deviceFlag);
-      return cudaGetLastError();
+    size_t size = nelems * sizeof(T);
+    int nBlocks = 8;
+    int nThreadsPerBlock = 1024;
+    if (size <= (1 << 13)) {
+      nBlocks = 4;
+      nThreadsPerBlock = 512;
     }
+    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (const T*)input, (T*)scratch, (T*)output, nvlsChannels, nelems, scratchBufferSize, rank, worldSize, deviceFlag);
+    return cudaGetLastError();
   }
 };
 
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
   Op reduceOp = getReduceOp(op);
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);  // Convert for NCCL operations
+  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
   
   if (reduceOp == SUM) {
     if (ncclDtype == ncclFloat16) {
@@ -211,8 +188,6 @@ AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
 #endif
     } else if (ncclDtype == ncclInt32 || ncclDtype == ncclUint32) {
       return Adapter<SUM, int>::call;
-    } else if (ncclDtype == ncclInt64 || ncclDtype == ncclUint64) {
-      return Adapter<SUM, int64_t>::call;
     } else {
       return nullptr;
     }
@@ -233,8 +208,6 @@ AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
 #endif
     } else if (ncclDtype == ncclInt32 || ncclDtype == ncclUint32) {
       return Adapter<MIN, int>::call;
-    } else if (ncclDtype == ncclInt64 || ncclDtype == ncclUint64) {
-      return Adapter<MIN, int64_t>::call;
     } else {
       return nullptr;
     }
@@ -354,13 +327,13 @@ mscclpp::Algorithm AllreducePacket::build() {
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, mscclpp::DataType dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-        return self->allreduceKernelFunc(ctx, input, output, count, dtype, stream, extras);  // No cast needed
+        return self->allreduceKernelFunc(ctx, input, output, count, dtype, stream, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, mscclpp::DataType dtype) {
-        return self->initAllreduceContext(comm, input, output, count, dtype);  // No cast needed
+        return self->initAllreduceContext(comm, input, output, count, dtype);
       },
       [self](const void* input, void* output, size_t count, mscclpp::DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, count, dtype);  // No cast needed
+        return self->generateAllreduceContextKey(input, output, count, dtype);
       });
   return allreduceAlgo;
 }
