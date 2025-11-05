@@ -11,6 +11,7 @@ import warnings
 from functools import wraps
 from mscclpp._version import __version__, __commit_id__
 import mscclpp._compiler
+from mscclpp._algorithm import Algorithm
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
@@ -86,6 +87,9 @@ __all__ = [
     "version",
     "get_include",
     "get_lib",
+
+    # Python API
+    "Algorithm",
 ]
 
 

@@ -22,6 +22,13 @@ except ImportError:
     torchTensor = Type[Any]
 
 
+def get_device_arch() -> str:
+    if cp.cuda.runtime.is_hip:
+        return cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8")
+    else:
+        return f"sm_{cp.cuda.Device().compute_capability}"
+
+
 class Kernel:
     CU_LAUNCH_PARAM_BUFFER_POINTER = 0x01
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
@@ -86,7 +93,8 @@ class KernelBuilder:
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
         if not cp.cuda.runtime.is_hip:
-            compute_capability = cp.cuda.Device().compute_capability
+            arch = get_device_arch()
+            compute_capability = arch.replace("sm_", "")
             cuda_home = os.environ.get("CUDA_HOME")
             nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
             command = [
@@ -104,9 +112,7 @@ class KernelBuilder:
             ]
         else:
             # the gcn arch name is like "gfx942:sramecc+:xnack-"
-            gcn_arch = (
-                cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8").split(":")[0]
-            )
+            gcn_arch = get_device_arch()
             rocm_home = os.environ.get("ROCM_HOME")
             hipcc = os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
             command = [

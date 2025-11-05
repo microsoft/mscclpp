@@ -12,16 +12,17 @@ from typing import Any, Callable
 from pathlib import Path
 
 import pybind11
-from shutil import which
 import sys
 import sysconfig
 
 from blake3 import blake3
+import cupy as cp
 
 from mscclpp._version import __version__
 from mscclpp._executor import ExecutionPlanHandle, ExecutionPlanRegistry
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
+from mscclpp.utils import get_device_arch
 
 from ._mscclpp import (
     ExecutionPlan,
@@ -127,13 +128,10 @@ class DslCompiler:
 
 class NativeCodeCompiler:
     def __init__(self):
-        self._hip_available = which("hipcc") is not None
-        self._cuda_available = which("nvcc") is not None
-        if not (self._hip_available or self._cuda_available):
-            raise RuntimeError("No suitable compiler found (nvcc or hipcc).")
-        self._compiler = "nvcc" if self._cuda_available else "hipcc"
+        self._is_hip = cp.cuda.runtime.is_hip
+        self._device_arch = get_device_arch()
+        self._compiler = self._get_compiler()
         self._default_options = ["-std=c++17", "-O3", "--shared"]
-        self._device_arch = "sm_90" # need to detect dynamically in the future
         python_include = sysconfig.get_path('include')
         pybind11_include = pybind11.get_include()
         self._default_options += [
@@ -144,7 +142,7 @@ class NativeCodeCompiler:
         python_lib = f"-lpython{sys.version_info.major}.{sys.version_info.minor}"
         self._default_options.append(python_lib)
 
-        if self._cuda_available:
+        if not self._is_hip:
             # Format: -gencode=arch=compute_90,code=sm_90
             compute_arch = self._device_arch.replace("sm_", "compute_")
             arch_flag = f"-gencode=arch={compute_arch},code={self._device_arch}"
@@ -161,13 +159,15 @@ class NativeCodeCompiler:
                                                          "-L" + os.path.join(self._lib_home, "lib"),
                                                          "-lmscclpp",]
 
+    def _get_compiler(self) -> str:
+        if self._is_hip:
+            rocm_home = os.environ.get("ROCM_HOME")
+            return os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
+        else:
+            cuda_home = os.environ.get("CUDA_HOME")
+            return os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
 
-    def is_hip(self) -> bool:
-        return self._hip_available
 
-    def is_cuda(self) -> bool:
-        return self._cuda_available
-    
     def get_arch(self):
         return self._device_arch
 
