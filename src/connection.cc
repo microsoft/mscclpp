@@ -21,10 +21,10 @@ namespace mscclpp {
 
 static void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
   if (!mem.transports().has(transport)) {
-    throw Error("RegisteredMemory does not support this transport", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
   }
   if (offset + size > mem.size()) {
-    throw Error("RegisteredMemory out of bounds", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory out of bounds");
   }
 }
 
@@ -55,18 +55,18 @@ CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const End
                                      const Endpoint& remoteEndpoint)
     : Connection(context, localEndpoint) {
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
-    throw Error("CudaIpc transport is required for CudaIpcConnection", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for local endpoint", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "No GPU device ID provided for local endpoint");
   }
   if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "No GPU device ID provided for remote endpoint");
   }
   int localDeviceId = localEndpoint.device().id;
   int remoteDeviceId = remoteEndpoint.device().id;
   if (localEndpoint.device().type != DeviceType::GPU && remoteEndpoint.device().type != DeviceType::GPU) {
-    throw Error("CudaIpcConnection requires at least one GPU endpoint", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "CudaIpcConnection requires at least one GPU endpoint");
   } else if (localEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().type == DeviceType::GPU) {
     if (isSameProcess(localEndpoint, remoteEndpoint) && localDeviceId != remoteDeviceId) {
       // Connecting two GPUs in the same process - need to enable peer access explicitly
@@ -191,11 +191,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
   auto srcTransportInfo = getImpl(src).getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
-    throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "src is remote, which is not supported");
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -221,7 +221,7 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   validateTransport(dst, remoteTransport());
   auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -250,19 +250,18 @@ void IBConnection::flush(int64_t timeoutUsec) {
   while (qp_.lock()->getNumCqItems()) {
     int wcNum = qp_.lock()->pollCq();
     if (wcNum < 0) {
-      throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
+      THROW(NET, IbError, errno, "pollCq failed");
     } else if (timeoutUsec >= 0) {
       auto elapsed = timer.elapsed();
       if (elapsed > timeoutUsec) {
-        throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
-                        std::to_string(qp_.lock()->getNumCqItems()) + " signals",
-                    ErrorCode::Timeout);
+        THROW(CONN, Error, ErrorCode::Timeout, "pollCq timed out: waited for ", elapsed / 1e6, " seconds. Expected ",
+              qp_.lock()->getNumCqItems(), " signals");
       }
     }
     for (int i = 0; i < wcNum; ++i) {
       int status = qp_.lock()->getWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
-        throw mscclpp::IbError("a work item failed: status " + std::to_string(status), status);
+        THROW(NET, Error, ErrorCode::SystemError, "an IB work item failed: ", qp_.lock()->getWcStatusString(i));
       }
     }
   }
@@ -283,7 +282,7 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const E
       recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
-    throw Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "Ethernet connection can only be made from Ethernet endpoints");
   }
 
   // Instanciating Buffers
