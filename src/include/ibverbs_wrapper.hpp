@@ -64,7 +64,6 @@ struct IBVerbs {
 #endif  // defined(ibv_get_device_list)
 
 #undef ibv_query_port
-  // REGISTER_IBV_FUNC_WITH_NAME(ibv_query_port, ___ibv_query_port)
   static inline int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr) {
     static decltype(&::ibv_query_port) impl = nullptr;
     if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym("ibv_query_port"));
