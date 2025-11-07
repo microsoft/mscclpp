@@ -39,16 +39,16 @@ def reduce_copy_send_packets_test(num_threads_per_block, min_message_size, max_m
     ):
         rank = Rank(0)
         input_buffer = rank.get_input_buffer()
-        
+
         # Create scratch buffers for both GPUs
         scratch_buffers = [Buffer(0, 2), Buffer(1, 1)]
-        
+
         # Establish memory channel for communication between GPUs
         ch = MemoryChannel(1, 0)
 
         # Perform packet-based reduce: combine input into local scratch buffer
         rank.reduce(input_buffer[0:1], [scratch_buffers[0][0:1]], tb=0, packet=True)
-        
+
         # Copy reduced result to another buffer location using packet format
         rank.copy_packets(scratch_buffers[0][1:2], input_buffer[0:1], tb=0)
 

@@ -39,7 +39,7 @@ def reduce_copy_packets_test(num_threads_per_block, min_message_size, max_messag
     ):
         rank = Rank(0)
         input_buffer = rank.get_input_buffer()
-        
+
         # Create scratch buffer with 2 chunks for packet operations
         scratch_buffer = Buffer(0, 2)
 
