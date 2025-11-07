@@ -212,7 +212,7 @@ __global__ void __launch_bounds__(1024, 1)
 class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
  public:
   AllgatherAlgo6();
-  mscclpp::Algorithm build() override;
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   bool disableChannelCache_;
@@ -232,7 +232,7 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
 
 class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
  public:
-  mscclpp::Algorithm build() override;
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;

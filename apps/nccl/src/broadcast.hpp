@@ -158,7 +158,7 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
 class BroadcastAlgo6 : public mscclpp::AlgorithmBuilder {
  public:
   BroadcastAlgo6() = default;
-  mscclpp::Algorithm build() override;
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,

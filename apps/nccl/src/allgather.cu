@@ -110,9 +110,9 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo6::generateAllgatherContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
-mscclpp::Algorithm AllgatherAlgo6::build() {
+std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo6::build() {
   auto self = std::make_shared<AllgatherAlgo6>();
-  mscclpp::Algorithm allgatherAlgo(
+  return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allgather6", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
@@ -126,7 +126,6 @@ mscclpp::Algorithm AllgatherAlgo6::build() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  return allgatherAlgo;
 }
 
 void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
@@ -197,9 +196,9 @@ mscclpp::AlgorithmCtxKey AllgatherAlgo8::generateAllgatherContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-mscclpp::Algorithm AllgatherAlgo8::build() {
+std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo8::build() {
   auto self = std::make_shared<AllgatherAlgo8>();
-  mscclpp::Algorithm allgatherAlgo(
+  return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allgather8", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
@@ -213,5 +212,4 @@ mscclpp::Algorithm AllgatherAlgo8::build() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  return allgatherAlgo;
 }

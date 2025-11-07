@@ -75,9 +75,9 @@ mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-mscclpp::Algorithm BroadcastAlgo6::build() {
+std::shared_ptr<mscclpp::Algorithm> BroadcastAlgo6::build() {
   auto self = std::make_shared<BroadcastAlgo6>();
-  mscclpp::Algorithm broadcastAlgo(
+  return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_broadcast6", "broadcast",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
@@ -91,5 +91,4 @@ mscclpp::Algorithm BroadcastAlgo6::build() {
       [self](const void* input, void* output, size_t count, int dtype) {
         return self->generateBroadcastContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
       });
-  return broadcastAlgo;
 }
