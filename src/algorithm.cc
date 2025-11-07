@@ -5,33 +5,43 @@
 
 namespace mscclpp {
 
-class Algorithm::Impl {
+class NativeAlgorithm::Impl {
  public:
-  Impl(std::string name, std::string collective, Algorithm::InitFunc initFunc, Algorithm::KernelFunc kernelFunc,
-       Algorithm::ContextInitFunc contextInitFunc, Algorithm::ContextKeyGenFunc contextKeyGenFunc)
+  Impl(std::string name, std::string collective, NativeAlgorithm::InitFunc initFunc,
+       NativeAlgorithm::KernelFunc kernelFunc, NativeAlgorithm::ContextInitFunc contextInitFunc,
+       NativeAlgorithm::ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize, size_t maxMessageSize,
+       CollectiveBufferMode bufferMode, std::unordered_map<std::string, uint64_t> tags)
       : name_(name),
         collective_(collective),
         initFunc_(initFunc),
         kernelLaunchFunc_(kernelFunc),
         contextInitFunc_(contextInitFunc),
-        contextKeyGenFunc_(contextKeyGenFunc) {}
-  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+        contextKeyGenFunc_(contextKeyGenFunc),
+        minMessageSize_(minMessageSize),
+        maxMessageSize_(maxMessageSize),
+        bufferMode_(bufferMode),
+        tags_(tags) {}
+  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
+              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::string name_;
   std::string collective_;
-  Algorithm::InitFunc initFunc_;
-  Algorithm::KernelFunc kernelLaunchFunc_;
-  Algorithm::ContextInitFunc contextInitFunc_;
-  Algorithm::ContextKeyGenFunc contextKeyGenFunc_;
+  NativeAlgorithm::InitFunc initFunc_;
+  NativeAlgorithm::KernelFunc kernelLaunchFunc_;
+  NativeAlgorithm::ContextInitFunc contextInitFunc_;
+  NativeAlgorithm::ContextKeyGenFunc contextKeyGenFunc_;
+  size_t minMessageSize_;
+  size_t maxMessageSize_;
+  CollectiveBufferMode bufferMode_;
+  std::unordered_map<std::string, uint64_t> tags_;
 
   bool initialized_ = false;
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
 };
 
-int Algorithm::Impl::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                            int dtype, cudaStream_t stream,
-                            std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+int NativeAlgorithm::Impl::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
+                                   size_t count, int dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   if (!initialized_) {
     initFunc_(comm, extras);
     initialized_ = true;
@@ -45,33 +55,46 @@ int Algorithm::Impl::launch(std::shared_ptr<mscclpp::Communicator> comm, const v
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, count, dtype, stream, extras);
 }
 
-Algorithm::Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
-                     ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc)
-    : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
+NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
+                                 ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc,
+                                 size_t minMessageSize, size_t maxMessageSize, CollectiveBufferMode bufferMode,
+                                 std::unordered_map<std::string, uint64_t> tags)
+    : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc,
+                                   minMessageSize, maxMessageSize, bufferMode, tags)) {}
 
-int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                      int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  return this->impl_->launch(comm, input, output, count, dtype, stream, extras);
+int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+                             int dtype, cudaStream_t stream,
+                             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+  return this->impl_->execute(comm, input, output, count, dtype, stream, extras);
 }
 
-bool Algorithm::isEmpty() { return !impl_; }
+const std::string& NativeAlgorithm::name() const { return impl_->name_; }
 
-std::string Algorithm::name() const { return impl_->name_; }
+const std::string& NativeAlgorithm::collective() const { return impl_->collective_; }
 
-std::string Algorithm::collective() const { return impl_->collective_; }
+const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
+  static std::pair<size_t, size_t> range;
+  range = {impl_->minMessageSize_, impl_->maxMessageSize_};
+  return range;
+}
+
+const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return impl_->tags_; }
+
+const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return impl_->bufferMode_; }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
-                                            Algorithm algorithm) {
+                                            std::shared_ptr<Algorithm> algorithm) {
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
-Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                               size_t messageSize, int dtype, int nRanksPerNode, int worldSize) {
-  Algorithm algo;
+std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input,
+                                                                void* output, size_t messageSize, int dtype,
+                                                                int nRanksPerNode, int worldSize) {
+  std::shared_ptr<Algorithm> algo;
   if (algoSelector_) {
     algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode, worldSize);
   }
-  if (algo.isEmpty()) {
+  if (!algo) {
     algo = fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode,
                                  worldSize);
   }
@@ -97,7 +120,7 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   auto collection = std::make_shared<AlgorithmCollection>();
   for (const auto& builder : algoBuilders_) {
     auto algo = builder->build();
-    collection->registerAlgorithm(algo.collective(), algo.name(), algo);
+    collection->registerAlgorithm(algo->collective(), algo->name(), algo);
   }
   collection->algoSelector_ = algoSelector_;
   collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;

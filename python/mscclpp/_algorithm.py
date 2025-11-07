@@ -23,7 +23,6 @@ class Algorithm():
         min_size: int = 0,
         max_size: int = (1 << 64 - 1),
         buffer_mode: BufferMode = BufferMode.ALL,
-        architectures: List[Union[GpuModel, str]] = [GpuModel.ALL],
         constraints: Optional[AlgorithmConstraint] = None,
         execution_plan_handle: Optional[ExecutionPlanHandle] = None,
         native_handle: Optional[int] = None,
@@ -35,7 +34,6 @@ class Algorithm():
         self.native_handle = native_handle
         self.min_size = min_size
         self.max_size = max_size
-        self.architectures = architectures
         self.buffer_mode = buffer_mode
         self.constraints = constraints
         self.tags = tags
