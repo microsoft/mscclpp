@@ -12,12 +12,12 @@ namespace mscclpp {
 
 struct IBVerbs {
  private:
-  static void *dlsym(const std::string &symbol);
+  static void *dlsym(const std::string &symbol, bool allowReturnNull = false);
 
  public:
 #define REGISTER_IBV_FUNC_WITH_NAME(name__, func__)                                          \
   template <typename... Args>                                                                \
-  static auto(name__)(Args && ...args) {                                                     \
+  static inline auto(name__)(Args && ...args) {                                              \
     static_assert(sizeof(&::func__) > 0, #func__ " is expected be a function, not a macro"); \
     static decltype(&::func__) impl = nullptr;                                               \
     if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym(#func__));             \
@@ -41,10 +41,12 @@ struct IBVerbs {
   REGISTER_IBV_FUNC(ibv_create_qp)
   REGISTER_IBV_FUNC(ibv_destroy_qp)
   REGISTER_IBV_FUNC(ibv_modify_qp)
-  REGISTER_IBV_FUNC(ibv_reg_dmabuf_mr)
   REGISTER_IBV_FUNC(ibv_dereg_mr)
   REGISTER_IBV_FUNC(ibv_query_gid)
   REGISTER_IBV_FUNC(ibv_wc_status_str)
+
+  static bool isDmabufSupported();
+  static struct ibv_mr *ibv_reg_dmabuf_mr(struct ibv_pd *, uint64_t, size_t, uint64_t, int, int);
 
   ///
   /// Below is for cases where the API (may be / is) a macro. Refer to `infiniband/verbs.h`.
@@ -56,8 +58,9 @@ struct IBVerbs {
 #undef ibv_get_device_list
   REGISTER_IBV_FUNC(ibv_static_providers)
   static inline struct ibv_device **ibv_get_device_list(int *num_devices) {
-    static decltype(&::ibv_get_device_list) impl = nullptr;
-    if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym("ibv_get_device_list"));
+    using FuncType = struct ibv_device **(*)(int *);
+    static FuncType impl = nullptr;
+    if (!impl) impl = reinterpret_cast<FuncType>(IBVerbs::dlsym("ibv_get_device_list"));
     IBVerbs::ibv_static_providers(NULL, _RDMA_STATIC_PREFIX(RDMA_STATIC_PROVIDERS), NULL);
     return impl(num_devices);
   }

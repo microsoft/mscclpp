@@ -14,6 +14,7 @@
 #include <mscclpp/fifo.hpp>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
 #include "api.h"
 #include "context.hpp"
@@ -51,14 +52,32 @@ static inline bool isGpuAddr(void* ptr) {
   return (memType == CU_MEMORYTYPE_DEVICE);
 }
 
-static inline bool isDmaBufSupported() {
+static inline int gpuAddrToDeviceId(CUdeviceptr devPtr) {
+  int deviceId;
+  MSCCLPP_CUTHROW(cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, devPtr));
+  return deviceId;
+}
+
+static inline bool isDmabufSupportedByGpu(int gpuId) {
+  static std::unordered_map<int, bool> cache;
+  if (gpuId < 0 || !IBVerbs::isDmabufSupported()) {
+    return false;
+  }
+  if (cache.find(gpuId) != cache.end()) {
+    return cache[gpuId];
+  }
   int dmaBufSupported = 0;
 #if !defined(__HIP_PLATFORM_AMD__)
   CUdevice dev;
-  MSCCLPP_CUTHROW(cuCtxGetDevice(&dev));
+  MSCCLPP_CUTHROW(cuDeviceGet(&dev, gpuId));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
 #endif  // !defined(__HIP_PLATFORM_AMD__)
-  return dmaBufSupported != 0;
+  bool ret = dmaBufSupported != 0;
+  if (!ret) {
+    DEBUG(NET, "GPU ", gpuId, " does not support DMABUF");
+  }
+  cache[gpuId] = ret;
+  return ret;
 }
 
 IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff), size_(0) {
@@ -73,9 +92,9 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   uintptr_t addr = buffIntPtr & -pageSize;
   std::size_t pages = (size + (buffIntPtr - addr) + pageSize - 1) / pageSize;
 
-  bool isGpuAddrVal = isGpuAddr(buff_);
-  bool isDmaBufSupportedVal = isDmaBufSupported();
-  if (isGpuAddrVal && isDmaBufSupportedVal) {
+  bool isGpuBuff = isGpuAddr(buff_);
+  int gpuId = isGpuBuff ? gpuAddrToDeviceId(reinterpret_cast<CUdeviceptr>(buff_)) : -1;
+  if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
 #if !defined(__HIP_PLATFORM_AMD__)
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
@@ -88,16 +107,16 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
-#else
-    THROW(NET, Error, ErrorCode::InvalidUsage, "Registration of DMA_BUF based memory region failed on HIP platform");
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#else   // defined(__HIP_PLATFORM_AMD__)
+    THROW(NET, Error, ErrorCode::InvalidUsage, "We don't support DMABUF on HIP platforms yet");
+#endif  // defined(__HIP_PLATFORM_AMD__)
   } else {
 #if !defined(__HIP_PLATFORM_AMD__)
-    if (isGpuAddrVal) {
-      // nvidia-peermem is needed only when DMA_BUF is not supported
+    if (isGpuBuff) {
       if (isCuMemMapAllocated(buff_)) {
-        WARN(NET, "DMA_BUF is not supported; falling back to nvidia_peermem");
+        THROW(NET, Error, ErrorCode::InvalidUsage, "DMABUF is required but is not supported in this platform.");
       }
+      // Need nvidia-peermem when DMABUF is not supported
       if (!checkNvPeerMemLoaded()) {
         THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
       }
