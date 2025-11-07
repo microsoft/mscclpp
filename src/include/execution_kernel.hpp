@@ -719,18 +719,25 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
   }
 }
 
-template <typename T, typename PacketType>
-MSCCLPP_DEVICE_INLINE void handleReduceCopyPackets(const Operation& op, void* input, void* output, void* scratch) {
+template <typename T, typename PacketType, bool SendToRemote = true>
+MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
   const uint32_t nSrcs = op.nInputs - 1;
+  const uint32_t nDstChannels = op.nOutputs - 2;
   const uint32_t srcOffsetByBytes = op.inputOffsets[0];
   const uint32_t dstOffsetByBytes = op.outputOffsets[0];
   const uint32_t* inputOffsets = op.inputOffsets + 1;
+  const uint32_t* outputOffsets = op.outputOffsets + 2;
+  const BufferRef* outputBufferRefs = op.outputBufferRefs + 2;
+  
+  PacketType* dstPkt = (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[1].type) + 2 * op.outputOffsets[1]) ;
   uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
   const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
+  const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);
   PacketPayload<PacketType>* srcPacketPayload =
       (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + srcOffset;
-  PacketType* dstPacketPayload = (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type) + (dstOffsetByBytes << 1));
+  PacketPayload<PacketType>* dstPacketPayload =
+      (PacketPayload<PacketType>*)getBuffer(input, output, scratch, op.outputBufferRefs[0].type) + dstOffset;
   for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
     for (uint32_t index = 0; index < nSrcs; ++index) {
@@ -739,9 +746,18 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopyPackets(const Operation& op, void* in
       data = add_vectors<T>(data, val);
     }
     data = add_vectors<T>(data, srcPacketPayload[idx]);
-    srcPacketPayload[idx] = data;
-    PacketType* dst_val = &dstPacketPayload[idx];
+    dstPacketPayload[idx] = data;
+    PacketType* dst_val = &dstPkt[idx];
     dst_val->write(data, flag_);
+
+    if constexpr (SendToRemote) {
+      PacketType pkt(data, flag_);
+      for (uint32_t index = 0; index < nDstChannels; ++index) {
+        uint32_t offset = (scratchOffset_ + outputOffsets[index] * 2) / sizeof(PacketType);
+        void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[outputBufferRefs[index].id]);
+        mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
+      }
+    }
   }
 }
 
@@ -1019,8 +1035,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleReduceSendPackets<T, PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::REDUCE_PACKETS) {
     handleReduceSendPackets<T, PacketType, false>(op, input, output, scratch);
+  } else if (opType == OperationType::REDUCE_COPY_SEND_PACKETS) {
+    handleReduceCopySendPackets<T, PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::REDUCE_COPY_PACKETS) {
-    handleReduceCopyPackets<T, PacketType>(op, input, output, scratch);
+    handleReduceCopySendPackets<T, PacketType, false>(op, input, output, scratch);
   } else if (opType == OperationType::UNPACK_PACKETS) {
     handleUnpackPackets<PacketType>(op, input, output, scratch);
   } else if (opType == OperationType::COPY_PACKETS) {
