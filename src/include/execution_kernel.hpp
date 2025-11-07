@@ -729,8 +729,9 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
   const uint32_t* inputOffsets = op.inputOffsets + 1;
   const uint32_t* outputOffsets = op.outputOffsets + 2;
   const BufferRef* outputBufferRefs = op.outputBufferRefs + 2;
-  
-  PacketType* dstPkt = (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[1].type) + 2 * op.outputOffsets[1]) ;
+
+  PacketType* dstPkt =
+      (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[1].type) + 2 * op.outputOffsets[1]);
   uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
   const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
   const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);

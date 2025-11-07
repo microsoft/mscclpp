@@ -772,9 +772,11 @@ class ReduceOperation(BaseOperation):
             )
         if (
             isinstance(other, PutOperation)
-            and self.name == Instruction.reduce_copy_packet or self.name == Instruction.reduce_copy_send_packet
-            and (other.name == Instruction.put_packet and self.local_dst_buff[0] == other.src_buff[0]) or
-            (other.name == Instruction.read_put_packet and self.local_pkt_dst_buff[0] == other.src_buff[0])
+            and (self.name == Instruction.reduce_copy_packet or self.name == Instruction.reduce_copy_send_packet)
+            and (
+                (other.name == Instruction.put_packet and self.local_dst_buff[0] == other.src_buff[0])
+                or (other.name == Instruction.read_put_packet and self.local_pkt_dst_buff[0] == other.src_buff[0])
+            )
             and other.channel_type == ChannelType.memory
             and self.tbg_info == other.tbg_info
         ):

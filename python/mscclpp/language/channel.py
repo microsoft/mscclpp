@@ -682,6 +682,55 @@ class PortChannel:
 
         get_program().add_operation(self.src_rank, tb, op)
 
+    def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
+        """Transfer data from local buffer to remote scratch buffer in packet format.
+
+        Performs a specialized put operation that transfers data from the source rank's buffer
+        to the destination rank's scratch buffer in packet format through the port channel.
+        The destination chunk must be a scratch buffer.
+
+        Args:
+            dst_chunk (Chunk): The destination scratch chunk on the destination rank.
+            src_chunk (Chunk): The source chunk on the source rank (any buffer type).
+            tb (int): The thread block ID that will execute this operation.
+
+        Raises:
+            RuntimeError: If chunk ranks don't match channel configuration, if destination
+                chunk is not a scratch buffer, or if chunk sizes don't match.
+
+        Example:
+            >>> channel.put_packets(dst_chunk, src_chunk, tb=0)
+        """
+        if src_chunk.rank != self.src_rank:
+            raise RuntimeError(
+                f"Source chunk rank {src_chunk.rank} does not match current channel source rank {self.src_rank}."
+            )
+        if dst_chunk.rank != self.dst_rank:
+            raise RuntimeError(
+                f"Dst chunk rank {dst_chunk.rank} does not match current channel dst rank {self.dst_rank}."
+            )
+        if dst_chunk.buffer != BufferType.scratch:
+            raise RuntimeError(f"Destination chunk must be of type scratch.")
+        if dst_chunk.size != src_chunk.size:
+            raise RuntimeError(
+                f"Destination chunk size {dst_chunk.size} does not match source chunk size {src_chunk.size}."
+            )
+
+        remote_chunk = RemoteBuffer(src_chunk.rank, dst_chunk.rank, dst_chunk.buffer, self.channel_type)
+        tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb, remote_chunk, self.channel_type)
+        tb_channel_ids = get_program().setup_channel(tb, self)
+
+        op = PutOperation(
+            src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
+            dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
+            channel_ids=tb_channel_ids,
+            channel_type=self.channel_type,
+            from_packet=False,
+            to_packet=True,
+        )
+
+        get_program().add_operation(self.src_rank, tb, op)
+
     def read_put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Transfer data in packet format from local to remote scratch buffer.
 
