@@ -70,11 +70,12 @@ class NativeAlgorithm : public Algorithm {
  public:
   using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>,
                                       std::unordered_map<std::string, std::shared_ptr<void>>&)>;
-  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, int,
+  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, int,
                                        cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
-                                                                      const void*, void*, size_t, int)>;
-  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, int dtype)>;
+                                                                      const void*, void*, size_t, size_t, int)>;
+  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
+                                                          size_t outputSize, int dtype)>;
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ALL,

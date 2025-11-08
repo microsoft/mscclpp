@@ -23,13 +23,12 @@ void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 }
 
 ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                                 void* output, size_t inputSize, cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int nBlocks = 28;
-  const size_t bytes = count * ncclTypeSize(dtype);
-  const size_t nElem = bytes / sizeof(int);
+  const size_t nElem = inputSize / sizeof(int);
   int rank = ctx->rank;
-  if (bytes <= 32 * (1 << 20)) {
+  if (inputSize <= 32 * (1 << 20)) {
     if (nElem <= 4096) {
       nBlocks = 7;
     } else if (nElem <= 32768) {
@@ -42,7 +41,7 @@ ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::
   }
 
   size_t channelOutOffset = *static_cast<size_t*>(ctx->extras["channel_out_offset"].get());
-  if ((char*)input == (char*)output + rank * bytes) {
+  if ((char*)input == (char*)output + rank * inputSize) {
     allgather6<false><<<nBlocks, 1024, 0, stream>>>((void*)input, ctx->memoryChannelDeviceHandles.get(),
                                                     channelOutOffset, ctx->rank, ctx->workSize, ctx->nRanksPerNode,
                                                     nElem);
@@ -116,15 +115,17 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo6::build() {
       "default_allgather6", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-        return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] int dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
       },
-      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
-        return self->initAllgatherContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+             [[maybe_unused]] size_t outputSize, int dtype) {
+        return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
       },
-      [self](const void* input, void* output, size_t count, int dtype) {
-        return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, int dtype) {
+        return self->generateAllgatherContextKey(input, output, inputSize, static_cast<ncclDataType_t>(dtype));
       });
 }
 
@@ -136,12 +137,11 @@ void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 }
 
 ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t count, ncclDataType_t dtype, cudaStream_t stream,
+                                                 void* output, size_t inputSize, cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int rank = ctx->rank;
-  const size_t bytes = count * ncclTypeSize(dtype);
-  const size_t nElem = bytes / sizeof(int);
-  if ((char*)input == (char*)output + rank * bytes) {
+  const size_t nElem = inputSize / sizeof(int);
+  if ((char*)input == (char*)output + rank * inputSize) {
     allgather8<false><<<56, 1024, 0, stream>>>((void*)input, this->scratchBuffer_.get(), (void*)output,
                                                ctx->memoryChannelDeviceHandles.get(), rank, ctx->nRanksPerNode,
                                                ctx->workSize, nElem);
@@ -202,14 +202,16 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo8::build() {
       "default_allgather8", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-        return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] int dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
       },
-      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
-        return self->initAllgatherContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+             [[maybe_unused]] size_t outputSize, int dtype) {
+        return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
       },
-      [self](const void* input, void* output, size_t count, int dtype) {
-        return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, int dtype) {
+        return self->generateAllgatherContextKey(input, output, inputSize, static_cast<ncclDataType_t>(dtype));
       });
 }

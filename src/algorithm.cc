@@ -49,14 +49,13 @@ int NativeAlgorithm::Impl::execute(std::shared_ptr<mscclpp::Communicator> comm, 
     initFunc_(comm, extras);
     initialized_ = true;
   }
-  // Use inputSize for the context key generation (assuming count represents input element count)
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, dtype);
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
-    auto ctx = contextInitFunc_(comm, input, output, inputSize, dtype);
+    auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
     contexts_[ctxKey] = ctx;
   }
-  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, dtype, stream, extras);
+  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, stream, extras);
 }
 
 NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,

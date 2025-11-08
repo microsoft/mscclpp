@@ -164,7 +164,7 @@ class BroadcastAlgo6 : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t inputSize, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
