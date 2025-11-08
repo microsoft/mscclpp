@@ -6,9 +6,9 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/datatype_conversion.hpp>
 
 #include "allgather.hpp"
-#include "datatype_conversion.hpp"
 #include "debug.h"
 
 AllgatherAlgo6::AllgatherAlgo6() : disableChannelCache_(false) {

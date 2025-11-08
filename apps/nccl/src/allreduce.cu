@@ -7,7 +7,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
-#include "datatype_conversion.hpp"
+#include <mscclpp/datatype_conversion.hpp>
 
 #include "allreduce.hpp"
 #include "debug.h"

@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#ifndef DATATYPE_CONVERSION_HPP_
-#define DATATYPE_CONVERSION_HPP_
+#ifndef MSCCLPP_DATATYPE_CONVERSION_HPP_
+#define MSCCLPP_DATATYPE_CONVERSION_HPP_
 
 #include <mscclpp/executor.hpp>
 #include <mscclpp/nccl.h>
+#include <cstddef>
 
 // Convert ncclDataType_t to mscclpp::DataType
 inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
@@ -55,4 +56,22 @@ inline ncclDataType_t mscclppDataTypeToNccl(mscclpp::DataType dtype) {
   }
 }
 
-#endif  // DATATYPE_CONVERSION_HPP_
+// Get the size in bytes of a data type
+inline size_t getDataTypeSize(mscclpp::DataType dtype) {
+  switch (dtype) {
+    case mscclpp::DataType::FP8_E4M3:
+    case mscclpp::DataType::FP8_E5M2:
+      return 1;
+    case mscclpp::DataType::FLOAT16:
+    case mscclpp::DataType::BFLOAT16:
+      return 2;
+    case mscclpp::DataType::INT32:
+    case mscclpp::DataType::UINT32:
+    case mscclpp::DataType::FLOAT32:
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+#endif  // MSCCLPP_DATATYPE_CONVERSION_HPP_
