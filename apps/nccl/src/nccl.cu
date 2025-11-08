@@ -643,7 +643,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
         {"root", std::make_shared<int>(root)},
         {"scratch", comm->scratchBuffer_},
         {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
-    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -697,7 +697,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
         {"op", std::make_shared<int>(reductionOperation)},
         {"scratch", comm->scratchBuffer_},
         {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
-    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, count, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -796,7 +796,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     std::unordered_map<std::string, std::shared_ptr<void>> extras = {
         {"scratch", comm->scratchBuffer_}, {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
-    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, sendcount, datatype, stream, extras));
+    return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, datatype, stream, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

@@ -5,6 +5,7 @@
 #define MSCCLPP_ALGORITHM_HPP_
 
 #include <memory>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
@@ -27,8 +28,8 @@ class Algorithm {
   virtual const std::pair<size_t, size_t>& messageRange() const = 0;
   virtual const std::unordered_map<std::string, uint64_t>& tags() const = 0;
   virtual const CollectiveBufferMode& bufferMode() const = 0;
-  virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                      int dtype, cudaStream_t stream,
+  virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+                      size_t outputSize, int dtype, cudaStream_t stream,
                       std::unordered_map<std::string, std::shared_ptr<void>>& extras) = 0;
 };
 
@@ -90,8 +91,9 @@ class NativeAlgorithm : public Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
-              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) override;
+  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+              size_t outputSize, int dtype, cudaStream_t stream,
+              std::unordered_map<std::string, std::shared_ptr<void>>& extras) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -102,6 +104,24 @@ class NativeAlgorithm : public Algorithm {
   class Impl;
   std::shared_ptr<Impl> impl_;
 };
+
+class DslAlgorithm : public Algorithm {
+ public:
+  DslAlgorithm(std::shared_ptr<ExecutionPlanHandle> planHandle);
+
+  const std::string& name() const override;
+  const std::string& collective() const override;
+  const std::pair<size_t, size_t>& messageRange() const override;
+  const std::unordered_map<std::string, uint64_t>& tags() const override;
+  const CollectiveBufferMode& bufferMode() const override;
+  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+              size_t outputSize, int dtype, cudaStream_t stream,
+              std::unordered_map<std::string, std::shared_ptr<void>>& extras) override;
+
+ private:
+  std::shared_ptr<ExecutionPlanHandle> planHandle_;
+};
+
 }  // namespace mscclpp
 
 namespace std {

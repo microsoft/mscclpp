@@ -3,6 +3,8 @@
 
 #include <mscclpp/algorithm.hpp>
 
+#include "logger.hpp"
+
 namespace mscclpp {
 
 class NativeAlgorithm::Impl {
@@ -21,8 +23,9 @@ class NativeAlgorithm::Impl {
         maxMessageSize_(maxMessageSize),
         bufferMode_(bufferMode),
         tags_(tags) {}
-  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
-              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+              size_t outputSize, int dtype, cudaStream_t stream,
+              std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::string name_;
   std::string collective_;
@@ -40,19 +43,20 @@ class NativeAlgorithm::Impl {
 };
 
 int NativeAlgorithm::Impl::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
-                                   size_t count, int dtype, cudaStream_t stream,
+                                   size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   if (!initialized_) {
     initFunc_(comm, extras);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, count, dtype);
+  // Use inputSize for the context key generation (assuming count represents input element count)
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, dtype);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
-    auto ctx = contextInitFunc_(comm, input, output, count, dtype);
+    auto ctx = contextInitFunc_(comm, input, output, inputSize, dtype);
     contexts_[ctxKey] = ctx;
   }
-  return kernelLaunchFunc_(contexts_[ctxKey], input, output, count, dtype, stream, extras);
+  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, dtype, stream, extras);
 }
 
 NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
@@ -62,10 +66,10 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
     : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc,
                                    minMessageSize, maxMessageSize, bufferMode, tags)) {}
 
-int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                             int dtype, cudaStream_t stream,
+int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
+                             size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
                              std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  return this->impl_->execute(comm, input, output, count, dtype, stream, extras);
+  return this->impl_->execute(comm, input, output, inputSize, outputSize, dtype, stream, extras);
 }
 
 const std::string& NativeAlgorithm::name() const { return impl_->name_; }
@@ -125,6 +129,44 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   collection->algoSelector_ = algoSelector_;
   collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;
+}
+
+DslAlgorithm::DslAlgorithm(std::shared_ptr<ExecutionPlanHandle> planHandle) : planHandle_(planHandle) {}
+
+const std::string& DslAlgorithm::name() const { return planHandle_->plan->name(); }
+
+const std::string& DslAlgorithm::collective() const {
+  return planHandle_->plan->collective();
+}
+
+const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
+  static std::pair<size_t, size_t> range;
+  range = {planHandle_->plan->minMessageSize(), planHandle_->plan->maxMessageSize()};
+  return range;
+}
+
+const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return planHandle_->tags; }
+
+const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
+  // TODO: need to fix
+  static CollectiveBufferMode mode =
+      planHandle_->plan->isInPlace() ? CollectiveBufferMode::IN_PLACE : CollectiveBufferMode::OUT_OF_PLACE;
+  return mode;
+}
+
+int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
+                          size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
+                          std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+  auto executorIt = extras.find("executor");
+  if (executorIt == extras.end()) {
+    THROW(EXEC, Error, ErrorCode::ExecutorError, "DslAlgorithm requires 'executor' in extras");
+  }
+  auto executor = std::static_pointer_cast<Executor>(executorIt->second);
+  int rank = comm->bootstrap()->getRank();
+  executor->execute(rank, const_cast<void*>(input), output, inputSize, outputSize, static_cast<DataType>(dtype),
+                    *planHandle_->plan, stream);
+
+  return 0;
 }
 
 }  // namespace mscclpp

@@ -44,10 +44,10 @@ class ExecutionPlan {
   ~ExecutionPlan() = default;
 
   /// Return the human-readable name of the plan.
-  std::string name() const;
+  const std::string& name() const;
 
   /// Return the collective implemented by this plan (e.g., "allreduce", "allgather").
-  std::string collective() const;
+  const std::string& collective() const;
 
   /// Minimum message size (in bytes) for which this plan is valid.
   size_t minMessageSize() const;

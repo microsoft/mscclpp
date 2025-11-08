@@ -694,9 +694,9 @@ void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
 ExecutionPlan::ExecutionPlan(const std::string& planPath, int rank) : impl_(std::make_shared<Impl>(planPath, rank)) {}
 
-std::string ExecutionPlan::name() const { return this->impl_->name; }
+const std::string& ExecutionPlan::name() const { return this->impl_->name; }
 
-std::string ExecutionPlan::collective() const { return this->impl_->collective; }
+const std::string& ExecutionPlan::collective() const { return this->impl_->collective; }
 
 size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSize; }
 
