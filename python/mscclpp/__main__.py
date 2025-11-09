@@ -12,7 +12,7 @@ from mscclpp.language.utils import AlgoSpec
 
 default_algo_configs = [
     {
-        "filename": "allreduce_2nodes.json",
+        "filename": "allreduce_2nodes_1K_64K.json",
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
             name="allreduce_2nodes",
@@ -27,6 +27,27 @@ default_algo_configs = [
             reuse_resources=True,
             use_double_scratch_buffer=True,
             min_message_size=1 << 10,
+            max_message_size=64 << 10,
+            tags={"default": 1},
+        ),
+        "additional_args": [1],
+    },
+    {
+        "filename": "allreduce_2nodes_128K_2M.json",
+        "function": def_algo.allreduce_2nodes,
+        "spec": AlgoSpec(
+            name="allreduce_2nodes",
+            collective=AllReduce(16, 1, True),
+            nranks_per_node=8,
+            world_size=16,
+            in_place=True,
+            instances=1,
+            protocol="LL",
+            auto_sync=False,
+            num_threads_per_block=1024,
+            reuse_resources=True,
+            use_double_scratch_buffer=True,
+            min_message_size=128 << 10,
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
