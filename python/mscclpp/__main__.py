@@ -15,7 +15,7 @@ default_algo_configs = [
         "filename": "allreduce_2nodes_1K_64K.json",
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
-            name="allreduce_2nodes",
+            name="allreduce_2nodes_1K_64K",
             collective=AllReduce(16, 1, True),
             nranks_per_node=8,
             world_size=16,
@@ -36,7 +36,7 @@ default_algo_configs = [
         "filename": "allreduce_2nodes_128K_2M.json",
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
-            name="allreduce_2nodes",
+            name="allreduce_2nodes_128K_2M",
             collective=AllReduce(16, 1, True),
             nranks_per_node=8,
             world_size=16,

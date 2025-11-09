@@ -106,11 +106,11 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> Collective
                 )
 
                 current_rank.copy_packets(
-                   scratch_buffers[current_rank_id][
-                       local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu
-                   ],
-                   input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
-                   tb_group=global_intra_node_tbg,
+                    scratch_buffers[current_rank_id][
+                        local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu
+                    ],
+                    input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
+                    tb_group=global_intra_node_tbg,
                 )
 
                 current_rank.barrier(
@@ -148,11 +148,9 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> Collective
                 )
 
                 current_rank.copy_packets(
-                   scratch_buffers[current_rank_id][
-                       scratch_buffer_size - packets_per_gpu : scratch_buffer_size
-                   ],
-                   input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
-                   tb_group=global_intra_node_tbg,
+                    scratch_buffers[current_rank_id][scratch_buffer_size - packets_per_gpu : scratch_buffer_size],
+                    input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
+                    tb_group=global_intra_node_tbg,
                 )
 
                 # Broadcast Reduced Data
