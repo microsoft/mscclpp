@@ -52,7 +52,7 @@ default_algo_configs = [
             tags={"default": 1},
         ),
         "additional_args": [4],
-    }
+    },
 ]
 
 
