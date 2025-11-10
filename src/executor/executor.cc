@@ -156,7 +156,7 @@ struct Executor::Impl {
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
     this->proxyService->startProxy();
-    this->proxyService->isStarted();
+    this->proxyService->is();
   }
   ~Impl() = default;
 
@@ -213,7 +213,6 @@ struct Executor::Impl {
               (char*)context.deviceExecutionPlans[devicePlanKey].data(),
               context.deviceExecutionPlans[devicePlanKey].size() * sizeof(DeviceExecutionPlan), cudaMemcpyHostToDevice);
     context.currentDevicePlan = devicePlanKey;
-    context.proxyService->startProxy();
     this->contexts.insert({key, context});
     return context;
   }
