@@ -32,30 +32,6 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
   }
 }
 
-// Convert mscclpp::DataType to ncclDataType_t
-inline ncclDataType_t mscclppDataTypeToNccl(mscclpp::DataType dtype) {
-  switch (dtype) {
-    case mscclpp::DataType::INT32:
-      return ncclInt32;
-    case mscclpp::DataType::UINT32:
-      return ncclUint32;
-    case mscclpp::DataType::FLOAT16:
-      return ncclFloat16;
-    case mscclpp::DataType::FLOAT32:
-      return ncclFloat32;
-    case mscclpp::DataType::BFLOAT16:
-      return ncclBfloat16;
-#ifdef __FP8_TYPES_EXIST__
-    case mscclpp::DataType::FP8_E4M3:
-      return ncclFloat8e4m3;
-    case mscclpp::DataType::FP8_E5M2:
-      return ncclFloat8e5m2;
-#endif
-    default:
-      return ncclFloat32;  // fallback
-  }
-}
-
 // Get the size in bytes of a data type
 inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   switch (dtype) {

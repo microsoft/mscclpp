@@ -27,8 +27,7 @@ ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::
                                                  void* output, size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int nBlocks = 28;
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
-  const size_t bytes = count * ncclTypeSize(ncclDtype);
+  const size_t bytes = count * getDataTypeSize(dtype);
   const size_t nElem = bytes / sizeof(int);
   int rank = ctx->rank;
   if (bytes <= 32 * (1 << 20)) {
@@ -72,8 +71,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo6::initAllgatherContext(std:
   // setup semaphores
   ctx->memorySemaphores = this->memorySemaphores_;
 
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
-  size_t bytes = count * ncclTypeSize(ncclDtype);
+  size_t bytes = count * getDataTypeSize(dtype);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
@@ -143,8 +141,7 @@ ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::
                                                  void* output, size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int rank = ctx->rank;
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
-  const size_t bytes = count * ncclTypeSize(ncclDtype);
+  const size_t bytes = count * getDataTypeSize(dtype);
   const size_t nElem = bytes / sizeof(int);
   if ((char*)input == (char*)output + rank * bytes) {
     allgather8<false><<<56, 1024, 0, stream>>>((void*)input, this->scratchBuffer_.get(), (void*)output,
@@ -176,8 +173,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherAlgo8::initAllgatherContext(std:
   // setup semaphores
   ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
 
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
-  size_t bytes = count * ncclTypeSize(ncclDtype);
+  size_t bytes = count * getDataTypeSize(dtype);
   // register the memory for the broadcast operation
   mscclpp::RegisteredMemory localMemory = comm->registerMemory((void*)input, bytes, mscclpp::Transport::CudaIpc);
   mscclpp::RegisteredMemory scratchMemory =

@@ -21,16 +21,16 @@ ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::
                                                  cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   int root = *(int*)extras.at("root").get();
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
+  const size_t elemSize = getDataTypeSize(dtype);
   cudaError_t err;
   if (input == output) {
     err = broadcast<false>((int*)input, (int*)this->scratchBuffer_.get(), (int*)output,
                            ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                           count * ncclTypeSize(ncclDtype) / sizeof(int), stream);
+                           count * elemSize / sizeof(int), stream);
   } else {
     err = broadcast<true>((int*)input, (int*)this->scratchBuffer_.get(), (int*)output,
                           ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                          count * ncclTypeSize(ncclDtype) / sizeof(int), stream);
+                          count * elemSize / sizeof(int), stream);
   }
   if (err != cudaSuccess) {
     return ncclInternalError;

@@ -169,44 +169,43 @@ struct AllreduceNvlsPacketAdapter {
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
   Op reduceOp = getReduceOp(op);
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
   
   if (reduceOp == SUM) {
-    if (ncclDtype == ncclFloat16) {
+    if (dtype == mscclpp::DataType::FLOAT16) {
       return Adapter<SUM, half>::call;
-    } else if (ncclDtype == ncclFloat32) {
+    } else if (dtype == mscclpp::DataType::FLOAT32) {
       return Adapter<SUM, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
-    } else if (ncclDtype == ncclBfloat16) {
+    } else if (dtype == mscclpp::DataType::BFLOAT16) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (ncclDtype == ncclFloat8e4m3) {
+    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
       return Adapter<SUM, __fp8_e4m3>::call;
-    } else if (ncclDtype == ncclFloat8e5m2) {
+    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
       return Adapter<SUM, __fp8_e5m2>::call;
 #endif
-    } else if (ncclDtype == ncclInt32 || ncclDtype == ncclUint32) {
+    } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<SUM, int>::call;
     } else {
       return nullptr;
     }
   } else if (reduceOp == MIN) {
-    if (ncclDtype == ncclFloat16) {
+    if (dtype == mscclpp::DataType::FLOAT16) {
       return Adapter<MIN, half>::call;
-    } else if (ncclDtype == ncclFloat32) {
+    } else if (dtype == mscclpp::DataType::FLOAT32) {
       return Adapter<MIN, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
-    } else if (ncclDtype == ncclBfloat16) {
+    } else if (dtype == mscclpp::DataType::BFLOAT16) {
       return Adapter<MIN, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (ncclDtype == ncclFloat8e4m3) {
+    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
       return Adapter<MIN, __fp8_e4m3>::call;
-    } else if (ncclDtype == ncclFloat8e5m2) {
+    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
       return Adapter<MIN, __fp8_e5m2>::call;
 #endif
-    } else if (ncclDtype == ncclInt32 || ncclDtype == ncclUint32) {
+    } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<MIN, int>::call;
     } else {
       return nullptr;
@@ -358,7 +357,6 @@ ncclResult_t AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::A
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return ncclInvalidArgument;
   }
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -529,8 +527,7 @@ void Allreduce8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 ncclResult_t Allreduce8::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                              void* output, size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                              std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  ncclDataType_t ncclDtype = mscclppDataTypeToNccl(dtype);
-  const size_t bytes = count * ncclTypeSize(ncclDtype);
+  const size_t bytes = count * getDataTypeSize(dtype);
   ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op").get());
 
   size_t recvBytes;

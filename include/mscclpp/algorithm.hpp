@@ -5,7 +5,7 @@
 #define MSCCLPP_ALGORITHM_HPP_
 
 #include <memory>
-#include <mscclpp/executor.hpp>  // Add this include for DataType
+#include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
