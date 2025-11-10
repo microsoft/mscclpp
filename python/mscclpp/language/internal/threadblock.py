@@ -6,6 +6,7 @@ from mscclpp.language.internal.optimizer import *
 from mscclpp.language.internal.buffer_access import *
 from dataclasses import dataclass, field
 from collections import OrderedDict
+from typing import List
 
 
 @dataclass
@@ -88,7 +89,7 @@ class ThreadBlock:
     @dataclass
     class Channel:
         channel_type: ChannelType
-        channel_ids: list[int] = field(default_factory=list)
+        channel_ids: List[int] = field(default_factory=list)
 
         def to_dict(self) -> dict:
             return {"channel_type": self.channel_type.value, "channel_ids": self.channel_ids}
@@ -96,7 +97,7 @@ class ThreadBlock:
     @dataclass
     class RemoteBuffer:
         access_channel_type: ChannelType
-        remote_buffer_ids: list[int] = field(default_factory=list)
+        remote_buffer_ids: List[int] = field(default_factory=list)
 
         def to_dict(self) -> dict:
             return {

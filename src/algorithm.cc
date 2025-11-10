@@ -7,9 +7,8 @@ namespace mscclpp {
 
 class Algorithm::Impl {
  public:
-  Impl(std::string name, std::string collective, Algorithm::InitFunc initFunc,
-                Algorithm::KernelFunc kernelFunc, Algorithm::ContextInitFunc contextInitFunc,
-                Algorithm::ContextKeyGenFunc contextKeyGenFunc)
+  Impl(std::string name, std::string collective, Algorithm::InitFunc initFunc, Algorithm::KernelFunc kernelFunc,
+       Algorithm::ContextInitFunc contextInitFunc, Algorithm::ContextKeyGenFunc contextKeyGenFunc)
       : name_(name),
         collective_(collective),
         initFunc_(initFunc),
@@ -31,8 +30,8 @@ class Algorithm::Impl {
 };
 
 int Algorithm::Impl::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                          int dtype, cudaStream_t stream,
-                          std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                            int dtype, cudaStream_t stream,
+                            std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   if (!initialized_) {
     initFunc_(comm, extras);
     initialized_ = true;
@@ -62,19 +61,19 @@ std::string Algorithm::name() const { return impl_->name_; }
 std::string Algorithm::collective() const { return impl_->collective_; }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
-                                         Algorithm algorithm) {
+                                            Algorithm algorithm) {
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
 Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                            size_t messageSize, int nRanksPerNode, int worldSize) {
+                                               size_t messageSize, int dtype, int nRanksPerNode, int worldSize) {
   Algorithm algo;
   if (algoSelector_) {
-    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode, worldSize);
   }
   if (algo.isEmpty()) {
-    algo =
-        fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode,
+                                 worldSize);
   }
   return algo;
 }

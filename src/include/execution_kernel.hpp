@@ -51,6 +51,129 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
   return __hadd2(a, b);
 }
 
+#if defined(__FP8_TYPES_EXIST__)
+// FP8 E4M3 addition using __hadd (single element)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false);
+#else
+  return __fp8_e4m3(__hadd(__half(a), __half(b)));
+#endif
+}
+
+// FP8 E5M2 addition using __hadd (single element) - must come before helper functions
+template <>
+MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942 (bfloat8)
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false);
+#else
+  return __fp8_e5m2(__hadd(__half(a), __half(b)));
+#endif
+}
+
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+// HIP gfx942 platform: Helper functions for vectorized FP8 operations
+// We use separate function names because __fp8x2_e4m3 and __fp8x2_e5m2 are both uint16_t
+
+// E4M3 vectorized addition for 2 elements
+MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
+}
+
+// E4M3 vectorized addition for 4 elements
+MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e4m3(uint32_t a, uint32_t b) {
+  uint16_t a_low = a & 0xFFFF;
+  uint16_t a_high = (a >> 16) & 0xFFFF;
+  uint16_t b_low = b & 0xFFFF;
+  uint16_t b_high = (b >> 16) & 0xFFFF;
+  uint16_t result_low = add_fp8x2_e4m3(a_low, b_low);
+  uint16_t result_high = add_fp8x2_e4m3(a_high, b_high);
+  return (static_cast<uint32_t>(result_high) << 16) | result_low;
+}
+
+// E5M2 vectorized addition for 2 elements
+MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false);
+}
+
+// E5M2 vectorized addition for 4 elements
+MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e5m2(uint32_t a, uint32_t b) {
+  uint16_t a_low = a & 0xFFFF;
+  uint16_t a_high = (a >> 16) & 0xFFFF;
+  uint16_t b_low = b & 0xFFFF;
+  uint16_t b_high = (b >> 16) & 0xFFFF;
+  uint16_t result_low = add_fp8x2_e5m2(a_low, b_low);
+  uint16_t result_high = add_fp8x2_e5m2(a_high, b_high);
+  return (static_cast<uint32_t>(result_high) << 16) | result_low;
+}
+#endif
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// CUDA platform: Template specializations for vectorized FP8 operations
+
+// FP8 E4M3 vectorized addition using __hadd2 for 2 elements (CUDA only)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+  return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
+}
+
+// FP8 E4M3 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e4m3)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
+  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
+
+  __fp8x2_e4m3 result[2];
+  result[0] = add_elements(a_pair[0], b_pair[0]);
+  result[1] = add_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e4m3*>(result);
+}
+
+// FP8 E5M2 vectorized addition for 2 elements (CUDA only)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  return __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+}
+
+// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
+template <>
+MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
+  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+
+  __fp8x2_e5m2 result[2];
+  result[0] = add_elements(a_pair[0], b_pair[0]);
+  result[1] = add_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e5m2*>(result);
+}
+#endif
+#endif  // __FP8_TYPES_EXIST__
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int4 add_vectors_helper(int4 a, int4 b) {
   int4 ret;
@@ -76,6 +199,38 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+#if defined(__FP8_TYPES_EXIST__)
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e4m3>(int4 a, int4 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  int4 ret;
+  ret.w = add_fp8x4_e4m3(a.w, b.w);
+  ret.x = add_fp8x4_e4m3(a.x, b.x);
+  ret.y = add_fp8x4_e4m3(a.y, b.y);
+  ret.z = add_fp8x4_e4m3(a.z, b.z);
+  return ret;
+#else
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e5m2>(int4 a, int4 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  int4 ret;
+  ret.w = add_fp8x4_e5m2(a.w, b.w);
+  ret.x = add_fp8x4_e5m2(a.x, b.x);
+  ret.y = add_fp8x4_e5m2(a.y, b.y);
+  ret.z = add_fp8x4_e5m2(a.z, b.z);
+  return ret;
+#else
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
+}
+#endif  // __FP8_TYPES_EXIST__
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
@@ -99,6 +254,34 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+#if defined(__FP8_TYPES_EXIST__)
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  uint2 ret;
+  ret.x = add_fp8x4_e4m3(a.x, b.x);
+  ret.y = add_fp8x4_e4m3(a.y, b.y);
+  return ret;
+#else
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e5m2>(uint2 a, uint2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // HIP gfx942: Use helper functions that work with storage types
+  uint2 ret;
+  ret.x = add_fp8x4_e5m2(a.x, b.x);
+  ret.y = add_fp8x4_e5m2(a.y, b.y);
+  return ret;
+#else
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
+}
+#endif  // __FP8_TYPES_EXIST__
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int add_vectors_helper(int a, int b) {
   return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
@@ -119,6 +302,26 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a,
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+#if defined(__FP8_TYPES_EXIST__)
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e4m3(a, b);
+#else
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e5m2>(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e5m2(a, b);
+#else
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
+}
+#endif  // __FP8_TYPES_EXIST__
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper(uint32_t a, uint32_t b) {
   return bit_cast<uint32_t, T>(add_elements(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
@@ -138,6 +341,26 @@ template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
 }
+
+#if defined(__FP8_TYPES_EXIST__)
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e4m3>(uint32_t a, uint32_t b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e4m3(a, b);
+#else
+  return add_vectors_helper<__fp8x4_e4m3>(a, b);
+#endif
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e5m2>(uint32_t a, uint32_t b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  return add_fp8x4_e5m2(a, b);
+#else
+  return add_vectors_helper<__fp8x4_e5m2>(a, b);
+#endif
+}
+#endif  // __FP8_TYPES_EXIST__
 
 #endif  // MSCCLPP_DEVICE_COMPILE
 
@@ -161,6 +384,7 @@ __shared__ BufferType* portChannelBufferTypes_;
 __shared__ uint32_t flag_;
 __shared__ uint32_t scratchChunkSize_;
 __shared__ uint32_t scratchOffset_;
+__shared__ MemoryId localMemoryIdBegin_;
 #if defined(ENABLE_NPKIT)
 __shared__ NpKitEvent* eventBuffer_;
 #endif
@@ -293,7 +517,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
     if (tid < count) {
       uint32_t size = min(outputSizes[tid] - offset, unitSize);
       MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[tid].id];
-      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type);
+      MemoryId srcMemoryId = static_cast<MemoryId>(op.inputBufferRefs[tid].type) + localMemoryIdBegin_;
       uint32_t dstOffset =
           dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
       uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
@@ -451,8 +675,8 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
     uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
     uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
     MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
-    portChannels_[channelIndexes[chIdx]].put(dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH),
-                                             srcOffset, size << 1);
+    portChannels_[channelIndexes[chIdx]].put(
+        dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH) + localMemoryIdBegin_, srcOffset, size << 1);
   }
 }
 
@@ -804,7 +1028,8 @@ template <typename T, typename PacketType = LL16Packet, bool ReuseScratch = fals
 __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int rank /*for debug*/, T* input, T* output,
                                                            T* scratch, uint32_t scratchOffset,
                                                            uint32_t scratchChunkSize, DeviceExecutionPlan* plan,
-                                                           DeviceSemaphore* semaphores, uint32_t flag
+                                                           DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                                                           uint32_t flag
 #if defined(ENABLE_NPKIT)
                                                            ,
                                                            NpKitEventCollectContext* npKitEventCollectContexts,
@@ -844,6 +1069,7 @@ __global__ __launch_bounds__(1024, 1) void executionKernel([[maybe_unused]] int 
   flag_ = flag;
   scratchChunkSize_ = scratchChunkSize;
   scratchOffset_ = scratchOffset;
+  localMemoryIdBegin_ = localMemoryIdBegin;
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -889,13 +1115,13 @@ class ExecutionKernel {
   template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
-                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0) {
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                           uint32_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0) {
     switch (dataType) {
       case DataType::INT32:
         executionKernel<int32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (int32_t*)src, (int32_t*)dst, (int32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
-            flag
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -906,7 +1132,7 @@ class ExecutionKernel {
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
-            flag
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -916,7 +1142,8 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT16:
         executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
+            rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -926,7 +1153,8 @@ class ExecutionKernel {
         break;
       case DataType::FLOAT32:
         executionKernel<float, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (float*)src, (float*)dst, (float*)scratch, scratchOffset, scratchChunkSize, plan, semaphores, flag
+            rank, (float*)src, (float*)dst, (float*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -937,7 +1165,7 @@ class ExecutionKernel {
       case DataType::BFLOAT16:
         executionKernel<__bfloat16, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__bfloat16*)src, (__bfloat16*)dst, (__bfloat16*)scratch, scratchOffset, scratchChunkSize, plan,
-            semaphores, flag
+            semaphores, localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
@@ -945,14 +1173,38 @@ class ExecutionKernel {
         );
 #endif
         break;
+#if defined(__FP8_TYPES_EXIST__)
+      case DataType::FP8_E4M3:
+        executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::FP8_E5M2:
+        executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+#endif  // __FP8_TYPES_EXIST__
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
   template <typename PacketType, bool ReuseScratch>
   static void launchKernel(int rank, int nthreadblocks, int nthreads, void* src, void* dst, void* scratch,
                            uint32_t scratchOffset, uint32_t scratchChunkSize, DataType dataType,
-                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t sharedMemSize,
-                           cudaStream_t stream, uint32_t flag = 0);
+                           DeviceExecutionPlan* plan, DeviceSemaphore* semaphores, uint32_t localMemoryIdBegin,
+                           uint32_t sharedMemSize, cudaStream_t stream, uint32_t flag = 0);
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 };
 }  // namespace mscclpp

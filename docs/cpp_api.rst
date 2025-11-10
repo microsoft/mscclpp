@@ -231,8 +231,6 @@ Channel Device Interfaces
 .. doxygenstruct:: mscclpp::BasePortChannelDeviceHandle
    :members:
 
-.. doxygenunion:: mscclpp::ChannelTrigger
-
 .. doxygenunion:: mscclpp::LL16Packet
 
 .. doxygenunion:: mscclpp::LL8Packet
@@ -267,8 +265,7 @@ FIFO Device Interfaces
 .. doxygenstruct:: mscclpp::FifoDeviceHandle
    :members:
 
-.. doxygenstruct:: mscclpp::ProxyTrigger
-   :members:
+.. doxygenunion:: mscclpp::ProxyTrigger
 
 .. doxygenvariable:: mscclpp::TriggerBitsFifoReserved
 

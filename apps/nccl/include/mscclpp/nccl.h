@@ -58,17 +58,17 @@ typedef struct ncclConfig_v21700 {
 
 /* Config initializer must be assigned to initialize config structure when it is created.
  * Not initialized config will result in NCCL error. */
-#define NCCL_CONFIG_INITIALIZER                                              \
-  {                                                                          \
-      sizeof(ncclConfig_t),                             /* size */           \
-      0xcafebeef,                                       /* magic */          \
-      NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
-      NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
-      NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
-      NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
-      NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
-      NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
-      NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
+#define NCCL_CONFIG_INITIALIZER                                                \
+  {                                                                            \
+    sizeof(ncclConfig_t),                                 /* size */           \
+        0xcafebeef,                                       /* magic */          \
+        NCCL_VERSION(NCCL_MAJOR, NCCL_MINOR, NCCL_PATCH), /* version */        \
+        NCCL_CONFIG_UNDEF_INT,                            /* blocking */       \
+        NCCL_CONFIG_UNDEF_INT,                            /* cgaClusterSize */ \
+        NCCL_CONFIG_UNDEF_INT,                            /* minCTAs */        \
+        NCCL_CONFIG_UNDEF_INT,                            /* maxCTAs */        \
+        NCCL_CONFIG_UNDEF_PTR,                            /* netName */        \
+        NCCL_CONFIG_UNDEF_INT                             /* splitShare */     \
   }
 
 /* This struct will be used by ncclGroupSimulateEnd() API to query information about simulation. */
@@ -248,17 +248,10 @@ typedef enum {
   ncclFloat = 7,
   ncclFloat64 = 8,
   ncclDouble = 8,
-#if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
   ncclBfloat16 = 9,
-  ncclFp8E4M3 = 10,
-  ncclFp8E5M2 = 11,
+  ncclFloat8e4m3 = 10,
+  ncclFloat8e5m2 = 11,
   ncclNumTypes = 12
-#elif defined(__CUDA_BF16_TYPES_EXIST__)
-  ncclBfloat16 = 9,
-  ncclNumTypes = 10
-#else
-  ncclNumTypes = 9
-#endif
 } ncclDataType_t;
 
 static inline size_t ncclTypeSize(ncclDataType_t type) {
@@ -278,15 +271,11 @@ static inline size_t ncclTypeSize(ncclDataType_t type) {
       return 4;
     case ncclFloat64:
       return 8;
-#if defined(__CUDA_BF16_TYPES_EXIST__)
     case ncclBfloat16:
       return 2;
-#endif  // defined(__CUDA_BF16_TYPES_EXIST__)
-#if defined(__CUDA_FP8_TYPES_EXIST__)
-    case ncclFp8E4M3:
-    case ncclFp8E5M2:
+    case ncclFloat8e4m3:
+    case ncclFloat8e5m2:
       return 1;
-#endif  // defined(__CUDA_FP8_TYPES_EXIST__)
     case ncclNumTypes:
       return 0;
   }

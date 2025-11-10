@@ -14,5 +14,5 @@ extern "C" __attribute__((visibility("default"))) char *la_objsearch(const char 
       strcmp(name, "librccl.so.1")) {
     return (char *)name;
   }
-  return (char*)library;
+  return (char *)library;
 }

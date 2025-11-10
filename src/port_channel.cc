@@ -62,6 +62,14 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
   return memories_.size() - 1;
 }
 
+MSCCLPP_API_CPP MemoryId ProxyService::nextMemoryId([[maybe_unused]] uint32_t count) const {
+  if (count == 0) {
+    throw Error("count must be greater than 0", ErrorCode::InvalidUsage);
+  }
+  MemoryId firstId = memories_.size();
+  return firstId;
+}
+
 MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(SemaphoreId id) const {
   return semaphores_[id];
 }
