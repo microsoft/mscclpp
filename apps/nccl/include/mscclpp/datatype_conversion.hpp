@@ -28,7 +28,7 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
       return mscclpp::DataType::FP8_E5M2;
 #endif
     default:
-      return mscclpp::DataType::FLOAT32;  // fallback
+      throw mscclpp::Error("Unsupported ncclDataType_t: " + std::to_string(dtype), mscclpp::ErrorCode::InvalidUsage);
   }
 }
 

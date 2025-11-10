@@ -30,6 +30,7 @@ constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnab
 constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
 constexpr auto cudaErrorInvalidDevice = hipErrorInvalidDevice;
 constexpr auto cudaSuccess = hipSuccess;
+constexpr auto cudaErrorNotSupported = hipErrorNotSupported;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
 constexpr auto cudaStreamCaptureModeRelaxed = hipStreamCaptureModeRelaxed;
