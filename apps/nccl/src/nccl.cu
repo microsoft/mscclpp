@@ -193,10 +193,8 @@ static void registerDefaultDslAlgorithms(int rank) {
     auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
     try {
       auto executionPlan = std::make_shared<mscclpp::ExecutionPlan>(planPath, rank);
-      auto handle = mscclpp::ExecutionPlanHandle::create(planId, config.worldSize, config.nRanksPerNode, executionPlan,
-                                                         config.tags);
-      std::shared_ptr<mscclpp::DslAlgorithmBuilder> algoBuilder =
-          std::make_shared<mscclpp::DslAlgorithmBuilder>(handle);
+      std::shared_ptr<mscclpp::AlgorithmBuilder> algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
+          planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
       collectionBuilder->addAlgorithmBuilder(algoBuilder);
       INFO(MSCCLPP_NCCL, "Successfully loaded plan: %s for collective: %s", planId.c_str(), config.collective.c_str());
     } catch (const std::exception& e) {
@@ -284,16 +282,18 @@ static std::pair<int, int> getDeviceComputeCapability() {
   return std::make_pair(major, minor);
 }
 
-static bool matchExecutionPlan(std::shared_ptr<mscclpp::ExecutionPlanHandle> handle,
+static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo,
                                const mscclpp::CollectiveRequest& request) {
-  bool worldSizeMatch = handle->constraint.worldSize == request.worldSize;
-  bool ranksPerNodeMatch = handle->constraint.nRanksPerNode == request.nRanksPerNode;
-  bool collectiveMatch = handle->plan->collective() == request.collective;
-  bool inPlaceMatch = handle->plan->isInPlace() == request.isInPlace();
+  bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
+  bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
+  bool collectiveMatch = algo->collective() == request.collective;
+  // TODO need to fix
+  bool inPlaceMatch = true;
+  // bool inPlaceMatch = algo->isInPlace() == request.isInPlace();
   size_t effectiveSize =
       (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
-  bool minSizeMatch = effectiveSize >= handle->plan->minMessageSize();
-  bool maxSizeMatch = effectiveSize <= handle->plan->maxMessageSize();
+  bool minSizeMatch = effectiveSize >= algo->messageRange().first;
+  bool maxSizeMatch = effectiveSize <= algo->messageRange().second;
   bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
   return result;
 }
