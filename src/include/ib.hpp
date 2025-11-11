@@ -82,6 +82,7 @@ class IbQp {
 
   IbQpInfo& getInfo() { return info_; }
   virtual int getWcStatus([[maybe_unused]] int idx) const;
+  virtual std::string getWcStatusString([[maybe_unused]] int idx) const;
   virtual int getNumCqItems() const;
 
  private:
@@ -138,7 +139,7 @@ class IbCtx {
 
  private:
   bool isPortUsable(int port) const;
-  int getAnyActivePort() const;
+  int getAnyUsablePort() const;
 
   const std::string devName_;
   ibv_context* ctx_;
