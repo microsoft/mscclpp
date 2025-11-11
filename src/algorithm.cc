@@ -21,7 +21,7 @@ bool CollectiveRequest::isInPlace() const {
 NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                                  ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc,
                                  size_t minMessageSize, size_t maxMessageSize, CollectiveBufferMode bufferMode,
-                                 std::unordered_map<std::string, uint64_t> tags)
+                                 std::unordered_map<std::string, uint64_t> tags, Constraint constraint)
     : name_(name),
       collective_(collective),
       initFunc_(initFunc),
@@ -31,7 +31,8 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
       minMessageSize_(minMessageSize),
       maxMessageSize_(maxMessageSize),
       bufferMode_(bufferMode),
-      tags_(tags) {}
+      tags_(tags),
+      constraint_(constraint) {}
 
 int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
                              size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
@@ -64,7 +65,7 @@ const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const {
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
 
 Algorithm::Constraint NativeAlgorithm::constraint() const {
-  return {};
+  return constraint_;
 }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
@@ -109,9 +110,9 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   return collection;
 }
 
-DslAlgorithm::DslAlgorithm(const std::string id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
-                           const std::unordered_map<std::string, uint64_t> tags)
-    : plan_(plan), id_(id), constraint_{worldSize, nRanksPerNode}, tags_(tags) {}
+DslAlgorithm::DslAlgorithm(std::string id, std::shared_ptr<ExecutionPlan> plan,
+                           std::unordered_map<std::string, uint64_t> tags, Constraint constraint)
+    : plan_(plan), id_(id), tags_(tags), constraint_(constraint) {}
 
 const std::string& DslAlgorithm::name() const { return plan_->name(); }
 

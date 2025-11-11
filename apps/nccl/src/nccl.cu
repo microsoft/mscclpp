@@ -193,8 +193,8 @@ static void registerDefaultDslAlgorithms(int rank) {
     auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
     try {
       auto executionPlan = std::make_shared<mscclpp::ExecutionPlan>(planPath, rank);
-      std::shared_ptr<mscclpp::AlgorithmBuilder> algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
-          planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
+      auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
+          planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
       collectionBuilder->addAlgorithmBuilder(algoBuilder);
       INFO(MSCCLPP_NCCL, "Successfully loaded plan: %s for collective: %s", planId.c_str(), config.collective.c_str());
     } catch (const std::exception& e) {

@@ -124,8 +124,7 @@ class NativeAlgorithm : public Algorithm {
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ALL,
-                  std::unordered_map<std::string, uint64_t> tags = {});
-  NativeAlgorithm() = default;
+                  std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
   /// @brief Execute the algorithm.
   /// @brief comm The communicator.
@@ -159,6 +158,7 @@ class NativeAlgorithm : public Algorithm {
   size_t maxMessageSize_;
   CollectiveBufferMode bufferMode_;
   std::unordered_map<std::string, uint64_t> tags_;
+  Constraint constraint_;
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
 
   bool initialized_ = false;
@@ -166,8 +166,8 @@ class NativeAlgorithm : public Algorithm {
 
 class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enable_shared_from_this<DslAlgorithm> {
  public:
-  DslAlgorithm(const std::string id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
-               const std::unordered_map<std::string, uint64_t> tags = {});
+  DslAlgorithm(std::string id, std::shared_ptr<ExecutionPlan> plan, std::unordered_map<std::string, uint64_t> tags = {},
+               Constraint constraint = {});
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -184,8 +184,8 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
  private:
   std::shared_ptr<ExecutionPlan> plan_;
   std::string id_;
-  Constraint constraint_;
   std::unordered_map<std::string, uint64_t> tags_;
+  Constraint constraint_;
 };
 
 struct CollectiveRequest {
