@@ -24,18 +24,6 @@ void register_executor(nb::module_& m) {
 
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
-  nb::class_<ExecutionPlanHandle>(m, "ExecutionPlanHandle")
-      .def_ro("id", &ExecutionPlanHandle::id)
-      .def_ro("constraint", &ExecutionPlanHandle::constraint)
-      .def_ro("plan", &ExecutionPlanHandle::plan)
-      .def_ro("tags", &ExecutionPlanHandle::tags)
-      .def_static("create", &ExecutionPlanHandle::create, nb::arg("id"), nb::arg("world_size"),
-                  nb::arg("nranks_per_node"), nb::arg("plan"),
-                  nb::arg("tags") = std::unordered_map<std::string, uint64_t>{});
-
-  nb::class_<ExecutionPlanHandle::Constraint>(m, "ExecutionPlanConstraint")
-      .def_ro("world_size", &ExecutionPlanHandle::Constraint::worldSize)
-      .def_ro("n_ranks_per_node", &ExecutionPlanHandle::Constraint::nRanksPerNode);
 
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))
