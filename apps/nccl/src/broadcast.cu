@@ -81,7 +81,7 @@ std::shared_ptr<mscclpp::Algorithm> BroadcastAlgo6::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] int dtype, cudaStream_t stream,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->broadcastKernelFunc(ctx, input, output, inputSize, stream, extras);
       },

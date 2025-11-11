@@ -5,7 +5,6 @@
 #define MSCCLPP_ALGORITHM_HPP_
 
 #include <memory>
-#include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
@@ -19,6 +18,11 @@ enum class CollectiveBufferMode {
   OUT_OF_PLACE,
 };
 
+enum class AlgorithmType {
+  NATIVE = 0,
+  DSL,
+};
+
 class Algorithm {
  public:
   virtual ~Algorithm() = default;
@@ -28,6 +32,7 @@ class Algorithm {
   virtual const std::pair<size_t, size_t>& messageRange() const = 0;
   virtual const std::unordered_map<std::string, uint64_t>& tags() const = 0;
   virtual const CollectiveBufferMode& bufferMode() const = 0;
+  virtual AlgorithmType type() const = 0;
   virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                       size_t outputSize, int dtype, cudaStream_t stream,
                       std::unordered_map<std::string, std::shared_ptr<void>>& extras) = 0;
@@ -74,8 +79,8 @@ class NativeAlgorithm : public Algorithm {
                                        cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
                                                                       const void*, void*, size_t, size_t, int)>;
-  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
-                                                          size_t outputSize, int dtype)>;
+  using ContextKeyGenFunc =
+      std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize, size_t outputSize, int dtype)>;
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ALL,
@@ -100,12 +105,14 @@ class NativeAlgorithm : public Algorithm {
   const std::pair<size_t, size_t>& messageRange() const override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
+  AlgorithmType type() const override { return AlgorithmType::NATIVE; }
 
  private:
   class Impl;
   std::shared_ptr<Impl> impl_;
 };
 
+class ExecutionPlanHandle;
 class DslAlgorithm : public Algorithm {
  public:
   DslAlgorithm(std::shared_ptr<ExecutionPlanHandle> planHandle);
@@ -118,11 +125,27 @@ class DslAlgorithm : public Algorithm {
   int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
               size_t outputSize, int dtype, cudaStream_t stream,
               std::unordered_map<std::string, std::shared_ptr<void>>& extras) override;
+  AlgorithmType type() const override { return AlgorithmType::DSL; }
+  std::shared_ptr<ExecutionPlanHandle> planHandle() const;
 
  private:
   std::shared_ptr<ExecutionPlanHandle> planHandle_;
 };
 
+struct CollectiveRequest {
+  int worldSize;
+  int nRanksPerNode;
+  int rank;
+  const void* inputBuffer;
+  void* outputBuffer;
+  size_t messageSize;
+  const std::string& collective;
+  const int dtype;
+  const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
+
+  /// Whether the request indicates an in-place operation.
+  bool isInPlace() const;
+};
 }  // namespace mscclpp
 
 namespace std {
@@ -156,27 +179,28 @@ class AlgorithmBuilder {
   virtual std::shared_ptr<Algorithm> build() = 0;
 };
 
+class DslAlgorithmBuilder : public AlgorithmBuilder {
+ public:
+  DslAlgorithmBuilder(std::shared_ptr<ExecutionPlanHandle> planHandle);
+  std::shared_ptr<Algorithm> build() override;
+
+ private:
+  std::shared_ptr<ExecutionPlanHandle> planHandle_;
+};
+
 using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&
         algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
-    int worldSize)>;
+    CollectiveRequest request)>;
 
 class AlgorithmCollection {
  public:
   AlgorithmCollection() = default;
 
   /// @brief Select an algorithm based on the collective operation name and message size.
-  /// @param collective The collective operation name.
-  /// @param input The input buffer.
-  /// @param output The output buffer.
-  /// @param messageSize The message size.
-  /// @param dtype The data type. Please refer to ncclDataType_t for the definition.
-  /// @param nRanksPerNode The number of ranks per node.
-  /// @param worldSize The total number of ranks.
+  /// @param request The collective request containing all necessary parameters.
   /// @return The selected algorithm. If no suitable algorithm is found, a nullptr will be returned.
-  std::shared_ptr<Algorithm> selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                             size_t messageSize, int dtype, int nRanksPerNode, int worldSize);
+  std::shared_ptr<Algorithm> selectAlgorithm(CollectiveRequest request);
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.
