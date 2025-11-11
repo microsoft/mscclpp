@@ -50,7 +50,8 @@ Algorithm::Algorithm(std::string name, std::string collective, InitFunc initFunc
     : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
 
 int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                      DataType dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                      DataType dtype, cudaStream_t stream,
+                      std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   return this->impl_->launch(comm, input, output, count, dtype, stream, extras);
 }
 

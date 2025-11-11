@@ -4,9 +4,9 @@
 #include <mscclpp/nccl.h>
 
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/datatype_conversion.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/datatype_conversion.hpp>
 
 #include "allgather.hpp"
 #include "debug.h"
@@ -24,7 +24,8 @@ void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 }
 
 ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                                 void* output, size_t count, mscclpp::DataType dtype,
+                                                 cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int nBlocks = 28;
   const size_t bytes = count * getDataTypeSize(dtype);
@@ -117,13 +118,13 @@ mscclpp::Algorithm AllgatherAlgo6::build() {
       "default_allgather6", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, mscclpp::DataType dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, dtype, stream, extras);
       },
-      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, mscclpp::DataType dtype) {
-        return self->initAllgatherContext(comm, input, output, count, dtype);
-      },
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, count, dtype); },
       [self](const void* input, void* output, size_t count, mscclpp::DataType dtype) {
         return self->generateAllgatherContextKey(input, output, count, dtype);
       });
@@ -138,7 +139,8 @@ void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 }
 
 ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                                 void* output, size_t count, mscclpp::DataType dtype,
+                                                 cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>&) {
   int rank = ctx->rank;
   const size_t bytes = count * getDataTypeSize(dtype);
@@ -204,13 +206,13 @@ mscclpp::Algorithm AllgatherAlgo8::build() {
       "default_allgather8", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, mscclpp::DataType dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, count, dtype, stream, extras);
       },
-      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, mscclpp::DataType dtype) {
-        return self->initAllgatherContext(comm, input, output, count, dtype);
-      },
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, count, dtype); },
       [self](const void* input, void* output, size_t count, mscclpp::DataType dtype) {
         return self->generateAllgatherContextKey(input, output, count, dtype);
       });

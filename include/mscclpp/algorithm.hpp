@@ -56,7 +56,8 @@ class Algorithm {
                                        cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
                                                                       const void*, void*, size_t, DataType)>;
-  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, DataType dtype)>;
+  using ContextKeyGenFunc =
+      std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, DataType dtype)>;
   Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
             ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
   Algorithm() = default;
