@@ -56,7 +56,7 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
   }
 }
 
-MSCCLPP_API_CPP void Proxy::start() {
+MSCCLPP_API_CPP void Proxy::start(bool blocking) {
   pimpl_->running.store(true, std::memory_order_release);
   pimpl_->service = std::thread([this] {
     // never capture in a proxy thread
@@ -95,16 +95,16 @@ MSCCLPP_API_CPP void Proxy::start() {
       }
     }
   });
-}
 
-MSCCLPP_API_CPP void Proxy::isStarted() {
-  int count = ProxyStartWarnPeriod;
-  while (!pimpl_->threadStarted.load(std::memory_order_acquire)) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    count--;
-    if (count == 0) {
-      count = ProxyStartWarnPeriod;
-      WARN("Proxy thread startup taking longer than expected.");
+  if (blocking) {
+    int count = ProxyStartWarnPeriod;
+    while (!pimpl_->threadStarted.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      count--;
+      if (count == 0) {
+        count = ProxyStartWarnPeriod;
+        WARN("Proxy thread startup taking longer than expected.");
+      }
     }
   }
 }

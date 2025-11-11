@@ -504,10 +504,7 @@ class AllGatherProxyService : public mscclpp::BaseProxyService {
  public:
   AllGatherProxyService(int worldSize, int rank, int cudaDevice);
   void startProxy(bool blocking = false) override {
-    proxy_->start();
-    if (blocking) {
-      proxy_->isStarted();
-    }
+    proxy_->start(blocking);
   }
   void stopProxy() override { proxy_->stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
