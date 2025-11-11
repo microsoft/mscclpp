@@ -282,19 +282,18 @@ static std::pair<int, int> getDeviceComputeCapability() {
   return std::make_pair(major, minor);
 }
 
-static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo,
-                               const mscclpp::CollectiveRequest& request) {
+static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, const mscclpp::CollectiveRequest& request) {
   bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
   bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = algo->collective() == request.collective;
-  // TODO need to fix
-  bool inPlaceMatch = true;
-  // bool inPlaceMatch = algo->isInPlace() == request.isInPlace();
+  bool bufferModeMatch =
+      algo->bufferMode() == mscclpp::CollectiveBufferMode::ANY || request.bufferMode() == algo->bufferMode();
   size_t effectiveSize =
       (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
   bool minSizeMatch = effectiveSize >= algo->messageRange().first;
   bool maxSizeMatch = effectiveSize <= algo->messageRange().second;
-  bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
+  bool result =
+      worldSizeMatch && ranksPerNodeMatch && collectiveMatch && bufferModeMatch && minSizeMatch && maxSizeMatch;
   return result;
 }
 
