@@ -305,7 +305,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   for (const auto& pair : algoMapByCollective.at(request.collective)) {
     const auto& algo = pair.second;
     if (algo->type() == mscclpp::AlgorithmType::DSL) {
-      if (matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo)->planHandle(), request)) {
+      if (matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
         return algo;
       }
     }

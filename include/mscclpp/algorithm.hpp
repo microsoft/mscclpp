@@ -5,6 +5,7 @@
 #define MSCCLPP_ALGORITHM_HPP_
 
 #include <memory>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
@@ -25,6 +26,11 @@ enum class AlgorithmType {
 
 class Algorithm {
  public:
+  struct Constraint {
+    int worldSize;
+    int nRanksPerNode;
+  };
+
   virtual ~Algorithm() = default;
 
   virtual const std::string& name() const = 0;
@@ -33,9 +39,16 @@ class Algorithm {
   virtual const std::unordered_map<std::string, uint64_t>& tags() const = 0;
   virtual const CollectiveBufferMode& bufferMode() const = 0;
   virtual AlgorithmType type() const = 0;
+  virtual Constraint constraint() const = 0;
   virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                       size_t outputSize, int dtype, cudaStream_t stream,
                       std::unordered_map<std::string, std::shared_ptr<void>>& extras) = 0;
+};
+
+class AlgorithmBuilder {
+ public:
+  virtual ~AlgorithmBuilder() = default;
+  virtual std::shared_ptr<Algorithm> build() = 0;
 };
 
 class AlgorithmCtx {
@@ -70,6 +83,33 @@ struct AlgorithmCtxKey {
            baseSendSize == other.baseSendSize && baseRecvSize == other.baseRecvSize && tag == other.tag;
   }
 };
+
+}  // namespace mscclpp
+
+namespace std {
+
+// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
+template <typename T>
+inline void hash_combine(std::size_t& seed, const T& value) {
+  std::hash<T> hasher;
+  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+template <>
+struct hash<mscclpp::AlgorithmCtxKey> {
+  std::size_t operator()(const mscclpp::AlgorithmCtxKey& key) const {
+    std::size_t seed = 42;
+    hash_combine(seed, key.baseSendBuff);
+    hash_combine(seed, key.baseRecvBuff);
+    hash_combine(seed, key.baseSendSize);
+    hash_combine(seed, key.baseRecvSize);
+    hash_combine(seed, key.tag);
+    return seed;
+  }
+};
+}  // namespace std
+
+namespace mscclpp {
 
 class NativeAlgorithm : public Algorithm {
  public:
@@ -106,17 +146,28 @@ class NativeAlgorithm : public Algorithm {
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   AlgorithmType type() const override { return AlgorithmType::NATIVE; }
+  Constraint constraint() const override;
 
  private:
-  class Impl;
-  std::shared_ptr<Impl> impl_;
+  std::string name_;
+  std::string collective_;
+  NativeAlgorithm::InitFunc initFunc_;
+  NativeAlgorithm::KernelFunc kernelLaunchFunc_;
+  NativeAlgorithm::ContextInitFunc contextInitFunc_;
+  NativeAlgorithm::ContextKeyGenFunc contextKeyGenFunc_;
+  size_t minMessageSize_;
+  size_t maxMessageSize_;
+  CollectiveBufferMode bufferMode_;
+  std::unordered_map<std::string, uint64_t> tags_;
+  std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
+
+  bool initialized_ = false;
 };
 
-class ExecutionPlanHandle;
-class DslAlgorithm : public Algorithm {
+class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enable_shared_from_this<DslAlgorithm> {
  public:
-  DslAlgorithm(std::shared_ptr<ExecutionPlanHandle> planHandle);
-
+  DslAlgorithm(const std::string id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+               const std::unordered_map<std::string, uint64_t> tags = {});
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -126,10 +177,15 @@ class DslAlgorithm : public Algorithm {
               size_t outputSize, int dtype, cudaStream_t stream,
               std::unordered_map<std::string, std::shared_ptr<void>>& extras) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
-  std::shared_ptr<ExecutionPlanHandle> planHandle() const;
+  Constraint constraint() const override;
+
+  std::shared_ptr<Algorithm> build() override;
 
  private:
-  std::shared_ptr<ExecutionPlanHandle> planHandle_;
+  std::shared_ptr<ExecutionPlan> plan_;
+  std::string id_;
+  Constraint constraint_;
+  std::unordered_map<std::string, uint64_t> tags_;
 };
 
 struct CollectiveRequest {
@@ -148,45 +204,7 @@ struct CollectiveRequest {
 };
 }  // namespace mscclpp
 
-namespace std {
-
-// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
-template <typename T>
-inline void hash_combine(std::size_t& seed, const T& value) {
-  std::hash<T> hasher;
-  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
-template <>
-struct hash<mscclpp::AlgorithmCtxKey> {
-  std::size_t operator()(const mscclpp::AlgorithmCtxKey& key) const {
-    std::size_t seed = 42;
-    hash_combine(seed, key.baseSendBuff);
-    hash_combine(seed, key.baseRecvBuff);
-    hash_combine(seed, key.baseSendSize);
-    hash_combine(seed, key.baseRecvSize);
-    hash_combine(seed, key.tag);
-    return seed;
-  }
-};
-}  // namespace std
-
 namespace mscclpp {
-
-class AlgorithmBuilder {
- public:
-  virtual ~AlgorithmBuilder() = default;
-  virtual std::shared_ptr<Algorithm> build() = 0;
-};
-
-class DslAlgorithmBuilder : public AlgorithmBuilder {
- public:
-  DslAlgorithmBuilder(std::shared_ptr<ExecutionPlanHandle> planHandle);
-  std::shared_ptr<Algorithm> build() override;
-
- private:
-  std::shared_ptr<ExecutionPlanHandle> planHandle_;
-};
 
 using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&

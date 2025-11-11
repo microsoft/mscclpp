@@ -66,32 +66,6 @@ class ExecutionPlan {
 };
 
 
-/// A handle representing a specific execution plan along with its constraints and metadata.
-struct ExecutionPlanHandle {
-  /// Constraints that must be satisfied for the plan to be valid.
-  struct Constraint {
-    int worldSize;
-    int nRanksPerNode;
-  };
-
-  std::string id;                                  /// Unique identifier for the handle.
-  Constraint constraint;                           /// Constraints for plan applicability.
-  std::shared_ptr<ExecutionPlan> plan;             /// Backing ExecutionPlan instance.
-  std::unordered_map<std::string, uint64_t> tags;  /// Optional tags/metadata used by selector.
-
-  /// Create a new ExecutionPlanHandle.
-  /// @param id Unique id for the handle.
-  /// @param worldSize Required world size for the plan.
-  /// @param nRanksPerNode Required ranks-per-node for the plan.
-  /// @param plan The associated ExecutionPlan.
-  /// @param tags Optional tags used for selection.
-  static std::shared_ptr<ExecutionPlanHandle> create(const std::string& id, int worldSize, int nRanksPerNode,
-                                                     std::shared_ptr<ExecutionPlan> plan,
-                                                     const std::unordered_map<std::string, uint64_t>& tags = {});
-
-};
-
-
 /// High-level executor responsible for invoking execution plans on a communicator.
 class Executor {
  public:
