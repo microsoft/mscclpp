@@ -73,13 +73,13 @@ int main() {
   log("GPU 0: Creating a connection and a semaphore stub ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
-  std::shared_ptr<mscclpp::Connection> conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
+  mscclpp::Connection conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
   mscclpp::SemaphoreStub semaStub0(conn0);
 
   log("GPU 1: Creating a connection and a semaphore stub ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(1));
-  std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
+  mscclpp::Connection conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
   mscclpp::SemaphoreStub semaStub1(conn1);
 
   log("GPU 0: Creating a semaphore and a memory channel ...");

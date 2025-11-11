@@ -99,16 +99,16 @@ MSCCLPP_API_CPP std::shared_future<RegisteredMemory> Communicator::recvMemory(in
   return shared_future;
 }
 
-MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(const Endpoint& localEndpoint,
-                                                                                      int remoteRank, int tag) {
+MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpoint& localEndpoint, int remoteRank,
+                                                                     int tag) {
   if (remoteRank == bootstrap()->getRank()) {
     // Connection to self
     auto remoteEndpoint = context()->createEndpoint(localEndpoint.config());
     auto connection = context()->connect(localEndpoint, remoteEndpoint);
-    std::promise<std::shared_ptr<Connection>> promise;
+    std::promise<Connection> promise;
     promise.set_value(connection);
-    pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
-    return std::shared_future<std::shared_ptr<Connection>>(promise.get_future());
+    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
+    return std::shared_future<Connection>(promise.get_future());
   }
 
   bootstrap()->send(localEndpoint.serialize(), remoteRank, tag);
@@ -123,27 +123,22 @@ MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::co
     bootstrap()->recv(data, remoteRank, tag);
     auto remoteEndpoint = Endpoint::deserialize(data);
     auto connection = context()->connect(localEndpoint, remoteEndpoint);
-    pimpl_->connectionInfos_[connection.get()] = {remoteRank, tag};
+    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
     return connection;
   });
-  auto shared_future = std::shared_future<std::shared_ptr<Connection>>(std::move(future));
-  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<std::shared_ptr<Connection>>>(shared_future));
+  auto shared_future = std::shared_future<Connection>(std::move(future));
+  pimpl_->setLastRecvItem(remoteRank, tag, std::make_shared<RecvItem<Connection>>(shared_future));
   return shared_future;
 }
 
-MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(const EndpointConfig& localConfig,
-                                                                                      int remoteRank, int tag) {
+MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const EndpointConfig& localConfig, int remoteRank,
+                                                                     int tag) {
   auto localEndpoint = context()->createEndpoint(localConfig);
   return connect(localEndpoint, remoteRank, tag);
 }
 
-MSCCLPP_API_CPP std::shared_future<std::shared_ptr<Connection>> Communicator::connect(int remoteRank, int tag,
-                                                                                      EndpointConfig localConfig) {
-  return connect(localConfig, remoteRank, tag);
-}
-
-MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::shared_ptr<Connection> connection,
-                                                                           int remoteRank, int tag) {
+MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(const Connection& connection, int remoteRank,
+                                                                           int tag) {
   SemaphoreStub localStub(connection);
   bootstrap()->send(localStub.serialize(), remoteRank, tag);
 
@@ -165,11 +160,11 @@ MSCCLPP_API_CPP std::shared_future<Semaphore> Communicator::buildSemaphore(std::
 }
 
 MSCCLPP_API_CPP int Communicator::remoteRankOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(&connection).remoteRank;
+  return pimpl_->connectionInfos_.at(connection.impl_.get()).remoteRank;
 }
 
 MSCCLPP_API_CPP int Communicator::tagOf(const Connection& connection) {
-  return pimpl_->connectionInfos_.at(&connection).tag;
+  return pimpl_->connectionInfos_.at(connection.impl_.get()).tag;
 }
 
 }  // namespace mscclpp
