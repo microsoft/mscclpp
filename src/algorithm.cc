@@ -7,14 +7,17 @@
 
 namespace mscclpp {
 
-bool CollectiveRequest::isInPlace() const {
-  if (inputBuffer == outputBuffer) return true;
+CollectiveBufferMode CollectiveRequest::bufferMode() const {
+  if (inputBuffer == outputBuffer) return CollectiveBufferMode::IN_PLACE;
   if (collective == "allgather") {
     size_t rankOffset = rank * messageSize;
     const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
-    return static_cast<const void*>(expectedInput) == inputBuffer;
+    if (static_cast<const void*>(expectedInput) == inputBuffer) {
+      return CollectiveBufferMode::IN_PLACE;
+    }
+    return CollectiveBufferMode::OUT_OF_PLACE;
   }
-  return false;
+  return CollectiveBufferMode::OUT_OF_PLACE;
 }
 
 

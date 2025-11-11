@@ -14,7 +14,7 @@
 namespace mscclpp {
 
 enum class CollectiveBufferMode {
-  ALL = 0,
+  ANY = 0,
   IN_PLACE,
   OUT_OF_PLACE,
 };
@@ -123,7 +123,7 @@ class NativeAlgorithm : public Algorithm {
       std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize, size_t outputSize, int dtype)>;
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
-                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ALL,
+                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
   /// @brief Execute the algorithm.
@@ -199,8 +199,7 @@ struct CollectiveRequest {
   const int dtype;
   const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
 
-  /// Whether the request indicates an in-place operation.
-  bool isInPlace() const;
+  CollectiveBufferMode bufferMode() const;
 };
 }  // namespace mscclpp
 
