@@ -10,10 +10,12 @@
 #include <thread>
 
 #include "api.h"
+#include "debug.h"
 
 namespace mscclpp {
 
 constexpr int ProxyStopCheckPeriod = 1000;
+constexpr int ProxyStartWarnPeriod = 1000;
 
 struct Proxy::Impl {
   ProxyHandler handler;
@@ -55,25 +57,24 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
 }
 
 MSCCLPP_API_CPP void Proxy::start() {
-  pimpl_->running = true;
+  pimpl_->running.store(true, std::memory_order_release);
   pimpl_->service = std::thread([this] {
     // never capture in a proxy thread
     auto mode = cudaStreamCaptureModeRelaxed;
     MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
 
-    pimpl_->threadStarted = true;
     pimpl_->threadInit();
+    pimpl_->threadStarted.store(true, std::memory_order_release);
 
     ProxyHandler handler = this->pimpl_->handler;
     auto fifo = this->pimpl_->fifo;
-    std::atomic_bool& running = this->pimpl_->running;
     ProxyTrigger trigger;
 
     int runCnt = ProxyStopCheckPeriod;
     for (;;) {
       if (runCnt-- == 0) {
         runCnt = ProxyStopCheckPeriod;
-        if (!running) {
+        if (!this->pimpl_->running.load(std::memory_order_acquire)) {
           break;
         }
       }
@@ -97,16 +98,23 @@ MSCCLPP_API_CPP void Proxy::start() {
 }
 
 MSCCLPP_API_CPP void Proxy::isStarted() {
-  while (!pimpl_->threadStarted) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  int count = ProxyStartWarnPeriod;
+  while (!pimpl_->threadStarted.load(std::memory_order_acquire)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    count--;
+    if (count == 0) {
+      count = ProxyStartWarnPeriod;
+      WARN("Proxy thread startup taking longer than expected.");
+    }
   }
 }
 
 MSCCLPP_API_CPP void Proxy::stop() {
-  pimpl_->running = false;
+  pimpl_->running.store(false, std::memory_order_release);
   if (pimpl_->service.joinable()) {
     pimpl_->service.join();
   }
+  pimpl_->threadStarted.store(false, std::memory_order_release);
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Fifo> Proxy::fifo() { return pimpl_->fifo; }

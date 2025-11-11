@@ -82,9 +82,12 @@ MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId d
   return PortChannel(id, semaphores_[id], proxy_, dst, src);
 }
 
-MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
-
-MSCCLPP_API_CPP void ProxyService::isStarted() { proxy_->isStarted(); }
+MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) {
+  proxy_->start();
+  if (blocking) {
+    proxy_->isStarted();
+  }
+}
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
