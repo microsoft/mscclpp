@@ -76,7 +76,7 @@ void AlgorithmCollection::registerAlgorithm(const std::string collective, const 
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
-std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(CollectiveRequest request) {
+std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const CollectiveRequest& request) {
   std::shared_ptr<Algorithm> algo;
   if (algoSelector_) {
     algo = algoSelector_(algoMapByCollective_, request);

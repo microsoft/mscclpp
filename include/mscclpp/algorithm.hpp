@@ -208,7 +208,7 @@ namespace mscclpp {
 using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&
         algoMapByCollective,
-    CollectiveRequest request)>;
+    const CollectiveRequest& request)>;
 
 class AlgorithmCollection {
  public:
@@ -217,7 +217,7 @@ class AlgorithmCollection {
   /// @brief Select an algorithm based on the collective operation name and message size.
   /// @param request The collective request containing all necessary parameters.
   /// @return The selected algorithm. If no suitable algorithm is found, a nullptr will be returned.
-  std::shared_ptr<Algorithm> selectAlgorithm(CollectiveRequest request);
+  std::shared_ptr<Algorithm> selectAlgorithm(const CollectiveRequest& request);
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.

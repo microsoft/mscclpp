@@ -85,23 +85,23 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     }
   }
 
-  mscclpp::Algorithm build() {
+  std::shared_ptr<mscclpp::Algorithm> build() override {
     auto self = std::make_shared<AllgatherAlgoBuilder>();
-    mscclpp::Algorithm allgatherAlgo(
+    std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
         "allgather", "allgather",
         [self](std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&) {
           self->initialize(comm);
         },
-        [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
-               int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-          return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream,
+        [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+               size_t outputSize, int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+          return self->allgatherKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                            extras);
         },
-        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
-          return self->initAllgatherContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
+        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
+          return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
         },
-        [self](const void* input, void* output, size_t count, int dtype) {
-          return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+        [self](const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
+          return self->generateAllgatherContextKey(input, output, inputSize, outputSize, static_cast<ncclDataType_t>(dtype));
         });
     return allgatherAlgo;
   }
@@ -127,14 +127,13 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t inputSize, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
 
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
-    allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank,
-                                                  count * ncclTypeSize(dtype));
+    allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputSize);
     if (cudaGetLastError() == cudaSuccess) {
       return ncclSuccess;
     }
@@ -142,7 +141,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
-                                                              const void* input, void* output, size_t count,
+                                                              const void* input, void* output, size_t inputSize,
                                                               ncclDataType_t dtype) {
     auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
     ctx->rank = comm->bootstrap()->getRank();
@@ -151,9 +150,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
 
     // register memories
     mscclpp::RegisteredMemory inputBufRegMem =
-        comm->registerMemory((void*)input, count * ncclTypeSize(dtype), mscclpp::Transport::CudaIpc);
+        comm->registerMemory((void*)input, inputSize, mscclpp::Transport::CudaIpc);
     mscclpp::RegisteredMemory outputBufRegMem =
-        comm->registerMemory(output, count * ncclTypeSize(dtype) * ctx->workSize, mscclpp::Transport::CudaIpc);
+        comm->registerMemory(output, inputSize * ctx->workSize, mscclpp::Transport::CudaIpc);
     std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
     for (int i = 0; i < ctx->workSize; i++) {
       if (i == ctx->rank) continue;
@@ -184,9 +183,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     return ctx;
   }
 
-  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t count,
-                                                       ncclDataType_t dtype) {
-    return {(void*)input, output, count * ncclTypeSize(dtype), count * ncclTypeSize(dtype) * worldSize_, 0};
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
+                                                       size_t outputSize, ncclDataType_t dtype) {
+    return {(void*)input, output, inputSize, outputSize, 0};
   }
 };
 
@@ -199,14 +198,13 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
   mscclpp::AlgorithmCollectionBuilder::getInstance()->addAlgorithmBuilder(allgatherAlgoBuilder);
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setAlgorithmSelector(
-      [](const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>&
+      [](const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
              algoMapByCollective,
-         std::string collective, const void* input, void* output, size_t messageSize, int dtype, int nRanksPerNode,
-         int worldSize) {
-        if (collective != "allgather") {
-          return mscclpp::Algorithm();
+         const mscclpp::CollectiveRequest& request) {
+        if (request.collective != "allgather") {
+          return std::shared_ptr<mscclpp::Algorithm>(nullptr);
         }
-        return algoMapByCollective.at(collective).at("allgather");
+        return algoMapByCollective.at(request.collective).at("allgather");
       });
 
   float *sendbuff, *recvbuff;
