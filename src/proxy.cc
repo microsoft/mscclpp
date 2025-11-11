@@ -61,7 +61,7 @@ MSCCLPP_API_CPP void Proxy::start() {
     auto mode = cudaStreamCaptureModeRelaxed;
     MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
 
-    pimpl_->threadStarted = true;
+    pimpl_->threadStarted.store(true, std::memory_order_release);
     pimpl_->threadInit();
 
     ProxyHandler handler = this->pimpl_->handler;
@@ -97,7 +97,7 @@ MSCCLPP_API_CPP void Proxy::start() {
 }
 
 MSCCLPP_API_CPP void Proxy::isStarted() {
-  while (!pimpl_->threadStarted) {
+  while (!pimpl_->threadStarted.load(std::memory_order_acquire)) {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 }
