@@ -503,9 +503,7 @@ __global__ void __launch_bounds__(1024, 1)
 class AllGatherProxyService : public mscclpp::BaseProxyService {
  public:
   AllGatherProxyService(int worldSize, int rank, int cudaDevice);
-  void startProxy(bool blocking = false) override {
-    proxy_->start(blocking);
-  }
+  void startProxy(bool blocking = false) override { proxy_->start(blocking); }
   void stopProxy() override { proxy_->stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
