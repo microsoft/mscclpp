@@ -42,7 +42,7 @@ class Algorithm {
   virtual Constraint constraint() const = 0;
   virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                       size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
-                      std::unordered_map<std::string, void*>& extras) = 0;
+                      std::unordered_map<std::string, uintptr_t>& extras) = 0;
 };
 
 class AlgorithmBuilder {
@@ -115,7 +115,7 @@ class NativeAlgorithm : public Algorithm {
  public:
   using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>)>;
   using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, int,
-                                       cudaStream_t, std::unordered_map<std::string, void*>&)>;
+                                       cudaStream_t, std::unordered_map<std::string, uintptr_t>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
                                                                       const void*, void*, size_t, size_t, int)>;
   using ContextKeyGenFunc =
@@ -137,7 +137,7 @@ class NativeAlgorithm : public Algorithm {
   /// will be launched with the AlgorithmCtx.
   int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
               size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
-              std::unordered_map<std::string, void*>& extras) override;
+              std::unordered_map<std::string, uintptr_t>& extras) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -174,7 +174,7 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   const CollectiveBufferMode& bufferMode() const override;
   int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
               size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
-              std::unordered_map<std::string, void*>& extras) override;
+              std::unordered_map<std::string, uintptr_t>& extras) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;
 

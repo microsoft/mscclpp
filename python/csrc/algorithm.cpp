@@ -36,17 +36,13 @@ void register_algorithm(nb::module_& m) {
               [](Algorithm& self, std::shared_ptr<mscclpp::Communicator> comm, uintptr_t input, uintptr_t output,
                  size_t inputSize, size_t outputSize, int dtype, uintptr_t stream, std::shared_ptr<Executor> executor,
                  std::unordered_map<std::string, uintptr_t> extras) {
-                std::unordered_map<std::string, void*> extrasConverted;
-                for (const auto& [key, value] : extras) {
-                  extrasConverted[key] = reinterpret_cast<void*>(value);
-                }
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
                                     inputSize, outputSize, dtype, reinterpret_cast<cudaStream_t>(stream), executor,
-                                    extrasConverted);
+                                    extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
               nb::arg("dtype"), nb::arg("stream"), nb::arg("executor"),
-              nb::arg("extras") = std::unordered_map<std::string, void*>());
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
       .def(nb::init<>())

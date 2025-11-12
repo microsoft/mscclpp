@@ -659,7 +659,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                         .hints = hints};
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
-    std::unordered_map<std::string, void*> extras{{"root", &root}};
+    std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(
         algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, comm->executor, extras));
   }
@@ -711,7 +711,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
 
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
-    std::unordered_map<std::string, void*> extras{{"op", &reductionOperation}};
+    std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&reductionOperation)}};
     return static_cast<ncclResult_t>(
         algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, comm->executor, extras));
   }
@@ -764,7 +764,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         .hints = {}};
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
-    std::unordered_map<std::string, void*> extras{{"op", &op}};
+    std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&op)}};
     return static_cast<ncclResult_t>(
         algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, datatype, stream, comm->executor, extras));
   }
@@ -810,14 +810,14 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                         .rank = rank,
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
-                                        .messageSize = bytes * nRank,
+                                        .messageSize = bytes,
                                         .collective = "allgather",
                                         .dtype = datatype,
                                         .hints = {}};
 
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
-    std::unordered_map<std::string, void*> extras = {};
+    std::unordered_map<std::string, uintptr_t> extras = {};
     return static_cast<ncclResult_t>(
         algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, datatype, stream, comm->executor, extras));
   }

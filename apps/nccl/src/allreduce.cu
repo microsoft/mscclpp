@@ -234,8 +234,9 @@ void AllreducePacket::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 
 ncclResult_t AllreducePacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                   void* output, size_t inputSize, [[maybe_unused]] ncclDataType_t dtype,
-                                                  cudaStream_t stream, std::unordered_map<std::string, void*>& extras) {
-  ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op"));
+                                                  cudaStream_t stream,
+                                                  std::unordered_map<std::string, uintptr_t>& extras) {
+  ncclRedOp_t op = *reinterpret_cast<ncclRedOp_t*>(extras.at("op"));
 
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
@@ -312,7 +313,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreducePacket::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                          extras);
       },
@@ -338,7 +339,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 
 ncclResult_t AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                 void* output, size_t inputSize, ncclDataType_t dtype,
-                                                cudaStream_t stream, std::unordered_map<std::string, void*>&) {
+                                                cudaStream_t stream, std::unordered_map<std::string, uintptr_t>&) {
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(ncclSum, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
@@ -409,7 +410,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvls::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                          extras);
       },
@@ -437,7 +438,7 @@ void AllreduceNvlsWithCopy::initialize(std::shared_ptr<mscclpp::Communicator> co
 ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx,
                                                         const void* input, void* output, size_t inputSize,
                                                         ncclDataType_t dtype, cudaStream_t stream,
-                                                        std::unordered_map<std::string, void*>&) {
+                                                        std::unordered_map<std::string, uintptr_t>&) {
   AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(ncclSum, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
@@ -481,7 +482,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsWithCopy::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                          extras);
       },
@@ -509,8 +510,8 @@ void Allreduce8::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 
 ncclResult_t Allreduce8::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                              void* output, size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                             std::unordered_map<std::string, void*>& extras) {
-  ncclRedOp_t op = *static_cast<ncclRedOp_t*>(extras.at("op"));
+                                             std::unordered_map<std::string, uintptr_t>& extras) {
+  ncclRedOp_t op = *reinterpret_cast<ncclRedOp_t*>(extras.at("op"));
 
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
@@ -586,7 +587,7 @@ std::shared_ptr<mscclpp::Algorithm> Allreduce8::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                          extras);
       },
@@ -631,8 +632,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext
 ncclResult_t AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx,
                                                       const void* input, void* output, size_t inputSize,
                                                       ncclDataType_t dtype, cudaStream_t stream,
-                                                      std::unordered_map<std::string, void*>& extra) {
-  int op = *static_cast<int*>(extra.at("op"));
+                                                      std::unordered_map<std::string, uintptr_t>& extra) {
+  int op = *reinterpret_cast<int*>(extra.at("op"));
   AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(static_cast<ncclRedOp_t>(op), dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
@@ -656,7 +657,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                          extras);
       },

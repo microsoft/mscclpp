@@ -1129,7 +1129,7 @@ class AllreducePacket : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, void*>& extras);
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
@@ -1155,7 +1155,7 @@ class AllreduceNvls : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, void*>& extras);
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
@@ -1178,7 +1178,7 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, void*>& extras);
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
@@ -1203,7 +1203,7 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, void*>& extras);
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
@@ -1233,7 +1233,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, void*>& extras);
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);

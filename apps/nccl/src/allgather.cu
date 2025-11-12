@@ -23,7 +23,7 @@ void AllgatherAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 
 ncclResult_t AllgatherAlgo6::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t inputSize, cudaStream_t stream,
-                                                 std::unordered_map<std::string, void*>&) {
+                                                 std::unordered_map<std::string, uintptr_t>&) {
   int nBlocks = 28;
   const size_t nElem = inputSize / sizeof(int);
   int rank = ctx->rank;
@@ -115,7 +115,7 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo6::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
@@ -131,7 +131,7 @@ void AllgatherAlgo8::initialize(std::shared_ptr<mscclpp::Communicator> comm) { t
 
 ncclResult_t AllgatherAlgo8::allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                  void* output, size_t inputSize, cudaStream_t stream,
-                                                 std::unordered_map<std::string, void*>&) {
+                                                 std::unordered_map<std::string, uintptr_t>&) {
   int rank = ctx->rank;
   const size_t nElem = inputSize / sizeof(int);
   if ((char*)input == (char*)output + rank * inputSize) {
@@ -196,7 +196,7 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo8::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] int dtype, cudaStream_t stream,
-             std::unordered_map<std::string, void*>& extras) {
+             std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
