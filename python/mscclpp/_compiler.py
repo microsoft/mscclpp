@@ -34,6 +34,7 @@ logging.basicConfig(level=logging.INFO)
 
 _execution_plan_registry = ExecutionPlanRegistry()
 
+
 def _stable_json_bytes(obj: Any) -> bytes:
     return json.dumps(
         obj,
@@ -41,6 +42,7 @@ def _stable_json_bytes(obj: Any) -> bytes:
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+
 
 class DslCompiler:
     def __init__(self):
@@ -126,18 +128,16 @@ class DslCompiler:
         )
         return ExecutionPlanHandle(handle)
 
+
 class NativeCodeCompiler:
     def __init__(self):
         self._is_hip = cp.cuda.runtime.is_hip
         self._device_arch = get_device_arch()
         self._compiler = self._get_compiler()
         self._default_options = ["-std=c++17", "-O3", "--shared"]
-        python_include = sysconfig.get_path('include')
+        python_include = sysconfig.get_path("include")
         pybind11_include = pybind11.get_include()
-        self._default_options += [
-            f"-I{python_include}",
-            f"-I{pybind11_include}"
-        ]
+        self._default_options += [f"-I{python_include}", f"-I{pybind11_include}"]
 
         python_lib = f"-lpython{sys.version_info.major}.{sys.version_info.minor}"
         self._default_options.append(python_lib)
@@ -155,9 +155,11 @@ class NativeCodeCompiler:
             self._default_options += ["-fPIC"]
 
         self._lib_home = os.path.abspath(os.path.dirname(__file__))
-        self._default_options = self._default_options + ["-I" + os.path.join(self._lib_home, "include"),
-                                                         "-L" + os.path.join(self._lib_home, "lib"),
-                                                         "-lmscclpp",]
+        self._default_options = self._default_options + [
+            "-I" + os.path.join(self._lib_home, "include"),
+            "-L" + os.path.join(self._lib_home, "lib"),
+            "-lmscclpp",
+        ]
 
     def _get_compiler(self) -> str:
         if self._is_hip:
@@ -166,7 +168,6 @@ class NativeCodeCompiler:
         else:
             cuda_home = os.environ.get("CUDA_HOME")
             return os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
-
 
     def get_arch(self):
         return self._device_arch
@@ -187,10 +188,10 @@ class NativeCodeCompiler:
         """
         if not os.path.isfile(file):
             raise FileNotFoundError(f"The specified source file does not exist: {file}")
-        
+
         output_file = os.path.splitext(file)[0] + ".so"
         compile_command = [self._compiler] + self._default_options + ["-o", output_file, file]
-        
+
         try:
             subprocess.run(compile_command, check=True, capture_output=True, text=True)
         except FileNotFoundError as e:

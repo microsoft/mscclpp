@@ -9,7 +9,7 @@ from functools import cached_property
 from mscclpp._version import __version__, __commit_id__
 from ._mscclpp import (
     ExecutionPlan,
-    ExecutionPlanConstraint,
+    Algorithm,
     ExecutionPlanHandle as _ExecutionPlanHandle,
     ExecutionPlanRegistry as _ExecutionPlanRegistry,
 )

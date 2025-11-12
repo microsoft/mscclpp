@@ -7,6 +7,7 @@ import ipaddress
 
 _abs_path = os.path.dirname(os.path.abspath(__file__))
 
+
 def interfaces_for_ip_netifaces(ip: str):
     target = ipaddress.ip_address(ip)
     for interface in ni.interfaces():
@@ -29,12 +30,13 @@ class CustomizedComm:
         self.n_ranks_per_node = comm.nranks_per_node
         self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
-        mscclpp_native = mscclpp.compile_native(name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu"))
+        mscclpp_native = mscclpp.compile_native(
+            name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu")
+        )
         self.algorithm = mscclpp.Algorithm.create_from_handle(mscclpp_native.create_allgather_algorithm())
 
     def all_gather(self, tensor: torch.Tensor, stream: torch.cuda.Stream = None):
         self.algorithm.launch()
-
 
     def barrier_cpu(self):
         self.comm.barrier()
@@ -53,7 +55,6 @@ def main():
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
     return CustomizedComm(mscclpp_group)
-
 
 
 if __name__ == "__main__":

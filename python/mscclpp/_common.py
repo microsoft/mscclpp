@@ -3,6 +3,7 @@
 
 from enum import Enum
 
+
 class GpuModel(Enum):
     # Nvidia GPU Models
     A100 = "a100"
@@ -11,6 +12,7 @@ class GpuModel(Enum):
     # AMD GPU Models
     MI300X = "mi300x"
     ALL = "all"
+
 
 class BufferMode(Enum):
     INPLACE = 0

@@ -38,7 +38,7 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 
 int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
                              size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
-                             std::shared_ptr<Executor>, std::unordered_map<std::string, void*>& extras) {
+                             std::shared_ptr<Executor>, std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -147,7 +147,7 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
                           size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
-                          std::shared_ptr<Executor> executor, std::unordered_map<std::string, void*>&) {
+                          std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
