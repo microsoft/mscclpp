@@ -20,7 +20,6 @@ CollectiveBufferMode CollectiveRequest::bufferMode() const {
   return CollectiveBufferMode::OUT_OF_PLACE;
 }
 
-
 NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                                  ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc,
                                  size_t minMessageSize, size_t maxMessageSize, CollectiveBufferMode bufferMode,
@@ -39,9 +38,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 
 int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
                              size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
-                             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                             std::shared_ptr<Executor> executor, std::unordered_map<std::string, void*>& extras) {
   if (!initialized_) {
-    initFunc_(comm, extras);
+    initFunc_(comm);
     initialized_ = true;
   }
   AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype);
@@ -67,9 +66,7 @@ const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const {
 
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
 
-Algorithm::Constraint NativeAlgorithm::constraint() const {
-  return constraint_;
-}
+Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
                                             std::shared_ptr<Algorithm> algorithm) {
@@ -85,6 +82,16 @@ std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const Collective
     algo = fallbackAlgoSelector_(algoMapByCollective_, request);
   }
   return algo;
+}
+
+std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection::getAlgorithmsByCollective(
+    const std::string& collective) const {
+  auto it = algoMapByCollective_.find(collective);
+  if (it != algoMapByCollective_.end()) {
+    return it->second;
+  } else {
+    return {};
+  }
 }
 
 std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
@@ -140,12 +147,10 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
                           size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
-                          std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  auto executorIt = extras.find("executor");
-  if (executorIt == extras.end()) {
-    THROW(EXEC, Error, ErrorCode::InvalidUsage, "DslAlgorithm requires 'executor' in extras");
+                          std::shared_ptr<Executor> executor, std::unordered_map<std::string, void*>& extras) {
+  if (!executor) {
+    THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
-  auto executor = std::static_pointer_cast<Executor>(executorIt->second);
   int rank = comm->bootstrap()->getRank();
   DataType dataType = static_cast<DataType>(dtype);
   switch (dataType) {
@@ -183,7 +188,5 @@ int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const voi
   return 0;
 }
 
-std::shared_ptr<Algorithm> DslAlgorithm::build() {
-  return shared_from_this();
-}
+std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 }  // namespace mscclpp

@@ -1,3 +1,4 @@
+#include <Python.h>
 #include <mscclpp/nccl.h>
 #include <pybind11/pybind11.h>
 
@@ -48,23 +49,26 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     }
   }
 
-  mscclpp::Algorithm build() {
+  std::shared_ptr<mscclpp::Algorithm> build() override {
     auto self = std::make_shared<AllgatherAlgoBuilder>();
-    mscclpp::Algorithm allgatherAlgo(
+    std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
         "allgather", "allgather",
         [self](std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&) {
           self->initialize(comm);
         },
-        [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
-               int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-          return self->allgatherKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream,
+        [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+               size_t outputSize, int dtype, cudaStream_t stream,
+               std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+          return self->allgatherKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                            extras);
         },
-        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
-          return self->initAllgatherContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
+        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+               size_t outputSize, int dtype) {
+          return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
         },
-        [self](const void* input, void* output, size_t count, int dtype) {
-          return self->generateAllgatherContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+        [self](const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
+          return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
+                                                   static_cast<ncclDataType_t>(dtype));
         });
     return allgatherAlgo;
   }
@@ -147,23 +151,40 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     return ctx;
   }
 
-  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t count,
-                                                       ncclDataType_t dtype) {
-    return {(void*)input, output, count * ncclTypeSize(dtype), count * ncclTypeSize(dtype) * worldSize_, 0};
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
+                                                       size_t outputSize, ncclDataType_t dtype) {
+    return {(void*)input, output, inputSize, outputSize, 0};
   }
 };
 
-uintptr_t* createAllgatherAlgorithm() {
+std::shared_ptr<mscclpp::Algorithm> createAllgatherAlgorithm() {
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
-  mscclpp::Algorithm* algoPtr = new mscclpp::Algorithm(allgatherAlgoBuilder->build());
-  return reinterpret_cast<uintptr_t*>(algoPtr);
+  return allgatherAlgoBuilder->build();
+}
+
+void deletePtr(PyObject* capsule) {
+  const char* name = PyCapsule_GetName(capsule);
+  void* p = PyCapsule_GetPointer(capsule, name);
+  if (p == nullptr) {
+    PyErr_WriteUnraisable(capsule);
+    return;
+  }
+  auto* ptr = static_cast<std::shared_ptr<mscclpp::Algorithm>*>(p);
+  delete ptr;
+}
+
+PyObject* getCapsule(std::shared_ptr<mscclpp::Algorithm> algo) {
+  auto* ptrCopy = new std::shared_ptr<mscclpp::Algorithm>(algo);
+  PyObject* capsule = PyCapsule_New(ptrCopy, "mscclpp::AlgorithmPtr", deletePtr);
+  if (capsule == nullptr) {
+    delete ptrCopy;
+    throw pybind11::error_already_set();
+  }
+  return capsule;
 }
 
 PYBIND11_MODULE(mscclpp_native, m) {
-    m.doc() = "A simple C++ extension for mscclpp customized algorithm";
-    m.def(
-        "create_allgather_algorithm",
-        &createAllgatherAlgorithm,
-        "A function that creates an allgather algorithm in C++"
-    );
+  m.doc() = "A simple C++ extension for mscclpp customized algorithm";
+  m.def("create_allgather_algorithm", &createAllgatherAlgorithm,
+        "A function that creates an allgather algorithm in C++");
 }
