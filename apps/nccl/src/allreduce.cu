@@ -151,9 +151,9 @@ struct AllreduceNvlsPacketAdapter {
       nBlocks = 4;
       nThreadsPerBlock = 512;
     }
-    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output,
-                                                                             nvlsChannels, inputSize, scratchBufferSize,
-                                                                             rank, worldSize, deviceFlag);
+    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (const T*)input, (T*)scratch, (T*)output, nvlsChannels, inputSize / sizeof(T), scratchBufferSize, rank,
+        worldSize, deviceFlag);
     return cudaGetLastError();
   }
 };
