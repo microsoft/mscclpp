@@ -24,8 +24,8 @@ from mscclpp.language.collectives import *
 
 def switch_broadcast_test(num_threads_per_block, min_message_size, max_message_size):
     # Set up a test environment with 3 GPUs
-    gpus = 3
-    collective = TestCollective(gpus, 1, 1)
+    gpus = 2
+    collective = AllGather(gpus, 1, True)
 
     # Initialize MSCCLPP program context with Simple protocol
     with CollectiveProgram(
@@ -38,17 +38,25 @@ def switch_broadcast_test(num_threads_per_block, min_message_size, max_message_s
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        # Create a destination buffer for the broadcast operation
-        dst_chunk = Buffer(0, 1)
+        scratch_buffers = [Buffer(i, gpus) for i in range(gpus)]
+        ch = SwitchChannel(rank_list=[i for i in range(gpus)], buffer_type=BufferType.scratch)
 
-        # Create a switch channel connecting ranks 0 and 1 with input buffer type
-        ch = SwitchChannel(rank_list=[0, 1], buffer_type=BufferType.input)
-
-        # Perform broadcast operation from rank 0:
-        # - Broadcasts data from dst_chunk[0:1] to all connected ranks
-        # - Uses buffer_offset=0, size=1, and threadblock 0
-        # - Switch channel enables efficient one-to-many communication
-        ch.at_rank(0).broadcast(src_chunk=dst_chunk[0:1], buffer_offset=0, size=1, tb=0)
+        for gpu_id in range(gpus):
+            rank = Rank(gpu_id)
+            output_buffer = rank.get_output_buffer()
+            rank.copy_packets(
+                dst_chunk=scratch_buffers[gpu_id][gpu_id: gpu_id + 1],
+                src_chunk=output_buffer[gpu_id: gpu_id + 1],
+                tb=0,
+            )
+            ch.at_rank(gpu_id).broadcast(src_chunk=scratch_buffers[gpu_id][gpu_id: gpu_id + 1], buffer_offset=gpu_id, size=1, tb=0)
+            for peer in range(gpus):
+                if peer != gpu_id:
+                    rank.unpack_packets(
+                        dst_chunk=output_buffer[peer: peer + 1],
+                        src_chunk=scratch_buffers[gpu_id][peer: peer + 1],
+                        tb=0,
+                    )
 
         # Output the generated program in JSON format
         print(JSON())

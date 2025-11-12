@@ -869,6 +869,24 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T, typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input, void* output, void* scratch) {
+  const uint32_t srcOffset = op.inputOffsets[0];
+  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t size = op.inputBufferSizes[0];
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
+
+  PacketType* srcPackets =
+      (PacketType*)((char*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + (srcOffset << 1));
+  PacketType* multiPkt = (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
+
+  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
+    PacketType pkt(data, flag_);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x4*)(&pkt), multiPkt + idx);
+  }
+}
+
 template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
   static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
@@ -1050,6 +1068,9 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleSemRelease(op);
   }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  else if (opType == OperationType::MULTI_STORE) {
+    handleMultiStorePkt<T, PacketType>(op, input, output, scratch);
+  }
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
     handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
   }
