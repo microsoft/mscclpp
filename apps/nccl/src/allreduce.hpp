@@ -1136,7 +1136,7 @@ class AllreducePacket : public mscclpp::AlgorithmBuilder {
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
@@ -1186,7 +1186,7 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
 
   const size_t nvlsBufferSize_ = (1 << 30);
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
@@ -1213,7 +1213,7 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<mscclpp::Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> outputSemaphores_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
@@ -1240,7 +1240,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, ncclDataType_t);
 
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   const size_t nvlsBufferSize_ = (1 << 30);
 
   std::shared_ptr<uint32_t> deviceFlag_;

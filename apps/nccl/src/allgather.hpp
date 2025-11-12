@@ -220,10 +220,10 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   const int nChannelsPerConnection_ = 35;
 
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   std::unordered_map<std::string, void*>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
@@ -232,23 +232,24 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
 
 class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
  public:
+  AllgatherAlgo8(std::shared_ptr<char> scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(scratchBuffer), scratchBufferSize_(scratchBufferSize) {}
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
 
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
-                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   std::unordered_map<std::string, void*>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, ncclDataType_t);
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
 
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
 };
 
 #endif  // ALLGATHER_HPP_

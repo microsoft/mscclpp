@@ -20,7 +20,6 @@
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
-#include "broadcast.hpp"
 #include "debug.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
@@ -252,11 +251,10 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 
 static void registerCustomizedAlgo(ncclComm* commPtr) {
   auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
-  std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
-  collectionBuilder->addAlgorithmBuilder(broadcastAlgo6);
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
-  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
+  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 =
+      std::make_shared<AllgatherAlgo8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
   collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
   // TODO(binyli): remove allgather8 algo, use nccl by default
   collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
