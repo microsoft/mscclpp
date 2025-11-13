@@ -99,8 +99,10 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 }  // namespace std
 
 namespace {
-auto inSameNode = [](int rank1, int rank2, int nranksPerNode) {
-  return rank1 / nranksPerNode == rank2 / nranksPerNode;
+auto useIB = [](int rank1, int rank2, int nranksPerNode) {
+  bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
+  bool hasIBDevice = mscclpp::getIBDeviceCount() > 0;
+  return inSameNode and hasIBDevice;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -222,7 +224,7 @@ struct Executor::Impl {
       if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
       } else if (type == ChannelType::PORT) {
-        if (!inSameNode(rank, info.accessRank, this->nranksPerNode)) {
+        if (useIB(rank, info.accessRank, this->nranksPerNode)) {
           flags |= IBs[rank % this->nranksPerNode];
         } else
           flags |= Transport::CudaIpc;
@@ -273,7 +275,7 @@ struct Executor::Impl {
     std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
-          inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
+          useIB(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
       connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
