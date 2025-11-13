@@ -30,9 +30,7 @@ default_algo_configs = [
             max_message_size=64 << 10,
             tags={"default": 1},
         ),
-        "additional_kwargs": {
-            "thread_block_group_size": 1
-        },
+        "additional_kwargs": {"thread_block_group_size": 1},
     },
     {
         "filename": "allreduce_2nodes_128K_2M.json",
@@ -53,9 +51,7 @@ default_algo_configs = [
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
-        "additional_kwargs": {
-            "thread_block_group_size": 4
-        },
+        "additional_kwargs": {"thread_block_group_size": 4},
     },
 ]
 
