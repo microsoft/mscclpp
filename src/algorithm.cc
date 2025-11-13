@@ -120,6 +120,10 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   return collection;
 }
 
+void AlgorithmCollectionBuilder::cleanup() {
+  algoBuilders_.clear();
+}
+
 DslAlgorithm::DslAlgorithm(std::string id, std::shared_ptr<ExecutionPlan> plan,
                            std::unordered_map<std::string, uint64_t> tags, Constraint constraint)
     : plan_(plan), id_(id), tags_(tags), constraint_(constraint) {}

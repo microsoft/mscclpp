@@ -97,7 +97,7 @@ def init_dist():
     algorithm_collection_builder = mscclpp.AlgorithmCollectionBuilder()
     setup_plan(algorithm_collection_builder, rank, world)
     algorithm_collection_builder.set_algorithm_selector(selector)
-    dist.init_process_group(backend="nccl")
+    dist.init_process_group(backend="nccl", device_id=local)
     return rank, world, local
 
 

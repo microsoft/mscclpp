@@ -70,7 +70,8 @@ void register_algorithm(nb::module_& m) {
       .def("set_algorithm_selector", &AlgorithmCollectionBuilder::setAlgorithmSelector, nb::arg("selector"))
       .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
            nb::arg("selector"))
-      .def("build", &AlgorithmCollectionBuilder::build);
+      .def("build", &AlgorithmCollectionBuilder::build)
+      .def_static("reset", &AlgorithmCollectionBuilder::reset);
 
   nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),

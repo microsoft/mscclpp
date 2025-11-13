@@ -1,8 +1,9 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import Callable, List, Optional, Tuple, Dict, Union, Any
+from typing import Optional, Tuple, Dict, Union
 from functools import cached_property
+import atexit
 
 
 from ._mscclpp import (
@@ -124,6 +125,12 @@ class AlgorithmCollectionBuilder:
             cls._instance = super(AlgorithmCollectionBuilder, cls).__new__(cls)
         return cls._instance
 
+    @classmethod
+    def reset(cls):
+        if cls._instance is not None:
+            _AlgorithmCollectionBuilder.reset()
+            cls._instance = None
+
     
     def __init__(self):
         if not hasattr(self, "_initialized"):
@@ -148,3 +155,5 @@ class AlgorithmCollectionBuilder:
     
     def build(self):
         return self._builder.build()
+
+atexit.register(AlgorithmCollectionBuilder.reset)

@@ -239,6 +239,7 @@ class AlgorithmCollection {
 class AlgorithmCollectionBuilder {
  public:
   static std::shared_ptr<AlgorithmCollectionBuilder> getInstance();
+  static void reset();
 
   /// @brief Add a new algorithm builder for a specific collective operation.
   /// @param builder The algorithm builder.
@@ -263,6 +264,8 @@ class AlgorithmCollectionBuilder {
   std::vector<std::shared_ptr<AlgorithmBuilder>> algoBuilders_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
+
+  static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
 };
 
 }  // namespace mscclpp
