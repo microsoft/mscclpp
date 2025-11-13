@@ -88,20 +88,19 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<mscclpp::Algorithm> build() override {
     auto self = std::make_shared<AllgatherAlgoBuilder>();
     std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
-        "allgather", "allgather",
-        [self](std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&) {
-          self->initialize(comm);
-        },
+        "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-               size_t outputSize, int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+               size_t outputSize, int dtype, cudaStream_t stream, std::unordered_map<std::string, uintptr_t>& extras) {
           return self->allgatherKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                            extras);
         },
-        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
+        [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+               size_t outputSize, int dtype) {
           return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
         },
         [self](const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
-          return self->generateAllgatherContextKey(input, output, inputSize, outputSize, static_cast<ncclDataType_t>(dtype));
+          return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
+                                                   static_cast<ncclDataType_t>(dtype));
         });
     return allgatherAlgo;
   }
@@ -128,7 +127,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
 
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t inputSize, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                                   std::unordered_map<std::string, uintptr_t>& extras) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
 

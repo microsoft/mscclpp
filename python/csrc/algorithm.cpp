@@ -19,9 +19,7 @@ void register_algorithm(nb::module_& m) {
       .value("IN_PLACE", CollectiveBufferMode::IN_PLACE)
       .value("OUT_OF_PLACE", CollectiveBufferMode::OUT_OF_PLACE);
 
-  nb::enum_<AlgorithmType>(m, "AlgorithmType")
-      .value("NATIVE", AlgorithmType::NATIVE)
-      .value("DSL", AlgorithmType::DSL);
+  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::NATIVE).value("DSL", AlgorithmType::DSL);
 
   auto algorithmClass =
       nb::class_<Algorithm>(m, "Algorithm")
@@ -31,6 +29,7 @@ void register_algorithm(nb::module_& m) {
           .def_prop_ro("tags", &Algorithm::tags)
           .def_prop_ro("buffer_mode", &Algorithm::bufferMode)
           .def_prop_ro("constraint", &Algorithm::constraint)
+          .def_prop_ro("type", &Algorithm::type)
           .def(
               "execute",
               [](Algorithm& self, std::shared_ptr<mscclpp::Communicator> comm, uintptr_t input, uintptr_t output,
@@ -50,6 +49,8 @@ void register_algorithm(nb::module_& m) {
       .def_rw("world_size", &Algorithm::Constraint::worldSize)
       .def_rw("n_ranks_per_node", &Algorithm::Constraint::nRanksPerNode);
 
+  nb::class_<AlgorithmBuilder>(m, "AlgorithmBuilder").def("build", &AlgorithmBuilder::build);
+
   nb::class_<DslAlgorithm, Algorithm>(m, "DslAlgorithm")
       .def(nb::init<std::string, std::shared_ptr<ExecutionPlan>, std::unordered_map<std::string, uint64_t>,
                     Algorithm::Constraint>(),
@@ -57,11 +58,15 @@ void register_algorithm(nb::module_& m) {
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
 
-  nb::class_<AlgorithmBuilder>(m, "AlgorithmBuilder").def("build", &AlgorithmBuilder::build);
-
   nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
       .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))
+      .def(
+          "add_dsl_algorithm_builder",
+          [](AlgorithmCollectionBuilder& self, std::shared_ptr<DslAlgorithm> algorithm) {
+            self.addAlgorithmBuilder(algorithm);
+          },
+          nb::arg("algorithm"))
       .def("set_algorithm_selector", &AlgorithmCollectionBuilder::setAlgorithmSelector, nb::arg("selector"))
       .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
            nb::arg("selector"))
@@ -71,4 +76,18 @@ void register_algorithm(nb::module_& m) {
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),
            nb::arg("algorithm"))
       .def("get_algorithms_by_collective", &AlgorithmCollection::getAlgorithmsByCollective, nb::arg("collective"));
+
+  nb::class_<CollectiveRequest>(m, "CollectiveRequest")
+      .def_ro("world_size", &CollectiveRequest::worldSize)
+      .def_ro("n_ranks_per_node", &CollectiveRequest::nRanksPerNode)
+      .def_ro("rank", &CollectiveRequest::rank)
+      .def_prop_ro("input_buffer",
+                   [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.inputBuffer); })
+      .def_prop_ro("output_buffer",
+                   [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.outputBuffer); })
+      .def_ro("message_size", &CollectiveRequest::messageSize)
+      .def_prop_ro("collective", [](const CollectiveRequest& self) { return self.collective; })
+      .def_ro("dtype", &CollectiveRequest::dtype)
+      .def_prop_ro("hints", [](const CollectiveRequest& self) { return self.hints; })
+      .def("buffer_mode", &CollectiveRequest::bufferMode);
 }

@@ -19,20 +19,17 @@ from blake3 import blake3
 import cupy as cp
 
 from mscclpp._version import __version__
-from mscclpp._executor import ExecutionPlanHandle, ExecutionPlanRegistry
+from mscclpp._algorithm import Algorithm
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.utils import get_device_arch
 
 from ._mscclpp import (
     ExecutionPlan,
-    ExecutionPlanHandle as _ExecutionPlanHandle,
 )
 
 
 logging.basicConfig(level=logging.INFO)
-
-_execution_plan_registry = ExecutionPlanRegistry()
 
 
 def _stable_json_bytes(obj: Any) -> bytes:
@@ -48,15 +45,16 @@ class DslCompiler:
     def __init__(self):
         pass
 
-    def __call__(self, algo: Callable[..., CollectiveProgram], algo_spec: AlgoSpec, rank: int, **kwds):
+    def __call__(self, algo: Callable[..., CollectiveProgram], algo_spec: AlgoSpec, rank: int, **kwds) -> Algorithm:
         return self.compile(algo, algo_spec, rank, **kwds)
 
     def compile(
+        self,
         algo: Callable[..., CollectiveProgram],
         algo_spec: AlgoSpec,
         rank: int,
         **kwargs,
-    ) -> ExecutionPlanHandle:
+    ) -> Algorithm:
         """Compile a MSCCL++ program from a high-level algorithm description.
         Args:
             algo: The high-level algorithm description (e.g., a function or class).
@@ -95,9 +93,6 @@ class DslCompiler:
                 }
             )
         ).hexdigest()
-        plan_handle = _execution_plan_registry.get(plan_id)
-        if plan_handle is not None:
-            return plan_handle
 
         plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp")
         os.makedirs(plan_dir, exist_ok=True)
@@ -119,14 +114,14 @@ class DslCompiler:
             except Exception:
                 Path(plan_path).unlink(missing_ok=True)
         execution_plan = ExecutionPlan(plan_path, rank)
-        handle = _ExecutionPlanHandle.create(
+        return Algorithm(
             id=plan_id,
-            world_size=algo_spec.world_size,
-            nranks_per_node=algo_spec.nranks_per_node,
-            plan=execution_plan,
+            execution_plan=execution_plan,
+            constraint=Algorithm.Constraint(
+                world_size=algo_spec.world_size, n_ranks_per_node=algo_spec.nranks_per_node
+            ),
             tags=algo_spec.tags,
         )
-        return ExecutionPlanHandle(handle)
 
 
 class NativeCodeCompiler:

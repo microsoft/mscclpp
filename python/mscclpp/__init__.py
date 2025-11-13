@@ -10,8 +10,9 @@ import warnings
 
 from functools import wraps
 from mscclpp._version import __version__, __commit_id__
-import mscclpp._compiler
-from mscclpp._algorithm import Algorithm
+from mscclpp._algorithm import Algorithm, AlgorithmCollectionBuilder
+from mscclpp.language.utils import AlgoSpec
+from mscclpp._compiler import DslCompiler, NativeCodeCompiler
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
@@ -89,6 +90,8 @@ __all__ = [
     "get_lib",
     # Python API
     "Algorithm",
+    "AlgorithmCollectionBuilder",
+    "AlgoSpec",
 ]
 
 
@@ -117,5 +120,5 @@ def deprecated(new_cls):
     return decorator
 
 
-compile = mscclpp._compiler.DslCompiler()
-compile_native = mscclpp._compiler.NativeCodeCompiler()
+compile: DslCompiler = DslCompiler()
+compile_native: NativeCodeCompiler = NativeCodeCompiler()

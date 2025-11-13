@@ -28,15 +28,14 @@ class CustomizedComm:
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
         mscclpp_native = mscclpp.compile_native(
             name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu")
         )
-        self.algorithm = mscclpp.Algorithm.create_from_handle(mscclpp_native.create_allgather_algorithm())
+        self.algorithm = mscclpp.Algorithm.create_from_native_handle(mscclpp_native.create_allgather_algorithm())
 
     def all_gather(self, tensor: torch.Tensor, stream: torch.cuda.Stream = None):
-        self.algorithm.launch()
+        self.algorithm.execute()
 
     def barrier_cpu(self):
         self.comm.barrier()
@@ -54,7 +53,11 @@ def main():
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
-    return CustomizedComm(mscclpp_group)
+    comm =  CustomizedComm(mscclpp_group)                 
+    comm.barrier_cpu()
+    comm.all_gather(torch.zeros(1024, device="cuda"))
+    comm.barrier_cpu()
+
 
 
 if __name__ == "__main__":

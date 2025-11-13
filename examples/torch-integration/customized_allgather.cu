@@ -187,4 +187,6 @@ PYBIND11_MODULE(mscclpp_native, m) {
   m.doc() = "A simple C++ extension for mscclpp customized algorithm";
   m.def("create_allgather_algorithm", &createAllgatherAlgorithm,
         "A function that creates an allgather algorithm in C++");
+  m.def("get_algorithm_capsule", &getCapsule,
+        "A function that returns a PyCapsule containing a shared_ptr to mscclpp::Algorithm");
 }
