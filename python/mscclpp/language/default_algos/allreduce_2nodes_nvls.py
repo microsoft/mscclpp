@@ -149,16 +149,18 @@ def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> Collective
                     packet=True,
                 )
 
-                current_rank.copy_packets(
+                """ current_rank.copy_packets(
                     scratch_buffers[current_rank_id][scratch_buffer_size - packets_per_gpu : scratch_buffer_size],
                     input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
                     tb_group=global_intra_node_tbg,
-                )
+                ) """
 
                 # Broadcast Reduced Data
                 node_nvls_chan[node_id].at_rank(current_rank_id).broadcast(
-                    scratch_buffers[current_rank_id][scratch_buffer_size - packets_per_gpu : scratch_buffer_size],
-
+                    input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
+                    #scratch_buffers[current_rank_id][scratch_buffer_size - packets_per_gpu : scratch_buffer_size],
+                    buffer_offset=inter_node_offset + local_gpu_id * packets_per_gpu,
+                    size=packets_per_gpu,
                     tb_group=global_intra_node_tbg,
                 )
 
@@ -193,5 +195,5 @@ spec = AlgoSpec(
     use_double_scratch_buffer=True,
 )
 
-prog = allreduce_2nodes(spec, 1)
+prog = allreduce_2nodes(spec, 4)
 print(prog.to_json(indent=None, separators=(",", ":"), ensure_ascii=False))

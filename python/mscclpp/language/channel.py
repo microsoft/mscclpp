@@ -910,7 +910,7 @@ class SwitchChannel:
         )
         get_program().add_operation(self.src_rank, tb, op)
 
-    def broadcast(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
+    def broadcast(self, rank, src_chunk: Chunk, buffer_offset, size, tb=None, tb_group: ThreadBlockGroup = None):
         """Broadcast data from source chunk to all ranks in the switch channel.
 
         Broadcasts data from the source chunk to the specified buffer region
@@ -949,9 +949,31 @@ class SwitchChannel:
                     f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
                 )
 
-        tb_channel_ids = get_program().setup_channel(tb, self)
-        op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
-        get_program().add_operation(self.src_rank, tb, op)
+        if tb is not None:
+            tb_list = [tb]
+        elif tb_group is not None:
+            tb_list = tb_group.tb_list
+        else:
+            raise RuntimeError(
+                "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
+            )
+
+        for tb_id in tb_list:
+            tb_channel_ids = get_program().setup_channel(tb_id, self)
+            op = GroupStore(
+                src_chunk,
+                self.buffer_type,
+                buffer_offset,
+                size,
+                tb_channel_ids,
+                self.channel_type,
+                tbg_info=(
+                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
+                    if tb_group is not None
+                    else None
+                ),
+            )
+            get_program().add_operation(self.src_rank, tb_id, op)
 
     class SwitchChannelRankView:
         """A rank-specific view of a SwitchChannel for performing operations.
@@ -997,7 +1019,7 @@ class SwitchChannel:
             """
             return self._channel.reduce(self._rank, buffer_offset, size, dst_chunk, tb, reduce_op)
 
-        def broadcast(self, src_chunk: Chunk, buffer_offset, size, tb):
+        def broadcast(self, src_chunk: Chunk, buffer_offset, size, tb = None, tb_group: ThreadBlockGroup = None):
             """Perform a broadcast operation from this rank's perspective.
 
             Convenience method that calls the underlying channel's broadcast method
@@ -1015,4 +1037,4 @@ class SwitchChannel:
             Example:
                 >>> rank_view.broadcast(src_chunk=chunk, buffer_offset=0, size=1, tb=0)
             """
-            return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
+            return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb, tb_group)

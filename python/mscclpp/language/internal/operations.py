@@ -891,6 +891,7 @@ class GroupStore(BaseOperation):
         size: int,
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
+        tbg_info: ThreadBlockGroupInfo = None,
     ):
         super().__init__(Instruction.group_store)
         self.src_chunk = src_chunk
@@ -899,6 +900,7 @@ class GroupStore(BaseOperation):
         self.size = size
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+        self.tbg_info = tbg_info
 
     def shift_buffers(self, instance, num_instances, replication_function):
         self.buffer_offset = replication_function(self.buffer_offset, self.size, instance, num_instances)
@@ -917,6 +919,8 @@ class GroupStore(BaseOperation):
         #result["size"] = self.size
         #result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
