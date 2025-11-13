@@ -30,7 +30,9 @@ default_algo_configs = [
             max_message_size=64 << 10,
             tags={"default": 1},
         ),
-        "additional_args": [1],
+        "additional_kwargs": {
+            "thread_block_group_size": 1
+        },
     },
     {
         "filename": "allreduce_2nodes_128K_2M.json",
@@ -51,7 +53,9 @@ default_algo_configs = [
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
-        "additional_args": [4],
+        "additional_kwargs": {
+            "thread_block_group_size": 4
+        },
     },
 ]
 
@@ -67,12 +71,12 @@ def create_default_plans():
         filename = config["filename"]
         func = config["function"]
         spec = config["spec"]
-        additional_args = config.get("additional_args", [])
+        additional_kwargs = config.get("additional_kwargs", {})
         plan_path = os.path.join(plan_dir, filename)
 
         try:
-            if additional_args:
-                prog = func(spec, *additional_args)
+            if additional_kwargs:
+                prog = func(spec, **additional_kwargs)
             else:
                 prog = func(spec)
 
