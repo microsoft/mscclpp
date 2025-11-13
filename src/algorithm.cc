@@ -94,9 +94,12 @@ std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection:
   }
 }
 
+std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::gAlgorithmCollectionBuilder_;
 std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
-  static std::shared_ptr<AlgorithmCollectionBuilder> instance(new AlgorithmCollectionBuilder());
-  return instance;
+  if (!gAlgorithmCollectionBuilder_) {
+    gAlgorithmCollectionBuilder_ = std::shared_ptr<AlgorithmCollectionBuilder>(new AlgorithmCollectionBuilder());
+  }
+  return gAlgorithmCollectionBuilder_;
 }
 
 void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
@@ -120,21 +123,19 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   return collection;
 }
 
-void AlgorithmCollectionBuilder::cleanup() {
-  algoBuilders_.clear();
-}
+void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
 
-DslAlgorithm::DslAlgorithm(std::string id, std::shared_ptr<ExecutionPlan> plan,
-                           std::unordered_map<std::string, uint64_t> tags, Constraint constraint)
+DslAlgorithm::DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags,
+                           Constraint constraint)
     : plan_(plan), id_(id), tags_(tags), constraint_(constraint) {}
 
-const std::string& DslAlgorithm::name() const { return plan_->name(); }
+const std::string& DslAlgorithm::name() const { return plan_.name(); }
 
-const std::string& DslAlgorithm::collective() const { return plan_->collective(); }
+const std::string& DslAlgorithm::collective() const { return plan_.collective(); }
 
 const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
   static std::pair<size_t, size_t> range;
-  range = {plan_->minMessageSize(), plan_->maxMessageSize()};
+  range = {plan_.minMessageSize(), plan_.maxMessageSize()};
   return range;
 }
 
@@ -143,7 +144,7 @@ const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { re
 const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
   // TODO: need to fix
   static CollectiveBufferMode mode =
-      plan_->isInPlace() ? CollectiveBufferMode::IN_PLACE : CollectiveBufferMode::OUT_OF_PLACE;
+      plan_.isInPlace() ? CollectiveBufferMode::IN_PLACE : CollectiveBufferMode::OUT_OF_PLACE;
   return mode;
 }
 
@@ -159,34 +160,34 @@ int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const voi
   DataType dataType = static_cast<DataType>(dtype);
   switch (dataType) {
     case DataType::FLOAT16:
-      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, mscclpp::DataType::FLOAT16, *plan_,
+      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, mscclpp::DataType::FLOAT16, plan_,
                         stream);
       break;
     case DataType::FLOAT32:
-      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, mscclpp::DataType::FLOAT32, *plan_,
+      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, mscclpp::DataType::FLOAT32, plan_,
                         stream);
       break;
     case DataType::BFLOAT16:
       executor->execute(rank, (__bfloat16*)input, (__bfloat16*)output, inputSize, outputSize,
-                        mscclpp::DataType::BFLOAT16, *plan_, stream);
+                        mscclpp::DataType::BFLOAT16, plan_, stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
     case DataType::FP8_E4M3:
       executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize,
-                        mscclpp::DataType::FP8_E4M3, *plan_, stream);
+                        mscclpp::DataType::FP8_E4M3, plan_, stream);
       break;
     case DataType::FP8_E5M2:
       executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize,
-                        mscclpp::DataType::FP8_E5M2, *plan_, stream);
+                        mscclpp::DataType::FP8_E5M2, plan_, stream);
       break;
 #endif
     case DataType::INT32:
     case DataType::UINT32:
-      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, mscclpp::DataType::UINT32, *plan_,
+      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, mscclpp::DataType::UINT32, plan_,
                         stream);
       break;
     default:
-      WARN(EXEC, "Unsupported data type %d in DslAlgorithm", static_cast<int>(dataType));
+      WARN(EXEC, "Unsupported data type: ", static_cast<int>(dataType), " in DslAlgorithm");
       return 4;  // TODO: need to fix
   }
   return 0;

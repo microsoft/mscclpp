@@ -12,9 +12,11 @@ from ._mscclpp import (
     AlgorithmType as _AlgorithmType,
     AlgorithmBuilder as _AlgorithmBuilder,
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
-    ExecutionPlan,
     Communicator,
     CollectiveBufferMode,
+    DeviceType,
+    Executor,
+    ExecutionPlan,
 )
 
 
@@ -93,8 +95,9 @@ class Algorithm:
         output_buffer: int,
         input_size: int,
         output_size: int,
-        dtype: int,
+        dtype: DeviceType,
         stream: int,
+        executor: Optional[Executor] = None,
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         return self._algorithm.execute(
@@ -103,8 +106,9 @@ class Algorithm:
             int(output_buffer), 
             input_size, 
             output_size, 
-            dtype, 
+            int(dtype), 
             int(stream),
+            executor,
             extras if extras is not None else {}
         )
 

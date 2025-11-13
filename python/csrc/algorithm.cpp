@@ -40,7 +40,7 @@ void register_algorithm(nb::module_& m) {
                                     extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
-              nb::arg("dtype"), nb::arg("stream"), nb::arg("executor"),
+              nb::arg("dtype"), nb::arg("stream"), nb::arg("executor") = nullptr,
               nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
@@ -52,8 +52,7 @@ void register_algorithm(nb::module_& m) {
   nb::class_<AlgorithmBuilder>(m, "AlgorithmBuilder").def("build", &AlgorithmBuilder::build);
 
   nb::class_<DslAlgorithm, Algorithm>(m, "DslAlgorithm")
-      .def(nb::init<std::string, std::shared_ptr<ExecutionPlan>, std::unordered_map<std::string, uint64_t>,
-                    Algorithm::Constraint>(),
+      .def(nb::init<std::string, ExecutionPlan, std::unordered_map<std::string, uint64_t>, Algorithm::Constraint>(),
            nb::arg("id"), nb::arg("plan"), nb::arg("tags") = std::unordered_map<std::string, uint64_t>(),
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
