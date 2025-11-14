@@ -137,6 +137,7 @@ class NativeCodeCompiler:
 
         python_lib = f"-lpython{sys.version_info.major}.{sys.version_info.minor}"
         self._default_options.append(python_lib)
+        self._lib_home = os.path.abspath(os.path.dirname(__file__))
 
         if not self._is_hip:
             # Format: -gencode=arch=compute_90,code=sm_90
@@ -144,13 +145,13 @@ class NativeCodeCompiler:
             arch_flag = f"-gencode=arch={compute_arch},code={self._device_arch}"
             self._default_options.append(arch_flag)
             self._default_options += ["--compiler-options", "-fPIC"]
+            self._default_options += ["--linker-options", f"-rpath,{self._lib_home}/lib"]
         else:
             # Format for HIP: --offload-arch=gfx90a
             arch_flag = f"--offload-arch={self._device_arch}"
             self._default_options.append(arch_flag)
             self._default_options += ["-fPIC"]
 
-        self._lib_home = os.path.abspath(os.path.dirname(__file__))
         self._default_options = self._default_options + [
             "-I" + os.path.join(self._lib_home, "include"),
             "-L" + os.path.join(self._lib_home, "lib"),

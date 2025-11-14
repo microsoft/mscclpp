@@ -36,9 +36,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
       tags_(tags),
       constraint_(constraint) {}
 
-int NativeAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
-                             size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
-                             std::shared_ptr<Executor>, std::unordered_map<std::string, uintptr_t>& extras) {
+int NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                             size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor>,
+                             std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -150,7 +150,7 @@ const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
 
 Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
-int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output,
+int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                           size_t inputSize, size_t outputSize, int dtype, cudaStream_t stream,
                           std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
@@ -160,30 +160,30 @@ int DslAlgorithm::execute(std::shared_ptr<mscclpp::Communicator> comm, const voi
   DataType dataType = static_cast<DataType>(dtype);
   switch (dataType) {
     case DataType::FLOAT16:
-      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, mscclpp::DataType::FLOAT16, plan_,
+      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, DataType::FLOAT16, plan_,
                         stream);
       break;
     case DataType::FLOAT32:
-      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, mscclpp::DataType::FLOAT32, plan_,
+      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, DataType::FLOAT32, plan_,
                         stream);
       break;
     case DataType::BFLOAT16:
       executor->execute(rank, (__bfloat16*)input, (__bfloat16*)output, inputSize, outputSize,
-                        mscclpp::DataType::BFLOAT16, plan_, stream);
+                        DataType::BFLOAT16, plan_, stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
     case DataType::FP8_E4M3:
       executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize,
-                        mscclpp::DataType::FP8_E4M3, plan_, stream);
+                        DataType::FP8_E4M3, plan_, stream);
       break;
     case DataType::FP8_E5M2:
       executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize,
-                        mscclpp::DataType::FP8_E5M2, plan_, stream);
+                        DataType::FP8_E5M2, plan_, stream);
       break;
 #endif
     case DataType::INT32:
     case DataType::UINT32:
-      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, mscclpp::DataType::UINT32, plan_,
+      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_,
                         stream);
       break;
     default:

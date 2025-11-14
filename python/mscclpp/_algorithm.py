@@ -9,7 +9,6 @@ import atexit
 from ._mscclpp import (
     Algorithm as _Algorithm,
     DslAlgorithm as _DslAlgorithm,
-    NativeAlgorithm as _NativeAlgorithm,
     AlgorithmType as _AlgorithmType,
     AlgorithmBuilder as _AlgorithmBuilder,
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
@@ -60,11 +59,9 @@ class Algorithm:
         )
 
     @classmethod
-    def create_from_native_capsule(cls, capsule):
-        handle = _NativeAlgorithm.from_capsule(capsule)
-        return cls(
-            native_handle=handle,
-        )
+    def create_from_native_capsule(cls, obj):
+        handle = _Algorithm.from_native_capsule(obj)
+        return cls(native_handle=handle)
 
     @cached_property
     def name(self) -> str:

@@ -172,7 +172,7 @@ void deletePtr(PyObject* capsule) {
 
 PyObject* getCapsule(std::shared_ptr<mscclpp::Algorithm> algo) {
   auto* ptrCopy = new std::shared_ptr<mscclpp::Algorithm>(algo);
-  PyObject* capsule = PyCapsule_New(ptrCopy, "mscclpp::AlgorithmPtr", deletePtr);
+  PyObject* capsule = PyCapsule_New(ptrCopy, mscclpp::ALGORITHM_NATIVE_CAPSULE_NAME, deletePtr);
   if (capsule == nullptr) {
     delete ptrCopy;
     throw pybind11::error_already_set();

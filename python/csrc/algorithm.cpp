@@ -13,6 +13,7 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
+
 void register_algorithm(nb::module_& m) {
   nb::enum_<CollectiveBufferMode>(m, "CollectiveBufferMode")
       .value("ANY", CollectiveBufferMode::ANY)
@@ -23,6 +24,20 @@ void register_algorithm(nb::module_& m) {
 
   auto algorithmClass =
       nb::class_<Algorithm>(m, "Algorithm")
+          .def_static(
+              "from_native_capsule",
+              [](nb::capsule cap) {
+                const char* name = cap.name();
+                if (name == nullptr || std::strcmp(name, ALGORITHM_NATIVE_CAPSULE_NAME) != 0) {
+                  throw nb::type_error("Invalid capsule: expected 'mscclpp::AlgorithmPtr'");
+                }
+                void* data = cap.data();
+                if (data == nullptr) {
+                  throw nb::value_error("Failed to get pointer from capsule");
+                }
+                return *static_cast<std::shared_ptr<Algorithm>*>(data);
+              },
+              nb::arg("capsule"))
           .def_prop_ro("name", &Algorithm::name)
           .def_prop_ro("collective", &Algorithm::collective)
           .def_prop_ro("message_range", &Algorithm::messageRange)
@@ -32,7 +47,7 @@ void register_algorithm(nb::module_& m) {
           .def_prop_ro("type", &Algorithm::type)
           .def(
               "execute",
-              [](Algorithm& self, std::shared_ptr<mscclpp::Communicator> comm, uintptr_t input, uintptr_t output,
+              [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
                  size_t inputSize, size_t outputSize, int dtype, uintptr_t stream, std::shared_ptr<Executor> executor,
                  std::unordered_map<std::string, uintptr_t> extras) {
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
@@ -57,15 +72,6 @@ void register_algorithm(nb::module_& m) {
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
 
-  nb::class_<NativeAlgorithm, Algorithm>(m, "NativeAlgorithm")
-      .def_static(
-          "from_capsule",
-          [](nb::capsule cap) {
-            void* data = cap.data();
-            auto handle = static_cast<std::shared_ptr<NativeAlgorithm>*>(data);
-            return *handle;
-          },
-          nb::arg("capsule"));
 
   nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)

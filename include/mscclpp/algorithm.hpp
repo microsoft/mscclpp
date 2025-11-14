@@ -13,6 +13,8 @@
 
 namespace mscclpp {
 
+constexpr char ALGORITHM_NATIVE_CAPSULE_NAME[] = "mscclpp::AlgorithmPtr";
+
 enum class CollectiveBufferMode {
   ANY = 0,
   IN_PLACE,
@@ -40,7 +42,7 @@ class Algorithm {
   virtual const CollectiveBufferMode& bufferMode() const = 0;
   virtual AlgorithmType type() const = 0;
   virtual Constraint constraint() const = 0;
-  virtual int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
+  virtual int execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                       size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
                       std::unordered_map<std::string, uintptr_t>& extras) = 0;
 };
@@ -57,17 +59,16 @@ class AlgorithmCtx {
   int workSize;
   int nRanksPerNode;
 
-  std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::SwitchChannel> switchChannels;
-  std::vector<mscclpp::PortChannel> portChannels;
-  std::vector<std::shared_ptr<mscclpp::NvlsConnection>> nvlsConnections;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> switchChannelDeviceHandles;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
-  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> hostSemaphores;
-
+  std::vector<RegisteredMemory> registeredMemories;
+  std::vector<MemoryChannel> memoryChannels;
+  std::vector<SwitchChannel> switchChannels;
+  std::vector<PortChannel> portChannels;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
+  std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 
@@ -113,11 +114,11 @@ namespace mscclpp {
 
 class NativeAlgorithm : public Algorithm {
  public:
-  using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>)>;
+  using InitFunc = std::function<void(std::shared_ptr<Communicator>)>;
   using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, int,
                                        cudaStream_t, std::unordered_map<std::string, uintptr_t>&)>;
-  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
-                                                                      const void*, void*, size_t, size_t, int)>;
+  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
+                                                                      size_t, size_t, int)>;
   using ContextKeyGenFunc =
       std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize, size_t outputSize, int dtype)>;
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
@@ -135,8 +136,8 @@ class NativeAlgorithm : public Algorithm {
   /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
-  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
-              size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+  int execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize,
+              int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
               std::unordered_map<std::string, uintptr_t>& extras) override;
   const std::string& name() const override;
   const std::string& collective() const override;
@@ -172,8 +173,8 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   const std::pair<size_t, size_t>& messageRange() const override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
-  int execute(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
-              size_t outputSize, int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+  int execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize, size_t outputSize,
+              int dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
               std::unordered_map<std::string, uintptr_t>& extras) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;
