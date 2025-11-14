@@ -1,0 +1,74 @@
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
+
+jobs:
+- job: TestNoIBEnv
+  displayName: Test No IB Environment
+  strategy:
+    matrix:
+      cuda12.4:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  pool:
+    name: mscclpp-no-ib-env
+  container:
+    image: $[ variables['containerImage'] ]
+    options: --net=host --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
+
+  steps:
+  - task: Bash@3
+    name: Build
+    displayName: Build
+    inputs:
+      targetType: 'inline'
+      script: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+        make -j
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: PyTests
+    displayName: Run pytests
+    inputs:
+      targetType: inline
+      script: |
+        set -e
+        HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+        SSH_OPTION="StrictHostKeyChecking=no"
+        KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+        : > azureuser@10.0.0.4
+        tail -f azureuser@10.0.0.4 &
+        CHILD_PID=$!
+        parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
+          -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+          export PATH=/usr/local/mpi/bin:\$PATH                          \
+          export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+          cd /root/mscclpp;                                              \
+          mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        kill $CHILD_PID
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
