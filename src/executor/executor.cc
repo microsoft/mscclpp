@@ -102,7 +102,7 @@ namespace {
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
   bool hasIBDevice = mscclpp::getIBDeviceCount() > 0;
-  return inSameNode and hasIBDevice;
+  return !inSameNode && hasIBDevice;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
