@@ -99,10 +99,18 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 }  // namespace std
 
 namespace {
+auto hasIBDevices = []() {
+#if defined(USE_IBVERBS)
+  bool hasIBDevice = mscclpp::getIBDeviceCount() > 0;
+  return hasIBDevice;
+#else
+  return false;
+#endif
+};
+
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
-  bool hasIBDevice = mscclpp::getIBDeviceCount() > 0;
-  return !inSameNode && hasIBDevice;
+  return hasIBDevices() && !inSameNode;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -275,7 +283,7 @@ struct Executor::Impl {
     std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
-          useIB(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
+          !useIB(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
       connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
@@ -296,9 +304,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-#if defined(USE_IBVERBS)
-      flags |= IBs[rank % this->nranksPerNode];
-#endif
+      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
