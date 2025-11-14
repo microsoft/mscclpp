@@ -91,7 +91,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 
   auto& conn = semaphore->connection();
   int maxWriteQueueSize = conn.getMaxWriteQueueSize();
-  auto& numRequests = inflightRequests_[conn.impl_.get()];
+  auto& numRequests = inflightRequests_[conn.impl_];
 
   if (trigger.fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];

@@ -82,7 +82,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
-  std::unordered_map<const BaseConnection*, int> inflightRequests_;
+  std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };
