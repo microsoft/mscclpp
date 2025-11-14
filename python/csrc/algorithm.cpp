@@ -57,6 +57,16 @@ void register_algorithm(nb::module_& m) {
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
 
+  nb::class_<NativeAlgorithm, Algorithm>(m, "NativeAlgorithm")
+      .def_static(
+          "from_capsule",
+          [](nb::capsule cap) {
+            void* data = cap.data();
+            auto handle = static_cast<std::shared_ptr<NativeAlgorithm>*>(data);
+            return *handle;
+          },
+          nb::arg("capsule"));
+
   nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
       .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))

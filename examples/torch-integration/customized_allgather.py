@@ -1,5 +1,11 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_allgather.py
+
 import mscclpp
 import mscclpp.comm as mscclpp_comm
+import mscclpp.utils as mscclpp_utils
 import torch
 import os
 import netifaces as ni
@@ -32,10 +38,19 @@ class CustomizedComm:
         mscclpp_native = mscclpp.compile_native(
             name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu")
         )
-        self.algorithm = mscclpp.Algorithm.create_from_native_handle(mscclpp_native.create_allgather_algorithm())
+        capsule = mscclpp_native.get_capsule(mscclpp_native.create_allgather_algorithm())
+        self.algorithm = mscclpp.Algorithm.create_from_native_capsule(capsule)
 
-    def all_gather(self, tensor: torch.Tensor, stream: torch.cuda.Stream = None):
-        self.algorithm.execute()
+    def all_gather(self, tensor: torch.Tensor, out_tensor: torch.Tensor, stream: torch.cuda.Stream = None):
+        self.algorithm.execute(
+            self.comm.communicator,
+            tensor.data_ptr(),
+            out_tensor.data_ptr(),
+            tensor.nbytes,
+            out_tensor.nbytes,
+            mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
+            stream.cuda_stream if stream is not None else 0,
+        )
 
     def barrier_cpu(self):
         self.comm.barrier()
@@ -53,11 +68,14 @@ def main():
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
+    local_tensor_size = 1 << 20
+    out_tensor = torch.randn(local_tensor_size * world_size, device="cuda", dtype=torch.float32)
+    tensor = out_tensor[rank * local_tensor_size:(rank + 1) * local_tensor_size]
     comm =  CustomizedComm(mscclpp_group)                 
     comm.barrier_cpu()
-    comm.all_gather(torch.zeros(1024, device="cuda"))
-    comm.barrier_cpu()
-
+    comm.all_gather(tensor, out_tensor, stream=torch.cuda.current_stream())
+    torch.cuda.synchronize()
+    comm = None
 
 
 if __name__ == "__main__":

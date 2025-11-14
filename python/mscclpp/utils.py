@@ -10,7 +10,7 @@ from typing import Any, Type, Union, Tuple
 
 import cupy as cp
 import numpy as np
-from ._mscclpp import RawGpuBuffer
+from ._mscclpp import RawGpuBuffer, DataType
 
 try:
     import torch
@@ -188,3 +188,18 @@ def pack(*args):
 
 def is_torch_tensor(tensor: Any) -> bool:
     return _use_torch and isinstance(tensor, torchTensor)
+
+
+def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
+    if not _use_torch:
+        raise RuntimeError("PyTorch is not available.")
+    if dtype == torch.float16:
+        return DataType.float16
+    elif dtype == torch.float32:
+        return DataType.float32
+    elif dtype == torch.int32:
+        return DataType.int32
+    elif dtype == torch.bfloat16:
+        return DataType.bfloat16
+    else:
+        raise ValueError(f"Unknown data type: {dtype}")

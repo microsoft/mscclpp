@@ -52,13 +52,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<mscclpp::Algorithm> build() override {
     auto self = std::make_shared<AllgatherAlgoBuilder>();
     std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
-        "allgather", "allgather",
-        [self](std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&) {
-          self->initialize(comm);
-        },
+        "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-               size_t outputSize, int dtype, cudaStream_t stream,
-               std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+               size_t outputSize, int dtype, cudaStream_t stream, std::unordered_map<std::string, uintptr_t>& extras) {
           return self->allgatherKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
                                            extras);
         },
@@ -95,7 +91,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
 
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
                                    size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                                   std::unordered_map<std::string, uintptr_t>& extras) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
 
@@ -187,6 +183,6 @@ PYBIND11_MODULE(mscclpp_native, m) {
   m.doc() = "A simple C++ extension for mscclpp customized algorithm";
   m.def("create_allgather_algorithm", &createAllgatherAlgorithm,
         "A function that creates an allgather algorithm in C++");
-  m.def("get_algorithm_capsule", &getCapsule,
+  m.def("get_capsule", &getCapsule,
         "A function that returns a PyCapsule containing a shared_ptr to mscclpp::Algorithm");
 }

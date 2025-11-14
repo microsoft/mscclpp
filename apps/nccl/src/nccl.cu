@@ -191,7 +191,7 @@ static void registerDefaultDslAlgorithms(int rank) {
     std::string planId = generateFileId(planPath);
     auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
     try {
-      auto executionPlan = std::make_shared<mscclpp::ExecutionPlan>(planPath, rank);
+      auto executionPlan = mscclpp::ExecutionPlan(planPath, rank);
       auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
           planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
       collectionBuilder->addAlgorithmBuilder(algoBuilder);

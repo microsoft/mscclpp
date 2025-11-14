@@ -165,7 +165,7 @@ class NativeAlgorithm : public Algorithm {
 
 class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enable_shared_from_this<DslAlgorithm> {
  public:
-  DslAlgorithm(std::string id, std::shared_ptr<ExecutionPlan> plan, std::unordered_map<std::string, uint64_t> tags = {},
+  DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags = {},
                Constraint constraint = {});
   const std::string& name() const override;
   const std::string& collective() const override;
@@ -181,7 +181,7 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   std::shared_ptr<Algorithm> build() override;
 
  private:
-  std::shared_ptr<ExecutionPlan> plan_;
+  ExecutionPlan plan_;
   std::string id_;
   std::unordered_map<std::string, uint64_t> tags_;
   Constraint constraint_;

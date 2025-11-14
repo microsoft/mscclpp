@@ -9,6 +9,7 @@ import atexit
 from ._mscclpp import (
     Algorithm as _Algorithm,
     DslAlgorithm as _DslAlgorithm,
+    NativeAlgorithm as _NativeAlgorithm,
     AlgorithmType as _AlgorithmType,
     AlgorithmBuilder as _AlgorithmBuilder,
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
@@ -54,6 +55,13 @@ class Algorithm:
 
     @classmethod
     def create_from_native_handle(cls, handle: _Algorithm):
+        return cls(
+            native_handle=handle,
+        )
+
+    @classmethod
+    def create_from_native_capsule(cls, capsule):
+        handle = _NativeAlgorithm.from_capsule(capsule)
         return cls(
             native_handle=handle,
         )
