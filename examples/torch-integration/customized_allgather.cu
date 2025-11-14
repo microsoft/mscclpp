@@ -7,6 +7,8 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
+namespace py = pybind11;
+
 #if defined(__HIP_PLATFORM_AMD__)
 #define WARP_SIZE 64
 #else
@@ -90,14 +92,13 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t inputBytes, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, uintptr_t>& extras) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
 
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
-    allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank,
-                                                  count * ncclTypeSize(dtype));
+    allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputBytes);
     if (cudaGetLastError() == cudaSuccess) {
       return ncclSuccess;
     }
@@ -105,7 +106,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
-                                                              const void* input, void* output, size_t count,
+                                                              const void* input, void* output, size_t inputBytes,
                                                               ncclDataType_t dtype) {
     auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
     ctx->rank = comm->bootstrap()->getRank();
@@ -114,9 +115,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
 
     // register memories
     mscclpp::RegisteredMemory inputBufRegMem =
-        comm->registerMemory((void*)input, count * ncclTypeSize(dtype), mscclpp::Transport::CudaIpc);
+        comm->registerMemory((void*)input, inputBytes, mscclpp::Transport::CudaIpc);
     mscclpp::RegisteredMemory outputBufRegMem =
-        comm->registerMemory(output, count * ncclTypeSize(dtype) * ctx->workSize, mscclpp::Transport::CudaIpc);
+        comm->registerMemory(output, inputBytes * ctx->workSize, mscclpp::Transport::CudaIpc);
     std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
     for (int i = 0; i < ctx->workSize; i++) {
       if (i == ctx->rank) continue;
@@ -181,8 +182,8 @@ PyObject* getCapsule(std::shared_ptr<mscclpp::Algorithm> algo) {
 
 PYBIND11_MODULE(mscclpp_native, m) {
   m.doc() = "A simple C++ extension for mscclpp customized algorithm";
-  m.def("create_allgather_algorithm", &createAllgatherAlgorithm,
-        "A function that creates an allgather algorithm in C++");
-  m.def("get_capsule", &getCapsule,
-        "A function that returns a PyCapsule containing a shared_ptr to mscclpp::Algorithm");
+  m.def(
+      "create_allgather_algorithm",
+      []() { return py::reinterpret_steal<py::capsule>(getCapsule(createAllgatherAlgorithm())); },
+      "Create an allgather algorithm and return it as a PyCapsule usable by MSCCL++ Python bindings");
 }

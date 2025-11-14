@@ -38,7 +38,7 @@ class CustomizedComm:
         mscclpp_native = mscclpp.compile_native(
             name="mscclpp_native", file=os.path.join(_abs_path, "customized_allgather.cu")
         )
-        capsule = mscclpp_native.get_capsule(mscclpp_native.create_allgather_algorithm())
+        capsule = mscclpp_native.create_allgather_algorithm()
         self.algorithm = mscclpp.Algorithm.create_from_native_capsule(capsule)
 
     def all_gather(self, tensor: torch.Tensor, out_tensor: torch.Tensor, stream: torch.cuda.Stream = None):

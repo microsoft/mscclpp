@@ -8,6 +8,7 @@ import logging
 import json
 import os
 import subprocess
+import fcntl
 from typing import Any, Callable
 from pathlib import Path
 
@@ -155,6 +156,9 @@ class NativeCodeCompiler:
             "-L" + os.path.join(self._lib_home, "lib"),
             "-lmscclpp",
         ]
+        cache_root = os.environ.get("MSCCLPP_NATIVE_CACHE_DIR", Path.home() / ".cache/mscclpp/native")
+        self._cache_dir = Path(cache_root)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_compiler(self) -> str:
         if self._is_hip:
@@ -184,25 +188,55 @@ class NativeCodeCompiler:
         if not os.path.isfile(file):
             raise FileNotFoundError(f"The specified source file does not exist: {file}")
 
-        output_file = os.path.splitext(file)[0] + ".so"
-        compile_command = [self._compiler] + self._default_options + ["-o", output_file, file]
+        with open(file, "rb") as source_file:
+            source_bytes = source_file.read()
+        source_hash = blake3(source_bytes).hexdigest()
+        cache_key = blake3(
+            _stable_json_bytes(
+                {
+                    "version": __version__,
+                    "source_hash": source_hash,
+                    "compiler": self._compiler,
+                    "options": self._default_options,
+                    "arch": self._device_arch,
+                }
+            )
+        ).hexdigest()
+        output_file = self._cache_dir / f"{name}-{cache_key}.so"
+        lock_file = output_file.with_suffix(output_file.suffix + ".lock")
 
-        try:
-            subprocess.run(compile_command, check=True, capture_output=True, text=True)
-        except FileNotFoundError as e:
-            raise RuntimeError(f"Compiler '{self._compiler}' not found. Make sure it's installed and in PATH.") from e
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Compilation failed with return code {e.returncode}.\n"
-                f"Command: {' '.join(compile_command)}\n"
-                f"Stdout: {e.stdout}\n"
-                f"Stderr: {e.stderr}"
-            ) from e
-        spec = importlib.util.spec_from_file_location(name, output_file)
+        with open(lock_file, "w") as lock_handle:
+            fcntl.flock(lock_handle, fcntl.LOCK_EX)
+            if not output_file.exists():
+                tmp_file = output_file.with_suffix(output_file.suffix + f".tmp.{os.getpid()}")
+                compile_command = [self._compiler] + self._default_options + ["-o", str(tmp_file), file]
+                try:
+                    subprocess.run(compile_command, check=True, capture_output=True, text=True)
+                    os.replace(tmp_file, output_file)
+                except FileNotFoundError as e:
+                    Path(tmp_file).unlink(missing_ok=True)
+                    raise RuntimeError(
+                        f"Compiler '{self._compiler}' not found. Make sure it's installed and in PATH."
+                    ) from e
+                except subprocess.CalledProcessError as e:
+                    Path(tmp_file).unlink(missing_ok=True)
+                    raise RuntimeError(
+                        f"Compilation failed with return code {e.returncode}.\n"
+                        f"Command: {' '.join(compile_command)}\n"
+                        f"Stdout: {e.stdout}\n"
+                        f"Stderr: {e.stderr}"
+                    ) from e
+        module_name = name
+        existing_module = sys.modules.get(module_name)
+        if existing_module and getattr(existing_module, "__mscclpp_cache_key__", None) == cache_key:
+            return existing_module
+
+        spec = importlib.util.spec_from_file_location(module_name, output_file)
         if spec is None or spec.loader is None:
             raise ImportError(f"Could not load module '{name}' from '{output_file}'")
         module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
+        module.__mscclpp_cache_key__ = cache_key
+        sys.modules[module_name] = module
         spec.loader.exec_module(module)
         logging.info(f"Successfully compiled and loaded module '{name}' from '{output_file}'")
         return module
