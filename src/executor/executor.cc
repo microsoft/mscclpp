@@ -155,7 +155,7 @@ struct Executor::Impl {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
-    this->proxyService->startProxy();
+    this->proxyService->startProxy(true);
   }
   ~Impl() = default;
 

@@ -16,7 +16,8 @@
 namespace {
 
 static const std::vector<mscclpp::AlgoConfig> defaultAlgoConfigs = {
-    {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}}};
+    {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
+    {"allreduce_2nodes_128K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
 
 std::string simpleHash(const std::string& input) {
   std::hash<std::string> hasher;
@@ -76,6 +77,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::UNPACK_PACKETS;
   } else if (str == "repkt") {
     return mscclpp::OperationType::REDUCE_PACKETS;
+  } else if (str == "recpkt") {
+    return mscclpp::OperationType::REDUCE_COPY_PACKETS;
+  } else if (str == "recspkt") {
+    return mscclpp::OperationType::REDUCE_COPY_SEND_PACKETS;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
   } else if (str == "rlxsignal") {

@@ -19,7 +19,7 @@ class BaseProxyService {
  public:
   BaseProxyService() = default;
   virtual ~BaseProxyService() = default;
-  virtual void startProxy() = 0;
+  virtual void startProxy(bool blocking = false) = 0;
   virtual void stopProxy() = 0;
 };
 
@@ -73,7 +73,8 @@ class ProxyService : public BaseProxyService {
   PortChannel portChannel(SemaphoreId id, MemoryId dst, MemoryId src);
 
   /// Start the proxy service.
-  void startProxy();
+  /// @param blocking Whether to block until the proxy thread has started (default: false).
+  void startProxy(bool blocking = false);
 
   /// Stop the proxy service.
   void stopProxy();
