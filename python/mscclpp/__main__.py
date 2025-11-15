@@ -12,10 +12,10 @@ from mscclpp.language.utils import AlgoSpec
 
 default_algo_configs = [
     {
-        "filename": "allreduce_2nodes.json",
+        "filename": "allreduce_2nodes_1K_64K.json",
         "function": def_algo.allreduce_2nodes,
         "spec": AlgoSpec(
-            name="allreduce_2nodes",
+            name="allreduce_2nodes_1K_64K",
             collective=AllReduce(16, 1, True),
             nranks_per_node=8,
             world_size=16,
@@ -27,11 +27,32 @@ default_algo_configs = [
             reuse_resources=True,
             use_double_scratch_buffer=True,
             min_message_size=1 << 10,
+            max_message_size=64 << 10,
+            tags={"default": 1},
+        ),
+        "additional_kwargs": {"thread_block_group_size": 1},
+    },
+    {
+        "filename": "allreduce_2nodes_128K_2M.json",
+        "function": def_algo.allreduce_2nodes,
+        "spec": AlgoSpec(
+            name="allreduce_2nodes_128K_2M",
+            collective=AllReduce(16, 1, True),
+            nranks_per_node=8,
+            world_size=16,
+            in_place=True,
+            instances=1,
+            protocol="LL",
+            auto_sync=False,
+            num_threads_per_block=1024,
+            reuse_resources=True,
+            use_double_scratch_buffer=True,
+            min_message_size=128 << 10,
             max_message_size=2 << 20,
             tags={"default": 1},
         ),
-        "additional_args": [4],
-    }
+        "additional_kwargs": {"thread_block_group_size": 4},
+    },
 ]
 
 
@@ -46,12 +67,12 @@ def create_default_plans():
         filename = config["filename"]
         func = config["function"]
         spec = config["spec"]
-        additional_args = config.get("additional_args", [])
+        additional_kwargs = config.get("additional_kwargs", {})
         plan_path = os.path.join(plan_dir, filename)
 
         try:
-            if additional_args:
-                prog = func(spec, *additional_args)
+            if additional_kwargs:
+                prog = func(spec, **additional_kwargs)
             else:
                 prog = func(spec)
 

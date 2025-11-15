@@ -10,6 +10,8 @@
 
 namespace mscclpp {
 
+constexpr int MAX_LOCAL_BUFFER_PER_OPERATION = 2;
+
 constexpr int MAX_CHANNEL = 16;
 constexpr int MAX_CHANNEL_PER_OPERATION = 8;
 constexpr int MAX_OPERATION = 64;
@@ -52,8 +54,10 @@ enum class OperationType : uint8_t {
   FLUSH,
   REDUCE,
   REDUCE_PACKETS,
+  REDUCE_COPY_PACKETS,
   REDUCE_SEND,
   REDUCE_SEND_PACKETS,
+  REDUCE_COPY_SEND_PACKETS,
   READ_REDUCE,
   READ_REDUCE_SEND,
   MULTI_LOAD_REDUCE_STORE,
@@ -89,14 +93,14 @@ struct Operation {
   OperationType type;
   ChannelType channelType;
   union {
-    BufferRef inputBufferRefs[MAX_CHANNEL_PER_OPERATION];
+    BufferRef inputBufferRefs[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
     struct {
       uint8_t nvlsInputIndex;
       BufferType nvlsInputBufferType;
     };
   };
   union {
-    BufferRef outputBufferRefs[MAX_CHANNEL_PER_OPERATION];
+    BufferRef outputBufferRefs[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
     struct {
       uint8_t nvlsOutputIndex;
       BufferType nvlsOutputBufferType;
@@ -106,10 +110,10 @@ struct Operation {
   union {
     struct {
       uint8_t channelIndexes[MAX_CHANNEL_PER_OPERATION];
-      uint32_t inputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t outputOffsets[MAX_CHANNEL_PER_OPERATION];
-      uint32_t inputBufferSizes[MAX_CHANNEL_PER_OPERATION];
-      uint32_t outputBufferSizes[MAX_CHANNEL_PER_OPERATION];
+      uint32_t inputOffsets[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputOffsets[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
+      uint32_t inputBufferSizes[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
+      uint32_t outputBufferSizes[MAX_LOCAL_BUFFER_PER_OPERATION + MAX_CHANNEL_PER_OPERATION];
 
       uint8_t nChannels;
       uint8_t nInputs;
