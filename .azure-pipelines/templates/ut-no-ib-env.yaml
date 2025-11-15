@@ -50,7 +50,7 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: nccltest-single-node false
+    arguments: single-node-test false
     workingDirectory: $(System.DefaultWorkingDirectory)
 
 - task: Bash@3
