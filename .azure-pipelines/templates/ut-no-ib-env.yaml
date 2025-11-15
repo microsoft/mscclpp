@@ -14,9 +14,19 @@ steps:
     targetType: 'inline'
     script: |
       mkdir build && cd build
-      cmake -DCMAKE_BUILD_TYPE=Release ..
+      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: AzureCLI@2
+  name: StartVMSS
+  displayName: Start VMSS
+  inputs:
+    azureSubscription: ${{ parameters.subscription }} 
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss start --name ${{ parameters.vmssName }}  --resource-group mscclpp
 
 - task: Bash@3
   name: DeployTestEnv
