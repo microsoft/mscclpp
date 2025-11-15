@@ -51,7 +51,7 @@ steps:
     targetType: filePath
     filePath: mscclpp/test/deploy/deploy.sh
     arguments: nccltest-single-node false
-    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
+    workingDirectory: $(System.DefaultWorkingDirectory)
 
 - task: Bash@3
   name: PyTests
