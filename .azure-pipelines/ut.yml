@@ -107,3 +107,24 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+
+jobs:
+- job: UnitTestNoIBEnv
+  displayName: Test No IB Environment
+  strategy:
+    matrix:
+      cuda12.4:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  pool:
+    name: mscclpp-no-ib-env
+  container:
+    image: $[ variables['containerImage'] ]
+    options: --net=host --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
+
+  steps:
+  - template: templates/ut-no-ib-env.yaml
+    parameters:
+      subscription:     mscclpp-ci
+      vmssName:         mscclpp-ci
+      sshKeySecureFile: mscclpp.pem
