@@ -32,28 +32,54 @@ static bool isSameProcess(const Endpoint& a, const Endpoint& b) {
   return a.hostHash() == b.hostHash() && a.pidHash() == b.pidHash();
 }
 
-// Connection
+// BaseConnection
 
-const Endpoint::Impl& Connection::getImpl(const Endpoint& endpoint) { return *(endpoint.pimpl_); }
+const Endpoint::Impl& BaseConnection::getImpl(const Endpoint& endpoint) { return *(endpoint.pimpl_); }
 
-const RegisteredMemory::Impl& Connection::getImpl(const RegisteredMemory& memory) { return *(memory.pimpl_); }
+const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& memory) { return *(memory.pimpl_); }
 
-Context::Impl& Connection::getImpl(Context& context) { return *(context.pimpl_); }
+Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
-MSCCLPP_API_CPP Connection::Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
+MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
     : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Context> Connection::context() const { return context_; }
+MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
-MSCCLPP_API_CPP const Device& Connection::localDevice() const { return localEndpoint_.device(); }
+MSCCLPP_API_CPP const Device& BaseConnection::localDevice() const { return localEndpoint_.device(); }
 
-MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+MSCCLPP_API_CPP int BaseConnection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+
+// Connection wrapper
+
+Connection::Connection(std::shared_ptr<BaseConnection> impl) : impl_(impl) {}
+
+MSCCLPP_API_CPP void Connection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src,
+                                       uint64_t srcOffset, uint64_t size) {
+  impl_->write(dst, dstOffset, src, srcOffset, size);
+}
+
+MSCCLPP_API_CPP void Connection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src,
+                                               uint64_t newValue) {
+  impl_->updateAndSync(dst, dstOffset, src, newValue);
+}
+
+MSCCLPP_API_CPP void Connection::flush(int64_t timeoutUsec) { impl_->flush(timeoutUsec); }
+
+MSCCLPP_API_CPP Transport Connection::transport() const { return impl_->transport(); }
+
+MSCCLPP_API_CPP Transport Connection::remoteTransport() const { return impl_->remoteTransport(); }
+
+MSCCLPP_API_CPP std::shared_ptr<Context> Connection::context() const { return impl_->context(); }
+
+MSCCLPP_API_CPP const Device& Connection::localDevice() const { return impl_->localDevice(); }
+
+MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->getMaxWriteQueueSize(); }
 
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
-    : Connection(context, localEndpoint) {
+    : BaseConnection(context, localEndpoint) {
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
     THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
@@ -163,7 +189,7 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                            const Endpoint& remoteEndpoint)
-    : Connection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
@@ -276,7 +302,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize)
-    : Connection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint),
       abortFlag_(0),
       sendBufferSize_(sendBufferSize),
       recvBufferSize_(recvBufferSize) {

@@ -27,11 +27,11 @@ class Host2DeviceSemaphore {
   /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
-  Host2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  Host2DeviceSemaphore(Communicator& communicator, const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
-  std::shared_ptr<Connection> connection() const;
+  Connection& connection();
 
   /// Signal the device.
   void signal();
@@ -59,11 +59,11 @@ class Host2HostSemaphore {
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed for
   /// Host2HostSemaphore.
-  Host2HostSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  Host2HostSemaphore(Communicator& communicator, const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
-  std::shared_ptr<Connection> connection() const;
+  Connection& connection();
 
   /// Signal the remote host.
   void signal();
@@ -92,11 +92,11 @@ class MemoryDevice2DeviceSemaphore {
   /// Constructor.
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
-  MemoryDevice2DeviceSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  MemoryDevice2DeviceSemaphore(Communicator& communicator, const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
-  std::shared_ptr<Connection> connection() const;
+  Connection& connection();
 
   /// Device-side handle for MemoryDevice2DeviceSemaphore.
   using DeviceHandle = MemoryDevice2DeviceSemaphoreDeviceHandle;

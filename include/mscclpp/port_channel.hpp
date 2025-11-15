@@ -33,7 +33,7 @@ class ProxyService : public BaseProxyService {
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.
-  SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  SemaphoreId buildAndAddSemaphore(Communicator& communicator, const Connection& connection);
 
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
@@ -83,7 +83,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
-  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
+  std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };

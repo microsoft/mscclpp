@@ -6,6 +6,7 @@
 
 #include "api.h"
 #include "atomic.hpp"
+#include "connection.hpp"
 #include "context.hpp"
 #include "debug.h"
 #include "registered_memory.hpp"
@@ -14,7 +15,7 @@
 namespace mscclpp {
 
 struct SemaphoreStub::Impl {
-  Impl(std::shared_ptr<Connection> connection);
+  Impl(const Connection& connection);
 
   Impl(const RegisteredMemory& idMemory, const Device& device);
 
@@ -22,7 +23,7 @@ struct SemaphoreStub::Impl {
 
   std::shared_ptr<uint64_t> gpuCallocToken(std::shared_ptr<Context> context);
 
-  std::shared_ptr<Connection> connection_;
+  Connection connection_;
   std::shared_ptr<uint64_t> token_;
   RegisteredMemory idMemory_;
   Device device_;
@@ -41,9 +42,9 @@ std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Co
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
-SemaphoreStub::Impl::Impl(std::shared_ptr<Connection> connection) : connection_(connection) {
+SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection) {
   // Allocate a semaphore ID on the local device
-  const Device& localDevice = connection_->localDevice();
+  const Device& localDevice = connection_.localDevice();
   if (localDevice.type == DeviceType::CPU) {
     token_ = std::make_shared<uint64_t>(0);
   } else if (localDevice.type == DeviceType::GPU) {
@@ -51,12 +52,11 @@ SemaphoreStub::Impl::Impl(std::shared_ptr<Connection> connection) : connection_(
       throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
     }
     MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
-    token_ = gpuCallocToken(connection_->context());
+    token_ = gpuCallocToken(connection_.context());
   } else {
     throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
   }
-  idMemory_ =
-      std::move(connection->context()->registerMemory(token_.get(), sizeof(uint64_t), connection_->transport()));
+  idMemory_ = std::move(connection_.context()->registerMemory(token_.get(), sizeof(uint64_t), connection_.transport()));
 }
 
 SemaphoreStub::Impl::Impl(const RegisteredMemory& idMemory, const Device& device)
@@ -64,7 +64,7 @@ SemaphoreStub::Impl::Impl(const RegisteredMemory& idMemory, const Device& device
 
 SemaphoreStub::SemaphoreStub(std::shared_ptr<Impl> pimpl) : pimpl_(std::move(pimpl)) {}
 
-MSCCLPP_API_CPP SemaphoreStub::SemaphoreStub(std::shared_ptr<Connection> connection)
+MSCCLPP_API_CPP SemaphoreStub::SemaphoreStub(const Connection& connection)
     : pimpl_(std::make_shared<Impl>(connection)) {}
 
 MSCCLPP_API_CPP std::vector<char> SemaphoreStub::serialize() const {
@@ -103,17 +103,15 @@ Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remote
   }
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Semaphore::connection() const {
-  return pimpl_->localStub_.pimpl_->connection_;
-}
+MSCCLPP_API_CPP Connection& Semaphore::connection() { return pimpl_->localStub_.pimpl_->connection_; }
 
 MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localStub_.memory(); }
 
 MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteStubMemory_; }
 
-static Semaphore buildSemaphoreFromConnection(Communicator& communicator, std::shared_ptr<Connection> connection) {
+static Semaphore buildSemaphoreFromConnection(Communicator& communicator, const Connection& connection) {
   auto semaphoreFuture =
-      communicator.buildSemaphore(connection, communicator.remoteRankOf(*connection), communicator.tagOf(*connection));
+      communicator.buildSemaphore(connection, communicator.remoteRankOf(connection), communicator.tagOf(connection));
   return semaphoreFuture.get();
 }
 
@@ -121,19 +119,18 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
     : semaphore_(semaphore),
       expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
       outboundToken_(std::make_unique<uint64_t>()) {
-  if (connection()->localDevice().type != DeviceType::GPU) {
+  if (connection().localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
 }
 
-MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator,
-                                                           std::shared_ptr<Connection> connection)
+MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator, const Connection& connection)
     : Host2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Host2DeviceSemaphore::connection() const { return semaphore_.connection(); }
+MSCCLPP_API_CPP Connection& Host2DeviceSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2DeviceSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
+  connection().updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceHandle() const {
@@ -147,22 +144,21 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphor
     : semaphore_(semaphore),
       expectedInboundToken_(std::make_unique<uint64_t>()),
       outboundToken_(std::make_unique<uint64_t>()) {
-  if (connection()->transport() == Transport::CudaIpc) {
+  if (connection().transport() == Transport::CudaIpc) {
     throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
   }
-  if (connection()->localDevice().type != DeviceType::CPU) {
+  if (connection().localDevice().type != DeviceType::CPU) {
     throw Error("Local endpoint device type of Host2HostSemaphore should be CPU", ErrorCode::InvalidUsage);
   }
 }
 
-MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicator,
-                                                       std::shared_ptr<Connection> connection)
+MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicator, const Connection& connection)
     : Host2HostSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Host2HostSemaphore::connection() const { return semaphore_.connection(); }
+MSCCLPP_API_CPP Connection& Host2HostSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
-  connection()->updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
+  connection().updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
 }
 
 MSCCLPP_API_CPP bool Host2HostSemaphore::poll() {
@@ -187,18 +183,16 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const
     : semaphore_(semaphore),
       expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
       outboundToken_(detail::gpuCallocUnique<uint64_t>()) {
-  if (connection()->localDevice().type != DeviceType::GPU) {
+  if (connection().localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
 }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
-                                                                           std::shared_ptr<Connection> connection)
+                                                                           const Connection& connection)
     : MemoryDevice2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> MemoryDevice2DeviceSemaphore::connection() const {
-  return semaphore_.connection();
-}
+MSCCLPP_API_CPP Connection& MemoryDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
   MemoryDevice2DeviceSemaphore::DeviceHandle device;

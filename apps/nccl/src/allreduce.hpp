@@ -1137,7 +1137,7 @@ class AllreducePacket : public mscclpp::AlgorithmBuilder {
   size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
 
   std::shared_ptr<uint32_t> deviceFlag7_;
   std::shared_ptr<uint32_t> deviceFlag28_;
@@ -1164,7 +1164,7 @@ class AllreduceNvls : public mscclpp::AlgorithmBuilder {
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
 };
 
 class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
@@ -1188,7 +1188,7 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
 };
 
 class Allreduce8 : public mscclpp::AlgorithmBuilder {
@@ -1209,7 +1209,7 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   size_t scratchBufferSize_;
   std::shared_ptr<mscclpp::Communicator> comm_;
   int nChannelsPerConnection_;
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
   std::shared_ptr<char> scratchBuffer_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> outputSemaphores_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;

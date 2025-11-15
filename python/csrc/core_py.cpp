@@ -202,7 +202,7 @@ void register_core(nb::module_& m) {
       .def("connect", &Context::connect, nb::arg("local_endpoint"), nb::arg("remote_endpoint"));
 
   nb::class_<SemaphoreStub>(m, "SemaphoreStub")
-      .def(nb::init<std::shared_ptr<Connection>>(), nb::arg("connection"))
+      .def(nb::init<const Connection&>(), nb::arg("connection"))
       .def("memory", &SemaphoreStub::memory)
       .def("serialize", &SemaphoreStub::serialize)
       .def_static("deserialize", &SemaphoreStub::deserialize, nb::arg("data"));
@@ -215,7 +215,7 @@ void register_core(nb::module_& m) {
       .def("remote_memory", &Semaphore::remoteMemory);
 
   def_shared_future<RegisteredMemory>(m, "RegisteredMemory");
-  def_shared_future<std::shared_ptr<Connection>>(m, "shared_ptr_Connection");
+  def_shared_future<Connection>(m, "Connection");
 
   nb::class_<Communicator>(m, "Communicator")
       .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
@@ -231,8 +231,8 @@ void register_core(nb::module_& m) {
       .def("send_memory", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remote_rank"), nb::arg("tag") = 0)
       .def("recv_memory", &Communicator::recvMemory, nb::arg("remote_rank"), nb::arg("tag") = 0)
       .def("connect",
-           static_cast<std::shared_future<std::shared_ptr<Connection>> (Communicator::*)(const EndpointConfig&, int,
-                                                                                         int)>(&Communicator::connect),
+           static_cast<std::shared_future<Connection> (Communicator::*)(const EndpointConfig&, int, int)>(
+               &Communicator::connect),
            nb::arg("local_config"), nb::arg("remote_rank"), nb::arg("tag") = 0)
       .def(
           "connect_on_setup",
