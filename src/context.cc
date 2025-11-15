@@ -19,26 +19,28 @@ CudaIpcStream::CudaIpcStream(int deviceId)
 
 void CudaIpcStream::setStreamIfNeeded() {
   if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
-    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
     stream_->set(cudaStreamNonBlocking);
   }
 }
 
 void CudaIpcStream::memcpyD2D(void *dst, const void *src, size_t nbytes) {
+  CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToDevice, *stream_));
   dirty_ = true;
 }
 
 void CudaIpcStream::memcpyH2D(void *dst, const void *src, size_t nbytes) {
+  CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyHostToDevice, *stream_));
   dirty_ = true;
 }
 
 void CudaIpcStream::sync() {
-  setStreamIfNeeded();
   if (dirty_) {
+    CudaDeviceGuard deviceGuard(deviceId_);
+    setStreamIfNeeded();
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
     dirty_ = false;
   }
