@@ -18,6 +18,22 @@ steps:
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+- task: DownloadSecureFile@1
+  name: SshKeyFile
+  displayName: Download key file
+  inputs:
+    secureFile: ${{ parameters.sshKeySecureFile }}
+
+- task: Bash@3
+  name: InstallPackages
+  displayName: Install Packages
+  inputs:
+    targetType: 'inline'
+    script: |
+      sudo apt-get update -y
+      sudo apt-get install pssh -y
+      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
 - task: AzureCLI@2
   name: StartVMSS
   displayName: Start VMSS
