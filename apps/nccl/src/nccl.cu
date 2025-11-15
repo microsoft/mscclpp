@@ -17,7 +17,7 @@
 #include <mscclpp/nccl.h>
 
 #include <mscclpp/algorithm.hpp>
-#include <mscclpp/datatype_conversion.hpp>
+#include "datatype_conversion.hpp"
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
