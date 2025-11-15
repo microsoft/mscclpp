@@ -119,7 +119,7 @@ jobs:
     name: msccl-ci
   container:
     image: $[ variables['containerImage'] ]
-    options: --net=host --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
+    options: --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
 
   steps:
   - template: templates/ut-no-ib-env.yaml
