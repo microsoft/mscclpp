@@ -116,7 +116,7 @@ jobs:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
   pool:
-    name: mscclpp-no-ib-env
+    name: msccl-ci
   container:
     image: $[ variables['containerImage'] ]
     options: --net=host --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
