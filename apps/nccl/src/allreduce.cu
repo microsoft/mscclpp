@@ -4,7 +4,7 @@
 #include <mscclpp/nccl.h>
 
 #include <mscclpp/algorithm.hpp>
-#include <mscclpp/datatype_conversion.hpp>
+#include "datatype_conversion.hpp"
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
