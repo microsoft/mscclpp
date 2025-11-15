@@ -16,8 +16,16 @@ steps:
       mkdir build && cd build
       cmake -DCMAKE_BUILD_TYPE=Release ..
       make -j
-      pip install ..
     workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: DeployTestEnv
+  displayName: Deploy Test Env
+  inputs:
+    targetType: filePath
+    filePath: mscclpp/test/deploy/deploy.sh
+    arguments: nccltest-single-node false
+    workingDirectory: $(System.DefaultWorkingDirectory)/mscclpp
 
 - task: Bash@3
   name: PyTests
@@ -25,5 +33,29 @@ steps:
   inputs:
     targetType: inline
     script: |
-      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      : > azureuser@10.0.0.4
+      tail -f azureuser@10.0.0.4 &
+      CHILD_PID=$!
+      parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+        export PATH=/usr/local/mpi/bin:\$PATH                          \
+        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+        cd /root/mscclpp;                                              \
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+      kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: AzureCLI@2
+  name: StopVMSS
+  displayName: Deallocate VMSS
+  condition: always()
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp
