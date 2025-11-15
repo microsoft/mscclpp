@@ -31,7 +31,7 @@ jobs:
 - job: UnitTestNoIBEnv
   displayName: Test No IB Environment
   pool:
-    name: msccl-ci
+    name:  msccl-ci-h100
 
   strategy:
     matrix:
