@@ -30,17 +30,17 @@ pr:
 jobs:
 - job: UnitTestNoIBEnv
   displayName: Test No IB Environment
-  strategy:
-    matrix:
-      cuda12.4:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
-
   pool:
     name: msccl-ci
-  container:
-    image: $[ variables['containerImage'] ]
-    options: --ipc=host --gpus=all --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs
 
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  container:
+    image: $(containerImage)
+    
   steps:
   - template: templates/ut-no-ib-env.yaml
     parameters:
