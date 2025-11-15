@@ -9,6 +9,7 @@
 #include <future>
 #include <memory>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/version.hpp>
 #include <string>
 #include <vector>
