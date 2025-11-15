@@ -44,6 +44,6 @@ jobs:
   steps:
   - template: templates/ut-no-ib-env.yaml
     parameters:
-      subscription:     mscclpp-ci
-      vmssName:         mscclpp-ci
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
