@@ -7,7 +7,7 @@
 #include <mscclpp/nccl.h>
 
 #include <cstddef>
-#include <mscclpp/core.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 
 // Convert ncclDataType_t to mscclpp::DataType
 inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {

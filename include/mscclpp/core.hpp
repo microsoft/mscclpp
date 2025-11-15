@@ -9,6 +9,7 @@
 #include <future>
 #include <memory>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/version.hpp>
 #include <string>
 #include <vector>
@@ -213,17 +214,6 @@ enum class Transport {
   IB7,            // InfiniBand device 7 transport type.
   Ethernet,       // Ethernet transport type.
   NumTransports,  // The number of transports.
-};
-
-/// Data types supported by mscclpp operations.
-enum class DataType {
-  INT32,     // 32-bit signed integer.
-  UINT32,    // 32-bit unsigned integer.
-  FLOAT16,   // IEEE 754 half precision.
-  FLOAT32,   // IEEE 754 single precision.
-  BFLOAT16,  // bfloat16 precision.
-  FP8_E4M3,  // FP8 with E4M3 layout.
-  FP8_E5M2,  // FP8 with E5M2 layout.
 };
 
 namespace detail {
