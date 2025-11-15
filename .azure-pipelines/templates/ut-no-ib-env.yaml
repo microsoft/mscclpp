@@ -49,7 +49,7 @@ steps:
   displayName: Deploy Test Env
   inputs:
     targetType: filePath
-    filePath: mscclpp/test/deploy/deploy.sh
+    filePath: test/deploy/deploy.sh
     arguments: nccltest-single-node false
     workingDirectory: $(System.DefaultWorkingDirectory)
 
