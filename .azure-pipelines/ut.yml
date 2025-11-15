@@ -108,7 +108,6 @@ jobs:
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
 
-jobs:
 - job: UnitTestNoIBEnv
   displayName: Test No IB Environment
   strategy:
