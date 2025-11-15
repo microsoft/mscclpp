@@ -74,7 +74,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     return program
 
 
-def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
+def setup_plan(rank: int, world_size: int):
     spec = mscclpp.AlgoSpec(
         name="allreduce_nvls",
         collective=AllReduce(8, 1, True),
@@ -89,17 +89,10 @@ def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: i
         tags={"nvls": 1},
     )
 
-    plan_handle = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
-    registry.register_plan(plan_handle)
-
-
-def selector(plans, req):
-    if req.collective != "allreduce":
-        return None
-    if req.message_size < 1 << 20:
-        return None
-    nvls = [p for p in plans if "nvls" in p.tags]
-    return nvls[0] if nvls else plans[0]
+    algorithms = []
+    algo = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
+    algorithms.append(algo)
+    return algorithms
 
 
 def interfaces_for_ip_netifaces(ip: str):
@@ -129,43 +122,36 @@ def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp_comm.CommGroup, algorithms=[]):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
+        self.algorithms = algorithms
 
     def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
         assert op == torch.distributed.ReduceOp.SUM
-        plan = self.registry.select(
-            collective="allreduce",
-            world_size=self.world_size,
-            n_ranks_per_node=self.n_ranks_per_node,
-            send_buffer=tensor.data_ptr(),
-            recv_buffer=tensor.data_ptr(),
-            message_size=tensor.numel() * tensor.element_size(),
-        )
-        if plan is None:
-            raise ValueError(
-                f"No suitable plan found for collective allreduce with message size {tensor.numel() * tensor.element_size()}"
-            )
-        self.executor.execute(
-            self.rank,
-            tensor.data_ptr(),
-            tensor.data_ptr(),
-            tensor.numel() * tensor.element_size(),
-            tensor.numel() * tensor.element_size(),
-            dtype_to_mscclpp_dtype(tensor.dtype),
-            plan.plan,
-            stream.cuda_stream if stream is not None else 0,
+        algo: mscclpp.Algorithm = self.algorithms[0]
+        algo.execute(
+            comm=self.comm.communicator,
+            executor=self.executor,
+            input_buffer=tensor.data_ptr(),
+            output_buffer=tensor.data_ptr(),
+            input_size=tensor.nbytes,
+            output_size=tensor.nbytes,
+            dtype=dtype_to_mscclpp_dtype(tensor.dtype),
+            stream=stream.cuda_stream if stream is not None else 0,
         )
 
     def barrier_cpu(self):
         self.comm.barrier()
 
+    def destroy(self):
+        self.algorithms = None
+        self.executor = None
+        self.comm = None
 
 def init_dist() -> CustomizedComm:
     rank = int(os.environ["RANK"])
@@ -175,12 +161,10 @@ def init_dist() -> CustomizedComm:
     interface = interfaces_for_ip_netifaces(master_addr)
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
-    registry = mscclpp.ExecutionPlanRegistry()
-    setup_plan(registry, rank, world)
-    registry.set_selector(selector)
+    algorithms = setup_plan(rank, world)
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
-    return CustomizedComm(mscclpp_group)
+    return CustomizedComm(mscclpp_group, algorithms)
 
 
 def main():
@@ -194,7 +178,7 @@ def main():
     x.normal_()
     comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)
     comm.barrier_cpu()
-    comm = None
+    comm.destroy()
 
 
 if __name__ == "__main__":
