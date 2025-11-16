@@ -45,7 +45,7 @@ if [ "${IB_ENVIRONMENT}" == "true" ]; then
     --entrypoint /bin/bash ${CONTAINERIMAGE}"
 else
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run --rm -itd --net=host --ipc=host --gpus=all --cap-add=SYS_PTRACE --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband \
+    "sudo docker run --rm -itd --net=host --ipc=host --gpus=all --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband \
     --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs\
     -w /root -v ${DST_DIR}:/root/mscclpp --ulimit memlock=-1:-1 --name=mscclpp-test \
     --entrypoint /bin/bash ${CONTAINERIMAGE}"
