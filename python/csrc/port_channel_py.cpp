@@ -12,12 +12,12 @@ using namespace mscclpp;
 
 void register_port_channel(nb::module_& m) {
   nb::class_<BaseProxyService>(m, "BaseProxyService")
-      .def("start_proxy", &BaseProxyService::startProxy)
+      .def("start_proxy", &BaseProxyService::startProxy, nb::arg("blocking") = false)
       .def("stop_proxy", &BaseProxyService::stopProxy);
 
   nb::class_<ProxyService, BaseProxyService>(m, "ProxyService")
       .def(nb::init<int>(), nb::arg("fifo_size") = DEFAULT_FIFO_SIZE)
-      .def("start_proxy", &ProxyService::startProxy)
+      .def("start_proxy", &ProxyService::startProxy, nb::arg("blocking") = false)
       .def("stop_proxy", &ProxyService::stopProxy)
       .def("build_and_add_semaphore", &ProxyService::buildAndAddSemaphore, nb::arg("comm"), nb::arg("connection"))
       .def("add_semaphore", static_cast<SemaphoreId (ProxyService::*)(const Semaphore&)>(&ProxyService::addSemaphore),
