@@ -217,7 +217,7 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
 
  private:
   bool disableChannelCache_;
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   const int nChannelsPerConnection_ = 35;
 
@@ -236,7 +236,7 @@ class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
   mscclpp::Algorithm build() override;
 
  private:
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);

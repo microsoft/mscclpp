@@ -12,7 +12,7 @@ using namespace mscclpp;
 void register_semaphore(nb::module_& m) {
   nb::class_<Host2DeviceSemaphore> host2DeviceSemaphore(m, "Host2DeviceSemaphore");
   host2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
-      .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
+      .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &Host2DeviceSemaphore::connection)
       .def("signal", &Host2DeviceSemaphore::signal)
       .def("device_handle", &Host2DeviceSemaphore::deviceHandle);
@@ -27,7 +27,7 @@ void register_semaphore(nb::module_& m) {
 
   nb::class_<Host2HostSemaphore>(m, "Host2HostSemaphore")
       .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
-      .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
+      .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &Host2HostSemaphore::connection)
       .def("signal", &Host2HostSemaphore::signal)
       .def("poll", &Host2HostSemaphore::poll)
@@ -36,7 +36,7 @@ void register_semaphore(nb::module_& m) {
 
   nb::class_<MemoryDevice2DeviceSemaphore> memoryDevice2DeviceSemaphore(m, "MemoryDevice2DeviceSemaphore");
   memoryDevice2DeviceSemaphore.def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
-      .def(nb::init<Communicator&, std::shared_ptr<Connection>>(), nb::arg("communicator"), nb::arg("connection"))
+      .def(nb::init<Communicator&, const Connection&>(), nb::arg("communicator"), nb::arg("connection"))
       .def("connection", &MemoryDevice2DeviceSemaphore::connection)
       .def("device_handle", &MemoryDevice2DeviceSemaphore::deviceHandle);
 

@@ -76,8 +76,7 @@ MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
   return Endpoint(std::make_shared<Endpoint::Impl>(config, *pimpl_));
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &localEndpoint,
-                                                             const Endpoint &remoteEndpoint) {
+MSCCLPP_API_CPP Connection Context::connect(const Endpoint &localEndpoint, const Endpoint &remoteEndpoint) {
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
     throw Error("No GPU device ID provided for local endpoint", ErrorCode::InvalidUsage);
   }
@@ -93,7 +92,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &loc
        << std::to_string(remoteEndpoint.transport()) << ") endpoints";
     throw Error(ss.str(), ErrorCode::InvalidUsage);
   }
-  std::shared_ptr<Connection> conn;
+  std::shared_ptr<BaseConnection> conn;
   if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else if (AllIBTransports.has(localTransport)) {
@@ -103,7 +102,7 @@ MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &loc
   } else {
     throw Error("Unsupported transport", ErrorCode::InternalError);
   }
-  return conn;
+  return Connection(conn);
 }
 
 }  // namespace mscclpp

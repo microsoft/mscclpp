@@ -33,15 +33,15 @@ std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<msccl
                                                            mscclpp::RegisteredMemory localMemory);
 
 std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
-    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<mscclpp::Connection>& connections,
     const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
     const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
     int nChannelsPerConnection);
 
-std::vector<std::shared_ptr<mscclpp::Connection>> setupConnections(std::shared_ptr<mscclpp::Communicator> comm);
+std::vector<mscclpp::Connection> setupConnections(std::shared_ptr<mscclpp::Communicator> comm);
 
 std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
-    std::shared_ptr<mscclpp::Communicator> comm, const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    std::shared_ptr<mscclpp::Communicator> comm, const std::vector<mscclpp::Connection>& connections,
     int nChannelsPerConnection);
 
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
@@ -57,7 +57,7 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelD
     const std::vector<mscclpp::SwitchChannel>& nvlsChannels);
 
 std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
-    const std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+    const std::vector<mscclpp::Connection>& connections,
     const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
     int nChannelsPerConnection);
 

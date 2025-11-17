@@ -172,7 +172,7 @@ class BroadcastAlgo6 : public mscclpp::AlgorithmBuilder {
                                                               void* output, size_t, mscclpp::DataType);
   mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, mscclpp::DataType);
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
   size_t scratchMemSize_;
   std::shared_ptr<char> scratchBuffer_;
 };
