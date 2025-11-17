@@ -109,6 +109,7 @@ jobs:
       sshKeySecureFile: mscclpp.pem
 
 - job: UnitTestNoIBEnv
+  timeoutInMinutes: 40
   displayName: Test No IB Environment
   pool:
     name:  msccl-ci-h100
@@ -120,7 +121,7 @@ jobs:
 
   container:
     image: $(containerImage)
-    
+
   steps:
   - template: templates/ut-no-ib-env.yaml
     parameters:

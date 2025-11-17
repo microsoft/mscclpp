@@ -1,6 +1,6 @@
 set -e
 
-# get parameter form $1
+# get parameter from $1 and $2
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"
 
@@ -46,7 +46,7 @@ if [ "${IB_ENVIRONMENT}" == "true" ]; then
 else
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
     "sudo docker run --rm -itd --net=host --ipc=host --gpus=all --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --mount type=tmpfs,destination=/dev/infiniband \
-    --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verbs\
+    --mount type=tmpfs,destination=/sys/class/infiniband --mount type=tmpfs,destination=/sys/class/infiniband_verb \
     -w /root -v ${DST_DIR}:/root/mscclpp --ulimit memlock=-1:-1 --name=mscclpp-test \
     --entrypoint /bin/bash ${CONTAINERIMAGE}"
 fi
