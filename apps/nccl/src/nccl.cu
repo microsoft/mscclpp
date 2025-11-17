@@ -17,11 +17,11 @@
 #include <mscclpp/nccl.h>
 
 #include <mscclpp/algorithm.hpp>
-#include <mscclpp/datatype_conversion.hpp>
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
 #include "broadcast.hpp"
+#include "datatype_conversion.hpp"
 #include "debug.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
