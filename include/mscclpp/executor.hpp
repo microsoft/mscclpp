@@ -11,17 +11,6 @@
 
 namespace mscclpp {
 
-/// Data types supported by the executor.
-enum class DataType {
-  INT32,     // 32-bit signed integer.
-  UINT32,    // 32-bit unsigned integer.
-  FLOAT16,   // IEEE 754 half precision.
-  FLOAT32,   // IEEE 754 single precision.
-  BFLOAT16,  // bfloat16 precision.
-  FP8_E4M3,  // FP8 with E4M3 layout.
-  FP8_E5M2,  // FP8 with E5M2 layout.
-};
-
 /// Packet formats used by low-latency transport.
 enum class PacketType {
   LL8,   // 8-byte low-latency packet.
