@@ -99,8 +99,17 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 }  // namespace std
 
 namespace {
-auto inSameNode = [](int rank1, int rank2, int nranksPerNode) {
-  return rank1 / nranksPerNode == rank2 / nranksPerNode;
+auto hasIBDevices = []() {
+#if defined(USE_IBVERBS)
+  return (mscclpp::getIBDeviceCount() > 0);
+#else
+  return false;
+#endif
+};
+
+auto useIB = [](int rank1, int rank2, int nranksPerNode) {
+  bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
+  return hasIBDevices() && !inSameNode;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -222,7 +231,7 @@ struct Executor::Impl {
       if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
       } else if (type == ChannelType::PORT) {
-        if (!inSameNode(rank, info.accessRank, this->nranksPerNode)) {
+        if (useIB(rank, info.accessRank, this->nranksPerNode)) {
           flags |= IBs[rank % this->nranksPerNode];
         } else
           flags |= Transport::CudaIpc;
@@ -273,7 +282,7 @@ struct Executor::Impl {
     std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
-          inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
+          !useIB(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
       connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
@@ -294,9 +303,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-#if defined(USE_IBVERBS)
-      flags |= IBs[rank % this->nranksPerNode];
-#endif
+      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
