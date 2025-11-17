@@ -44,8 +44,8 @@ void CommunicatorTestBase::TearDown() {
 void CommunicatorTestBase::setNumRanksToUse(int num) { numRanksToUse = num; }
 
 void CommunicatorTestBase::connectMesh(bool useIpc, bool useIb, bool useEthernet) {
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(numRanksToUse);
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> cpuConnectionFutures(numRanksToUse);
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanksToUse);
+  std::vector<std::shared_future<mscclpp::Connection>> cpuConnectionFutures(numRanksToUse);
   for (int i = 0; i < numRanksToUse; i++) {
     if (i != gEnv->rank) {
       if ((rankToNode(i) == rankToNode(gEnv->rank)) && useIpc) {
@@ -158,9 +158,9 @@ void CommunicatorTest::writeToRemote(int dataCountPerRank) {
       if (i != gEnv->rank) {
         auto& conn = connections.at(i);
         auto& peerMemory = remoteMemory[n].at(i);
-        conn->write(peerMemory, gEnv->rank * dataCountPerRank * sizeof(int), localMemory[n],
-                    gEnv->rank * dataCountPerRank * sizeof(int), dataCountPerRank * sizeof(int));
-        conn->flush();
+        conn.write(peerMemory, gEnv->rank * dataCountPerRank * sizeof(int), localMemory[n],
+                   gEnv->rank * dataCountPerRank * sizeof(int), dataCountPerRank * sizeof(int));
+        conn.flush();
       }
     }
   }
@@ -262,7 +262,7 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   for (auto entry : cpuConnections) {
     auto& conn = entry.second;
     // Host2HostSemaphore cannot be used with CudaIpc transport
-    if (conn->transport() == mscclpp::Transport::CudaIpc) continue;
+    if (conn.transport() == mscclpp::Transport::CudaIpc) continue;
     semaphores.insert({entry.first, std::make_shared<mscclpp::Host2HostSemaphore>(*communicator.get(), conn)});
   }
   communicator->bootstrap()->barrier();
@@ -273,25 +273,25 @@ TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
   writeToRemote(deviceBufferSize / sizeof(int) / gEnv->worldSize);
 
   for (int i = 0; i < gEnv->worldSize; i++) {
-    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+    if (i != gEnv->rank && connections[i].transport() != mscclpp::Transport::CudaIpc) {
       semaphores[i]->signal();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
-    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+    if (i != gEnv->rank && connections[i].transport() != mscclpp::Transport::CudaIpc) {
       semaphores[i]->wait();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
-    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+    if (i != gEnv->rank && connections[i].transport() != mscclpp::Transport::CudaIpc) {
       semaphores[i]->signal();
     }
   }
 
   for (int i = 0; i < gEnv->worldSize; i++) {
-    if (i != gEnv->rank && connections[i]->transport() != mscclpp::Transport::CudaIpc) {
+    if (i != gEnv->rank && connections[i].transport() != mscclpp::Transport::CudaIpc) {
       semaphores[i]->wait();
     }
   }

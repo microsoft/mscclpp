@@ -112,7 +112,7 @@ namespace mscclpp {
 
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
-  std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::unordered_map<int, Connection> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   MemoryId localMemoryIdBegin = MemoryId(0);
 
@@ -155,7 +155,7 @@ struct Executor::Impl {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
-    this->proxyService->startProxy();
+    this->proxyService->startProxy(true);
   }
   ~Impl() = default;
 
@@ -270,7 +270,7 @@ struct Executor::Impl {
     };
 
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers();
-    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
           inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
@@ -339,10 +339,10 @@ struct Executor::Impl {
           auto connection = context.connections.at(peer);
           if (info.channelType == ChannelType::MEMORY) {
             futureMemorySemaphores.push_back(this->comm->buildSemaphore(
-                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
+                connection, this->comm->remoteRankOf(connection), this->comm->tagOf(connection)));
           } else if (info.channelType == ChannelType::PORT) {
-            futureProxySemaphores.push_back(this->comm->buildSemaphore(
-                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
+            futureProxySemaphores.push_back(this->comm->buildSemaphore(connection, this->comm->remoteRankOf(connection),
+                                                                       this->comm->tagOf(connection)));
           }
         }
       }

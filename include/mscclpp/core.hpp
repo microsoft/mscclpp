@@ -425,6 +425,7 @@ struct EndpointConfig {
 
 class Context;
 class Connection;
+class BaseConnection;
 class RegisteredMemory;
 class SemaphoreStub;
 class Semaphore;
@@ -474,7 +475,7 @@ class Endpoint {
   std::shared_ptr<Impl> pimpl_;
 
   friend class Context;
-  friend class Connection;
+  friend class BaseConnection;
 };
 
 /// Context for communication. This provides a low-level interface for forming connections in use-cases
@@ -521,8 +522,8 @@ class Context : public std::enable_shared_from_this<Context> {
   ///
   /// @param localEndpoint The local endpoint.
   /// @param remoteEndpoint The remote endpoint.
-  /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  /// @return A connection object.
+  Connection connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
  private:
   Context();
@@ -531,7 +532,7 @@ class Context : public std::enable_shared_from_this<Context> {
   std::unique_ptr<Impl> pimpl_;
 
   friend class Endpoint;
-  friend class Connection;
+  friend class BaseConnection;
   friend class RegisteredMemory;
   friend class SemaphoreStub;
 };
@@ -578,7 +579,7 @@ class RegisteredMemory {
   std::shared_ptr<Impl> pimpl_;
 
   friend class Context;
-  friend class Connection;
+  friend class BaseConnection;
   friend class SemaphoreStub;
   friend class Semaphore;
 };
@@ -587,12 +588,7 @@ class RegisteredMemory {
 class Connection {
  public:
   /// Constructor.
-  /// @param context The context associated with the connection.
-  /// @param localEndpoint The local endpoint of the connection.
-  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
-
-  /// Destructor.
-  virtual ~Connection() = default;
+  Connection() = default;
 
   /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
   ///
@@ -601,8 +597,7 @@ class Connection {
   /// @param src The source RegisteredMemory.
   /// @param srcOffset The offset in bytes from the start of the source RegisteredMemory.
   /// @param size The number of bytes to write.
-  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                     uint64_t size) = 0;
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size);
 
   /// Update an 8-byte value in a destination RegisteredMemory and synchronize the change with the remote process.
   ///
@@ -610,19 +605,19 @@ class Connection {
   /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
   /// @param src A pointer to the value to update.
   /// @param newValue The new value to write.
-  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue);
 
   /// Flush any pending writes to the remote process.
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
-  virtual void flush(int64_t timeoutUsec = -1) = 0;
+  void flush(int64_t timeoutUsec = -1);
 
   /// Get the transport used by the local process.
   /// @return The transport used by the local process.
-  virtual Transport transport() const = 0;
+  Transport transport() const;
 
   /// Get the transport used by the remote process.
   /// @return The transport used by the remote process.
-  virtual Transport remoteTransport() const = 0;
+  Transport remoteTransport() const;
 
   /// Get the context associated with this connection.
   /// @return A shared pointer to the context associated with this connection.
@@ -636,22 +631,23 @@ class Connection {
   /// @return The maximum number of write requests that can be queued.
   int getMaxWriteQueueSize() const;
 
- protected:
-  static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
-  static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
-  static Context::Impl& getImpl(Context& context);
+ private:
+  Connection(std::shared_ptr<BaseConnection> impl);
+  std::shared_ptr<BaseConnection> impl_;
 
-  std::shared_ptr<Context> context_;
-  Endpoint localEndpoint_;
-  int maxWriteQueueSize_;
+  friend class Context;
+  friend class Communicator;
+  friend class SemaphoreStub;
+  friend class Semaphore;
+  friend class ProxyService;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
 class SemaphoreStub {
  public:
   /// Constructor.
-  /// @param connection A shared pointer to the connection associated with this semaphore.
-  SemaphoreStub(std::shared_ptr<Connection> connection);
+  /// @param connection The connection associated with this semaphore.
+  SemaphoreStub(const Connection& connection);
 
   /// Get the memory associated with this semaphore.
   /// @return A reference to the registered memory for this semaphore.
@@ -686,8 +682,8 @@ class Semaphore {
   Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub);
 
   /// Get the connection associated with this semaphore.
-  /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connection() const;
+  /// @return The connection.
+  Connection& connection();
 
   /// Get the local memory associated with this semaphore.
   /// @return A reference to the local registered memory.
@@ -873,34 +869,23 @@ class Communicator {
   /// @param localEndpoint The local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
-  /// @return A future of shared pointer to the connection.
+  /// @return A future of the connection.
   ///
-  std::shared_future<std::shared_ptr<Connection>> connect(const Endpoint& localEndpoint, int remoteRank, int tag = 0);
+  std::shared_future<Connection> connect(const Endpoint& localEndpoint, int remoteRank, int tag = 0);
 
   /// Connect to a remote rank. Wrapper of `connect(localEndpoint, remoteRank, tag)`.
   /// @param localConfig The configuration for the local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
-  /// @return A future of shared pointer to the connection.
-  std::shared_future<std::shared_ptr<Connection>> connect(const EndpointConfig& localConfig, int remoteRank,
-                                                          int tag = 0);
-
-  [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
-      shared_future<std::shared_ptr<Connection>>
-      connect(int remoteRank, int tag, EndpointConfig localConfig);
-
-  [[deprecated("Use connect() instead. This will be removed in a future release.")]] NonblockingFuture<
-      std::shared_ptr<Connection>>
-  connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig) {
-    return connect(localConfig, remoteRank, tag);
-  }
+  /// @return A future of the connection.
+  std::shared_future<Connection> connect(const EndpointConfig& localConfig, int remoteRank, int tag = 0);
 
   /// Build a semaphore for cross-process synchronization.
   /// @param connection The connection associated with this semaphore.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the operation.
   /// @return A future of the built semaphore.
-  std::shared_future<Semaphore> buildSemaphore(std::shared_ptr<Connection> connection, int remoteRank, int tag = 0);
+  std::shared_future<Semaphore> buildSemaphore(const Connection& connection, int remoteRank, int tag = 0);
 
   /// Get the remote rank a connection is connected to.
   ///

@@ -106,18 +106,18 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
  private:
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
   std::shared_ptr<mscclpp::ProxyService> proxyService_;
   int worldSize_;
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm) {
-    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
     worldSize_ = comm->bootstrap()->getNranks();
     for (int i = 0; i < worldSize_; i++) {
       if (i == comm->bootstrap()->getRank()) continue;
       connectionFutures.push_back(comm->connect(mscclpp::Transport::CudaIpc, i));
     }
-    std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+    std::vector<mscclpp::Connection> connections;
     std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
                    [](const auto& future) { return future.get(); });
     this->conns_ = std::move(connections);

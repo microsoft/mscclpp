@@ -166,7 +166,8 @@ struct DslAlgoConfig {
 
 static void registerDefaultDslAlgorithms(int rank) {
   static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
-      {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}}};
+      {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}},
+      {"allreduce_2nodes_128K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
 
   static auto generateFileId = [](const std::string& input) {
     std::hash<std::string> hasher;

@@ -213,7 +213,7 @@ void setupMscclppConnections(int rank, int world_size, mscclpp::Communicator& co
   mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
   std::vector<mscclpp::SemaphoreId> semaphoreIds;
   std::vector<mscclpp::RegisteredMemory> localMemories;
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connections(world_size);
+  std::vector<std::shared_future<mscclpp::Connection>> connections(world_size);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemories;
 
   for (int r = 0; r < world_size; ++r) {
