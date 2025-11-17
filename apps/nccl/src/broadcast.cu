@@ -7,6 +7,7 @@
 #include <mscclpp/gpu_utils.hpp>
 
 #include "broadcast.hpp"
+#include "datatype_conversion.hpp"
 
 void BroadcastAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                 std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
@@ -16,19 +17,20 @@ void BroadcastAlgo6::initialize(std::shared_ptr<mscclpp::Communicator> comm,
 }
 
 ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t count, [[maybe_unused]] ncclDataType_t dtype,
+                                                 void* output, size_t count, mscclpp::DataType dtype,
                                                  cudaStream_t stream,
                                                  std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   int root = *(int*)extras.at("root").get();
+  const size_t elemSize = getDataTypeSize(dtype);
   cudaError_t err;
   if (input == output) {
     err = broadcast<false>((int*)input, (int*)this->scratchBuffer_.get(), (int*)output,
                            ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                           count * ncclTypeSize(dtype) / sizeof(int), stream);
+                           count * elemSize / sizeof(int), stream);
   } else {
     err = broadcast<true>((int*)input, (int*)this->scratchBuffer_.get(), (int*)output,
                           ctx->memoryChannelDeviceHandles.get(), 0, ctx->rank, ctx->nRanksPerNode, root, ctx->workSize,
-                          count * ncclTypeSize(dtype) / sizeof(int), stream);
+                          count * elemSize / sizeof(int), stream);
   }
   if (err != cudaSuccess) {
     return ncclInternalError;
@@ -38,7 +40,7 @@ ncclResult_t BroadcastAlgo6::broadcastKernelFunc(const std::shared_ptr<mscclpp::
 
 std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm,
                                                                             const void*, void* output, size_t,
-                                                                            ncclDataType_t) {
+                                                                            mscclpp::DataType) {
   constexpr int nChannelsPerConnection = 8;
 
   auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
@@ -70,7 +72,7 @@ std::shared_ptr<mscclpp::AlgorithmCtx> BroadcastAlgo6::initBroadcastContext(std:
   return ctx;
 }
 
-mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*, void*, size_t, ncclDataType_t) {
+mscclpp::AlgorithmCtxKey BroadcastAlgo6::generateBroadcastContextKey(const void*, void*, size_t, mscclpp::DataType) {
   // always use same context
   return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
@@ -81,15 +83,15 @@ mscclpp::Algorithm BroadcastAlgo6::build() {
       "default_broadcast6", "broadcast",
       [self](std::shared_ptr<mscclpp::Communicator> comm,
              std::unordered_map<std::string, std::shared_ptr<void>>& extras) { self->initialize(comm, extras); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count, int dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-        return self->broadcastKernelFunc(ctx, input, output, count, static_cast<ncclDataType_t>(dtype), stream, extras);
+      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype, cudaStream_t stream,
+             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+        return self->broadcastKernelFunc(ctx, input, output, count, dtype, stream, extras);
       },
-      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype) {
-        return self->initBroadcastContext(comm, input, output, count, static_cast<ncclDataType_t>(dtype));
-      },
-      [self](const void* input, void* output, size_t count, int dtype) {
-        return self->generateBroadcastContextKey(input, output, count, static_cast<ncclDataType_t>(dtype));
+      [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
+             mscclpp::DataType dtype) { return self->initBroadcastContext(comm, input, output, count, dtype); },
+      [self](const void* input, void* output, size_t count, mscclpp::DataType dtype) {
+        return self->generateBroadcastContextKey(input, output, count, dtype);
       });
   return broadcastAlgo;
 }

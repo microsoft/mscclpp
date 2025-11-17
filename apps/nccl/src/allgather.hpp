@@ -9,6 +9,7 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
@@ -222,12 +223,12 @@ class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
 };
 
 class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
@@ -240,12 +241,12 @@ class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm,
                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, ncclDataType_t);
-  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, ncclDataType_t);
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
   std::shared_ptr<char> scratchBuffer_;
