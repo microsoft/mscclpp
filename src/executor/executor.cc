@@ -101,7 +101,7 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 namespace {
 auto hasIBDevices = []() {
 #if defined(USE_IBVERBS)
-  return (mscclpp::getIBDeviceCount() > 0);
+  return mscclpp::getIBDeviceCount() > 0;
 #else
   return false;
 #endif
