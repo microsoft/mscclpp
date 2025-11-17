@@ -112,7 +112,7 @@ jobs:
   timeoutInMinutes: 40
   displayName: Test No IB Environment
   pool:
-    name:  msccl-ci-h100
+    name: msccl-ci-h100
 
   strategy:
     matrix:
