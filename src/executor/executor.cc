@@ -99,9 +99,7 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 }  // namespace std
 
 namespace {
-auto hasIBDevices = []() { 
-  printf("Number ib devices: %d\n", mscclpp::getIBDeviceCount());
-  return mscclpp::getIBDeviceCount() > 0; };
+auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
