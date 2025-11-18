@@ -48,7 +48,7 @@ void register_algorithm(nb::module_& m) {
           .def(
               "execute",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
-                 size_t inputSize, size_t outputSize, int dtype, uintptr_t stream, std::shared_ptr<Executor> executor,
+                 size_t inputSize, size_t outputSize, DataType dtype, uintptr_t stream, std::shared_ptr<Executor> executor,
                  std::unordered_map<std::string, uintptr_t> extras) {
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
                                     inputSize, outputSize, dtype, reinterpret_cast<cudaStream_t>(stream), executor,

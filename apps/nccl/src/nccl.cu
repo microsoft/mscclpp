@@ -20,6 +20,7 @@
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
+#include "datatype_conversion.hpp"
 #include "debug.h"
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
@@ -321,7 +322,6 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
   size_t messageSize = request.messageSize;
   const std::string& collective = request.collective;
-  ncclDataType_t dtype = (ncclDataType_t)request.dtype;
   bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
                              mscclpp::isCuMemMapAllocated(request.outputBuffer);
   bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
@@ -340,7 +340,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   }
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
-    bool isFp8 = dtype == ncclFloat8e4m3 || dtype == ncclFloat8e5m2;
+    bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
@@ -647,6 +647,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
@@ -656,13 +657,13 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
                                         .collective = "broadcast",
-                                        .dtype = datatype,
+                                        .dtype = dtype,
                                         .hints = hints};
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(
-        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, comm->executor, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -700,6 +701,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -707,14 +709,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
                                         .collective = "allreduce",
-                                        .dtype = datatype,
+                                        .dtype = dtype,
                                         .hints = {}};
 
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&reductionOperation)}};
     return static_cast<ncclResult_t>(
-        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, datatype, stream, comm->executor, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -754,6 +756,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -761,13 +764,13 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes * nRank,
                                         .collective = "reducescatter",
-                                        .dtype = datatype,
+                                        .dtype = dtype,
                                         .hints = {}};
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&op)}};
     return static_cast<ncclResult_t>(
-        algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, datatype, stream, comm->executor, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -806,6 +809,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -813,14 +817,14 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
                                         .collective = "allgather",
-                                        .dtype = datatype,
+                                        .dtype = dtype,
                                         .hints = {}};
 
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras = {};
     return static_cast<ncclResult_t>(
-        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, datatype, stream, comm->executor, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
