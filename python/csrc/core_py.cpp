@@ -36,6 +36,13 @@ void def_shared_future(nb::handle& m, const std::string& typestr) {
 void register_core(nb::module_& m) {
   m.def("version", &version);
 
+  nb::enum_<DataType>(m, "DataType")
+      .value("int32", DataType::INT32)
+      .value("uint32", DataType::UINT32)
+      .value("float16", DataType::FLOAT16)
+      .value("float32", DataType::FLOAT32)
+      .value("bfloat16", DataType::BFLOAT16);
+
   nb::class_<Bootstrap>(m, "Bootstrap")
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)

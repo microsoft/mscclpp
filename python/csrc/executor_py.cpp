@@ -15,13 +15,6 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_executor(nb::module_& m) {
-  nb::enum_<DataType>(m, "DataType")
-      .value("int32", DataType::INT32)
-      .value("uint32", DataType::UINT32)
-      .value("float16", DataType::FLOAT16)
-      .value("float32", DataType::FLOAT32)
-      .value("bfloat16", DataType::BFLOAT16);
-
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
 

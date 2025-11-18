@@ -14,7 +14,7 @@ from ._mscclpp import (
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
     Communicator,
     CollectiveBufferMode,
-    DeviceType,
+    DataType,
     Executor,
     ExecutionPlan,
 )
@@ -100,7 +100,7 @@ class Algorithm:
         output_buffer: int,
         input_size: int,
         output_size: int,
-        dtype: DeviceType,
+        dtype: DataType,
         stream: int,
         executor: Optional[Executor] = None,
         extras: Optional[Dict[str, int]] = None,
@@ -111,7 +111,7 @@ class Algorithm:
             int(output_buffer), 
             input_size, 
             output_size, 
-            int(dtype), 
+            dtype, 
             int(stream),
             executor,
             extras if extras is not None else {}

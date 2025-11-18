@@ -56,43 +56,41 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
         "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-               size_t outputSize, int dtype, cudaStream_t stream, std::unordered_map<std::string, uintptr_t>& extras) {
-          return self->allgatherKernelFunc(ctx, input, output, inputSize, static_cast<ncclDataType_t>(dtype), stream,
-                                           extras);
+               size_t outputSize, mscclpp::DataType dtype, cudaStream_t stream,
+               std::unordered_map<std::string, uintptr_t>& extras) {
+          return self->allgatherKernelFunc(ctx, input, output, inputSize, dtype, stream, extras);
         },
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
-               size_t outputSize, int dtype) {
-          return self->initAllgatherContext(comm, input, output, inputSize, static_cast<ncclDataType_t>(dtype));
-        },
-        [self](const void* input, void* output, size_t inputSize, size_t outputSize, int dtype) {
-          return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
-                                                   static_cast<ncclDataType_t>(dtype));
+               size_t outputSize,
+               mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
+        [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype) {
+          return self->generateAllgatherContextKey(input, output, inputSize, outputSize, dtype);
         });
     return allgatherAlgo;
   }
 
  private:
-  std::vector<std::shared_ptr<mscclpp::Connection>> conns_;
+  std::vector<mscclpp::Connection> conns_;
   std::shared_ptr<mscclpp::ProxyService> proxyService_;
   int worldSize_;
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm) {
-    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
     worldSize_ = comm->bootstrap()->getNranks();
     for (int i = 0; i < worldSize_; i++) {
       if (i == comm->bootstrap()->getRank()) continue;
       connectionFutures.push_back(comm->connect(mscclpp::Transport::CudaIpc, i));
     }
-    std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+    std::vector<mscclpp::Connection> connections;
     std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
                    [](const auto& future) { return future.get(); });
     this->conns_ = std::move(connections);
     proxyService_ = std::make_shared<mscclpp::ProxyService>();
-    proxyService_->startProxy();
+    proxyService_->startProxy(true);
   }
 
   ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t inputBytes, [[maybe_unused]] ncclDataType_t dtype, cudaStream_t stream,
+                                   size_t inputBytes, [[maybe_unused]] mscclpp::DataType dtype, cudaStream_t stream,
                                    std::unordered_map<std::string, uintptr_t>& extras) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
@@ -107,7 +105,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
                                                               const void* input, void* output, size_t inputBytes,
-                                                              ncclDataType_t dtype) {
+                                                              mscclpp::DataType dtype) {
     auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
     ctx->rank = comm->bootstrap()->getRank();
     ctx->workSize = comm->bootstrap()->getNranks();
@@ -149,7 +147,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
-                                                       size_t outputSize, ncclDataType_t dtype) {
+                                                       size_t outputSize, mscclpp::DataType dtype) {
     return {(void*)input, output, inputSize, outputSize, 0};
   }
 };
