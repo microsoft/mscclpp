@@ -1124,7 +1124,7 @@ enum Op getReduceOp(ncclRedOp_t op);
 class AllreducePacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreducePacket(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
@@ -1173,7 +1173,7 @@ class AllreduceNvls : public mscclpp::AlgorithmBuilder {
 class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsWithCopy(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
@@ -1198,7 +1198,7 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
 class Allreduce8 : public mscclpp::AlgorithmBuilder {
  public:
   Allreduce8(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
@@ -1228,7 +1228,7 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsPacket(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:

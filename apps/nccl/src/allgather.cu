@@ -199,10 +199,8 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo8::build() {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype) {
-        return self->initAllgatherContext(comm, input, output, inputSize, dtype);
-      },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype) {
-        return self->generateAllgatherContextKey(input, output, inputSize, dtype);
-      });
+             [[maybe_unused]] size_t outputSize,
+             mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
+             mscclpp::DataType dtype) { return self->generateAllgatherContextKey(input, output, inputSize, dtype); });
 }

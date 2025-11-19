@@ -54,7 +54,6 @@ class ExecutionPlan {
   friend class Executor;
 };
 
-
 /// High-level executor responsible for invoking execution plans on a communicator.
 class Executor {
  public:

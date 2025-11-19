@@ -13,7 +13,6 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
-
 void register_algorithm(nb::module_& m) {
   nb::enum_<CollectiveBufferMode>(m, "CollectiveBufferMode")
       .value("ANY", CollectiveBufferMode::ANY)
@@ -71,7 +70,6 @@ void register_algorithm(nb::module_& m) {
            nb::arg("id"), nb::arg("plan"), nb::arg("tags") = std::unordered_map<std::string, uint64_t>(),
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
-
 
   nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)

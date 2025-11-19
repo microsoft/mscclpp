@@ -119,8 +119,8 @@ class NativeAlgorithm : public Algorithm {
                                        DataType, cudaStream_t, std::unordered_map<std::string, uintptr_t>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
                                                                       size_t, size_t, DataType)>;
-  using ContextKeyGenFunc =
-      std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize, size_t outputSize, DataType dtype)>;
+  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
+                                                          size_t outputSize, DataType dtype)>;
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,

@@ -17,7 +17,6 @@ using namespace mscclpp;
 void register_executor(nb::module_& m) {
   nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
-
   nb::class_<ExecutionPlan>(m, "ExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))
       .def_prop_ro("name", [](const ExecutionPlan& self) -> std::string { return self.name(); })

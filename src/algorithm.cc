@@ -150,44 +150,41 @@ const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
 
 Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
-int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                          size_t inputSize, size_t outputSize, DataType dtype, cudaStream_t stream,
-                          std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t>&) {
+int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                          size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+                          std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
   int rank = comm->bootstrap()->getRank();
   switch (dtype) {
     case DataType::FLOAT16:
-      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, DataType::FLOAT16, plan_,
-                        stream);
+      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, DataType::FLOAT16, plan_, stream);
       break;
     case DataType::FLOAT32:
-      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, DataType::FLOAT32, plan_,
-                        stream);
+      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, DataType::FLOAT32, plan_, stream);
       break;
     case DataType::BFLOAT16:
-      executor->execute(rank, (__bfloat16*)input, (__bfloat16*)output, inputSize, outputSize,
-                        DataType::BFLOAT16, plan_, stream);
+      executor->execute(rank, (__bfloat16*)input, (__bfloat16*)output, inputSize, outputSize, DataType::BFLOAT16, plan_,
+                        stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
     case DataType::FP8_E4M3:
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize,
-                        DataType::FP8_E4M3, plan_, stream);
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FP8_E4M3, plan_,
+                        stream);
       break;
     case DataType::FP8_E5M2:
-      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize,
-                        DataType::FP8_E5M2, plan_, stream);
+      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FP8_E5M2, plan_,
+                        stream);
       break;
 #endif
     case DataType::INT32:
     case DataType::UINT32:
-      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_,
-                        stream);
+      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);
       break;
     default:
       WARN(EXEC, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
-      return 4; // TODO: need to fix
+      return 4;  // TODO: need to fix
   }
   return 0;
 }
