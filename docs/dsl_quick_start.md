@@ -30,7 +30,6 @@ def simple_allgather(name):
     
     Args:
         name: Algorithm name for identification
-        num_threads_per_block: CUDA threads per block
     """
     num_gpus = 2
     chunk_factor = 1  # Split data into num_gpus chunks
@@ -44,7 +43,6 @@ def simple_allgather(name):
         collective,
         num_gpus,
         protocol="Simple",  # Use Simple protocol (vs "LL" for low-latency)
-        num_threads_per_block=num_threads_per_block,
         min_message_size=0,
         max_message_size=2**30  # 1GB
     ):
@@ -149,11 +147,11 @@ Once you've written your algorithm, you need to run it:
 python3 path/to/simple_allgather.py > /path/to/simple_allgather.json
 ```
 
-after this use `executor_test.py` to validate correctness and measure performance.
+After this use `executor_test.py` to validate correctness and measure performance.
 
 ```bash
 # Test with 2 GPUs on a single node
-mpirun --allow-run-as-root -np 2 python3 /path/to/executor_test.py \
+mpirun --allow-run-as-root -np 2 python3 python/test/executor_test.py \
  -path /path/to/simple_allgather.json \
  --size 1M \
  --in_place
