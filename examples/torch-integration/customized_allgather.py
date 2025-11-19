@@ -70,8 +70,8 @@ def main():
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
     local_tensor_size = 1 << 20
     out_tensor = torch.randn(local_tensor_size * world_size, device="cuda", dtype=torch.float32)
-    tensor = out_tensor[rank * local_tensor_size:(rank + 1) * local_tensor_size]
-    comm =  CustomizedComm(mscclpp_group)                 
+    tensor = out_tensor[rank * local_tensor_size : (rank + 1) * local_tensor_size]
+    comm = CustomizedComm(mscclpp_group)
     comm.barrier_cpu()
     comm.all_gather(tensor, out_tensor, stream=torch.cuda.current_stream())
     torch.cuda.synchronize()

@@ -78,7 +78,7 @@ class Algorithm:
     @cached_property
     def tags(self) -> Dict[str, int]:
         return self._algorithm.tags
-    
+
     @cached_property
     def buffer_mode(self) -> CollectiveBufferMode:
         return self._algorithm.buffer_mode
@@ -106,15 +106,15 @@ class Algorithm:
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         return self._algorithm.execute(
-            comm, 
-            int(input_buffer), 
-            int(output_buffer), 
-            input_size, 
-            output_size, 
-            dtype, 
+            comm,
+            int(input_buffer),
+            int(output_buffer),
+            input_size,
+            output_size,
+            dtype,
             int(stream),
             executor,
-            extras if extras is not None else {}
+            extras if extras is not None else {},
         )
 
 
@@ -140,7 +140,6 @@ class AlgorithmCollectionBuilder:
             _AlgorithmCollectionBuilder.reset()
             cls._instance = None
 
-    
     def __init__(self):
         if not hasattr(self, "_initialized"):
             self._builder = _AlgorithmCollectionBuilder.get_instance()
@@ -158,11 +157,12 @@ class AlgorithmCollectionBuilder:
 
     def set_algorithm_selector(self, selector):
         self._builder.set_algorithm_selector(selector)
-    
+
     def set_fallback_algorithm_selector(self, selector):
         self._builder.set_fallback_algorithm_selector(selector)
-    
+
     def build(self):
         return self._builder.build()
+
 
 atexit.register(AlgorithmCollectionBuilder.reset)

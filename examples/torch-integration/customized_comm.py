@@ -153,6 +153,7 @@ class CustomizedComm:
         self.executor = None
         self.comm = None
 
+
 def init_dist() -> CustomizedComm:
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
