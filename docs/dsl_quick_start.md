@@ -147,7 +147,7 @@ Once you've written your algorithm, you need to run it:
 python3 path/to/simple_allgather.py > /path/to/simple_allgather.json
 ```
 
-After this use `executor_test.py` to validate correctness and measure performance.
+After this, use `executor_test.py` to validate correctness and measure performance.
 
 ```bash
 # Test with 2 GPUs on a single node
