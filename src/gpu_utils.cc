@@ -66,7 +66,7 @@ AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() {
   (void)cudaThreadExchangeStreamCaptureMode(&mode_);
 }
 
-CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId) {
+CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId), origDeviceId_(-1) {
   if (deviceId_ >= 0) {
     MSCCLPP_CUDATHROW(cudaGetDevice(&origDeviceId_));
     if (origDeviceId_ != deviceId_) {
@@ -76,10 +76,8 @@ CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId) {
 }
 
 CudaDeviceGuard::~CudaDeviceGuard() {
-  if (deviceId_ >= 0) {
-    if (origDeviceId_ != deviceId_) {
-      (void)cudaSetDevice(origDeviceId_);
-    }
+  if (deviceId_ >= 0 && origDeviceId_ >= 0 && origDeviceId_ != deviceId_) {
+    (void)cudaSetDevice(origDeviceId_);
   }
 }
 

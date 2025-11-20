@@ -41,6 +41,10 @@ namespace mscclpp {
 struct AvoidCudaGraphCaptureGuard {
   AvoidCudaGraphCaptureGuard();
   ~AvoidCudaGraphCaptureGuard();
+  AvoidCudaGraphCaptureGuard(const AvoidCudaGraphCaptureGuard&) = delete;
+  AvoidCudaGraphCaptureGuard& operator=(const AvoidCudaGraphCaptureGuard&) = delete;
+  AvoidCudaGraphCaptureGuard(AvoidCudaGraphCaptureGuard&&) = delete;
+  AvoidCudaGraphCaptureGuard& operator=(AvoidCudaGraphCaptureGuard&&) = delete;
   cudaStreamCaptureMode mode_;
   bool active_;
 };
@@ -49,6 +53,10 @@ struct AvoidCudaGraphCaptureGuard {
 struct CudaDeviceGuard {
   CudaDeviceGuard(int deviceId);
   ~CudaDeviceGuard();
+  CudaDeviceGuard(const CudaDeviceGuard&) = delete;
+  CudaDeviceGuard& operator=(const CudaDeviceGuard&) = delete;
+  CudaDeviceGuard(CudaDeviceGuard&&) = delete;
+  CudaDeviceGuard& operator=(CudaDeviceGuard&&) = delete;
   int deviceId_;
   int origDeviceId_;
 };
