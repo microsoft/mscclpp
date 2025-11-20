@@ -10,6 +10,7 @@ from ._mscclpp import (
     Connection,
     connect_nvls_collective,
     EndpointConfig,
+    Semaphore,
     Host2DeviceSemaphore,
     Host2HostSemaphore,
     ProxyService,
