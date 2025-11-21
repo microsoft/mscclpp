@@ -4,7 +4,7 @@ The MSCCL++ DSL (Domain Specific Language) provides a high-level Python API for 
 
 ## Installation
 
-You can follow the same steps in the installation [Quick Start](quickstart). 
+You can follow the same steps in the [Quick Start](quickstart).
 
 After finishing the installation in the quick start section, you can add the following steps to install some default algorithms from the DSL:
 
