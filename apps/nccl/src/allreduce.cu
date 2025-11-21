@@ -64,7 +64,13 @@ struct AllpairAdapter {
 #if defined(__FP8_TYPES_EXIST__)
         // FP8-specific tuning for 32KB-256KB range
         if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-          if (sizeBytes >= (32 << 10) && sizeBytes <= (256 << 10)) {
+          if (sizeBytes == (32 << 10)) {
+            nThreadsPerBlock = 64;
+          }
+          if (sizeBytes == (64 << 10)) {
+            nThreadsPerBlock = 128;
+          }
+          if (sizeBytes >= (128 << 10) && sizeBytes <= (256 << 10)) {
             nThreadsPerBlock = 256;
           }
         }
