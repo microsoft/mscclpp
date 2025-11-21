@@ -26,14 +26,20 @@ void register_memory_channel(nb::module_& m) {
 
   nb::class_<MemoryChannel>(m, "MemoryChannel")
       .def(nb::init<>())
-      .def("__init__",
-           [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
-              RegisteredMemory dst, RegisteredMemory src) { new (memoryChannel) MemoryChannel(semaphore, dst, src); })
-      .def("__init__",
-           [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
-              RegisteredMemory dst, RegisteredMemory src, uintptr_t packet_buffer) {
-             new (memoryChannel) MemoryChannel(semaphore, dst, src, reinterpret_cast<void*>(packet_buffer));
-           })
+      .def(
+          "__init__",
+          [](MemoryChannel* memoryChannel, std::shared_ptr<MemoryDevice2DeviceSemaphore> semaphore,
+             RegisteredMemory dst, RegisteredMemory src, uintptr_t packet_buffer) {
+            new (memoryChannel) MemoryChannel(semaphore, dst, src, reinterpret_cast<void*>(packet_buffer));
+          },
+          nb::arg("semaphore"), nb::arg("dst"), nb::arg("src"), nb::arg("packet_buffer") = 0)
+      .def(
+          "__init__",
+          [](MemoryChannel* memoryChannel, const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src,
+             uintptr_t packet_buffer = 0) {
+            new (memoryChannel) MemoryChannel(semaphore, dst, src, reinterpret_cast<void*>(packet_buffer));
+          },
+          nb::arg("semaphore"), nb::arg("dst"), nb::arg("src"), nb::arg("packet_buffer") = 0)
       .def("device_handle", &MemoryChannel::deviceHandle);
 
   nb::class_<MemoryChannel::DeviceHandle>(m, "MemoryChannelDeviceHandle")
