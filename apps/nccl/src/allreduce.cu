@@ -55,8 +55,7 @@ struct AllpairAdapter {
           // Half-specific tuning for 32KB-256KB range
           if (sizeBytes == (32 << 10)) {
             nThreadsPerBlock = 64;
-          }
-          if (sizeBytes >= (64 << 10) && sizeBytes <= (256 << 10)) {
+          } else if (sizeBytes >= (64 << 10) && sizeBytes <= (256 << 10)) {
             nThreadsPerBlock = 128;
           }
         }
@@ -66,11 +65,9 @@ struct AllpairAdapter {
         if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
           if (sizeBytes == (32 << 10)) {
             nThreadsPerBlock = 64;
-          }
-          if (sizeBytes == (64 << 10)) {
+          } else if (sizeBytes == (64 << 10)) {
             nThreadsPerBlock = 128;
-          }
-          if (sizeBytes >= (128 << 10) && sizeBytes <= (256 << 10)) {
+          } else if (sizeBytes >= (128 << 10) && sizeBytes <= (256 << 10)) {
             nThreadsPerBlock = 256;
           }
         }
