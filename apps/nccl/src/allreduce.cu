@@ -48,6 +48,31 @@ struct AllpairAdapter {
         nBlocks = (worldSize - 1) * 8;
         nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
         deviceFlag = deviceFlag56;
+
+#if defined(__HIP_PLATFORM_AMD__)
+        size_t sizeBytes = sizeof(T) * nelems;
+        if constexpr (std::is_same_v<T, __half>) {
+          // Half-specific tuning for 32KB-256KB range
+          if (sizeBytes == (32 << 10)) {
+            nThreadsPerBlock = 64;
+          } else if (sizeBytes >= (64 << 10) && sizeBytes <= (256 << 10)) {
+            nThreadsPerBlock = 128;
+          }
+        }
+
+#if defined(__FP8_TYPES_EXIST__)
+        // FP8-specific tuning for 32KB-256KB range
+        if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+          if (sizeBytes == (32 << 10)) {
+            nThreadsPerBlock = 64;
+          } else if (sizeBytes == (64 << 10)) {
+            nThreadsPerBlock = 128;
+          } else if (sizeBytes >= (128 << 10) && sizeBytes <= (256 << 10)) {
+            nThreadsPerBlock = 256;
+          }
+        }
+#endif
+#endif
       }
 #if defined(ENABLE_NPKIT)
       size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
