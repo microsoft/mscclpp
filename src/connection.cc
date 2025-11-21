@@ -96,17 +96,10 @@ CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const End
   } else if (localEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().type == DeviceType::GPU) {
     if (isSameProcess(localEndpoint, remoteEndpoint) && localDeviceId != remoteDeviceId) {
       // Connecting two GPUs in the same process - need to enable peer access explicitly
-      int originalDeviceId;
-      MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));
-      if (originalDeviceId != localDeviceId) {
-        MSCCLPP_CUDATHROW(cudaSetDevice(localDeviceId));
-      }
+      CudaDeviceGuard deviceGuard(localDeviceId);
       auto ret = cudaDeviceEnablePeerAccess(remoteDeviceId, 0);
       if (ret != cudaSuccess && ret != cudaErrorPeerAccessAlreadyEnabled) {
         MSCCLPP_CUDATHROW(ret);
-      }
-      if (originalDeviceId != localDeviceId) {
-        MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));
       }
     }
   }

@@ -66,6 +66,21 @@ AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() {
   (void)cudaThreadExchangeStreamCaptureMode(&mode_);
 }
 
+CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId), origDeviceId_(-1) {
+  if (deviceId_ >= 0) {
+    MSCCLPP_CUDATHROW(cudaGetDevice(&origDeviceId_));
+    if (origDeviceId_ != deviceId_) {
+      MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+    }
+  }
+}
+
+CudaDeviceGuard::~CudaDeviceGuard() {
+  if (deviceId_ >= 0 && origDeviceId_ >= 0 && origDeviceId_ != deviceId_) {
+    (void)cudaSetDevice(origDeviceId_);
+  }
+}
+
 CudaStreamWithFlags::CudaStreamWithFlags() : stream_(nullptr) { MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_)); }
 
 CudaStreamWithFlags::CudaStreamWithFlags(unsigned int flags) {
@@ -79,11 +94,8 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 
 void CudaStreamWithFlags::set(unsigned int flags) {
   if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
-  int originalDeviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));  // Save the current device
-  MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+  CudaDeviceGuard deviceGuard(deviceId_);
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
-  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));  // Restore the original device
 }
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
@@ -122,6 +134,18 @@ std::shared_ptr<GpuStreamPool> gpuStreamPool() {
 namespace detail {
 
 CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
+
+int gpuIdFromAddress(void* ptr) {
+  int deviceId;
+  auto res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, reinterpret_cast<CUdeviceptr>(ptr));
+  if (res == CUDA_ERROR_INVALID_VALUE) {
+    // not a GPU address
+    return -1;
+  } else {
+    MSCCLPP_CUTHROW(res);
+  }
+  return deviceId;
+}
 
 /// set memory access permission to read-write
 /// @param base Base memory pointer.
