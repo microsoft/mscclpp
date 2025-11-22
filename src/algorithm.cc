@@ -3,85 +3,103 @@
 
 #include <mscclpp/algorithm.hpp>
 
+#include "logger.hpp"
+
 namespace mscclpp {
 
-class Algorithm::Impl {
- public:
-  Impl(std::string name, std::string collective, Algorithm::InitFunc initFunc, Algorithm::KernelFunc kernelFunc,
-       Algorithm::ContextInitFunc contextInitFunc, Algorithm::ContextKeyGenFunc contextKeyGenFunc)
-      : name_(name),
-        collective_(collective),
-        initFunc_(initFunc),
-        kernelLaunchFunc_(kernelFunc),
-        contextInitFunc_(contextInitFunc),
-        contextKeyGenFunc_(contextKeyGenFunc) {}
-  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, DataType dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+CollectiveBufferMode CollectiveRequest::bufferMode() const {
+  if (inputBuffer == outputBuffer) return CollectiveBufferMode::IN_PLACE;
+  if (collective == "allgather") {
+    size_t rankOffset = rank * messageSize;
+    const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
+    if (static_cast<const void*>(expectedInput) == inputBuffer) {
+      return CollectiveBufferMode::IN_PLACE;
+    }
+    return CollectiveBufferMode::OUT_OF_PLACE;
+  }
+  return CollectiveBufferMode::OUT_OF_PLACE;
+}
 
-  std::string name_;
-  std::string collective_;
-  Algorithm::InitFunc initFunc_;
-  Algorithm::KernelFunc kernelLaunchFunc_;
-  Algorithm::ContextInitFunc contextInitFunc_;
-  Algorithm::ContextKeyGenFunc contextKeyGenFunc_;
+NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
+                                 ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc,
+                                 size_t minMessageSize, size_t maxMessageSize, CollectiveBufferMode bufferMode,
+                                 std::unordered_map<std::string, uint64_t> tags, Constraint constraint)
+    : name_(name),
+      collective_(collective),
+      initFunc_(initFunc),
+      kernelLaunchFunc_(kernelFunc),
+      contextInitFunc_(contextInitFunc),
+      contextKeyGenFunc_(contextKeyGenFunc),
+      minMessageSize_(minMessageSize),
+      maxMessageSize_(maxMessageSize),
+      bufferMode_(bufferMode),
+      tags_(tags),
+      constraint_(constraint) {}
 
-  bool initialized_ = false;
-  std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
-};
-
-int Algorithm::Impl::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                            DataType dtype, cudaStream_t stream,
-                            std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+int NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                             size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor>,
+                             std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
-    initFunc_(comm, extras);
+    initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, count, dtype);
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
-    auto ctx = contextInitFunc_(comm, input, output, count, dtype);
+    auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
     contexts_[ctxKey] = ctx;
   }
-  return kernelLaunchFunc_(contexts_[ctxKey], input, output, count, dtype, stream, extras);
+  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, stream, extras);
 }
 
-Algorithm::Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
-                     ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc)
-    : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
+const std::string& NativeAlgorithm::name() const { return name_; }
 
-int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                      DataType dtype, cudaStream_t stream,
-                      std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  return this->impl_->launch(comm, input, output, count, dtype, stream, extras);
+const std::string& NativeAlgorithm::collective() const { return collective_; }
+
+const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
+  static std::pair<size_t, size_t> range;
+  range = {minMessageSize_, maxMessageSize_};
+  return range;
 }
 
-bool Algorithm::isEmpty() { return !impl_; }
+const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return tags_; }
 
-std::string Algorithm::name() const { return impl_->name_; }
+const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
 
-std::string Algorithm::collective() const { return impl_->collective_; }
+Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
-                                            Algorithm algorithm) {
+                                            std::shared_ptr<Algorithm> algorithm) {
   this->algoMapByCollective_[collective][algoName] = algorithm;
 }
 
-Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                               size_t messageSize, DataType dtype, int nRanksPerNode, int worldSize) {
-  Algorithm algo;
+std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const CollectiveRequest& request) {
+  std::shared_ptr<Algorithm> algo;
   if (algoSelector_) {
-    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode, worldSize);
+    algo = algoSelector_(algoMapByCollective_, request);
   }
-  if (algo.isEmpty()) {
-    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode,
-                                 worldSize);
+  if (!algo) {
+    algo = fallbackAlgoSelector_(algoMapByCollective_, request);
   }
   return algo;
 }
 
+std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection::getAlgorithmsByCollective(
+    const std::string& collective) const {
+  auto it = algoMapByCollective_.find(collective);
+  if (it != algoMapByCollective_.end()) {
+    return it->second;
+  } else {
+    return {};
+  }
+}
+
+std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::gAlgorithmCollectionBuilder_;
 std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
-  static std::shared_ptr<AlgorithmCollectionBuilder> instance(new AlgorithmCollectionBuilder());
-  return instance;
+  if (!gAlgorithmCollectionBuilder_) {
+    gAlgorithmCollectionBuilder_ = std::shared_ptr<AlgorithmCollectionBuilder>(new AlgorithmCollectionBuilder());
+  }
+  return gAlgorithmCollectionBuilder_;
 }
 
 void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
@@ -98,11 +116,78 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
   auto collection = std::make_shared<AlgorithmCollection>();
   for (const auto& builder : algoBuilders_) {
     auto algo = builder->build();
-    collection->registerAlgorithm(algo.collective(), algo.name(), algo);
+    collection->registerAlgorithm(algo->collective(), algo->name(), algo);
   }
   collection->algoSelector_ = algoSelector_;
   collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;
 }
 
+void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
+
+DslAlgorithm::DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags,
+                           Constraint constraint)
+    : plan_(plan), id_(id), tags_(tags), constraint_(constraint) {}
+
+const std::string& DslAlgorithm::name() const { return plan_.name(); }
+
+const std::string& DslAlgorithm::collective() const { return plan_.collective(); }
+
+const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
+  static std::pair<size_t, size_t> range;
+  range = {plan_.minMessageSize(), plan_.maxMessageSize()};
+  return range;
+}
+
+const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return tags_; }
+
+const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
+  // TODO: need to fix
+  static CollectiveBufferMode mode =
+      plan_.isInPlace() ? CollectiveBufferMode::IN_PLACE : CollectiveBufferMode::OUT_OF_PLACE;
+  return mode;
+}
+
+Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
+
+int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                          size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+                          std::unordered_map<std::string, uintptr_t>&) {
+  if (!executor) {
+    THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
+  }
+  int rank = comm->bootstrap()->getRank();
+  switch (dtype) {
+    case DataType::FLOAT16:
+      executor->execute(rank, (half*)input, (half*)output, inputSize, outputSize, DataType::FLOAT16, plan_, stream);
+      break;
+    case DataType::FLOAT32:
+      executor->execute(rank, (float*)input, (float*)output, inputSize, outputSize, DataType::FLOAT32, plan_, stream);
+      break;
+    case DataType::BFLOAT16:
+      executor->execute(rank, (__bfloat16*)input, (__bfloat16*)output, inputSize, outputSize, DataType::BFLOAT16, plan_,
+                        stream);
+      break;
+#if defined(__FP8_TYPES_EXIST__)
+    case DataType::FP8_E4M3:
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FP8_E4M3, plan_,
+                        stream);
+      break;
+    case DataType::FP8_E5M2:
+      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FP8_E5M2, plan_,
+                        stream);
+      break;
+#endif
+    case DataType::INT32:
+    case DataType::UINT32:
+      executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);
+      break;
+    default:
+      WARN(EXEC, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
+      return 4;  // TODO: need to fix
+  }
+  return 0;
+}
+
+std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 }  // namespace mscclpp

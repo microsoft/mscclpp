@@ -5,6 +5,7 @@
 #ifndef NCCL_H_
 #define NCCL_H_
 
+#include <cassert>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 
@@ -280,6 +281,30 @@ static inline size_t ncclTypeSize(ncclDataType_t type) {
       return 0;
   }
   return 0;
+}
+
+static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
+  switch (dtype) {
+    case mscclpp::DataType::INT32:
+      return ncclInt32;
+    case mscclpp::DataType::UINT32:
+      return ncclUint32;
+    case mscclpp::DataType::FLOAT16:
+      return ncclFloat16;
+    case mscclpp::DataType::FLOAT32:
+      return ncclFloat32;
+    case mscclpp::DataType::BFLOAT16:
+      return ncclBfloat16;
+#ifdef __FP8_TYPES_EXIST__
+    case mscclpp::DataType::FP8_E4M3:
+      return ncclFloat8e4m3;
+    case mscclpp::DataType::FP8_E5M2:
+      return ncclFloat8e5m2;
+#endif
+    default:
+      assert(false && "Unsupported mscclpp::DataType");
+      return ncclNumTypes;
+  }
 }
 
 /* ncclScalarResidence_t: Location and dereferencing logic for scalar arguments. */

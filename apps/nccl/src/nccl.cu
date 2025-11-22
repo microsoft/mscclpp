@@ -20,7 +20,6 @@
 
 #include "allgather.hpp"
 #include "allreduce.hpp"
-#include "broadcast.hpp"
 #include "datatype_conversion.hpp"
 #include "debug.h"
 
@@ -158,6 +157,53 @@ static bool tryLoadNcclSharedLib() {
   return false;
 }
 
+struct DslAlgoConfig {
+  std::string filename;
+  std::string collective;
+  int nRanksPerNode;
+  int worldSize;
+  std::unordered_map<std::string, uint64_t> tags;
+};
+
+static void registerDefaultDslAlgorithms(int rank) {
+  static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
+      {"allreduce_2nodes.json", "allreduce", 8, 16, {{"default", 1}}},
+      {"allreduce_2nodes_128K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
+
+  static auto generateFileId = [](const std::string& input) {
+    std::hash<std::string> hasher;
+    size_t hashValue = hasher(input);
+    std::ostringstream oss;
+    oss << std::hex << hashValue;
+    return oss.str();
+  };
+
+  std::string planDir = mscclpp::env()->executionPlanDir;
+  if (!std::filesystem::exists(planDir)) {
+    INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
+    return;
+  }
+  for (const auto& config : defaultAlgoConfigs) {
+    std::string planPath = planDir + "/" + config.filename;
+    INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
+    if (!std::filesystem::exists(planPath)) {
+      INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
+      continue;
+    }
+    std::string planId = generateFileId(planPath);
+    auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+    try {
+      auto executionPlan = mscclpp::ExecutionPlan(planPath, rank);
+      auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
+          planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
+      collectionBuilder->addAlgorithmBuilder(algoBuilder);
+      INFO(MSCCLPP_NCCL, "Successfully loaded plan: %s for collective: %s", planId.c_str(), config.collective.c_str());
+    } catch (const std::exception& e) {
+      WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
+    }
+  }
+}
+
 // Declare the global map to store associations between raw pointer and shared pointer
 static std::unordered_map<void*, std::shared_ptr<char>> ptrMap;
 
@@ -173,50 +219,11 @@ struct ncclComm {
   std::shared_ptr<mscclpp::AlgorithmCollection> algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
-  std::shared_ptr<mscclpp::ExecutionPlanRegistry> planRegistry_;
   int nRanksPerNode;
   int worldSize;
 
   void* mscclppNcclComm;
 };
-
-static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor, int rank, ncclDataType_t datatype,
-                                    const void* sendbuff, void* recvbuff, size_t sendBytes, size_t recvBytes,
-                                    std::shared_ptr<mscclpp::ExecutionPlan> plan, cudaStream_t stream) {
-  switch (datatype) {
-    case ncclFloat16:
-      executor->execute(rank, (half*)sendbuff, (half*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::FLOAT16, *plan,
-                        stream);
-      break;
-    case ncclFloat32:
-      executor->execute(rank, (float*)sendbuff, (float*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::FLOAT32,
-                        *plan, stream);
-      break;
-    case ncclBfloat16:
-      executor->execute(rank, (__bfloat16*)sendbuff, (__bfloat16*)recvbuff, sendBytes, recvBytes,
-                        mscclpp::DataType::BFLOAT16, *plan, stream);
-      break;
-#if defined(__FP8_TYPES_EXIST__)
-    case ncclFloat8e4m3:
-      executor->execute(rank, (__fp8_e4m3*)sendbuff, (__fp8_e4m3*)recvbuff, sendBytes, recvBytes,
-                        mscclpp::DataType::FP8_E4M3, *plan, stream);
-      break;
-    case ncclFloat8e5m2:
-      executor->execute(rank, (__fp8_e5m2*)sendbuff, (__fp8_e5m2*)recvbuff, sendBytes, recvBytes,
-                        mscclpp::DataType::FP8_E5M2, *plan, stream);
-      break;
-#endif
-    case ncclInt32:
-    case ncclUint32:
-      executor->execute(rank, (int*)sendbuff, (int*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT32, *plan,
-                        stream);
-      break;
-    default:
-      WARN("datatype is invalid");
-      return ncclInvalidArgument;
-  }
-  return ncclSuccess;
-}
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) {
@@ -244,22 +251,25 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
   return ncclCommInitRank(comm, nranks, commId, rank);
 }
 
-static void registerCustomizedAlgo() {
+static void registerCustomizedAlgo(ncclComm* commPtr) {
   auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
-  std::shared_ptr<BroadcastAlgo6> broadcastAlgo6 = std::make_shared<BroadcastAlgo6>();
-  collectionBuilder->addAlgorithmBuilder(broadcastAlgo6);
 
   std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
-  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 = std::make_shared<AllgatherAlgo8>();
+  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 =
+      std::make_shared<AllgatherAlgo8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
   collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
   // TODO(binyli): remove allgather8 algo, use nccl by default
   collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
 
-  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo = std::make_shared<AllreducePacket>();
+  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo =
+      std::make_shared<AllreducePacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
   std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
-  std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo = std::make_shared<AllreduceNvlsWithCopy>();
-  std::shared_ptr<Allreduce8> allreduceAllreduce8Algo = std::make_shared<Allreduce8>();
-  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo = std::make_shared<AllreduceNvlsPacket>();
+  std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo =
+      std::make_shared<AllreduceNvlsWithCopy>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  std::shared_ptr<Allreduce8> allreduceAllreduce8Algo =
+      std::make_shared<Allreduce8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo =
+      std::make_shared<AllreduceNvlsPacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
   collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
   collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
@@ -276,19 +286,44 @@ static std::pair<int, int> getDeviceComputeCapability() {
   return std::make_pair(major, minor);
 }
 
-static mscclpp::Algorithm algoSelector(
-    const std::unordered_map<std::string, std::unordered_map<std::string, mscclpp::Algorithm>>& algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, mscclpp::DataType dtype,
-    int nRanksPerNode, int worldSize) {
-  if (nRanksPerNode != worldSize) {
+static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, const mscclpp::CollectiveRequest& request) {
+  bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
+  bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
+  bool collectiveMatch = algo->collective() == request.collective;
+  bool bufferModeMatch =
+      algo->bufferMode() == mscclpp::CollectiveBufferMode::ANY || request.bufferMode() == algo->bufferMode();
+  size_t effectiveSize =
+      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
+  bool minSizeMatch = effectiveSize >= algo->messageRange().first;
+  bool maxSizeMatch = effectiveSize <= algo->messageRange().second;
+  bool result =
+      worldSizeMatch && ranksPerNodeMatch && collectiveMatch && bufferModeMatch && minSizeMatch && maxSizeMatch;
+  return result;
+}
+
+static std::shared_ptr<mscclpp::Algorithm> algoSelector(
+    const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
+        algoMapByCollective,
+    const mscclpp::CollectiveRequest& request) {
+  for (const auto& pair : algoMapByCollective.at(request.collective)) {
+    const auto& algo = pair.second;
+    if (algo->type() == mscclpp::AlgorithmType::DSL) {
+      if (matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
+        return algo;
+      }
+    }
+  }
+  if (request.nRanksPerNode != request.worldSize) {
     // Fallback to nccl/rccl when multi-node
-    return mscclpp::Algorithm();
+    return nullptr;
   }
   static const bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
   static const bool isNvlsSupported = mscclpp::isNvlsSupported();
   static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
-  bool isCuMemMapAllocated =
-      mscclpp::isCuMemMapAllocated(const_cast<void*>(input)) && mscclpp::isCuMemMapAllocated(output);
+  size_t messageSize = request.messageSize;
+  const std::string& collective = request.collective;
+  bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
+                             mscclpp::isCuMemMapAllocated(request.outputBuffer);
   bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
@@ -305,7 +340,7 @@ static mscclpp::Algorithm algoSelector(
   }
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
-    bool isFp8 = dtype == mscclpp::DataType::FP8_E4M3 || dtype == mscclpp::DataType::FP8_E5M2;
+    bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
@@ -333,21 +368,7 @@ static mscclpp::Algorithm algoSelector(
 #endif
   }
   INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl/rccl");
-  return mscclpp::Algorithm();
-}
-
-std::shared_ptr<mscclpp::ExecutionPlanHandle> executionPlanDefaultSelector(
-    const std::vector<std::shared_ptr<mscclpp::ExecutionPlanHandle>> plans, const mscclpp::ExecutionRequest&) {
-  if (plans.empty()) {
-    INFO(MSCCLPP_NCCL, "No execution plans available for selection");
-    return nullptr;
-  }
-  for (auto plan : plans) {
-    if (plan->tags.find("default") == plan->tags.end()) {
-      return plan;
-    }
-  }
-  return plans[0];
+  return nullptr;
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
@@ -370,14 +391,12 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->comm = mscclppComm;
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
-  commPtr->planRegistry_ = mscclpp::ExecutionPlanRegistry::getInstance();
 
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
-  commPtr->planRegistry_->loadDefaultPlans(rank);
-  commPtr->planRegistry_->setDefaultSelector(executionPlanDefaultSelector);
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
-  registerCustomizedAlgo();
+  registerDefaultDslAlgorithms(rank);
+  registerCustomizedAlgo(commPtr);
   commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
 
   *comm = commPtr;
@@ -628,25 +647,23 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
-  auto planHandle = comm->planRegistry_->select("broadcast", comm->comm->bootstrap()->getNranks(),
-                                                comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, hints);
-  if (planHandle != nullptr) {
-    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandle->plan, stream);
-  }
-  mscclpp::DataType mscclppDataType = ncclDataTypeToMscclpp(datatype);
-  auto algo = comm->algorithmCollection->selectAlgorithm(
-      "broadcast", sendbuff, recvbuff, count * ncclTypeSize(datatype), mscclppDataType,
-      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
-  if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras{
-        {"root", std::make_shared<int>(root)},
-        {"scratch", comm->scratchBuffer_},
-        {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
+  mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
+                                        .nRanksPerNode = comm->nRanksPerNode,
+                                        .rank = rank,
+                                        .inputBuffer = sendbuff,
+                                        .outputBuffer = recvbuff,
+                                        .messageSize = bytes,
+                                        .collective = "broadcast",
+                                        .dtype = dtype,
+                                        .hints = hints};
+  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  if (algo != nullptr) {
+    std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(
-        algo.launch(comm->comm, sendbuff, recvbuff, count, mscclppDataType, stream, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -684,24 +701,22 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
     return mscclppNcclOps.AllReduce(sendbuff, recvbuff, count, datatype, reductionOperation,
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
+                                        .nRanksPerNode = comm->nRanksPerNode,
+                                        .rank = rank,
+                                        .inputBuffer = sendbuff,
+                                        .outputBuffer = recvbuff,
+                                        .messageSize = bytes,
+                                        .collective = "allreduce",
+                                        .dtype = dtype,
+                                        .hints = {}};
 
-  auto planHandler = comm->planRegistry_->select("allreduce", comm->comm->bootstrap()->getNranks(),
-                                                 comm->comm->bootstrap()->getNranksPerNode(),
-                                                 comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
-  if (planHandler != nullptr) {
-    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes, planHandler->plan, stream);
-  }
-  mscclpp::DataType mscclppDataType = ncclDataTypeToMscclpp(datatype);
-  auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allreduce", sendbuff, recvbuff, count * ncclTypeSize(datatype), mscclppDataType,
-      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
-  if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras{
-        {"op", std::make_shared<int>(reductionOperation)},
-        {"scratch", comm->scratchBuffer_},
-        {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
+  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  if (algo != nullptr) {
+    std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&reductionOperation)}};
     return static_cast<ncclResult_t>(
-        algo.launch(comm->comm, sendbuff, recvbuff, count, mscclppDataType, stream, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -741,13 +756,21 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
-
-  auto planHandle = comm->planRegistry_->select("reducescatter", comm->comm->bootstrap()->getNranks(),
-                                                comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
-  if (planHandle != nullptr) {
-    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes * nRank, bytes, planHandle->plan,
-                           stream);
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
+                                        .nRanksPerNode = comm->nRanksPerNode,
+                                        .rank = rank,
+                                        .inputBuffer = sendbuff,
+                                        .outputBuffer = recvbuff,
+                                        .messageSize = bytes * nRank,
+                                        .collective = "reducescatter",
+                                        .dtype = dtype,
+                                        .hints = {}};
+  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  if (algo != nullptr) {
+    std::unordered_map<std::string, uintptr_t> extras{{"op", reinterpret_cast<uintptr_t>(&op)}};
+    return static_cast<ncclResult_t>(
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -786,22 +809,22 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  auto planHandle = comm->planRegistry_->select("allgather", comm->comm->bootstrap()->getNranks(),
-                                                comm->comm->bootstrap()->getNranksPerNode(),
-                                                comm->comm->bootstrap()->getRank(), sendbuff, recvbuff, bytes, {});
-  if (planHandle != nullptr) {
-    return executeWithPlan(comm->executor, rank, datatype, sendbuff, recvbuff, bytes, bytes * nRank, planHandle->plan,
-                           stream);
-  }
-  mscclpp::DataType mscclppDataType = ncclDataTypeToMscclpp(datatype);
-  auto algo = comm->algorithmCollection->selectAlgorithm(
-      "allgather", sendbuff, recvbuff, nRank * sendcount * ncclTypeSize(datatype), mscclppDataType,
-      comm->comm->bootstrap()->getNranksPerNode(), comm->comm->bootstrap()->getNranks());
-  if (!algo.isEmpty()) {
-    std::unordered_map<std::string, std::shared_ptr<void>> extras = {
-        {"scratch", comm->scratchBuffer_}, {"scratch_size", std::make_shared<size_t>(comm->scratchBufferSize_)}};
+  mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
+                                        .nRanksPerNode = comm->nRanksPerNode,
+                                        .rank = rank,
+                                        .inputBuffer = sendbuff,
+                                        .outputBuffer = recvbuff,
+                                        .messageSize = bytes,
+                                        .collective = "allgather",
+                                        .dtype = dtype,
+                                        .hints = {}};
+
+  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  if (algo != nullptr) {
+    std::unordered_map<std::string, uintptr_t> extras = {};
     return static_cast<ncclResult_t>(
-        algo.launch(comm->comm, sendbuff, recvbuff, sendcount, mscclppDataType, stream, extras));
+        algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype, stream, comm->executor, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

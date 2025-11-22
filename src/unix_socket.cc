@@ -229,6 +229,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
           std::lock_guard<std::mutex> lock(mutex_);
           auto it = fdSet_.find(fd);
           if (it == fdSet_.end()) {
+            WARN("Requested fd %d not found, size of fdSet_ is %zu", fd, fdSet_.size());
             throw Error("Requested fd not found: " + std::to_string(fd), ErrorCode::InvalidUsage);
           }
           fdToSend = *it;

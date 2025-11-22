@@ -1123,21 +1123,22 @@ enum Op getReduceOp(ncclRedOp_t op);
 
 class AllreducePacket : public mscclpp::AlgorithmBuilder {
  public:
-  mscclpp::Algorithm build() override;
+  AllreducePacket(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
-                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, mscclpp::DataType);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   const int nSegmentsForScratchBuffer_ = 2;
   std::vector<mscclpp::Connection> conns_;
 
@@ -1150,13 +1151,13 @@ class AllreducePacket : public mscclpp::AlgorithmBuilder {
 class AllreduceNvls : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvls() = default;
-  mscclpp::Algorithm build() override;
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, mscclpp::DataType);
@@ -1171,14 +1172,15 @@ class AllreduceNvls : public mscclpp::AlgorithmBuilder {
 
 class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
  public:
-  mscclpp::Algorithm build() override;
+  AllreduceNvlsWithCopy(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
-                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, mscclpp::DataType);
@@ -1186,7 +1188,7 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
 
   const size_t nvlsBufferSize_ = (1 << 30);
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
@@ -1195,14 +1197,15 @@ class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
 
 class Allreduce8 : public mscclpp::AlgorithmBuilder {
  public:
-  mscclpp::Algorithm build() override;
+  Allreduce8(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
-                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, mscclpp::DataType);
@@ -1212,7 +1215,7 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<mscclpp::Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<mscclpp::Connection> conns_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> outputSemaphores_;
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
   std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
@@ -1224,21 +1227,22 @@ class Allreduce8 : public mscclpp::AlgorithmBuilder {
 
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
-  mscclpp::Algorithm build() override;
+  AllreduceNvlsPacket(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
-                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+                                   size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
                                                               void* output, size_t, mscclpp::DataType);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   size_t scratchBufferSize_;
-  std::shared_ptr<char> scratchBuffer_;
+  std::weak_ptr<char> scratchBuffer_;
   const size_t nvlsBufferSize_ = (1 << 30);
 
   std::shared_ptr<uint32_t> deviceFlag_;

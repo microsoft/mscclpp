@@ -381,10 +381,10 @@ struct EndpointConfig {
   /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
   /// transports.
   struct Ib {
-    static const int DefaultMaxCqSize = 1024;
-    static const int DefaultMaxCqPollNum = 1;
-    static const int DefaultMaxSendWr = 8192;
-    static const int DefaultMaxWrPerSend = 64;
+    static constexpr int DefaultMaxCqSize = 1024;
+    static constexpr int DefaultMaxCqPollNum = 1;
+    static constexpr int DefaultMaxSendWr = 8192;
+    static constexpr int DefaultMaxWrPerSend = 64;
 
     /// Maximum size of the completion queue.
     int maxCqSize;
