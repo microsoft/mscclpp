@@ -36,9 +36,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
       tags_(tags),
       constraint_(constraint) {}
 
-int NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                             size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor>,
-                             std::unordered_map<std::string, uintptr_t>& extras) {
+CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
+                                    size_t inputSize, size_t outputSize, DataType dtype, cudaStream_t stream,
+                                    std::shared_ptr<Executor>, std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -67,6 +67,11 @@ const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const {
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
 
 Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
+
+void NativeAlgorithm::reset() {
+  contexts_.clear();
+  initialized_ = false;
+}
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
                                             std::shared_ptr<Algorithm> algorithm) {
@@ -150,9 +155,9 @@ const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
 
 Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
-int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                          size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
-                          std::unordered_map<std::string, uintptr_t>&) {
+CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                                 size_t outputSize, DataType dtype, cudaStream_t stream,
+                                 std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
@@ -184,10 +189,14 @@ int DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input,
       break;
     default:
       WARN(EXEC, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
-      return 4;  // TODO: need to fix
+      return CommResult::commInvalidArgument;
   }
-  return 0;
+  return CommResult::commSuccess;
 }
 
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
+
+// TODO: implement this
+void DslAlgorithm::reset() {}
+
 }  // namespace mscclpp

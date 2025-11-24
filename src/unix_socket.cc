@@ -133,7 +133,8 @@ void UnixSocketServer::start() {
       if (abortFlag_ && *abortFlag_) {
         return;
       }
-      throw e;
+      WARN("Unix socket server main loop exited with exception: %s", e.what());
+      // throw e;
     }
   });
 }
@@ -170,8 +171,12 @@ void UnixSocketServer::unregisterFd(int fd) {
 void UnixSocketServer::mainLoop(int listenUnixSockFd) {
   std::vector<pollfd> pollFds;
   pollFds.push_back({listenUnixSockFd, POLLIN | POLLERR | POLLHUP | POLLNVAL | POLLRDHUP, 0});
-  auto removeClient = [&pollFds](size_t index) {
+  auto removeClient = [&pollFds, listenUnixSockFd](size_t index) {
     if (index == 0 || index >= pollFds.size()) {
+      return;
+    }
+    if (pollFds[index].fd == listenUnixSockFd) {
+      WARN("Attempted to remove listen fd from pollfds");
       return;
     }
     close(pollFds[index].fd);
@@ -190,6 +195,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
+      WARN("poll() failed on unix socket server: %s", std::strerror(errno));
       throw SysError("poll() failed on unix socket server", errno);
     }
     if (rc == 0) {
@@ -201,7 +207,8 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
-      throw Error("Unexpected event on unix socket listen fd", ErrorCode::InternalError);
+      printf("Unexpected event on unix socket listen fd: revents=0x%x\n", listenPfd.revents);
+      // throw Error(std::string("Unexpected event on unix socket listen fd: revents=0x") + std::to_string(listenPfd.revents), ErrorCode::InternalError);
     }
 
     if (listenPfd.revents & POLLIN) {
@@ -212,6 +219,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
         if (abortFlag_ && *abortFlag_) {
           break;
         }
+        WARN("accept() failed for unix socket: %s", std::strerror(errno));
         throw SysError("accept() failed for unix socket", errno);
       }
     }

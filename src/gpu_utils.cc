@@ -9,10 +9,12 @@
 
 static inline bool isCudaTeardownError(cudaError_t err) {
 #if defined(__HIP_PLATFORM_AMD__)
-  return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
+  return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice || err == cudaErrorDeviceUninitialized ||
+         err == cudaErrorInvalidValue;
 #else   // !defined(__HIP_PLATFORM_AMD__)
   return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
-         err == cudaErrorInvalidDevice || err == cudaErrorLaunchFailure;
+         err == cudaErrorInvalidDevice || err == cudaErrorInvalidValue || err == cudaErrorLaunchFailure ||
+         err == cudaErrorDeviceUninitialized || err == cudaErrorDevicesUnavailable;
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 }
 
