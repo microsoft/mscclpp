@@ -111,6 +111,10 @@ void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBu
   this->algoBuilders_.push_back(builder);
 }
 
+// TODO (binyli) implement this
+void AlgorithmCollectionBuilder::addDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
+                                                                  size_t scratchBufferSize) {}
+
 void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
 
 void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {

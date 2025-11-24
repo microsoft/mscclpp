@@ -445,7 +445,7 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
-                              size_t, cudaStream_t, uint32_t*, uint32_t*, uint32_t*, uint32_t, int, int)>;
+                              size_t, cudaStream_t, uint32_t, int, int)>;
 
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(Op op, mscclpp::DataType dtype) {

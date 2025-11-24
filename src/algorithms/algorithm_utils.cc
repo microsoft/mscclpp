@@ -5,8 +5,10 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
-namespace mscclpp {
+#include "allreduce_allpair_packet.hpp"
 
+namespace mscclpp {
+namespace algorithm {
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
                                                            mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
@@ -150,5 +152,14 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
 std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders() {
   return std::vector<std::shared_ptr<AlgorithmBuilder>>();
 }
+
+std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
+                                                                   size_t scratchBufferSize) {
+  if (algorithmName == "default_allreduce_allpair_packet") {
+    return std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize);
+  }
+  return nullptr;
+}
+}  // namespace algorithm
 
 }  // namespace mscclpp

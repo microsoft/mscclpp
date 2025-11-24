@@ -221,9 +221,6 @@ struct CollectiveRequest {
 
   CollectiveBufferMode bufferMode() const;
 };
-}  // namespace mscclpp
-
-namespace mscclpp {
 
 using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&
@@ -265,6 +262,8 @@ class AlgorithmCollectionBuilder {
   /// @brief Add a new algorithm builder for a specific collective operation.
   /// @param builder The algorithm builder.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
+
+  void addDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer, size_t scratchBufferSize);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.

@@ -17,53 +17,53 @@
 #endif
 
 namespace mscclpp {
+namespace algorithm {
 constexpr int NUM_NVLS_CONNECTION = 8;
 constexpr int NUM_SEMAPHORES = 64;
 
 constexpr int MAX_NRANKS_PER_NODE = 8;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
-static bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+static bool mscclppDisableChannelCache = env()->disableChannelCache;
 
-__device__ mscclpp::DeviceSyncer deviceSyncer;
-__constant__ mscclpp::DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
+__device__ DeviceSyncer deviceSyncer;
+__constant__ DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
 
-std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
-                                                           mscclpp::RegisteredMemory localMemory);
+std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
+                                                  RegisteredMemory localMemory);
 
-std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
-    const std::vector<mscclpp::Connection>& connections,
-    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
-    const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
-    int nChannelsPerConnection);
+std::vector<MemoryChannel> setupMemoryChannels(
+    const std::vector<Connection>& connections,
+    const std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>>& memorySemaphores,
+    const std::vector<RegisteredMemory>& remoteMemories, RegisteredMemory localMemory, int nChannelsPerConnection);
 
-std::vector<mscclpp::Connection> setupConnections(std::shared_ptr<mscclpp::Communicator> comm);
+std::vector<Connection> setupConnections(std::shared_ptr<Communicator> comm);
+std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
+    std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections, int nChannelsPerConnection);
 
-std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
-    std::shared_ptr<mscclpp::Communicator> comm, const std::vector<mscclpp::Connection>& connections,
-    int nChannelsPerConnection);
+std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
+    const std::vector<MemoryChannel>& memoryChannels);
 
-std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
-    const std::vector<mscclpp::MemoryChannel>& memoryChannels);
+std::vector<std::shared_ptr<NvlsConnection>> setupNvlsConnections(std::shared_ptr<Communicator> comm, size_t size,
+                                                                  int numConnections);
 
-std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::shared_ptr<mscclpp::Communicator> comm,
-                                                                           size_t size, int numConnections);
+std::vector<SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<NvlsConnection>> conns, void* buffer,
+                                             size_t bufferSize, int nSwitchChannels);
 
-std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
-                                                      void* buffer, size_t bufferSize, int nSwitchChannels);
+std::shared_ptr<DeviceHandle<SwitchChannel>> setupNvlsChannelDeviceHandles(
+    const std::vector<SwitchChannel>& nvlsChannels);
 
-std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> setupNvlsChannelDeviceHandles(
-    const std::vector<mscclpp::SwitchChannel>& nvlsChannels);
+std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
+    const std::vector<Connection>& connections,
+    const std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>>& memorySemaphores, int nChannelsPerConnection);
 
-std::vector<mscclpp::BaseMemoryChannel> setupBaseMemoryChannels(
-    const std::vector<mscclpp::Connection>& connections,
-    const std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>& memorySemaphores,
-    int nChannelsPerConnection);
-
-std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
-    const std::vector<mscclpp::BaseMemoryChannel>& baseMemoryChannels);
-
+std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
+    const std::vector<BaseMemoryChannel>& baseMemoryChannels);
 
 std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders();
+
+std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
+                                                                    size_t scratchBufferSize);
+}  // namespace algorithm
 }  // namespace mscclpp
 #endif  // ALGORITHM_UTILS_HPP
