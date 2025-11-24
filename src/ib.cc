@@ -41,23 +41,6 @@ namespace mscclpp {
 
 #if defined(USE_IBVERBS)
 
-static inline bool isGpuAddr(void* ptr) {
-  CUmemorytype memType;
-  auto res = cuPointerGetAttribute(&memType, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, reinterpret_cast<CUdeviceptr>(ptr));
-  if (res == CUDA_ERROR_INVALID_VALUE) {
-    return false;
-  } else if (res != CUDA_SUCCESS) {
-    MSCCLPP_CUTHROW(res);
-  }
-  return (memType == CU_MEMORYTYPE_DEVICE);
-}
-
-static inline int gpuAddrToDeviceId(CUdeviceptr devPtr) {
-  int deviceId;
-  MSCCLPP_CUTHROW(cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, devPtr));
-  return deviceId;
-}
-
 static inline bool isDmabufSupportedByGpu(int gpuId) {
   static std::unordered_map<int, bool> cache;
   if (gpuId < 0 || !IBVerbs::isDmabufSupported()) {
@@ -92,8 +75,8 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   uintptr_t addr = buffIntPtr & -pageSize;
   std::size_t pages = (size + (buffIntPtr - addr) + pageSize - 1) / pageSize;
 
-  bool isGpuBuff = isGpuAddr(buff_);
-  int gpuId = isGpuBuff ? gpuAddrToDeviceId(reinterpret_cast<CUdeviceptr>(buff_)) : -1;
+  int gpuId = detail::gpuIdFromAddress(buff_);
+  bool isGpuBuff = (gpuId != -1);
   if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
 #if !defined(__HIP_PLATFORM_AMD__)
     int fd;

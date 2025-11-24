@@ -51,7 +51,7 @@ SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection
     if (localDevice.id < 0) {
       throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
     }
-    MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
+    CudaDeviceGuard deviceGuard(localDevice.id);
     token_ = gpuCallocToken(connection_.context());
   } else {
     throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
