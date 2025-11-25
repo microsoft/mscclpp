@@ -1,7 +1,6 @@
 #ifndef ALGORITHM_UTILS_HPP
 #define ALGORITHM_UTILS_HPP
 
-#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
@@ -17,6 +16,8 @@
 #endif
 
 namespace mscclpp {
+
+class AlgorithmBuilder;
 namespace algorithm {
 constexpr int NUM_NVLS_CONNECTION = 8;
 constexpr int NUM_SEMAPHORES = 64;
@@ -60,10 +61,11 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
 
-std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders();
+std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders(uintptr_t scratchBuffer,
+                                                                           size_t scratchBufferSize);
 
 std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
-                                                                    size_t scratchBufferSize);
+                                                                   size_t scratchBufferSize);
 }  // namespace algorithm
 }  // namespace mscclpp
 #endif  // ALGORITHM_UTILS_HPP

@@ -281,14 +281,17 @@ __forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m
 // FP8 E4M3 vectorized min for 4 elements
 __forceinline__ __device__ __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
   // Process as two __fp8x2_e4m3 using min_elements for 2 elements
-  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
-  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
+  union {
+    __fp8x4_e4m3 vec4;
+    __fp8x2_e4m3 vec2[2];
+  } ua, ub, uresult;
+  ua.vec4 = a;
+  ub.vec4 = b;
 
-  __fp8x2_e4m3 result[2];
-  result[0] = min_elements(a_pair[0], b_pair[0]);
-  result[1] = min_elements(a_pair[1], b_pair[1]);
+  uresult.vec2[0] = min_elements(ua.vec2[0], ub.vec2[0]);
+  uresult.vec2[1] = min_elements(ua.vec2[1], ub.vec2[1]);
 
-  return *reinterpret_cast<__fp8x4_e4m3*>(result);
+  return uresult.vec4;
 }
 
 // FP8 E5M2 min operation (single element)
@@ -310,14 +313,17 @@ __forceinline__ __device__ __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m
 // FP8 E5M2 vectorized min for 4 elements (CUDA only)
 __forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
   // Process as two __fp8x2_e5m2 using min_elements for 2 elements
-  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
-  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+  union {
+    __fp8x4_e5m2 vec4;
+    __fp8x2_e5m2 vec2[2];
+  } ua, ub, uresult;
+  ua.vec4 = a;
+  ub.vec4 = b;
 
-  __fp8x2_e5m2 result[2];
-  result[0] = min_elements(a_pair[0], b_pair[0]);
-  result[1] = min_elements(a_pair[1], b_pair[1]);
+  uresult.vec2[0] = min_elements(ua.vec2[0], ub.vec2[0]);
+  uresult.vec2[1] = min_elements(ua.vec2[1], ub.vec2[1]);
 
-  return *reinterpret_cast<__fp8x4_e5m2*>(result);
+  return uresult.vec4;
 }
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 #endif  // __FP8_TYPES_EXIST__

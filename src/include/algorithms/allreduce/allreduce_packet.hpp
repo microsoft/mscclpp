@@ -22,8 +22,8 @@ class AllreducePacket : public AlgorithmBuilder {
                                                      size_t, DataType);
   AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
 
-  size_t scratchBufferSize_;
   void* scratchBuffer_;
+  size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
   const int maxBlockNum_ = 28;
   std::vector<Connection> conns_;

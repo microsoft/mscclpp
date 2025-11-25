@@ -1,10 +1,13 @@
+#include "algorithms/utils.hpp"
+
 #include <algorithm>
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
 #include "algorithms/allreduce/allreduce_allpair_packet.hpp"
-#include "algorithms/utils.hpp"
+#include "algorithms/allreduce/allreduce_packet.hpp"
 
 namespace mscclpp {
 namespace algorithm {
@@ -148,8 +151,12 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
   return ptr;
 }
 
-std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders() {
-  return std::vector<std::shared_ptr<AlgorithmBuilder>>();
+std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders(uintptr_t scratchBuffer,
+                                                                           size_t scratchBufferSize) {
+  std::vector<std::shared_ptr<AlgorithmBuilder>> builders;
+  builders.push_back(std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize));
+  builders.push_back(std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize));
+  return builders;
 }
 
 std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
