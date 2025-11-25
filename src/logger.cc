@@ -77,7 +77,7 @@ std::string timestamp(const char* format) {
   // Thread-local per-second UTC timestamp cache.
   struct TimeCache {
     time_t second = 0;
-    char buf[32];
+    char buf[64];
     size_t len = 0;
   };
   thread_local TimeCache cache;
@@ -98,7 +98,10 @@ std::string timestamp(const char* format) {
 
   cache.len = ::strftime(cache.buf, sizeof(cache.buf), format, &tmBuf);
   cache.second = currentTime;
-
+  if (cache.len == 0) {
+    // Formatting failure fallback.
+    return "";
+  }
   return std::string(cache.buf, cache.len);
 }
 
