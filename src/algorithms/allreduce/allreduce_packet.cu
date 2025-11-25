@@ -163,11 +163,14 @@ struct PacketAdapter {
   }
 };
 
-inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int worldSize) {
-  if (inputSize < worldSize * sizeof(int)) {
-    return {worldSize - 1, 32};
+inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerNode, int worldSize) {
+  int nBlocks = (nRanksPerNode - 1) * 4;
+  int nThreadsPerBlock = 1024;
+  if (inputSize >= 16384) {
+    nBlocks = (worldSize - 1) * 8;
+    nThreadsPerBlock = (inputSize <= 153600) ? 512 : 1024;
   }
-  return {(worldSize - 1) * 4, 512};
+  return {nBlocks, nThreadsPerBlock};
 }
 
 void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
@@ -186,7 +189,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmC
   Algorithm::Op op = *reinterpret_cast<Algorithm::Op*>(extras.at("op"));
   std::pair<int, int> blockAndThreadNum = getBlockNumAndThreadNum(extras);
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode);
   }
 
   size_t sendBytes;

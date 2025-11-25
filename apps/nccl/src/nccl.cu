@@ -258,6 +258,9 @@ static void registerCustomizedAlgo(ncclComm* commPtr) {
   collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_packet",
                                                       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
                                                       commPtr->scratchBufferSize_);
+  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_packet",
+                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
+                                                      commPtr->scratchBufferSize_);
 }
 
 static std::pair<int, int> getDeviceComputeCapability() {
@@ -330,11 +333,11 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
       useNvls = false;
     }
 #endif
-    if (messageSize <= (1 << 15)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
-    }
     if (messageSize <= (1 << 15) && useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
+    }
+    if (messageSize <= (1 << 14)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
     }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");

@@ -7,6 +7,7 @@
 #include <mscclpp/switch_channel.hpp>
 
 #include "algorithms/allreduce/allreduce_allpair_packet.hpp"
+#include "algorithms/allreduce/allreduce_nvls_packet.hpp"
 #include "algorithms/allreduce/allreduce_packet.hpp"
 
 namespace mscclpp {
@@ -158,6 +159,9 @@ std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string a
   }
   if (algorithmName == "default_allreduce_packet") {
     return std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize);
+  }
+  if (algorithmName == "default_allreduce_nvls_packet") {
+    return std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize);
   }
   throw std::runtime_error("Unsupported default native algorithm: " + algorithmName);
 }
