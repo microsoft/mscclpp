@@ -51,7 +51,7 @@ SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection
     if (localDevice.id < 0) {
       throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
     }
-    MSCCLPP_CUDATHROW(cudaSetDevice(localDevice.id));
+    CudaDeviceGuard deviceGuard(localDevice.id);
     token_ = gpuCallocToken(connection_.context());
   } else {
     throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
@@ -97,9 +97,9 @@ struct Semaphore::Impl {
 Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub) {
   auto remoteMemImpl = remoteStub.memory().pimpl_;
   if (remoteMemImpl->hostHash == getHostHash() && remoteMemImpl->pidHash == getPidHash()) {
-    pimpl_ = std::make_unique<Impl>(localStub, RegisteredMemory::deserialize(remoteStub.memory().serialize()));
+    pimpl_ = std::make_shared<Impl>(localStub, RegisteredMemory::deserialize(remoteStub.memory().serialize()));
   } else {
-    pimpl_ = std::make_unique<Impl>(localStub, remoteStub.memory());
+    pimpl_ = std::make_shared<Impl>(localStub, remoteStub.memory());
   }
 }
 
