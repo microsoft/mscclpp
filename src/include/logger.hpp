@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_LOGGER_HPP_
 #define MSCCLPP_LOGGER_HPP_
 
+#include <array>
 #include <bitset>
 #include <fstream>
 #include <iomanip>
