@@ -116,8 +116,9 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo6::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) {
-        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+             std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {
+        ncclResult_t res = self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+        return res == ncclSuccess ? mscclpp::CommResult::commSuccess : mscclpp::CommResult::commInternalError;
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
@@ -195,8 +196,9 @@ std::shared_ptr<mscclpp::Algorithm> AllgatherAlgo8::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) {
-        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+             std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {
+        ncclResult_t res = self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+        return res == ncclSuccess ? mscclpp::CommResult::commSuccess : mscclpp::CommResult::commInternalError;
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

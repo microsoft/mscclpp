@@ -148,10 +148,10 @@ __global__ void __launch_bounds__(1024, 1)
 template <Op OpType, typename T>
 struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
-                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*,
-                          size_t channelInOffset, size_t, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                          int worldSize, size_t inputSize, cudaStream_t stream, LL8Packet* flags,
-                          uint32_t numScratchBuff, int nBlocks = 0, int nThreadsPerBlock = 0) {
+                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
+                          size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
+                          cudaStream_t stream, LL8Packet* flags, uint32_t numScratchBuff, int nBlocks = 0,
+                          int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
@@ -240,7 +240,7 @@ AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void* input, 
 }
 
 std::shared_ptr<Algorithm> AllreducePacket::build() {
-  auto self = std::make_shared<AllreducePacket>(scratchBuffer_, scratchBufferSize_);
+  auto self = std::make_shared<AllreducePacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,

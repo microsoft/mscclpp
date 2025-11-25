@@ -75,15 +75,15 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
 template <Op OpType, typename T>
 struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
-                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*,
-                          size_t channelInOffset, size_t, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                          int worldSize, size_t inputSize, cudaStream_t stream, LL8Packet* flags,
-                          uint32_t numScratchBuff, int nBlocks = 0, int nThreadsPerBlock = 0) {
+                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
+                          size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
+                          cudaStream_t stream, LL8Packet* flags, uint32_t numScratchBuff, int nBlocks = 0,
+                          int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, flags, numScratchBuff);
+        nRanksPerNode, worldSize, nelems, numScratchBuff, flags);
     return cudaGetLastError();
   }
 };
@@ -160,7 +160,7 @@ AlgorithmCtxKey AllreduceAllpairPacket::generateAllreduceContextKey(const void* 
 }
 
 std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
-  auto self = std::make_shared<AllreduceAllpairPacket>(scratchBuffer_, scratchBufferSize_);
+  auto self = std::make_shared<AllreduceAllpairPacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_allpair_packet", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
