@@ -261,6 +261,9 @@ static void registerCustomizedAlgo(ncclComm* commPtr) {
   collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_packet",
                                                       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
                                                       commPtr->scratchBufferSize_);
+  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls",
+                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
+                                                      commPtr->scratchBufferSize_);
 }
 
 static std::pair<int, int> getDeviceComputeCapability() {
