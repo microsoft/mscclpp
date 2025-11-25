@@ -146,7 +146,7 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 template <Op OpType, typename T>
-struct AllpairAdapter {
+struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*,
                           size_t channelInOffset, size_t, size_t scratchBufferSize, int rank, int nRanksPerNode,
@@ -174,6 +174,7 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
   RegisteredMemory scratchMemory = comm->registerMemory(scratchBuffer_, scratchBufferSize_, Transport::CudaIpc);
   registeredMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), scratchMemory);
   registeredMemories_.push_back(scratchMemory);
+  flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
 }
 
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
@@ -191,15 +192,15 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmC
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
-  AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  cudaError_t error =
-      allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
-                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error = allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr,
+                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
+                                ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags_.get(),
+                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;
@@ -241,8 +242,7 @@ AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void* input, 
 std::shared_ptr<Algorithm> AllreducePacket::build() {
   auto self = std::make_shared<AllreducePacket>(scratchBuffer_, scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
-      "default_allreduce_packet", "allreduce",
-      [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
+      "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, cudaStream_t stream,
              std::unordered_map<std::string, uintptr_t>& extras) {

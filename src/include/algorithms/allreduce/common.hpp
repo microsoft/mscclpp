@@ -4,17 +4,22 @@
 #ifndef MSCCLPP_ALLREDUCE_HPP_
 #define MSCCLPP_ALLREDUCE_HPP_
 
+#include <cmath>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-using Op = mscclpp::Algorithm::Op;
-constexpr mscclpp::Algorithm::Op SUM = mscclpp::Algorithm::Op::SUM;
-constexpr mscclpp::Algorithm::Op MIN = mscclpp::Algorithm::Op::MIN;
+namespace mscclpp {
+
+namespace algorithm {
+using Op = Algorithm::Op;
+constexpr Algorithm::Op SUM = Algorithm::Op::SUM;
+constexpr Algorithm::Op MIN = Algorithm::Op::MIN;
 
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
@@ -445,7 +450,7 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
-                              size_t, cudaStream_t, uint32_t, int, int)>;
+                              size_t, cudaStream_t, LL8Packet*, uint32_t, int, int)>;
 
 template <template <Op, typename> class Adapter>
 AllreduceFunc dispatch(Op op, mscclpp::DataType dtype) {
@@ -504,5 +509,7 @@ inline std::pair<int, int> getBlockNumAndThreadNum(const std::unordered_map<std:
   }
   return {blockNum, threadNum};
 }
+}  // namespace algorithm
+}  // namespace mscclpp
 
 #endif  // MSCCLPP_ALLREDUCE_COMMON_HPP_

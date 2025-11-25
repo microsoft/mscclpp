@@ -29,6 +29,7 @@ class AllreducePacket : public AlgorithmBuilder {
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
+  std::shared_ptr<LL8Packet> flags_;
 };
 }  // namespace algorithm
 }  // namespace mscclpp

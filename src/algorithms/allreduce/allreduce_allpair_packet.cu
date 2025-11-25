@@ -77,14 +77,13 @@ struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*,
                           size_t channelInOffset, size_t, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                          int worldSize, size_t inputSize, cudaStream_t stream, uint32_t* deviceFlag7,
-                          uint32_t* deviceFlag28, uint32_t* deviceFlag56, uint32_t numScratchBuff, int nBlocks = 0,
-                          int nThreadsPerBlock = 0) {
+                          int worldSize, size_t inputSize, cudaStream_t stream, LL8Packet* flags,
+                          uint32_t numScratchBuff, int nBlocks = 0, int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
+        nRanksPerNode, worldSize, nelems, flags, numScratchBuff);
     return cudaGetLastError();
   }
 };
@@ -95,6 +94,7 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
   RegisteredMemory scratchMemory = comm->registerMemory(scratchBuffer_, scratchBufferSize_, Transport::CudaIpc);
   registeredMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), scratchMemory);
   registeredMemories_.push_back(scratchMemory);
+  flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
 }
 
 CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
@@ -117,10 +117,10 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  cudaError_t error =
-      allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
-                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error = allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr,
+                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
+                                ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags_.get(),
+                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;

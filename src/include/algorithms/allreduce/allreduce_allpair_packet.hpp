@@ -23,13 +23,14 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
                                                      size_t, DataType);
   AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
 
-  size_t scratchBufferSize_;
   void* scratchBuffer_;
+  size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
   const int maxBlockNum_ = 28;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
+  std::shared_ptr<LL8Packet> flags_;
 };
 }  // namespace algorithm
 }  // namespace mscclpp
