@@ -453,6 +453,47 @@ __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
   return cal_vectors_helper<CompType, OpType>(a, b);
 }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <class T>
+MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
+  using U = std::remove_cv_t<std::remove_reference_t<T>>;
+  if constexpr (std::is_same_v<U, std::int32_t> || std::is_same_v<U, std::uint32_t>) {
+    return 1;
+  } else {
+    static_assert(16 % sizeof(U) == 0, "16 bytes must be divisible by sizeof(T).");
+    return 16 / sizeof(U);
+  }
+}
+
+template <typename T>
+MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
+                                                      int tid, int nThreads) {
+  // nvls can only handle 4 bytes alignment
+  MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
+  constexpr size_t nElem = calcVectorSize<T>();
+  using vectorType = mscclpp::VectorType<T, nElem>;
+  const size_t nVec = size / sizeof(vectorType);
+  const size_t srcOffset4 = srcOffset / sizeof(vectorType);
+  const size_t dstOffset4 = dstOffset / sizeof(vectorType);
+  vectorType* src4 = (vectorType*)src;
+  vectorType* dst4 = (vectorType*)dst;
+  for (size_t idx = tid; idx < nVec; idx += nThreads) {
+    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(src4 + srcOffset4 + idx);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
+  }
+  // handle rest of data
+  size_t processed = nVec * sizeof(vectorType);
+  constexpr size_t nRestElem = 4 / sizeof(T);
+  using restVectorType = mscclpp::VectorType<T, nRestElem>;
+  const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
+  const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
+  for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
+    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((restVectorType*)src + idx);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
+  }
+}
+#endif  // defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
