@@ -53,6 +53,8 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       pidHash(getPidHash()),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
+    CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
+
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
 
@@ -204,7 +206,15 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
     if (this->isCuMemMapAlloc) {
-      detail::setReadWriteMemoryAccess(this->data, this->baseDataSize);
+      // Query which device owns this memory
+      int gpuId = detail::gpuIdFromAddress(this->data);
+      int currentDevice = -1;
+      MSCCLPP_CUDATHROW(cudaGetDevice(&currentDevice));
+
+      // Only set access if we're on a different device than where memory was allocated
+      if (gpuId != currentDevice) {
+        detail::setReadWriteMemoryAccess(this->data, this->baseDataSize);
+      }
     }
   } else if (transports.has(Transport::CudaIpc)) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
