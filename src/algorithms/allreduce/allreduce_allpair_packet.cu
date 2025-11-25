@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "algorithm_utils.hpp"
-#include "allreduce_allpair_packet.hpp"
-#include "allreduce_common.hpp"
+#include "algorithms/allreduce/allreduce_allpair_packet.hpp"
+#include "algorithms/allreduce/common.hpp"
+#include "algorithms/utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
@@ -22,6 +22,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   const int nPeers = nRanksPerNode - 1;
 
   uint32_t flag = deviceFlag;
+  __syncthreads();
   if (threadIdx.x == 0) {
     flags[blockIdx.x].write(0, flag);
   }

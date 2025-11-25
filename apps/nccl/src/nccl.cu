@@ -19,7 +19,6 @@
 #include <mscclpp/algorithm.hpp>
 
 #include "allgather.hpp"
-#include "allreduce.hpp"
 #include "datatype_conversion.hpp"
 #include "debug.h"
 
@@ -253,28 +252,34 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
 
 static void registerCustomizedAlgo(ncclComm* commPtr) {
   auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_allpair_packet",
+                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
+                                                      commPtr->scratchBufferSize_);
+  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_packet",
+                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
+                                                      commPtr->scratchBufferSize_);
 
-  std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
-  std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 =
-      std::make_shared<AllgatherAlgo8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
-  // TODO(binyli): remove allgather8 algo, use nccl by default
-  collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
+  // std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
+  // std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 =
+  //     std::make_shared<AllgatherAlgo8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  // collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
+  // // TODO(binyli): remove allgather8 algo, use nccl by default
+  // collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
 
-  std::shared_ptr<AllreducePacket> allreduceAllpairAlgo =
-      std::make_shared<AllreducePacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
-  std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo =
-      std::make_shared<AllreduceNvlsWithCopy>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  std::shared_ptr<Allreduce8> allreduceAllreduce8Algo =
-      std::make_shared<Allreduce8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo =
-      std::make_shared<AllreduceNvlsPacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
-  collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
-  collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
-  collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
-  collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
+  // std::shared_ptr<AllreducePacket> allreduceAllpairAlgo =
+  //     std::make_shared<AllreducePacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  // std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
+  // std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo =
+  //     std::make_shared<AllreduceNvlsWithCopy>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  // std::shared_ptr<Allreduce8> allreduceAllreduce8Algo =
+  //     std::make_shared<Allreduce8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  // std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo =
+  //     std::make_shared<AllreduceNvlsPacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
+  // collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
+  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
+  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
+  // collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
+  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
 }
 
 static std::pair<int, int> getDeviceComputeCapability() {

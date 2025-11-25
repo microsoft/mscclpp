@@ -3,7 +3,7 @@
 
 #include <mscclpp/algorithm.hpp>
 
-#include "allreduce_common.hpp"
+#include "algorithms/allreduce/common.hpp"
 
 namespace mscclpp {
 namespace algorithm {
@@ -12,6 +12,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   AllreduceAllpairPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
       : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize) {};
   std::shared_ptr<Algorithm> build() override;
+
  private:
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,

@@ -1,11 +1,10 @@
-#include "algorithm_utils.hpp"
-
 #include <algorithm>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
-#include "allreduce_allpair_packet.hpp"
+#include "algorithms/allreduce/allreduce_allpair_packet.hpp"
+#include "algorithms/utils.hpp"
 
 namespace mscclpp {
 namespace algorithm {
