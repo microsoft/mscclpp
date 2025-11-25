@@ -15,10 +15,10 @@ __global__ void __launch_bounds__(1024, 1)
                         [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] LL8Packet* flags) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   uint32_t flag = deviceFlag;
-//   __syncthreads();
-//   if (threadIdx.x == 0) {
-//     flags[blockIdx.x].write(0, flag);
-//   }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    flags[blockIdx.x].write(0, flag);
+  }
 
   size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
   uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
@@ -43,12 +43,12 @@ __global__ void __launch_bounds__(1024, 1)
     }
     dst[i] = data;
   }
-//   if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
-//     flags[threadIdx.x].read(flag, -1);
-//   }
-//   if (blockIdx.x == 0) {
-//     __syncthreads();
-//   }
+  if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
+    flags[threadIdx.x].read(flag, -1);
+  }
+  if (blockIdx.x == 0) {
+    __syncthreads();
+  }
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     deviceFlag++;
   }
