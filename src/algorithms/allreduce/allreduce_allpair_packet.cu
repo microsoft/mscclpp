@@ -59,7 +59,9 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
     flags[threadIdx.x].read(flag, -1);
   }
-  __syncthreads();
+  if (blockIdx.x == 0) {
+    __syncthreads();
+  }
   if (threadIdx.x == 0 && blockIdx.x == 0) {
     deviceFlag++;
   }

@@ -258,28 +258,6 @@ static void registerCustomizedAlgo(ncclComm* commPtr) {
   collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_packet",
                                                       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
                                                       commPtr->scratchBufferSize_);
-
-  // std::shared_ptr<AllgatherAlgo6> allgatherAlgo6 = std::make_shared<AllgatherAlgo6>();
-  // std::shared_ptr<AllgatherAlgo8> allgatherAlgo8 =
-  //     std::make_shared<AllgatherAlgo8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  // collectionBuilder->addAlgorithmBuilder(allgatherAlgo6);
-  // // TODO(binyli): remove allgather8 algo, use nccl by default
-  // collectionBuilder->addAlgorithmBuilder(allgatherAlgo8);
-
-  // std::shared_ptr<AllreducePacket> allreduceAllpairAlgo =
-  //     std::make_shared<AllreducePacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  // std::shared_ptr<AllreduceNvls> allreduceNvlsAlgo = std::make_shared<AllreduceNvls>();
-  // std::shared_ptr<AllreduceNvlsWithCopy> allreduceNvlsWithCopyAlgo =
-  //     std::make_shared<AllreduceNvlsWithCopy>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  // std::shared_ptr<Allreduce8> allreduceAllreduce8Algo =
-  //     std::make_shared<Allreduce8>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  // std::shared_ptr<AllreduceNvlsPacket> allreduceNvlsPacketAlgo =
-  //     std::make_shared<AllreduceNvlsPacket>(commPtr->scratchBuffer_, commPtr->scratchBufferSize_);
-  // collectionBuilder->addAlgorithmBuilder(allreduceAllpairAlgo);
-  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsAlgo);
-  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsWithCopyAlgo);
-  // collectionBuilder->addAlgorithmBuilder(allreduceAllreduce8Algo);
-  // collectionBuilder->addAlgorithmBuilder(allreduceNvlsPacketAlgo);
 }
 
 static std::pair<int, int> getDeviceComputeCapability() {
@@ -352,6 +330,9 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
       useNvls = false;
     }
 #endif
+    if (messageSize <= (1 << 15)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
+    }
     if (messageSize <= (1 << 15) && useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
     }

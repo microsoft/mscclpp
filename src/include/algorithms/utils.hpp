@@ -27,8 +27,8 @@ constexpr int MAX_NRANKS_PER_NODE = 8;
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 static bool mscclppDisableChannelCache = env()->disableChannelCache;
 
-__device__ DeviceSyncer deviceSyncer;
-__constant__ DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
+static __device__ DeviceSyncer deviceSyncer;
+static __constant__ DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
 
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
@@ -60,9 +60,6 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
-
-std::vector<std::shared_ptr<AlgorithmBuilder>> loadNativeAlgorithmBuilders(uintptr_t scratchBuffer,
-                                                                           size_t scratchBufferSize);
 
 std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
                                                                    size_t scratchBufferSize);

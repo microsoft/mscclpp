@@ -3,6 +3,7 @@
 
 #include <mscclpp/algorithm.hpp>
 
+#include "algorithms/utils.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -111,9 +112,11 @@ void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBu
   this->algoBuilders_.push_back(builder);
 }
 
-// TODO (binyli) implement this
 void AlgorithmCollectionBuilder::addDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
-                                                                  size_t scratchBufferSize) {}
+                                                                  size_t scratchBufferSize) {
+  auto builder = algorithm::getDefaultNativeAlgorithmBuilder(algorithmName, scratchBuffer, scratchBufferSize);
+  this->algoBuilders_.push_back(builder);
+}
 
 void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
 

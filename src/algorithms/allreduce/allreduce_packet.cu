@@ -129,7 +129,9 @@ __global__ void __launch_bounds__(1024, 1)
   if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
     flags[threadIdx.x].read(flag, -1);
   }
-  __syncthreads();
+  if (blockIdx.x == 0) {
+    __syncthreads();
+  }
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && \
     defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
   NpKit::CollectGpuEventShm(NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY, 0, 0, npkit_timestamp_entry, event_buffer,
