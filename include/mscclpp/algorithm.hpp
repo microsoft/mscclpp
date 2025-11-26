@@ -263,7 +263,8 @@ class AlgorithmCollectionBuilder {
   /// @param builder The algorithm builder.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
-  void addDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer, size_t scratchBufferSize);
+  std::shared_ptr<AlgorithmCollection> buildCollectionWithDefaultNativeAlgorithms(uintptr_t scratchBuffer,
+                                                                                  size_t scratchBufferSize);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.

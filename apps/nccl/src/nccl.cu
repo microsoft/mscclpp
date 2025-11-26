@@ -250,28 +250,6 @@ NCCL_API ncclResult_t ncclCommInitRankConfig(ncclComm_t* comm, int nranks, ncclU
   return ncclCommInitRank(comm, nranks, commId, rank);
 }
 
-static void registerCustomizedAlgo(ncclComm* commPtr) {
-  auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_allpair_packet",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_packet",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_packet",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_with_copy",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_with_copy2",
-                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
-                                                      commPtr->scratchBufferSize_);
-}
-
 static std::pair<int, int> getDeviceComputeCapability() {
   int device;
   CUDACHECK(cudaGetDevice(&device));
@@ -361,10 +339,10 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy2");
     }
 #if defined(__HIP_PLATFORM_AMD__)
-    return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+    return algoMapByCollective.at(collective).at("default_allreduce_allconnect");
 #else
     if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");
+      return algoMapByCollective.at(collective).at("default_allreduce_allconnect");
     }
 #endif
   }
@@ -396,9 +374,11 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
-  registerDefaultDslAlgorithms(rank);
-  registerCustomizedAlgo(commPtr);
-  commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
+  commPtr->algorithmCollection =
+      mscclpp::AlgorithmCollectionBuilder::getInstance()->buildCollectionWithDefaultNativeAlgorithms(
+          reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_);
+  // registerDefaultDslAlgorithms(rank);
+  // commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)

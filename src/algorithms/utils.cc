@@ -6,13 +6,6 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
-#include "algorithms/allreduce/allreduce_allpair_packet.hpp"
-#include "algorithms/allreduce/allreduce_nvls.hpp"
-#include "algorithms/allreduce/allreduce_nvls_packet.hpp"
-#include "algorithms/allreduce/allreduce_packet.hpp"
-#include "algorithms/allreduce/allreduce_nvls_with_copy.hpp"
-#include "algorithms/allreduce/allreduce_nvls_with_copy2.hpp"
-
 namespace mscclpp {
 namespace algorithm {
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
@@ -153,29 +146,6 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
   mscclpp::gpuMemcpy<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>>(
       ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
-}
-
-std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
-                                                                   size_t scratchBufferSize) {
-  if (algorithmName == "default_allreduce_allpair_packet") {
-    return std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize);
-  }
-  if (algorithmName == "default_allreduce_packet") {
-    return std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize);
-  }
-  if (algorithmName == "default_allreduce_nvls_packet") {
-    return std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize);
-  }
-  if (algorithmName == "default_allreduce_nvls") {
-    return std::make_shared<AllreduceNvls>();
-  }
-  if (algorithmName == "default_allreduce_nvls_with_copy") {
-    return std::make_shared<AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize);
-  }
-  if (algorithmName == "default_allreduce_nvls_with_copy2") {
-    return std::make_shared<AllreduceNvlsWithCopy2>(scratchBuffer, scratchBufferSize);
-  }
-  throw std::runtime_error("Unsupported default native algorithm: " + algorithmName);
 }
 }  // namespace algorithm
 

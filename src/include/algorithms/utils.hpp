@@ -60,8 +60,6 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
 
-std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string algorithmName, uintptr_t scratchBuffer,
-                                                                   size_t scratchBufferSize);
 }  // namespace algorithm
 }  // namespace mscclpp
 #endif  // ALGORITHM_UTILS_HPP
