@@ -250,6 +250,7 @@ ncclResult_t AllreducePacket::allreduceKernelFunc(const std::shared_ptr<mscclpp:
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, dtype);
     return ncclInvalidArgument;
   }
+
   cudaError_t error = allreduce(input, this->scratchBuffer_.get(), output, ctx->memoryChannelDeviceHandles.get(),
                                 nullptr, nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
                                 ctx->nRanksPerNode, ctx->workSize, count, stream, deviceFlag7_.get(),
@@ -443,6 +444,15 @@ ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<ms
                                                         const void* input, void* output, size_t count,
                                                         ncclDataType_t dtype, cudaStream_t stream,
                                                         std::unordered_map<std::string, std::shared_ptr<void>>&) {
+  // NVLS kernels require that (size / nRanksPerNode) is aligned to 16 bytes
+  size_t elemSize = ncclTypeSize(dtype);
+  size_t nRanksPerNode = ctx->nRanksPerNode;
+  size_t alignmentBytes = 16;
+
+  // Calculate the minimum element count that ensures per-rank size is 16-byte aligned
+  size_t elementsPerRankAlign = (alignmentBytes * nRanksPerNode) / elemSize;
+  size_t alignedCount = ((count + elementsPerRankAlign - 1) / elementsPerRankAlign) * elementsPerRankAlign;
+
   AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(ncclSum, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", dtype);
@@ -451,7 +461,7 @@ ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<ms
   cudaError_t error =
       allreduce(input, this->scratchBuffer_.get(), output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_, ctx->rank,
-                ctx->nRanksPerNode, ctx->workSize, count, stream, nullptr, nullptr, nullptr, 0);
+                ctx->nRanksPerNode, ctx->workSize, alignedCount, stream, nullptr, nullptr, nullptr, 0);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
     return ncclUnhandledCudaError;
