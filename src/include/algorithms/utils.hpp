@@ -28,7 +28,6 @@ constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread
 static bool mscclppDisableChannelCache = env()->disableChannelCache;
 
 static __device__ DeviceSyncer deviceSyncer;
-static __constant__ DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
 
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);

@@ -1,6 +1,6 @@
 #include <mscclpp/algorithm.hpp>
 
-#include "algorithms/allreduce/allreduce_nvls_nonzero_copy.hpp"
+#include "algorithms/allreduce/allreduce_nvls_with_copy.hpp"
 #include "algorithms/allreduce/common.hpp"
 #include "algorithms/utils.hpp"
 #include "debug.h"

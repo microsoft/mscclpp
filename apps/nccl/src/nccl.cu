@@ -267,6 +267,9 @@ static void registerCustomizedAlgo(ncclComm* commPtr) {
   collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_with_copy",
                                                       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
                                                       commPtr->scratchBufferSize_);
+  collectionBuilder->addDefaultNativeAlgorithmBuilder("default_allreduce_nvls_with_copy2",
+                                                      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()),
+                                                      commPtr->scratchBufferSize_);
 }
 
 static std::pair<int, int> getDeviceComputeCapability() {
@@ -351,8 +354,11 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     if (useNvls && useNvlsWithZeroCopy) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls");
     }
-    if (useNvls) {
+    if (useNvls && messageSize < (1 << 24)) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
+    }
+    if (useNvls && messageSize >= (1 << 24)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy2");
     }
 #if defined(__HIP_PLATFORM_AMD__)
     return algoMapByCollective.at(collective).at("default_allreduce_allreduce8");

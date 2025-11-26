@@ -19,8 +19,8 @@ class AllreduceNvlsWithCopy : public AlgorithmBuilder {
   AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
 
   const size_t nvlsBufferSize_ = (1 << 30);
-  size_t scratchBufferSize_;
   void* scratchBuffer_;
+  size_t scratchBufferSize_;
   uint32_t nSwitchChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
