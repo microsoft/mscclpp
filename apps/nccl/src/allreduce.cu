@@ -448,7 +448,7 @@ ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<ms
                                                         mscclpp::DataType dtype, cudaStream_t stream,
                                                         std::unordered_map<std::string, std::shared_ptr<void>>&) {
   // NVLS kernels require that (size / nRanksPerNode) is aligned to 16 bytes
-  size_t elemSize = ncclTypeSize(dtype);
+  size_t elemSize = getDataTypeSize(dtype);
   size_t nRanksPerNode = ctx->nRanksPerNode;
   size_t alignmentBytes = 16;
 
