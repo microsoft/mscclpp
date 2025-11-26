@@ -604,6 +604,7 @@ class ReduceOperation(BaseOperation):
         self,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
+        local_pkt_dst_buff: List[LocalChunk] = None,
         remote_src_buff: List[RemoteChunk] = None,
         remote_dst_buff: List[RemoteChunk] = None,
         channel_ids: List[int] = None,
@@ -613,6 +614,7 @@ class ReduceOperation(BaseOperation):
         tbg_info: ThreadBlockGroupInfo = None,
         packet: bool = False,
     ):
+        local_pkt_dst_buff = local_pkt_dst_buff if local_pkt_dst_buff is not None else []
         remote_src_buff = remote_src_buff if remote_src_buff is not None else []
         remote_dst_buff = remote_dst_buff if remote_dst_buff is not None else []
         channel_ids = channel_ids if channel_ids is not None else []
@@ -620,12 +622,18 @@ class ReduceOperation(BaseOperation):
 
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
-                super().__init__(Instruction.reduce_packet)
+                if len(local_pkt_dst_buff) == 0:
+                    super().__init__(Instruction.reduce_packet)
+                else:
+                    super().__init__(Instruction.reduce_copy_packet)
             else:
                 super().__init__(Instruction.reduce)
         elif len(remote_src_buff) == 0:
             if packet:
-                super().__init__(Instruction.reduce_send_packet)
+                if len(local_pkt_dst_buff) == 0:
+                    super().__init__(Instruction.reduce_send_packet)
+                else:
+                    super().__init__(Instruction.reduce_copy_send_packet)
             else:
                 super().__init__(Instruction.reduce_send)
         elif len(remote_dst_buff) == 0 and not packet:
@@ -637,6 +645,7 @@ class ReduceOperation(BaseOperation):
 
         self.local_src_buff = local_src_buff
         self.local_dst_buff = local_dst_buff
+        self.local_pkt_dst_buff = local_pkt_dst_buff
         self.remote_src_buff = remote_src_buff
         self.remote_dst_buff = remote_dst_buff
         self.channel_ids = channel_ids
@@ -741,6 +750,49 @@ class ReduceOperation(BaseOperation):
                 tbg_info=self.tbg_info,
                 packet=self.packet,
             )
+        if (
+            isinstance(other, CopyOperation)
+            and self.name == Instruction.reduce_packet
+            and other.name == Instruction.copy_packet
+            and self.local_dst_buff[0] == other.src_buff[0]
+            and self.tbg_info == other.tbg_info
+        ):
+            fused_operation = ReduceOperation(
+                self.local_src_buff,
+                self.local_dst_buff,
+                local_pkt_dst_buff=other.dst_buff,
+                remote_src_buff=self.remote_src_buff,
+                remote_dst_buff=self.remote_dst_buff,
+                channel_ids=self.channel_ids,
+                put_channel_ids=self.put_channel_ids,
+                channel_type=self.channel_type,
+                reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
+                packet=self.packet,
+            )
+        if (
+            isinstance(other, PutOperation)
+            and (self.name == Instruction.reduce_copy_packet or self.name == Instruction.reduce_copy_send_packet)
+            and (
+                (other.name == Instruction.put_packet and self.local_dst_buff[0] == other.src_buff[0])
+                or (other.name == Instruction.read_put_packet and self.local_pkt_dst_buff[0] == other.src_buff[0])
+            )
+            and other.channel_type == ChannelType.memory
+            and self.tbg_info == other.tbg_info
+        ):
+            fused_operation = ReduceOperation(
+                self.local_src_buff,
+                self.local_dst_buff,
+                local_pkt_dst_buff=self.local_pkt_dst_buff,
+                remote_src_buff=self.remote_src_buff,
+                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids,
+                put_channel_ids=self.put_channel_ids + other.channel_ids,
+                channel_type=other.channel_type,
+                reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
+                packet=self.packet,
+            )
 
         return fused_operation
 
@@ -751,6 +803,8 @@ class ReduceOperation(BaseOperation):
             result["src_buff"].append(chunk.to_dict())
         result["dst_buff"] = []
         for chunk in self.local_dst_buff:
+            result["dst_buff"].append(chunk.to_dict())
+        for chunk in self.local_pkt_dst_buff:
             result["dst_buff"].append(chunk.to_dict())
 
         if len(self.remote_src_buff) > 0:

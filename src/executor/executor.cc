@@ -99,8 +99,11 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 }  // namespace std
 
 namespace {
-auto inSameNode = [](int rank1, int rank2, int nranksPerNode) {
-  return rank1 / nranksPerNode == rank2 / nranksPerNode;
+auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
+
+auto useIB = [](int rank1, int rank2, int nranksPerNode) {
+  bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
+  return hasIBDevices() && !inSameNode;
 };
 
 static const mscclpp::Transport IBs[] = {mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2,
@@ -112,7 +115,7 @@ namespace mscclpp {
 
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
-  std::unordered_map<int, std::shared_ptr<Connection>> connections;
+  std::unordered_map<int, Connection> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   MemoryId localMemoryIdBegin = MemoryId(0);
 
@@ -155,7 +158,7 @@ struct Executor::Impl {
     this->nranksPerNode = comm->bootstrap()->getNranksPerNode();
     this->nranks = comm->bootstrap()->getNranks();
     this->proxyService = std::make_shared<ProxyService>();
-    this->proxyService->startProxy();
+    this->proxyService->startProxy(true);
   }
   ~Impl() = default;
 
@@ -222,7 +225,7 @@ struct Executor::Impl {
       if (type == ChannelType::MEMORY) {
         flags |= Transport::CudaIpc;
       } else if (type == ChannelType::PORT) {
-        if (!inSameNode(rank, info.accessRank, this->nranksPerNode)) {
+        if (useIB(rank, info.accessRank, this->nranksPerNode)) {
           flags |= IBs[rank % this->nranksPerNode];
         } else
           flags |= Transport::CudaIpc;
@@ -270,10 +273,10 @@ struct Executor::Impl {
     };
 
     std::vector<int> connectedPeers = plan.impl_->getConnectedPeers();
-    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+    std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
     for (int peer : connectedPeers) {
       Transport transport =
-          inSameNode(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
+          !useIB(rank, peer, this->nranksPerNode) ? Transport::CudaIpc : IBs[rank % this->nranksPerNode];
       connectionFutures.push_back(this->comm->connect(transport, peer));
     }
     for (size_t i = 0; i < connectionFutures.size(); i++) {
@@ -294,9 +297,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-#if defined(USE_IBVERBS)
-      flags |= IBs[rank % this->nranksPerNode];
-#endif
+      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
@@ -339,10 +340,10 @@ struct Executor::Impl {
           auto connection = context.connections.at(peer);
           if (info.channelType == ChannelType::MEMORY) {
             futureMemorySemaphores.push_back(this->comm->buildSemaphore(
-                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
+                connection, this->comm->remoteRankOf(connection), this->comm->tagOf(connection)));
           } else if (info.channelType == ChannelType::PORT) {
-            futureProxySemaphores.push_back(this->comm->buildSemaphore(
-                connection, this->comm->remoteRankOf(*connection), this->comm->tagOf(*connection)));
+            futureProxySemaphores.push_back(this->comm->buildSemaphore(connection, this->comm->remoteRankOf(connection),
+                                                                       this->comm->tagOf(connection)));
           }
         }
       }

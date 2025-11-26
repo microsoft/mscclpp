@@ -102,15 +102,15 @@ class BaseTestEngine {
 
   double benchTime();
 
-  void setupMeshConnectionsInternal(std::vector<std::shared_ptr<mscclpp::Connection>>& connections,
+  void setupMeshConnectionsInternal(std::vector<mscclpp::Connection>& connections,
                                     mscclpp::RegisteredMemory& localMemory,
                                     std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteRegMemories,
                                     bool addConnections = true);
 
  protected:
-  using SetupChannelFunc = std::function<void(std::vector<std::shared_ptr<mscclpp::Connection>>,
-                                              std::vector<std::shared_future<mscclpp::RegisteredMemory>>&,
-                                              const mscclpp::RegisteredMemory&)>;
+  using SetupChannelFunc =
+      std::function<void(std::vector<mscclpp::Connection>, std::vector<std::shared_future<mscclpp::RegisteredMemory>>&,
+                         const mscclpp::RegisteredMemory&)>;
   template <class T>
   using DeviceHandle = mscclpp::DeviceHandle<T>;
   void setupMeshConnections(std::vector<DeviceHandle<mscclpp::PortChannel>>& portChannels, void* inputBuff,

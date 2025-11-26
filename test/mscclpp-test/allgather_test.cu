@@ -503,13 +503,13 @@ __global__ void __launch_bounds__(1024, 1)
 class AllGatherProxyService : public mscclpp::BaseProxyService {
  public:
   AllGatherProxyService(int worldSize, int rank, int cudaDevice);
-  void startProxy() override { proxy_->start(); }
+  void startProxy(bool blocking = false) override { proxy_->start(blocking); }
   void stopProxy() override { proxy_->stop(); }
   void setSendBytes(size_t sendBytes) { this->sendBytes_ = sendBytes; }
   void addRemoteMemory(mscclpp::RegisteredMemory memory) { remoteMemories_.push_back(memory); }
   void setLocalMemory(mscclpp::RegisteredMemory memory) { localMemory_ = memory; }
   mscclpp::SemaphoreId buildAndAddSemaphore(mscclpp::Communicator& communicator,
-                                            std::shared_ptr<mscclpp::Connection> connection) {
+                                            const mscclpp::Connection& connection) {
     semaphores_.push_back(std::make_shared<mscclpp::Host2DeviceSemaphore>(communicator, connection));
     return semaphores_.size() - 1;
   }
@@ -554,19 +554,19 @@ mscclpp::ProxyHandlerResult AllGatherProxyService::handleTrigger(mscclpp::ProxyT
       continue;
     }
     int index = (r < rank_) ? r : r - 1;
-    semaphores_[index]->connection()->write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
+    semaphores_[index]->connection().write(remoteMemories_[index], offset, localMemory_, offset, sendBytes_);
     semaphores_[index]->signal();
   }
   bool flushIpc = false;
   for (auto& semaphore : semaphores_) {
-    auto conn = semaphore->connection();
-    if (conn->transport() == mscclpp::Transport::CudaIpc && !flushIpc) {
+    auto& conn = semaphore->connection();
+    if (conn.transport() == mscclpp::Transport::CudaIpc && !flushIpc) {
       // since all the cudaIpc channels are using the same cuda stream, we only need to flush one of them
-      conn->flush();
+      conn.flush();
       flushIpc = true;
     }
-    if (mscclpp::AllIBTransports.has(conn->transport())) {
-      conn->flush();
+    if (mscclpp::AllIBTransports.has(conn.transport())) {
+      conn.flush();
     }
   }
   return mscclpp::ProxyHandlerResult::Continue;
@@ -758,7 +758,7 @@ void AllGatherTestEngine::setupConnections() {
   } else {
     auto service = std::dynamic_pointer_cast<AllGatherProxyService>(chanService_);
     setupMeshConnections(devPortChannels, sendBuff_.get(), args_.maxBytes, nullptr, 0,
-                         [&](std::vector<std::shared_ptr<mscclpp::Connection>> conns,
+                         [&](std::vector<mscclpp::Connection> conns,
                              std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteMemories,
                              const mscclpp::RegisteredMemory& localMemory) {
                            std::vector<mscclpp::SemaphoreId> semaphoreIds;

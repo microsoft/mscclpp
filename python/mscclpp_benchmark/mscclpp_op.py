@@ -453,7 +453,10 @@ class MscclppAllReduce6:
         )
 
         # create a memory_channel for each remote neighbor
-        self.semaphores = group.make_semaphore(self.nvlink_connections, MemoryDevice2DeviceSemaphore)
+        self.semaphores = {
+            rank: MemoryDevice2DeviceSemaphore(sema)
+            for rank, sema in group.make_semaphores(self.nvlink_connections).items()
+        }
         file_dir = os.path.dirname(os.path.abspath(__file__))
         self.kernel = KernelBuilder(
             file="allreduce.cu",
