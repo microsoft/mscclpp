@@ -1,28 +1,30 @@
-// #include <mscclpp/algorithm.hpp>
+#include <mscclpp/algorithm.hpp>
 
-// namespace mscclpp {
-// class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
-//  public:
-//   AllreduceNvlsWithCopy(std::shared_ptr<void> scratchBuffer, size_t scratchBufferSize)
-//       : scratchBuffer_(std::static_pointer_cast<char>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
-//   std::shared_ptr<mscclpp::Algorithm> build() override;
+namespace mscclpp {
+namespace algorithm {
+class AllreduceNvlsWithCopy : public AlgorithmBuilder {
+ public:
+  AllreduceNvlsWithCopy(uintptr_t scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
+  std::shared_ptr<Algorithm> build() override;
 
-//  private:
-//   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
-//   CommResult allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-//                                  size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
-//                                  std::unordered_map<std::string, uintptr_t>& extras);
+ private:
+  void initialize(std::shared_ptr<Communicator> comm);
+  CommResult allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,
+                                 size_t inputSize, DataType dtype, cudaStream_t stream,
+                                 std::unordered_map<std::string, uintptr_t>& extras);
 
-//   std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-//                                                               void* output, size_t, mscclpp::DataType);
-//   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+  std::shared_ptr<AlgorithmCtx> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output,
+                                                     size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
 
-//   const size_t nvlsBufferSize_ = (1 << 30);
-//   size_t scratchBufferSize_;
-//   std::weak_ptr<char> scratchBuffer_;
-//   uint32_t nSwitchChannels_;
-//   std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
-//   std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
-//   std::vector<mscclpp::Connection> conns_;
-// };
-// }  // namespace mscclpp
+  const size_t nvlsBufferSize_ = (1 << 30);
+  size_t scratchBufferSize_;
+  void* scratchBuffer_;
+  uint32_t nSwitchChannels_;
+  std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<BaseMemoryChannel> baseChannels_;
+  std::vector<Connection> conns_;
+};
+}  // namespace algorithm
+}  // namespace mscclpp

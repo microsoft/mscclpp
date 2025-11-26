@@ -10,6 +10,7 @@
 #include "algorithms/allreduce/allreduce_nvls.hpp"
 #include "algorithms/allreduce/allreduce_nvls_packet.hpp"
 #include "algorithms/allreduce/allreduce_packet.hpp"
+#include "algorithms/allreduce/allreduce_nvls_nonzero_copy.hpp"
 
 namespace mscclpp {
 namespace algorithm {
@@ -166,6 +167,9 @@ std::shared_ptr<AlgorithmBuilder> getDefaultNativeAlgorithmBuilder(std::string a
   }
   if (algorithmName == "default_allreduce_nvls") {
     return std::make_shared<AllreduceNvls>();
+  }
+  if (algorithmName == "default_allreduce_nvls_with_copy") {
+    return std::make_shared<AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize);
   }
   throw std::runtime_error("Unsupported default native algorithm: " + algorithmName);
 }
