@@ -246,6 +246,8 @@ class AlgorithmCollection {
   std::unordered_map<std::string, std::shared_ptr<Algorithm>> getAlgorithmsByCollective(
       const std::string& collective) const;
 
+  void extend(const AlgorithmCollection& other);
+
  private:
   std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>> algoMapByCollective_;
   AlgoSelectFunc algoSelector_ = nullptr;
@@ -265,6 +267,8 @@ class AlgorithmCollectionBuilder {
 
   std::shared_ptr<AlgorithmCollection> buildCollectionWithDefaultNativeAlgorithms(uintptr_t scratchBuffer,
                                                                                   size_t scratchBufferSize);
+
+  std::shared_ptr<AlgorithmCollection> buildCollectionWithDefaultDslAlgorithms(int rank);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.

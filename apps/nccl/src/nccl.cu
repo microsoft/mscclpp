@@ -95,26 +95,26 @@ static inline int mscclppNcclDlopenInit() {
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
-             ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
+             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t (*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t (*)(ncclComm_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t (*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllGather,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Broadcast,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Reduce,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
-             ncclResult_t(*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
-             ncclResult_t(*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t(*)());
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t(*)());
+             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
 
   return dlopenSuccess;
 }
@@ -154,53 +154,6 @@ static bool tryLoadNcclSharedLib() {
     }
   }
   return false;
-}
-
-struct DslAlgoConfig {
-  std::string filename;
-  std::string collective;
-  int nRanksPerNode;
-  int worldSize;
-  std::unordered_map<std::string, uint64_t> tags;
-};
-
-static void registerDefaultDslAlgorithms(int rank) {
-  static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
-      {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
-      {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
-
-  static auto generateFileId = [](const std::string& input) {
-    std::hash<std::string> hasher;
-    size_t hashValue = hasher(input);
-    std::ostringstream oss;
-    oss << std::hex << hashValue;
-    return oss.str();
-  };
-
-  std::string planDir = mscclpp::env()->executionPlanDir;
-  if (!std::filesystem::exists(planDir)) {
-    INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
-    return;
-  }
-  for (const auto& config : defaultAlgoConfigs) {
-    std::string planPath = planDir + "/" + config.filename;
-    INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
-    if (!std::filesystem::exists(planPath)) {
-      INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
-      continue;
-    }
-    std::string planId = generateFileId(planPath);
-    auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
-    try {
-      auto executionPlan = mscclpp::ExecutionPlan(planPath, rank);
-      auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
-          planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
-      collectionBuilder->addAlgorithmBuilder(algoBuilder);
-      INFO(MSCCLPP_NCCL, "Successfully loaded plan: %s for collective: %s", planId.c_str(), config.collective.c_str());
-    } catch (const std::exception& e) {
-      WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
-    }
-  }
 }
 
 // Declare the global map to store associations between raw pointer and shared pointer
@@ -377,8 +330,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->algorithmCollection =
       mscclpp::AlgorithmCollectionBuilder::getInstance()->buildCollectionWithDefaultNativeAlgorithms(
           reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_);
-  // registerDefaultDslAlgorithms(rank);
-  // commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->build();
+  auto dslAlgoCollection =
+      mscclpp::AlgorithmCollectionBuilder::getInstance()->buildCollectionWithDefaultDslAlgorithms(rank);
+  commPtr->algorithmCollection->extend(*dslAlgoCollection);
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)

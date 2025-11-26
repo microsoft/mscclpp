@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <filesystem>
 #include <mscclpp/algorithm.hpp>
 
 #include "algorithms/allreduce/allreduce_allconnect.hpp"
@@ -97,6 +98,14 @@ std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const Collective
   return algo;
 }
 
+void AlgorithmCollection::extend(const AlgorithmCollection& other) {
+  for (const auto& [collective, algoMap] : other.algoMapByCollective_) {
+    for (const auto& [algoName, algorithm] : algoMap) {
+      this->registerAlgorithm(collective, algoName, algorithm);
+    }
+  }
+}
+
 std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection::getAlgorithmsByCollective(
     const std::string& collective) const {
   auto it = algoMapByCollective_.find(collective);
@@ -144,6 +153,56 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollection
   collection->registerAlgorithm(allreduceAllconnect->collective(), allreduceAllconnect->name(), allreduceAllconnect);
   collection->algoSelector_ = algoSelector_;
   collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  return collection;
+}
+
+std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollectionWithDefaultDslAlgorithms(int rank) {
+  struct DslAlgoConfig {
+    std::string filename;
+    std::string collective;
+    int nRanksPerNode;
+    int worldSize;
+    std::unordered_map<std::string, uint64_t> tags;
+  };
+  static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
+      {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
+      {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
+  auto collection = std::make_shared<AlgorithmCollection>();
+  collection->algoSelector_ = algoSelector_;
+  collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+
+  static auto generateFileId = [](const std::string& input) {
+    std::hash<std::string> hasher;
+    size_t hashValue = hasher(input);
+    std::ostringstream oss;
+    oss << std::hex << hashValue;
+    return oss.str();
+  };
+
+  std::string planDir = mscclpp::env()->executionPlanDir;
+  if (!std::filesystem::exists(planDir)) {
+    INFO(EXEC, "Plan directory does not exist: ", planDir);
+    return collection;
+  }
+  for (const auto& config : defaultAlgoConfigs) {
+    std::string planPath = planDir + "/" + config.filename;
+    INFO(EXEC, "Loading plan: ", planPath);
+    if (!std::filesystem::exists(planPath)) {
+      INFO(EXEC, "Plan file does not exist: ", planPath);
+      continue;
+    }
+    std::string planId = generateFileId(planPath);
+    auto collectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+    try {
+      auto executionPlan = mscclpp::ExecutionPlan(planPath, rank);
+      auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
+          planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
+      collectionBuilder->addAlgorithmBuilder(algoBuilder);
+      INFO(EXEC, "Successfully loaded plan: ", planId, " for collective: ", config.collective);
+    } catch (const std::exception& e) {
+      WARN(EXEC, "Failed to load plan : ", planPath, " ", e.what());
+    }
+  }
   return collection;
 }
 
