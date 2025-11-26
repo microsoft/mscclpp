@@ -150,7 +150,7 @@ struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelOutDataOffset,
                           size_t channelScratchOffset, size_t, int rank, int nRanksPerNode, int worldSize,
-                          size_t inputSize, cudaStream_t stream, LL8Packet*, uint32_t, int nBlocks,
+                          size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks,
                           int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);

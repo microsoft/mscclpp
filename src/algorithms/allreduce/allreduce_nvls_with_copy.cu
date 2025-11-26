@@ -111,7 +111,7 @@ struct NvlsWithCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
-                          cudaStream_t stream, LL8Packet*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
       return cudaErrorNotSupported;

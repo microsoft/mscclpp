@@ -7,17 +7,22 @@ namespace mscclpp {
 namespace algorithm {
 
 __device__ uint32_t deviceFlag = 1;
-template <Algorithm::Op OpType, typename T>
+template <Algorithm::Op OpType, typename T, bool flagPerThread = false>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                         [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
-                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] LL8Packet* flags) {
+                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-  uint32_t flag = deviceFlag;
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    flags[blockIdx.x].write(0, flag);
+  uint32_t flag = 0;
+  if constexpr (flagPerThread) {
+    flag = ((uint32_t*)flags)[blockIdx.x];
+  } else {
+    flag = deviceFlag;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      ((LL8Packet*)flags)[blockIdx.x].write(0, flag);
+    }
   }
 
   size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
@@ -43,14 +48,18 @@ __global__ void __launch_bounds__(1024, 1)
     }
     dst[i] = data;
   }
-  if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
-    flags[threadIdx.x].read(flag, -1);
-  }
-  if (blockIdx.x == 0) {
-    __syncthreads();
-  }
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    deviceFlag++;
+  if constexpr (flagPerThread) {
+    ((uint32_t*)flags)[blockIdx.x] = flag + 1;
+  } else {
+    if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
+      ((LL8Packet*)flags)[threadIdx.x].read(flag, -1);
+    }
+    if (blockIdx.x == 0) {
+      __syncthreads();
+    }
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      deviceFlag++;
+    }
   }
 #endif
 }
@@ -70,17 +79,28 @@ struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
-                          int rank, int, int worldSize, size_t inputSize, cudaStream_t stream, LL8Packet* flags,
+                          int rank, int, int worldSize, size_t inputSize, cudaStream_t stream, void* flags,
                           uint32_t, int nBlocks, int nThreadsPerBlock) {
-    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output,
-                                                                             nvlsChannels, inputSize / sizeof(T),
-                                                                             scratchBufferSize, rank, worldSize, flags);
+    if (nBlocks == 4 || nBlocks == 8) {
+      allreduceNvlsPacket<OpType, T, true>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output, nvlsChannels,
+                                                     inputSize / sizeof(T), scratchBufferSize, rank, worldSize, flags);
+    } else {
+      allreduceNvlsPacket<OpType, T>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output, nvlsChannels,
+                                                     inputSize / sizeof(T), scratchBufferSize, rank, worldSize, flags);
+    }
     return cudaGetLastError();
   }
 };
 
 void AllreduceNvlsPacket::initialize(std::shared_ptr<mscclpp::Communicator>) {
+  std::vector<uint32_t> flags(8, 1);
   flags_ = mscclpp::detail::gpuCallocShared<LL8Packet>(16);
+  flags4_ = mscclpp::detail::gpuCallocShared<uint32_t>(4);
+  flags8_ = mscclpp::detail::gpuCallocShared<uint32_t>(8);
+  mscclpp::gpuMemcpy<uint32_t>(flags4_.get(), flags.data(), 4, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<uint32_t>(flags8_.get(), flags.data(), 8, cudaMemcpyHostToDevice);
 }
 
 mscclpp::AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t,
@@ -122,10 +142,17 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclp
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  cudaError_t error = allreduce(
-      input, this->scratchBuffer_, output, nullptr, nullptr, ctx->switchChannelDeviceHandles.get(),
-      nullptr, 0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream,
-      this->flags_.get(), 0, blockAndThreadNum.first, blockAndThreadNum.second);
+  void* flags = this->flags_.get();
+  if (blockAndThreadNum.first == 4) {
+    flags = this->flags4_.get();
+  }
+  else if (blockAndThreadNum.first == 8) {
+    flags = this->flags8_.get();
+  }
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_, output, nullptr, nullptr, ctx->switchChannelDeviceHandles.get(), nullptr,
+                0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags,
+                0, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;

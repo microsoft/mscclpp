@@ -152,13 +152,13 @@ struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
-                          cudaStream_t stream, LL8Packet* flags, uint32_t numScratchBuff, int nBlocks = 0,
+                          cudaStream_t stream, void* flags, uint32_t numScratchBuff, int nBlocks = 0,
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, flags, numScratchBuff);
+        nRanksPerNode, worldSize, nelems, (LL8Packet*)flags, numScratchBuff);
     return cudaGetLastError();
   }
 };
