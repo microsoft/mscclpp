@@ -27,8 +27,6 @@ constexpr int MAX_NRANKS_PER_NODE = 8;
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 static bool mscclppDisableChannelCache = env()->disableChannelCache;
 
-static __device__ DeviceSyncer deviceSyncer;
-
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
 
@@ -59,6 +57,8 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
+
+std::pair<int, int> getBlockNumAndThreadNum(const std::unordered_map<std::string, uintptr_t>& extra);
 
 }  // namespace algorithm
 }  // namespace mscclpp

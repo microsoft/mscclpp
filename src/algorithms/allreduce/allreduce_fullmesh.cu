@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "algorithms/allreduce/allreduce_allconnect.hpp"
+#include "algorithms/allreduce/allreduce_fullmesh.hpp"
 #include "algorithms/allreduce/common.hpp"
 #include "algorithms/utils.hpp"
 #include "debug.h"
@@ -11,9 +11,9 @@ namespace algorithm {
 
 template <Op OpType, typename T>
 __global__ void __launch_bounds__(512, 1)
-    allreduceAllconnect(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                         DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset,
-                         size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+    allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
+                      DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset,
+                      size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
   const int nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
@@ -150,20 +150,19 @@ struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelOutDataOffset,
                           size_t channelScratchOffset, size_t, int rank, int nRanksPerNode, int worldSize,
-                          size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks,
-                          int nThreadsPerBlock) {
+                          size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0) nBlocks = 35;
     if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
-    allreduceAllconnect<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreduceFullmesh<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
         channelOutDataOffset, channelScratchOffset, rank, nRanksPerNode, worldSize, nelems);
     return cudaGetLastError();
   }
 };
 
-void AllreduceAllconnect::initialize(std::shared_ptr<Communicator> comm) {
+void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
   nChannelsPerConnection_ = 64;
   comm_ = comm;
@@ -175,9 +174,9 @@ void AllreduceAllconnect::initialize(std::shared_ptr<Communicator> comm) {
   localScratchMemory_ = std::move(localMemory);
 }
 
-CommResult AllreduceAllconnect::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                 void* output, size_t inputSize, DataType dtype, cudaStream_t stream,
-                                                 std::unordered_map<std::string, uintptr_t>& extras) {
+CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
+                                                  void* output, size_t inputSize, DataType dtype, cudaStream_t stream,
+                                                  std::unordered_map<std::string, uintptr_t>& extras) {
   Algorithm::Op op = *reinterpret_cast<Algorithm::Op*>(extras.at("op"));
 
   size_t recvBytes;
@@ -214,7 +213,7 @@ CommResult AllreduceAllconnect::allreduceKernelFunc(const std::shared_ptr<Algori
   return CommResult::commSuccess;
 }
 
-AlgorithmCtxKey AllreduceAllconnect::generateAllreduceContextKey(const void*, void* output, size_t, DataType) {
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType) {
   static int tag = 0;
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
@@ -225,8 +224,8 @@ AlgorithmCtxKey AllreduceAllconnect::generateAllreduceContextKey(const void*, vo
   return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
-std::shared_ptr<AlgorithmCtx> AllreduceAllconnect::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                                     void* output, size_t, DataType) {
+std::shared_ptr<AlgorithmCtx> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+                                                                      void* output, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -246,8 +245,8 @@ std::shared_ptr<AlgorithmCtx> AllreduceAllconnect::initAllreduceContext(std::sha
   return ctx;
 }
 
-std::shared_ptr<Algorithm> AllreduceAllconnect::build() {
-  auto self = std::make_shared<AllreduceAllconnect>((uintptr_t)scratchBuffer_, scratchBufferSize_);
+std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
+  auto self = std::make_shared<AllreduceFullmesh>((uintptr_t)scratchBuffer_, scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_allconnect", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },

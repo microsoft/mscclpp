@@ -4,8 +4,10 @@
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
 
-#include "algorithms/allreduce/allreduce_allconnect.hpp"
+#include "algorithms/allgather/allgather_fullmesh.hpp"
+#include "algorithms/allgather/allgather_fullmesh2.hpp"
 #include "algorithms/allreduce/allreduce_allpair_packet.hpp"
+#include "algorithms/allreduce/allreduce_fullmesh.hpp"
 #include "algorithms/allreduce/allreduce_nvls.hpp"
 #include "algorithms/allreduce/allreduce_nvls_packet.hpp"
 #include "algorithms/allreduce/allreduce_nvls_with_copy.hpp"
@@ -148,9 +150,14 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollection
   collection->registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
   auto allreduceNvls = std::make_shared<algorithm::AllreduceNvls>()->build();
   collection->registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
-  auto allreduceAllconnect =
-      std::make_shared<algorithm::AllreduceAllconnect>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceAllconnect->collective(), allreduceAllconnect->name(), allreduceAllconnect);
+  auto allreduceFullmesh =
+      std::make_shared<algorithm::AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
+  collection->registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
+
+  auto allgatherFullmesh = std::make_shared<algorithm::AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
+  collection->registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
+  auto allgatherFullmesh2 = std::make_shared<algorithm::AllgatherFullmesh2>()->build();
+  collection->registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
   collection->algoSelector_ = algoSelector_;
   collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;

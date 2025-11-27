@@ -18,7 +18,6 @@
 
 #include <mscclpp/algorithm.hpp>
 
-#include "allgather.hpp"
 #include "datatype_conversion.hpp"
 #include "debug.h"
 
@@ -253,13 +252,13 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
-      return algoMapByCollective.at(collective).at("default_allgather6");
+      return algoMapByCollective.at(collective).at("default_allgather_fullmesh2");
     } else {
 #if defined(__HIP_PLATFORM_AMD__)
-      return algoMapByCollective.at(collective).at("default_allgather6");
+      return algoMapByCollective.at(collective).at("default_allgather_fullmesh2");
 #else
       if (!mscclppNcclDlopenSharedLib) {
-        return algoMapByCollective.at(collective).at("default_allgather8");
+        return algoMapByCollective.at(collective).at("default_allgather_fullmesh");
       }
 #endif
     }
