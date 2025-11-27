@@ -245,7 +245,7 @@ class AlgorithmCollection {
 
   std::unordered_map<std::string, std::shared_ptr<Algorithm>> getAlgorithmsByCollective(
       const std::string& collective) const;
-
+  std::vector<std::shared_ptr<Algorithm>> getAllAlgorithms() const;
   void extend(const AlgorithmCollection& other);
 
  private:
@@ -265,10 +265,8 @@ class AlgorithmCollectionBuilder {
   /// @param builder The algorithm builder.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
-  std::shared_ptr<AlgorithmCollection> buildCollectionWithDefaultNativeAlgorithms(uintptr_t scratchBuffer,
-                                                                                  size_t scratchBufferSize);
-
-  std::shared_ptr<AlgorithmCollection> buildCollectionWithDefaultDslAlgorithms(int rank);
+  std::shared_ptr<AlgorithmCollection> buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
+                                                              int rank);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.
@@ -291,6 +289,8 @@ class AlgorithmCollectionBuilder {
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
   static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
+  std::shared_ptr<AlgorithmCollection> buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
+  std::shared_ptr<AlgorithmCollection> buildDefaultDslAlgorithms(int rank);
 };
 
 }  // namespace mscclpp

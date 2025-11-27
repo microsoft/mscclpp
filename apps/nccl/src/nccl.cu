@@ -326,12 +326,8 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
   mscclpp::AlgorithmCollectionBuilder::getInstance()->setFallbackAlgorithmSelector(algoSelector);
-  commPtr->algorithmCollection =
-      mscclpp::AlgorithmCollectionBuilder::getInstance()->buildCollectionWithDefaultNativeAlgorithms(
-          reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_);
-  auto dslAlgoCollection =
-      mscclpp::AlgorithmCollectionBuilder::getInstance()->buildCollectionWithDefaultDslAlgorithms(rank);
-  commPtr->algorithmCollection->extend(*dslAlgoCollection);
+  commPtr->algorithmCollection = mscclpp::AlgorithmCollectionBuilder::getInstance()->buildDefaultAlgorithms(
+      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_, rank);
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)

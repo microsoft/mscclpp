@@ -7,6 +7,7 @@
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
+#include <nanobind/stl/vector.h>
 
 #include <mscclpp/algorithm.hpp>
 
@@ -84,12 +85,15 @@ void register_algorithm(nb::module_& m) {
       .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
            nb::arg("selector"))
       .def("build", &AlgorithmCollectionBuilder::build)
+      .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms,
+           nb::arg("scratch_buffer"), nb::arg("scratch_buffer_size"), nb::arg("rank"))
       .def_static("reset", &AlgorithmCollectionBuilder::reset);
 
   nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),
            nb::arg("algorithm"))
-      .def("get_algorithms_by_collective", &AlgorithmCollection::getAlgorithmsByCollective, nb::arg("collective"));
+      .def("get_algorithms_by_collective", &AlgorithmCollection::getAlgorithmsByCollective, nb::arg("collective"))
+      .def("to_list", &AlgorithmCollection::getAllAlgorithms);
 
   nb::class_<CollectiveRequest>(m, "CollectiveRequest")
       .def_ro("world_size", &CollectiveRequest::worldSize)

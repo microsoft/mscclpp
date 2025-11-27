@@ -17,7 +17,7 @@
 namespace mscclpp {
 
 typedef enum : unsigned int { NONE = 0, DEBUG, INFO, WARN, ERROR } LogLevel;
-typedef enum : std::size_t { ENV = 0, NET, CONN, EXEC, NCCL, COUNT } LogSubsys;
+typedef enum : std::size_t { ENV = 0, NET, CONN, EXEC, NCCL, ALGO, COUNT } LogSubsys;
 
 namespace detail {
 std::string guessRemoveProjectPrefix(const std::string& filePathStr);

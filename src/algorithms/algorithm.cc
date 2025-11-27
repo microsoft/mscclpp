@@ -91,6 +91,9 @@ void AlgorithmCollection::registerAlgorithm(const std::string collective, const 
 
 std::shared_ptr<Algorithm> AlgorithmCollection::selectAlgorithm(const CollectiveRequest& request) {
   std::shared_ptr<Algorithm> algo;
+  if (!algoSelector_ && !fallbackAlgoSelector_) {
+    THROW(ALGO, Error, ErrorCode::InvalidUsage, "No algorithm selector is set in AlgorithmCollection.");
+  }
   if (algoSelector_) {
     algo = algoSelector_(algoMapByCollective_, request);
   }
@@ -106,6 +109,16 @@ void AlgorithmCollection::extend(const AlgorithmCollection& other) {
       this->registerAlgorithm(collective, algoName, algorithm);
     }
   }
+}
+
+std::vector<std::shared_ptr<Algorithm>> AlgorithmCollection::getAllAlgorithms() const {
+  std::vector<std::shared_ptr<Algorithm>> allAlgos;
+  for (const auto& [collective, algoMap] : algoMapByCollective_) {
+    for (const auto& [algoName, algorithm] : algoMap) {
+      allAlgos.push_back(algorithm);
+    }
+  }
+  return allAlgos;
 }
 
 std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection::getAlgorithmsByCollective(
@@ -130,7 +143,16 @@ void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBu
   this->algoBuilders_.push_back(builder);
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollectionWithDefaultNativeAlgorithms(
+std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
+                                                                                        size_t scratchBufferSize,
+                                                                                        int rank) {
+  auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
+  auto dslCollection = buildDefaultDslAlgorithms(rank);
+  nativeCollection->extend(*dslCollection);
+  return nativeCollection;
+}
+
+std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(
     uintptr_t scratchBuffer, size_t scratchBufferSize) {
   auto collection = std::make_shared<AlgorithmCollection>();
   auto allreduceAllpairPkt =
@@ -163,7 +185,7 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollection
   return collection;
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollectionWithDefaultDslAlgorithms(int rank) {
+std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int rank) {
   struct DslAlgoConfig {
     std::string filename;
     std::string collective;
@@ -188,14 +210,14 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollection
 
   std::string planDir = mscclpp::env()->executionPlanDir;
   if (!std::filesystem::exists(planDir)) {
-    INFO(EXEC, "Plan directory does not exist: ", planDir);
+    INFO(ALGO, "Plan directory does not exist: ", planDir);
     return collection;
   }
   for (const auto& config : defaultAlgoConfigs) {
     std::string planPath = planDir + "/" + config.filename;
-    INFO(EXEC, "Loading plan: ", planPath);
+    INFO(ALGO, "Loading plan: ", planPath);
     if (!std::filesystem::exists(planPath)) {
-      INFO(EXEC, "Plan file does not exist: ", planPath);
+      INFO(ALGO, "Plan file does not exist: ", planPath);
       continue;
     }
     std::string planId = generateFileId(planPath);
@@ -205,9 +227,9 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildCollection
       auto algoBuilder = std::make_shared<mscclpp::DslAlgorithm>(
           planId, executionPlan, config.tags, mscclpp::Algorithm::Constraint{config.worldSize, config.nRanksPerNode});
       collectionBuilder->addAlgorithmBuilder(algoBuilder);
-      INFO(EXEC, "Successfully loaded plan: ", planId, " for collective: ", config.collective);
+      INFO(ALGO, "Successfully loaded plan: ", planId, " for collective: ", config.collective);
     } catch (const std::exception& e) {
-      WARN(EXEC, "Failed to load plan : ", planPath, " ", e.what());
+      WARN(ALGO, "Failed to load plan : ", planPath, " ", e.what());
     }
   }
   return collection;
@@ -290,7 +312,7 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
       executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);
       break;
     default:
-      WARN(EXEC, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
+      WARN(ALGO, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
       return CommResult::commInvalidArgument;
   }
   return CommResult::commSuccess;
