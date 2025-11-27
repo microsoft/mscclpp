@@ -129,8 +129,14 @@ if(MSCCLPP_USE_CUDA)
 
     set(CMAKE_CUDA_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
-    set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     set(GPU_INCLUDE_DIRS ${CUDAToolkit_INCLUDE_DIRS})
+
+    find_package(CCCL PATHS ${CUDAToolkit_LIBRARY_DIR}/cmake/cccl)
+    if (CCCL_FOUND AND CUDAToolkit_VERSION_MAJOR GREATER 12)
+        set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver CCCL::CCCL)
+    else()
+        set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
+    endif()
 else()
     set(CMAKE_HIP_STANDARD 17)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
