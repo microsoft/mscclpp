@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.globals import *
-from mscclpp.language.internal.operations import PipelineOperation
 
 
 class LoopIterationContext:
@@ -35,7 +34,6 @@ class LoopIterationContext:
         """
         self.unit = unit
         self.num_chunks = num_chunks
-        self.operations = []
 
     def __enter__(self):
         """Enter the context and set this as the active loop context.
@@ -54,17 +52,7 @@ class LoopIterationContext:
         """
         get_program().set_loop_context(None)
 
-        pipeline_operation = {}
-        for rank, tb, operation in self.operations:
-            key = (rank, tb)
-            if key not in pipeline_operation:
-                pipeline_operation[key] = PipelineOperation(self.unit, self.num_chunks)
-            pipeline_operation[key].add_operation(operation)
-
-        for (rank, tb), pipeline in pipeline_operation.items():
-            get_program().add_operation(rank, tb, pipeline)
-
-    def add_operation(self, rank, tb, operation):
+    def process_operation(self, operation):
         """Add an operation to be included in the pipeline.
 
         This method is called internally to collect operations that should be
@@ -76,4 +64,4 @@ class LoopIterationContext:
             tb (int): The thread block ID that will execute this operation.
             operation: The operation object to be added to the pipeline.
         """
-        self.operations.append((rank, tb, operation))
+        operation.set_pipeline_context(self)

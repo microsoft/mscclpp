@@ -251,3 +251,8 @@ class ReplicationPolicy(Enum):
 
     def __str__(self):
         return self.value
+
+@dataclass
+class PipelineContext():
+    unit: int
+    num_chunks: int

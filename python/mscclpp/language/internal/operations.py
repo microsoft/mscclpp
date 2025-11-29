@@ -12,6 +12,7 @@ from mscclpp.language.internal.types import (
     DataAccessType,
 )
 from mscclpp.language.thread_block_group import ThreadBlockGroup
+from mscclpp.language.loop import LoopIterationContext
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List
@@ -36,6 +37,8 @@ class BaseOperation(ABC):
     rank: int
     threadblock: int
     name: str
+    # TODO: Only fuse operation with the same pipeline_context
+    pipeline_context: LoopIterationContext = field(default=None)
 
     def local_data_access(self, sync_purpose=True):
         """Get list of local data accesses performed by this operation.
@@ -84,6 +87,12 @@ class BaseOperation(ABC):
         """
         return
 
+    def set_pipeline_context(self, pipeline_context):
+        self.pipeline_context = pipeline_context
+
+    def basic_fusion_check(self, other_op):
+        return self.rank == other_op.rank and self.threadblock == other_op.thread_block and self.pipeline_context == other_op.pipeline_context
+
     def __add__(self, other):
         """Attempt to fuse this operation with another operation.
 
@@ -120,6 +129,9 @@ class SyncOperation(BaseOperation):
         super().__init__(rank, threadblock, Instruction.nop)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+
         fused_operation = None
         if isinstance(other, SyncOperation):
             fused_operation = SyncOperation()
@@ -229,6 +241,9 @@ class SemaphoreAcquireOperation(BaseOperation):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if isinstance(other, SemaphoreAcquireOperation):
             fused_operation = SemaphoreAcquireOperation(
@@ -262,6 +277,9 @@ class SemaphoreReleaseOperation(BaseOperation):
             self.semaphore_ids[i] = replication_function(self.semaphore_ids[i], instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if isinstance(other, SemaphoreReleaseOperation):
             fused_operation = SemaphoreReleaseOperation(
@@ -303,6 +321,9 @@ class SignalOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if (
             isinstance(other, SignalOperation)
@@ -352,6 +373,9 @@ class WaitOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if (
             isinstance(other, WaitOperation)
@@ -403,6 +427,9 @@ class BarrierOperation(BaseOperation):
         self.barrier_id = replication_function(self.barrier_id, instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
@@ -444,6 +471,9 @@ class FlushOperation(BaseOperation):
         self.data_sync = data_sync
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
             fused_operation = FlushOperation(
@@ -511,6 +541,9 @@ class GetOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, chunk.size, instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if (
             isinstance(other, GetOperation)
@@ -610,6 +643,9 @@ class PutOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, chunk.size, instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if (
             isinstance(other, PutOperation)
@@ -748,6 +784,9 @@ class ReduceOperation(BaseOperation):
             chunk.index = replication_function(chunk.index, chunk.size, instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+        
         fused_operation = None
         if (
             isinstance(other, ReduceOperation)
@@ -873,6 +912,9 @@ class GroupLoadReduce(BaseOperation):
         self.dst_chunk.index = replication_function(self.dst_chunk.index, self.size, instance, num_instances)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+
         fused_operation = None
         if (
             isinstance(other, GroupStore)
@@ -1034,6 +1076,9 @@ class PipelineOperation(BaseOperation):
             operation.shift_ids(instance, num_instances, replication_function)
 
     def __add__(self, other):
+        if not self.basic_fused_check(self):
+            return None
+            
         fused_operation = None
         if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
             other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)

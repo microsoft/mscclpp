@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from mscclpp.language.internal.globals import *
 from mscclpp.language.internal.operations import *
 from mscclpp.language.internal.types import *
 from mscclpp.language.internal.register import ChannelRegister, SemaphoreRegister
 from queue import Queue
 from typing import Set, Dict, Tuple
+import warnings
 
 
 class OperationDependencyGraph:
@@ -105,6 +107,7 @@ class OperationDependencyGraph:
 
     def add_semaphore_dependency(self):
         queue = Queue()
+        processed_node = set()
         sem_rel = {}
         sem_acq = {}
         sem_val = {}
@@ -112,13 +115,20 @@ class OperationDependencyGraph:
         self.reset()
 
         def compute_sem_op(sem_op, node):
-             for id in node.operation.semaphore_ids:
-                if (node.operation.rank, id) not in sem_op:
-                    sem_op[(node.operation.rank, id)] = []
-                    sem_val[(node.operation.rank, id)] = SemaphoreRegister.get_semaphore(node.operation.rank, id).initial_value
-                sem_op[(node.operation.rank, id)].append(node)
+            operation = node.operation
+            for id in operation.semaphore_ids:
+                if (operation.rank, id) not in sem_op:
+                    sem_op[(operation.rank, id)] = []
+                    sem_val[(operation.rank, id)] = SemaphoreRegister.get_semaphore(operation.rank, id).initial_value
+                sem_op[(operation.rank, id)].append((node, operation.pipeline_context))
+            
+            return True
 
         def process_node(node):
+            if node in processed_node:
+                return
+            processed_node.add(node)
+            
             for next_node in node.next_nodes:
                 next_node.add_reach()
                 if next_node.get_reach() == next_node.get_input():
@@ -128,49 +138,59 @@ class OperationDependencyGraph:
                     else:
                        queue.put(next_node) 
 
-
         for node in self.root_nodes:
             queue.put(node)
 
         while True:
+            sem_ops_found = False
+            new_sem_rel_node = []
             while not queue.empty():
                 node = queue.get()
                 if isinstance(node, self.Node) and isinstance(node.operation, SemaphoreReleaseOperation):
-                    compute_sem_op(sem_rel, node)
+                    sem_ops_found = compute_sem_op(sem_rel, node)
+                    new_sem_rel_node.append(node)
                 elif isinstance(node, self.Node) and isinstance(node.operation, SemaphoreAcquireOperation):
-                    compute_sem_op(sem_acq, node)
+                    sem_ops_found = compute_sem_op(sem_acq, node)
                 else:
                     process_node(node)
 
-            if not sem_rel and not sem_acq:
+            if not sem_ops_found:
                 break
             else:
                 removed_keys = []
                 for key in sem_acq.keys():
-                    if key in sem_rel:
-                        if len(sem_acq[key]) > 1 or sem_val[key] != len(sem_rel[key]) - len(sem_acq[key]):
-                            raise RuntimeError(f"Undefined Behaviour Semaphore Id {key[1]}.")
-                        else:
-                            sem_acq_node = sem_acq[key][0]
-                            sem_val[key] = 0
-                            if sem_acq_node in self.root_nodes:
-                                self.root_nodes.remove(sem_acq_node)
-                            process_node(sem_acq_node)
-                            for sem_rel_node in sem_rel[key]:
-                                process_node(sem_rel_node)
-                                sem_rel_node.next_nodes.append(sem_acq_node)
-                                sem_acq_node.operation.add_tb_sync(sem_rel_node.operation.threadblock)
-                                sem_acq_node.previous_nodes.append(sem_rel_node)
-                                sem_acq_node.add_input()
-                        
-                        removed_keys.append(key)
+                    if key not in sem_rel:
+                        sem_rel[key] = []
+                    if len(sem_acq[key]) > 1 or sem_val[key] < len(sem_rel[key]) - len(sem_acq[key]):
+                        get_program().disable_inter_tb_sync()
+                        warnings.warn(f"Undefined Behaviour Semaphore Id.", UserWarning)
+                        return
+                    
+                    for sem_rel_node in new_sem_rel_node:
+                        process_node(sem_rel_node)
+                    
+                    if sem_val[key] == len(sem_rel[key]) - len(sem_acq[key]):
+                        sem_acq_node, sem_acq_ctx = sem_acq[key][0]
+                        sem_val[key] = 0
+                        if sem_acq_node in self.root_nodes:
+                            self.root_nodes.remove(sem_acq_node)
+                        process_node(sem_acq_node)
+                        for sem_rel_node, sem_rel_ctx in sem_rel[key]:
+                            if sem_rel_ctx is not sem_acq_ctx:
+                                raise RuntimeError(f"Semaphore cross pipeline context violation.")
+                            sem_rel_node.next_nodes.append(sem_acq_node)
+                            sem_acq_node.operation.add_tb_sync(sem_rel_node.operation.threadblock)
+                            sem_acq_node.previous_nodes.append(sem_rel_node)
+                            sem_acq_node.add_input()
+                    
+                    removed_keys.append(key)
                 
                 for key in removed_keys:
                     sem_rel.pop(key)
                     sem_acq.pop(key)
 
-        if len(sem_rel.keys()) > 0 or len(sem_acq.keys()):
-            raise RuntimeError(f"Undefined Semaphore Behaviour.")
+        if len(sem_acq.keys()) > 0:
+            raise RuntimeError(f"Semaphore acquire hanging.")
     
     def reset(self):
         for node in self.node_list:

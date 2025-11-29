@@ -48,6 +48,7 @@ class CollectiveProgram:
         protocol: str = "Simple",
         instr_fusion: bool = True,
         auto_sync: bool = True,
+        intra_rank_sync: bool = True,
         replication_policy: ReplicationPolicy = ReplicationPolicy.interleaved,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
@@ -103,7 +104,7 @@ class CollectiveProgram:
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
         self.op_dep_dag = OperationDependencyGraph()
-        self.buffers_access = BuffersAccess(num_ranks)
+        self.buffers_access = BuffersAccess(num_ranks, intra_rank_sync)
         self.buffers = collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
@@ -129,6 +130,9 @@ class CollectiveProgram:
         """
         set_program(None)
 
+    def disable_inter_tb_sync(self):
+        self.buffers_access.intra_rank_sync = False
+
     def add_channel(self, channel):
         if channel.channel_type == ChannelType.switch:
             for gpu in channel.rank_group.ranks:
@@ -152,9 +156,8 @@ class CollectiveProgram:
 
     def add_operation(self, rank, tb, operation):
         if self.loop_context != None:
-            self.loop_context.add_operation(rank, tb, operation)
-        else:
-            self.op_dep_dag.add_operation(operation)
+            self.loop_context.process_operation(operation)
+        self.op_dep_dag.add_operation(operation)
 
     def add_tbg_operation(self, operations):
         self.op_dep_dag.add_tbg_operation(operations)

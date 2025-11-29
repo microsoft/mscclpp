@@ -9,7 +9,8 @@ from enum import Enum
 
 
 class BuffersAccess:
-    def __init__(self, num_ranks):
+    def __init__(self, num_ranks, intra_rank_sync):
+        self.intra_rank_sync = intra_rank_sync
         self.rank_intervals = [
             {
                 BufferType.input: SortedDict(),
@@ -114,7 +115,7 @@ class BuffersAccess:
                     fix_operations.append(SyncOperation(rank, threadblock))
                     self.track_sync[(rank, threadblock)] = order_id
                     break
-        if data_access_conflict.conflict_type == DataAccessConflictType.inter_threadblock:
+        if data_access_conflict.conflict_type == DataAccessConflictType.inter_threadblock and self.intra_rank_sync:
             conflict_tb = set([threadblock])
             for tb in data_access_conflict.threadblocks:
                 if threadblock != tb[0] and ((rank, threadblock, tb[0]) not in self.track_barrier or self.track_barrier[(rank, threadblock, tb[0])] < tb[1]):
