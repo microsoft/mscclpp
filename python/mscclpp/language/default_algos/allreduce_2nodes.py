@@ -7,7 +7,7 @@ This implements a hierarchical AllReduce: intra-node allreduce followed by
 inter-node exchange and final intra-node allreduce.
 """
 
-import argparse
+from mscclpp.language.utils import AlgoSpec
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
 from mscclpp.language.general import *
@@ -15,9 +15,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def allreduce_example(
-    program_name, gpus_per_node, thread_block_group_size, num_threads_per_block, min_message_size, max_message_size
-):
+def allreduce_2nodes(spec: AlgoSpec, thread_block_group_size: int) -> CollectiveProgram:
     """
     Implements a multi-node AllReduce using a hierarchical approach:
     1. Intra-node allreduce
@@ -26,38 +24,41 @@ def allreduce_example(
     """
     # Configuration constants
     num_nodes = 2
+    gpus_per_node = spec.nranks_per_node
     total_gpus = num_nodes * gpus_per_node
-    chunks_per_loop = 1
-    packets_per_gpu = 2  # Each GPU handles 2 data packets
+    packets_per_gpu = 2
 
-    # Initialize collective operation
-    collective = AllReduce(total_gpus, chunks_per_loop, True)
-
-    with CollectiveProgram(
-        program_name,
-        collective,
-        total_gpus,
-        protocol="LL",
-        num_threads_per_block=num_threads_per_block,
-        reuse_resources=False,
-        use_double_scratch_buffer=True,
-        min_message_size=min_message_size,
-        max_message_size=max_message_size,
-    ):
+    with CollectiveProgram.from_spec(spec) as prog:
         # Initialize communication channels and buffers
         intra_node_memory_channels = {}
         inter_node_port_channels = {}
         scratch_buffers = []
         thread_block_offset = 1
-        thread_block_group = ThreadBlockGroup(
-            tb_list=[i for i in range(thread_block_offset, thread_block_offset + thread_block_group_size)]
+        thread_block_groups = []
+        global_intra_node_tbg = ThreadBlockGroup(
+            tb_list=[
+                i
+                for i in range(thread_block_offset, thread_block_offset + (gpus_per_node - 1) * thread_block_group_size)
+            ]
         )
+        for i in range(gpus_per_node - 1):
+            thread_block_groups.append(
+                ThreadBlockGroup(
+                    tb_list=[
+                        i
+                        for i in range(
+                            thread_block_offset + i * thread_block_group_size,
+                            thread_block_offset + (i + 1) * thread_block_group_size,
+                        )
+                    ]
+                )
+            )
 
+        scratch_buffer_size = packets_per_gpu * (total_gpus + 1)
         for node_id in range(num_nodes):
             for local_gpu_id in range(gpus_per_node):
                 current_rank_id = local_gpu_id + gpus_per_node * node_id
                 next_node_rank_id = (local_gpu_id + gpus_per_node * (node_id + 1)) % total_gpus
-                scratch_buffer_size = 2 * total_gpus
                 scratch_buffers.append(Buffer(current_rank_id, scratch_buffer_size))
                 for peer_gpu_id in range(gpus_per_node):
                     if peer_gpu_id != local_gpu_id:
@@ -79,13 +80,14 @@ def allreduce_example(
                 for peer_gpu_id in range(gpus_per_node):
                     peer_rank_id = peer_gpu_id + gpus_per_node * node_id
                     peer_data_offset = peer_gpu_id * packets_per_gpu
+                    tbg_id = peer_gpu_id if peer_gpu_id < local_gpu_id else peer_gpu_id - 1
                     if peer_gpu_id != local_gpu_id:
                         intra_node_memory_channels[(peer_rank_id, current_rank_id)].put_packets(
                             scratch_buffers[peer_rank_id][
                                 local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu
                             ],
                             input_buffer[peer_data_offset : peer_data_offset + packets_per_gpu],
-                            tb_group=thread_block_group,
+                            tb_group=thread_block_groups[tbg_id],
                         )
 
                 # Intra Node Reduce
@@ -99,20 +101,24 @@ def allreduce_example(
                 current_rank.reduce(
                     input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
                     other_gpu_data,
-                    tb_group=thread_block_group,
+                    tb_group=global_intra_node_tbg,
                     packet=True,
                 )
 
-                # Copy Reduced Data to Scratch Buffer and send to Next Node
                 current_rank.copy_packets(
                     scratch_buffers[current_rank_id][
                         local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu
                     ],
                     input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
-                    tb_group=thread_block_group,
+                    tb_group=global_intra_node_tbg,
                 )
+
+                current_rank.barrier(
+                    tb_list=[i for i in range(thread_block_offset + (gpus_per_node - 1) * thread_block_group_size)]
+                )
+
                 inter_node_offset = total_gpus
-                inter_node_port_channels[current_rank_id].read_put_packets(
+                inter_node_port_channels[current_rank_id].put_packets(
                     scratch_buffers[next_node_rank_id][
                         inter_node_offset
                         + local_gpu_id * packets_per_gpu : inter_node_offset
@@ -137,8 +143,14 @@ def allreduce_example(
                 current_rank.reduce(
                     input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
                     inter_node_data,
-                    tb_group=thread_block_group,
+                    tb_group=global_intra_node_tbg,
                     packet=True,
+                )
+
+                current_rank.copy_packets(
+                    scratch_buffers[current_rank_id][scratch_buffer_size - packets_per_gpu : scratch_buffer_size],
+                    input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
+                    tb_group=global_intra_node_tbg,
                 )
 
                 # Broadcast Reduced Data
@@ -146,22 +158,24 @@ def allreduce_example(
                     peer_rank_id = peer_gpu_id + gpus_per_node * node_id
 
                     if peer_gpu_id != local_gpu_id:
-                        intra_node_memory_channels[(peer_rank_id, current_rank_id)].put_packets(
+                        tbg_id = peer_gpu_id if peer_gpu_id < local_gpu_id else peer_gpu_id - 1
+                        intra_node_memory_channels[(peer_rank_id, current_rank_id)].read_put_packets(
                             scratch_buffers[peer_rank_id][
                                 inter_node_offset
                                 + local_gpu_id * packets_per_gpu : inter_node_offset
                                 + local_gpu_id * packets_per_gpu
                                 + packets_per_gpu
                             ],
-                            input_buffer[
-                                local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu
+                            scratch_buffers[current_rank_id][
+                                scratch_buffer_size - packets_per_gpu : scratch_buffer_size
                             ],
-                            tb_group=thread_block_group,
+                            tb_group=thread_block_groups[tbg_id],
                         )
 
                 # Unpack Data Received from other GPUs in the same node
                 for peer_gpu_id in range(gpus_per_node):
                     if peer_gpu_id != local_gpu_id:
+                        tbg_id = peer_gpu_id if peer_gpu_id < local_gpu_id else peer_gpu_id - 1
                         current_rank.unpack_packets(
                             input_buffer[
                                 peer_gpu_id * packets_per_gpu : peer_gpu_id * packets_per_gpu + packets_per_gpu
@@ -172,28 +186,7 @@ def allreduce_example(
                                 + peer_gpu_id * packets_per_gpu
                                 + packets_per_gpu
                             ],
-                            tb_group=thread_block_group,
+                            tb_group=thread_block_groups[tbg_id],
                         )
 
-        print(JSON())
-
-
-parser = argparse.ArgumentParser()
-
-parser.add_argument("--name", type=str, help="name of the program")
-parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
-parser.add_argument("--tbg_size", type=int, help="number of thread blocks in the thread block group")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
-parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2 * 2**20, help="maximum message size")
-
-args = parser.parse_args()
-
-allreduce_example(
-    args.name,
-    args.gpus_per_node,
-    args.tbg_size,
-    args.num_threads_per_block,
-    args.min_message_size,
-    args.max_message_size,
-)
+    return prog

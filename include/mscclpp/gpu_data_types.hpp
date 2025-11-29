@@ -8,12 +8,31 @@
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
+#include <hip/hip_version.h>
 
 using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
-#else
+// AMD FP8 support - hip_fp8.h provides __hip_fp8_e4m3_fnuz and __hip_fp8_e5m2_fnuz
+// Only available on gfx942 and newer architectures (ROCm 6.0+)
+#if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
+#include <hip/hip_fp8.h>
+
+// Create aliases matching CUDA naming convention for cross-platform compatibility
+using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
+using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
+
+// HIP FP8 vector types use storage types (from hip/amd_detail/amd_hip_fp8.h):
+using __fp8x2_e4m3 = __hip_fp8x2_storage_t;  // uint16_t
+using __fp8x2_e5m2 = __hip_fp8x2_storage_t;  // uint16_t
+using __fp8x4_e4m3 = __hip_fp8x4_storage_t;  // uint32_t
+using __fp8x4_e5m2 = __hip_fp8x4_storage_t;  // uint32_t
+
+#define __FP8_TYPES_EXIST__
+#endif  // HIP_VERSION_MAJOR >= 6
+
+#else  // NVIDIA
 
 #include <cuda_fp16.h>
 #include <cuda_runtime_api.h>
@@ -22,6 +41,13 @@ using __bfloat162 = __hip_bfloat162;
 #endif
 #if (CUDART_VERSION >= 11080)
 #include <cuda_fp8.h>
+using __fp8_e4m3 = __nv_fp8_e4m3;
+using __fp8_e5m2 = __nv_fp8_e5m2;
+using __fp8x2_e4m3 = __nv_fp8x2_e4m3;
+using __fp8x2_e5m2 = __nv_fp8x2_e5m2;
+using __fp8x4_e4m3 = __nv_fp8x4_e4m3;
+using __fp8x4_e5m2 = __nv_fp8x4_e5m2;
+#define __FP8_TYPES_EXIST__
 #endif
 
 using __bfloat16 = __nv_bfloat16;
@@ -32,6 +58,17 @@ using __bfloat162 = __nv_bfloat162;
 #include <mscclpp/device.hpp>
 
 namespace mscclpp {
+
+/// Data types supported by mscclpp operations.
+enum class DataType {
+  INT32,     // 32-bit signed integer.
+  UINT32,    // 32-bit unsigned integer.
+  FLOAT16,   // IEEE 754 half precision.
+  FLOAT32,   // IEEE 754 single precision.
+  BFLOAT16,  // bfloat16 precision.
+  FP8_E4M3,  // FP8 with E4M3 layout.
+  FP8_E5M2,  // FP8 with E5M2 layout.
+};
 
 /// Word array.
 template <int Bytes>
@@ -88,6 +125,16 @@ using bf16x4 = VectorType<__bfloat16, 4>;
 
 using f16x8 = VectorType<__half, 8>;
 using bf16x8 = VectorType<__bfloat16, 8>;
+
+#if defined(__FP8_TYPES_EXIST__)
+// FP8 vector types
+using fp8_e4m3x2 = VectorType<__fp8_e4m3, 2>;
+using fp8_e4m3x4 = VectorType<__fp8_e4m3, 4>;
+using fp8_e4m3x8 = VectorType<__fp8_e4m3, 8>;
+using fp8_e5m2x2 = VectorType<__fp8_e5m2, 2>;
+using fp8_e5m2x4 = VectorType<__fp8_e5m2, 4>;
+using fp8_e5m2x8 = VectorType<__fp8_e5m2, 8>;
+#endif
 
 }  // namespace mscclpp
 

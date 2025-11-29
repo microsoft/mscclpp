@@ -85,7 +85,7 @@ class MyProxyService {
   mscclpp::RegisteredMemory localMemory_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores1_;
   std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> deviceSemaphores2_;
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections_;
+  std::vector<mscclpp::Connection> connections_;
   mscclpp::Proxy proxy_;
 
  public:
@@ -98,7 +98,7 @@ class MyProxyService {
     int cudaNum = rankToLocalRank(rank);
     std::string ibDevStr = "mlx5_ib" + std::to_string(cudaNum);
     mscclpp::Transport ibTransport = mscclpp::getIBTransportByDeviceName(ibDevStr);
-    std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionsFuture(world_size);
+    std::vector<std::shared_future<mscclpp::Connection>> connectionsFuture(world_size);
     std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemoriesFuture(world_size);
 
     localMemory_ = comm.registerMemory(data_d, dataSize, mscclpp::Transport::CudaIpc | ibTransport);
@@ -138,15 +138,15 @@ class MyProxyService {
       int dataSizePerRank = dataSize_ / world_size;
       for (int r = 1; r < world_size; ++r) {
         int nghr = (rank + r) % world_size;
-        connections_[nghr]->write(remoteMemories_[nghr], rank * dataSizePerRank, localMemory_, rank * dataSizePerRank,
-                                  dataSizePerRank);
+        connections_[nghr].write(remoteMemories_[nghr], rank * dataSizePerRank, localMemory_, rank * dataSizePerRank,
+                                 dataSizePerRank);
         if (triggerRaw.fst == 1)
           deviceSemaphores1_[nghr]->signal();
         else
           deviceSemaphores2_[nghr]->signal();
-        if ((flusher % 64) == 0 && mscclpp::AllIBTransports.has(connections_[nghr]->transport())) {
+        if ((flusher % 64) == 0 && mscclpp::AllIBTransports.has(connections_[nghr].transport())) {
           // if we are using IB transport, we need a flush every once in a while
-          connections_[nghr]->flush();
+          connections_[nghr].flush();
         }
       }
       flusher++;

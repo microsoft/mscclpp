@@ -18,6 +18,10 @@ void IbTestBase::SetUp() {
 }
 
 void IbPeerToPeerTest::SetUp() {
+#if !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+
   IbTestBase::SetUp();
 
   mscclpp::UniqueId id;
@@ -306,9 +310,9 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
 
   const int maxIter = 100000;
   const int nelem = 1;
-  auto data = mscclpp::detail::gpuCallocUnique<int>(nelem);
+  auto data = mscclpp::detail::gpuCallocUnique<uint64_t>(nelem);
 
-  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
+  registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
 
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
@@ -322,7 +326,9 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
           int status = qp->getWcStatus(i);
-          EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
+          if (status != static_cast<int>(mscclpp::WsStatus::Success)) {
+            FAIL() << "Work completion status error: " << qp->getWcStatusString(i);
+          }
           waiting = false;
           break;
         }

@@ -3,11 +3,15 @@
 
 from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
-from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType, ReplicationPolicy
+from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
 from mscclpp.language.internal.register import ChannelRegister, SemaphoreRegister
 from mscclpp.language.internal.op_dep_graph import OperationDependencyGraph
 from mscclpp.language.internal.buffer_access import BuffersAccess
+from mscclpp.language.channel import *
+from mscclpp.language.rank import Semaphore
+from mscclpp.language.collectives import *
+from mscclpp.language.utils import AlgoSpec, ReplicationPolicy
 from typing import List
 import json
 
@@ -114,6 +118,55 @@ class CollectiveProgram:
 
         self.loop_context = None
 
+    @classmethod
+    def from_spec(cls, spec: AlgoSpec):
+        """Initialize a new CollectiveProgram from an algorithm specification.
+
+        This constructor provides an alternative way to create a CollectiveProgram
+        using an AlgoSpec object, which contains the complete algorithm specification
+        including collective instance, protocol parameters, and optimization settings.
+        The collective operation is directly provided through the spec's collective attribute.
+
+        Args:
+            spec (AlgoSpec): Algorithm specification containing all program parameters
+                and configuration settings, including a Collective instance.
+
+        Raises:
+            AssertionError: If protocol is not "Simple" or "LL".
+
+        Example:
+            >>> from mscclpp.language.utils import AlgoSpec
+            >>> from mscclpp.language.collectives import AllReduce
+            >>> collective = AllReduce(num_ranks=4, chunk_factor=1, inplace=False)
+            >>> spec = AlgoSpec(
+            ...     name="my_allreduce",
+            ...     collective=collective,
+            ...     world_size=4,
+            ...     instances=1,
+            ...     protocol="Simple",
+            ...     in_place=False
+            ... )
+            >>> with CollectiveProgram.from_spec(spec) as prog:
+            ...     # Define communication operations
+            ...     pass
+        """
+        return cls(
+            spec.name,
+            spec.collective,
+            spec.world_size,
+            instances=spec.instances,
+            protocol=spec.protocol,
+            instr_fusion=spec.instr_fusion,
+            auto_sync=spec.auto_sync,
+            replication_policy=spec.replication_policy,
+            reuse_resources=spec.reuse_resources,
+            num_threads_per_block=spec.num_threads_per_block,
+            use_double_scratch_buffer=spec.use_double_scratch_buffer,
+            buffer_alignment=spec.buffer_alignment,
+            min_message_size=spec.min_message_size,
+            max_message_size=spec.max_message_size,
+        )
+
     def __enter__(self):
         """Enter the program context and set this as the active program.
 
@@ -121,6 +174,7 @@ class CollectiveProgram:
         this program as the active program in the global context.
         """
         set_program(self)
+        return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         """Exit the program context and clear the active program.
@@ -128,6 +182,10 @@ class CollectiveProgram:
         This method is called when exiting the 'with' statement and removes
         this program from the global context.
         """
+        MemoryChannel.reset()
+        PortChannel.reset()
+        SwitchChannel.reset()
+        Semaphore.reset()
         set_program(None)
 
     def disable_inter_tb_sync(self):
@@ -195,7 +253,8 @@ class CollectiveProgram:
             raise RuntimeError("Nested Pipelines are not Supported.")
         self.loop_context = loop_context
 
-    def to_json(self):
+    def to_json(self, indent=2, **kwargs):
+        self.post_process_operations()
         json_obj = {
             "name": self.name,
             "collective": self.collective.name,
@@ -210,4 +269,4 @@ class CollectiveProgram:
             "max_message_size": self.max_message_size,
         }
 
-        return json.dumps(json_obj, indent=2)
+        return json.dumps(json_obj, indent=indent, **kwargs)

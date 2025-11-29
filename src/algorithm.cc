@@ -15,7 +15,7 @@ class Algorithm::Impl {
         kernelLaunchFunc_(kernelFunc),
         contextInitFunc_(contextInitFunc),
         contextKeyGenFunc_(contextKeyGenFunc) {}
-  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, int dtype,
+  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, DataType dtype,
              cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
 
   std::string name_;
@@ -30,7 +30,7 @@ class Algorithm::Impl {
 };
 
 int Algorithm::Impl::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                            int dtype, cudaStream_t stream,
+                            DataType dtype, cudaStream_t stream,
                             std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   if (!initialized_) {
     initFunc_(comm, extras);
@@ -50,7 +50,8 @@ Algorithm::Algorithm(std::string name, std::string collective, InitFunc initFunc
     : impl_(std::make_shared<Impl>(name, collective, initFunc, kernelFunc, contextInitFunc, contextKeyGenFunc)) {}
 
 int Algorithm::launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count,
-                      int dtype, cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
+                      DataType dtype, cudaStream_t stream,
+                      std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
   return this->impl_->launch(comm, input, output, count, dtype, stream, extras);
 }
 
@@ -66,14 +67,14 @@ void AlgorithmCollection::registerAlgorithm(const std::string collective, const 
 }
 
 Algorithm AlgorithmCollection::selectAlgorithm(const std::string& collective, const void* input, void* output,
-                                               size_t messageSize, int nRanksPerNode, int worldSize) {
+                                               size_t messageSize, DataType dtype, int nRanksPerNode, int worldSize) {
   Algorithm algo;
   if (algoSelector_) {
-    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = algoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode, worldSize);
   }
   if (algo.isEmpty()) {
-    algo =
-        fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, nRanksPerNode, worldSize);
+    algo = fallbackAlgoSelector_(algoMapByCollective_, collective, input, output, messageSize, dtype, nRanksPerNode,
+                                 worldSize);
   }
   return algo;
 }
