@@ -13,23 +13,80 @@
 
 namespace mscclpp {
 
+constexpr char ALGORITHM_NATIVE_CAPSULE_NAME[] = "mscclpp::AlgorithmPtr";
+
+enum class CollectiveBufferMode {
+  ANY = 0,
+  IN_PLACE,
+  OUT_OF_PLACE,
+};
+
+enum class AlgorithmType {
+  NATIVE = 0,
+  DSL,
+};
+
+enum class CommResult {
+  commSuccess = 0,
+  commUnhandledCudaError = 1,
+  commSystemError = 2,
+  commInternalError = 3,
+  commInvalidArgument = 4,
+  commInvalidUsage = 5,
+  commRemoteError = 6,
+  commInProgress = 7,
+  commNumResults = 8
+};
+
+class Algorithm {
+ public:
+  struct Constraint {
+    int worldSize;
+    int nRanksPerNode;
+  };
+
+  enum Op {
+    SUM = 0,
+    MIN = 3,
+  };
+
+  virtual ~Algorithm() = default;
+
+  virtual const std::string& name() const = 0;
+  virtual const std::string& collective() const = 0;
+  virtual const std::pair<size_t, size_t>& messageRange() const = 0;
+  virtual const std::unordered_map<std::string, uint64_t>& tags() const = 0;
+  virtual const CollectiveBufferMode& bufferMode() const = 0;
+  virtual AlgorithmType type() const = 0;
+  virtual Constraint constraint() const = 0;
+  virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                             size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+                             std::unordered_map<std::string, uintptr_t>& extras) = 0;
+  virtual void reset() = 0;
+};
+
+class AlgorithmBuilder {
+ public:
+  virtual ~AlgorithmBuilder() = default;
+  virtual std::shared_ptr<Algorithm> build() = 0;
+};
+
 class AlgorithmCtx {
  public:
   int rank;
   int workSize;
   int nRanksPerNode;
 
-  std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::vector<mscclpp::MemoryChannel> memoryChannels;
-  std::vector<mscclpp::SwitchChannel> switchChannels;
-  std::vector<mscclpp::PortChannel> portChannels;
-  std::vector<std::shared_ptr<mscclpp::NvlsConnection>> nvlsConnections;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::SwitchChannel>> switchChannelDeviceHandles;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
-  std::vector<std::shared_ptr<mscclpp::Host2DeviceSemaphore>> hostSemaphores;
-
+  std::vector<RegisteredMemory> registeredMemories;
+  std::vector<MemoryChannel> memoryChannels;
+  std::vector<SwitchChannel> switchChannels;
+  std::vector<PortChannel> portChannels;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
+  std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 
@@ -46,42 +103,6 @@ struct AlgorithmCtxKey {
   }
 };
 
-class AlgorithmImpl;
-
-class Algorithm {
- public:
-  using InitFunc = std::function<void(std::shared_ptr<mscclpp::Communicator>,
-                                      std::unordered_map<std::string, std::shared_ptr<void>>&)>;
-  using KernelFunc = std::function<int(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, DataType,
-                                       cudaStream_t, std::unordered_map<std::string, std::shared_ptr<void>>&)>;
-  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<mscclpp::Communicator>,
-                                                                      const void*, void*, size_t, DataType)>;
-  using ContextKeyGenFunc =
-      std::function<AlgorithmCtxKey(const void* input, void* output, size_t count, DataType dtype)>;
-  Algorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
-            ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc);
-  Algorithm() = default;
-
-  /// @brief Launch the algorithm.
-  /// @param comm The communicator.
-  /// @param input The input buffer.
-  /// @param output The output buffer.
-  /// @param count The number of elements.
-  /// @param dtype The data type.
-  /// @param stream The CUDA stream.
-  /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
-  /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
-  /// will be launched with the AlgorithmCtx.
-  int launch(std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t count, DataType dtype,
-             cudaStream_t stream, std::unordered_map<std::string, std::shared_ptr<void>>& extras);
-  bool isEmpty();
-  std::string name() const;
-  std::string collective() const;
-
- private:
-  class Impl;
-  std::shared_ptr<Impl> impl_;
-};
 }  // namespace mscclpp
 
 namespace std {
@@ -109,41 +130,126 @@ struct hash<mscclpp::AlgorithmCtxKey> {
 
 namespace mscclpp {
 
-class AlgorithmBuilder {
+class NativeAlgorithm : public Algorithm {
  public:
-  virtual ~AlgorithmBuilder() = default;
-  virtual Algorithm build() = 0;
+  using InitFunc = std::function<void(std::shared_ptr<Communicator>)>;
+  using KernelFunc = std::function<CommResult(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t,
+                                              DataType, cudaStream_t, std::unordered_map<std::string, uintptr_t>&)>;
+  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
+                                                                      size_t, size_t, DataType)>;
+  using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
+                                                          size_t outputSize, DataType dtype)>;
+  NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
+                  ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
+                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
+                  std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
+
+  /// @brief Execute the algorithm.
+  /// @brief comm The communicator.
+  /// @param input The input buffer.
+  /// @param output The output buffer.
+  /// @param count The number of elements.
+  /// @param dtype The data type.
+  /// @param stream The CUDA stream.
+  /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
+  /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
+  /// will be launched with the AlgorithmCtx.
+  CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                     size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+                     std::unordered_map<std::string, uintptr_t>& extras) override;
+  const std::string& name() const override;
+  const std::string& collective() const override;
+  const std::pair<size_t, size_t>& messageRange() const override;
+  const std::unordered_map<std::string, uint64_t>& tags() const override;
+  const CollectiveBufferMode& bufferMode() const override;
+  AlgorithmType type() const override { return AlgorithmType::NATIVE; }
+  Constraint constraint() const override;
+  void reset() override;
+
+ private:
+  std::string name_;
+  std::string collective_;
+  NativeAlgorithm::InitFunc initFunc_;
+  NativeAlgorithm::KernelFunc kernelLaunchFunc_;
+  NativeAlgorithm::ContextInitFunc contextInitFunc_;
+  NativeAlgorithm::ContextKeyGenFunc contextKeyGenFunc_;
+  size_t minMessageSize_;
+  size_t maxMessageSize_;
+  CollectiveBufferMode bufferMode_;
+  std::unordered_map<std::string, uint64_t> tags_;
+  Constraint constraint_;
+  std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
+
+  bool initialized_ = false;
 };
 
-using AlgoSelectFunc = std::function<Algorithm(
-    const std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>>& algoMapByCollective,
-    std::string collective, const void* input, void* output, size_t messageSize, DataType dtype, int nRanksPerNode,
-    int worldSize)>;
+class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enable_shared_from_this<DslAlgorithm> {
+ public:
+  DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags = {},
+               Constraint constraint = {});
+  const std::string& name() const override;
+  const std::string& collective() const override;
+  const std::pair<size_t, size_t>& messageRange() const override;
+  const std::unordered_map<std::string, uint64_t>& tags() const override;
+  const CollectiveBufferMode& bufferMode() const override;
+  CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
+                     size_t outputSize, DataType dtype, cudaStream_t stream, std::shared_ptr<Executor> executor,
+                     std::unordered_map<std::string, uintptr_t>& extras) override;
+  AlgorithmType type() const override { return AlgorithmType::DSL; }
+  Constraint constraint() const override;
+  void reset() override;
+
+  std::shared_ptr<Algorithm> build() override;
+
+ private:
+  ExecutionPlan plan_;
+  std::string id_;
+  std::unordered_map<std::string, uint64_t> tags_;
+  Constraint constraint_;
+};
+
+struct CollectiveRequest {
+  int worldSize;
+  int nRanksPerNode;
+  int rank;
+  const void* inputBuffer;
+  void* outputBuffer;
+  size_t messageSize;
+  const std::string& collective;
+  const DataType dtype;
+  const std::unordered_map<std::string, std::vector<uint64_t>>& hints;
+
+  CollectiveBufferMode bufferMode() const;
+};
+
+using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
+    const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&
+        algoMapByCollective,
+    const CollectiveRequest& request)>;
 
 class AlgorithmCollection {
  public:
   AlgorithmCollection() = default;
 
   /// @brief Select an algorithm based on the collective operation name and message size.
-  /// @param collective The collective operation name.
-  /// @param input The input buffer.
-  /// @param output The output buffer.
-  /// @param messageSize The message size.
-  /// @param dtype The data type.
-  /// @param nRanksPerNode The number of ranks per node.
-  /// @param worldSize The total number of ranks.
-  /// @return The selected algorithm. If no suitable algorithm is found, an empty Algorithm object is returned.
-  Algorithm selectAlgorithm(const std::string& collective, const void* input, void* output, size_t messageSize,
-                            DataType dtype, int nRanksPerNode, int worldSize);
+  /// @param request The collective request containing all necessary parameters.
+  /// @return The selected algorithm. If no suitable algorithm is found, a nullptr will be returned.
+  std::shared_ptr<Algorithm> selectAlgorithm(const CollectiveRequest& request);
 
   /// @brief Register a new algorithm.
   /// @param collective The collective operation name.
   /// @param algoName The algorithm name.
   /// @param algorithm The algorithm implementation.
-  void registerAlgorithm(const std::string collective, const std::string algoName, Algorithm algorithm);
+  void registerAlgorithm(const std::string collective, const std::string algoName,
+                         std::shared_ptr<Algorithm> algorithm);
+
+  std::unordered_map<std::string, std::shared_ptr<Algorithm>> getAlgorithmsByCollective(
+      const std::string& collective) const;
+  std::vector<std::shared_ptr<Algorithm>> getAllAlgorithms() const;
+  void extend(const AlgorithmCollection& other);
 
  private:
-  std::unordered_map<std::string, std::unordered_map<std::string, Algorithm>> algoMapByCollective_;
+  std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>> algoMapByCollective_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
@@ -153,10 +259,14 @@ class AlgorithmCollection {
 class AlgorithmCollectionBuilder {
  public:
   static std::shared_ptr<AlgorithmCollectionBuilder> getInstance();
+  static void reset();
 
   /// @brief Add a new algorithm builder for a specific collective operation.
   /// @param builder The algorithm builder.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
+
+  std::shared_ptr<AlgorithmCollection> buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
+                                                              int rank);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.
@@ -177,6 +287,10 @@ class AlgorithmCollectionBuilder {
   std::vector<std::shared_ptr<AlgorithmBuilder>> algoBuilders_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
+
+  static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
+  std::shared_ptr<AlgorithmCollection> buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
+  std::shared_ptr<AlgorithmCollection> buildDefaultDslAlgorithms(int rank);
 };
 
 }  // namespace mscclpp
