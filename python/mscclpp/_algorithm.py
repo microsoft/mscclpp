@@ -11,6 +11,7 @@ from ._mscclpp import (
     DslAlgorithm as _DslAlgorithm,
     AlgorithmType as _AlgorithmType,
     AlgorithmBuilder as _AlgorithmBuilder,
+    AlgorithmCollection as _AlgorithmCollection,
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
     Communicator,
     CollectiveBufferMode,
@@ -126,6 +127,36 @@ class AlgorithmBuilder:
         return Algorithm.create_from_native_handle(self._algorithm_builder.build())
 
 
+class AlgorithmCollection:
+    def __init__(self, native_collection: _AlgorithmCollection):
+        self._native_collection = native_collection
+        self._algorithms = [
+            Algorithm.create_from_native_handle(algo)
+            for algo in self._native_collection.to_list()
+        ]
+
+    def __iter__(self):
+        """Iterate over all algorithms in the collection."""
+        return iter(self._algorithms)
+
+    def __len__(self):
+        """Return the number of algorithms in the collection."""
+        return len(self._algorithms)
+
+    def __getitem__(self, index: int) -> Algorithm:
+        """Get an algorithm by index."""
+        return self._algorithms[index]
+
+    def get_by_collective(self, collective: str):
+        """Get all algorithms for a specific collective operation."""
+        return [algo for algo in self._algorithms if algo.collective == collective]
+
+    def register_algorithm(self, collective: str, algo_name: str, algorithm: Algorithm):
+        """Register an algorithm for a collective operation."""
+        self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
+        self._algorithms.append(algorithm)
+
+
 class AlgorithmCollectionBuilder:
     _instance = None
 
@@ -161,8 +192,14 @@ class AlgorithmCollectionBuilder:
     def set_fallback_algorithm_selector(self, selector):
         self._builder.set_fallback_algorithm_selector(selector)
 
-    def build(self):
-        return self._builder.build()
-
+    def build(self) -> AlgorithmCollection:
+        collection =  self._builder.build()
+        return AlgorithmCollection(collection)
+    
+    def build_default_algorithms(self, scratch_buffer: int, scratch_buffer_size: int, rank: int) -> AlgorithmCollection:
+        native_collection = self._builder.build_default_algorithms(
+            int(scratch_buffer), scratch_buffer_size, rank
+        )
+        return AlgorithmCollection(native_collection)
 
 atexit.register(AlgorithmCollectionBuilder.reset)

@@ -10,7 +10,7 @@ import warnings
 
 from functools import wraps
 from mscclpp._version import __version__, __commit_id__
-from mscclpp._algorithm import Algorithm, AlgorithmCollectionBuilder
+from mscclpp._algorithm import Algorithm, AlgorithmCollectionBuilder, AlgorithmCollection
 from mscclpp.language.utils import AlgoSpec
 from mscclpp._compiler import DslCompiler, NativeCodeCompiler
 
@@ -91,6 +91,7 @@ __all__ = [
     # Python API
     "Algorithm",
     "AlgorithmCollectionBuilder",
+    "AlgorithmCollection",
     "AlgoSpec",
 ]
 
