@@ -106,8 +106,8 @@ class Algorithm:
         op: ReduceOp,
         stream: int = 0,
         executor: Optional[Executor] = None,
-        nblocks = 0,
-        nthreads_per_block = 0,
+        nblocks=0,
+        nthreads_per_block=0,
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         return self._algorithm.execute(
@@ -137,10 +137,7 @@ class AlgorithmBuilder:
 class AlgorithmCollection:
     def __init__(self, native_collection: _AlgorithmCollection):
         self._native_collection = native_collection
-        self._algorithms = [
-            Algorithm.create_from_native_handle(algo)
-            for algo in self._native_collection.to_list()
-        ]
+        self._algorithms = [Algorithm.create_from_native_handle(algo) for algo in self._native_collection.to_list()]
 
     def __iter__(self):
         """Iterate over all algorithms in the collection."""
@@ -200,13 +197,12 @@ class AlgorithmCollectionBuilder:
         self._builder.set_fallback_algorithm_selector(selector)
 
     def build(self) -> AlgorithmCollection:
-        collection =  self._builder.build()
+        collection = self._builder.build()
         return AlgorithmCollection(collection)
-    
+
     def build_default_algorithms(self, scratch_buffer: int, scratch_buffer_size: int, rank: int) -> AlgorithmCollection:
-        native_collection = self._builder.build_default_algorithms(
-            int(scratch_buffer), scratch_buffer_size, rank
-        )
+        native_collection = self._builder.build_default_algorithms(int(scratch_buffer), scratch_buffer_size, rank)
         return AlgorithmCollection(native_collection)
+
 
 atexit.register(AlgorithmCollectionBuilder.reset)

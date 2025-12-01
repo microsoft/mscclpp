@@ -44,6 +44,7 @@ def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
     else:
         raise ValueError(f"Unknown data type: {dtype}")
 
+
 def to_mscclpp_reduce_op(op: torch.distributed.ReduceOp) -> mscclpp.ReduceOp:
     if op == torch.distributed.ReduceOp.SUM:
         return mscclpp.ReduceOp.SUM
@@ -60,7 +61,7 @@ class CustomizedComm:
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        dlpack  = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
+        dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
         algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
         self._algorithm_nvls_packet = [

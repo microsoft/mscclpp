@@ -5,7 +5,6 @@
 namespace mscclpp {
 namespace algorithm {
 
-
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
