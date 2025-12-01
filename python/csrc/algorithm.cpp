@@ -9,6 +9,7 @@
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
 
+#include <cstring>
 #include <mscclpp/algorithm.hpp>
 
 namespace nb = nanobind;
