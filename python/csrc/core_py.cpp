@@ -216,6 +216,7 @@ void register_core(nb::module_& m) {
 
   def_shared_future<RegisteredMemory>(m, "RegisteredMemory");
   def_shared_future<Connection>(m, "Connection");
+  def_shared_future<Semaphore>(m, "Semaphore");
 
   nb::class_<Communicator>(m, "Communicator")
       .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
@@ -242,7 +243,7 @@ void register_core(nb::module_& m) {
           nb::arg("remote_rank"), nb::arg("tag"), nb::arg("local_config"))
       .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remote_rank"), nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remote_rank"), nb::arg("tag"))
-      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("local_flag"), nb::arg("remote_rank"),
+      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("connection"), nb::arg("remote_rank"),
            nb::arg("tag") = 0)
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)
