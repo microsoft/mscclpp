@@ -49,12 +49,11 @@ from ._mscclpp import (
     ExecutionPlan,
     PacketType,
     RawGpuBuffer,
+    ReduceOp,
     env,
     is_nvls_supported,
     npkit,
 )
-
-from ._mscclpp.Algorithm import ReduceOp
 
 __all__ = [
     "Device",

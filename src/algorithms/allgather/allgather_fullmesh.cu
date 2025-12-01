@@ -5,7 +5,6 @@
 namespace mscclpp {
 namespace algorithm {
 
-using ReduceOp = Algorithm::ReduceOp;
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)

@@ -8,7 +8,7 @@
 
 namespace mscclpp {
 namespace algorithm {
-using ReduceOp = Algorithm::ReduceOp;
+using ReduceOp = ReduceOp;
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)

@@ -17,7 +17,6 @@
 namespace mscclpp {
 
 namespace algorithm {
-using ReduceOp = Algorithm::ReduceOp;
 constexpr ReduceOp SUM = ReduceOp::SUM;
 constexpr ReduceOp MIN = ReduceOp::MIN;
 

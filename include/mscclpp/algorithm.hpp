@@ -38,14 +38,14 @@ enum class CommResult {
   commNumResults = 8
 };
 
+enum ReduceOp { SUM = 0, MIN = 3, None = 255 };
+
 class Algorithm {
  public:
   struct Constraint {
     int worldSize;
     int nRanksPerNode;
   };
-
-  enum ReduceOp { SUM = 0, MIN = 3, None = 255 };
 
   virtual ~Algorithm() = default;
 

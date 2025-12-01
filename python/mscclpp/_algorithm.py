@@ -18,9 +18,8 @@ from ._mscclpp import (
     DataType,
     Executor,
     ExecutionPlan,
+    ReduceOp,
 )
-
-from ._mscclpp.Algorithm import ReduceOp
 
 
 class Algorithm:

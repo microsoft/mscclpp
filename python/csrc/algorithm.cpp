@@ -33,6 +33,11 @@ void register_algorithm(nb::module_& m) {
       .value("COMM_IN_PROGRESS", CommResult::commInProgress)
       .value("COMM_NUM_RESULTS", CommResult::commNumResults);
 
+  nb::enum_<ReduceOp>(m, "ReduceOp")
+      .value("SUM", ReduceOp::SUM)
+      .value("MIN", ReduceOp::MIN)
+      .value("None", ReduceOp::None);
+
   auto algorithmClass =
       nb::class_<Algorithm>(m, "Algorithm")
           .def_static(
@@ -59,7 +64,7 @@ void register_algorithm(nb::module_& m) {
           .def(
               "execute",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
-                 size_t inputSize, size_t outputSize, DataType dtype, Algorithm::ReduceOp op, uintptr_t stream,
+                 size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op, uintptr_t stream,
                  std::shared_ptr<Executor> executor, int nBlocks, int nThreadsPerBlock,
                  std::unordered_map<std::string, uintptr_t> extras) {
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
@@ -67,14 +72,9 @@ void register_algorithm(nb::module_& m) {
                                     nBlocks, nThreadsPerBlock, extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
-              nb::arg("dtype"), nb::arg("op") = Algorithm::ReduceOp::None, nb::arg("stream") = 0,
-              nb::arg("executor") = nullptr, nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0,
+              nb::arg("dtype"), nb::arg("op") = ReduceOp::None, nb::arg("stream") = 0, nb::arg("executor") = nullptr,
+              nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0,
               nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
-
-  nb::enum_<Algorithm::ReduceOp>(algorithmClass, "ReduceOp")
-      .value("SUM", Algorithm::ReduceOp::SUM)
-      .value("MIN", Algorithm::ReduceOp::MIN)
-      .value("None", Algorithm::ReduceOp::None);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
       .def(nb::init<>())

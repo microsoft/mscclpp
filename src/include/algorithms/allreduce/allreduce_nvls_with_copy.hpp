@@ -2,7 +2,7 @@
 
 namespace mscclpp {
 namespace algorithm {
-using ReduceOp = Algorithm::ReduceOp;
+
 class AllreduceNvlsWithCopy : public AlgorithmBuilder {
  public:
   AllreduceNvlsWithCopy(uintptr_t scratchBuffer, size_t scratchBufferSize)

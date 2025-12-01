@@ -2,7 +2,7 @@
 
 namespace mscclpp {
 namespace algorithm {
-using ReduceOp = Algorithm::ReduceOp;
+
 class AllreduceNvls : public AlgorithmBuilder {
  public:
   AllreduceNvls() = default;
