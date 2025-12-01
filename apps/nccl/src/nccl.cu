@@ -593,7 +593,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   mscclpp::Algorithm::ReduceOp::None, stream, comm->executor, 0, 0,
+                                                   mscclpp::ReduceOp::None, stream, comm->executor, 0, 0,
                                                    extras));
   }
 
@@ -752,7 +752,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection->selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
-                                                   mscclpp::Algorithm::ReduceOp::None, stream, comm->executor));
+                                                   mscclpp::ReduceOp::None, stream, comm->executor));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

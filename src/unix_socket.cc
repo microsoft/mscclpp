@@ -208,7 +208,8 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
         break;
       }
       printf("Unexpected event on unix socket listen fd: revents=0x%x\n", listenPfd.revents);
-      // throw Error(std::string("Unexpected event on unix socket listen fd: revents=0x") + std::to_string(listenPfd.revents), ErrorCode::InternalError);
+      // throw Error(std::string("Unexpected event on unix socket listen fd: revents=0x") +
+      // std::to_string(listenPfd.revents), ErrorCode::InternalError);
     }
 
     if (listenPfd.revents & POLLIN) {

@@ -9,7 +9,7 @@ import mscclpp.comm as mscclpp_comm
 import mscclpp
 import netifaces as ni
 import ipaddress
-import ctypes
+import logging
 
 
 def load_algorithms(scratch_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
@@ -44,6 +44,14 @@ def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
     else:
         raise ValueError(f"Unknown data type: {dtype}")
 
+def to_mscclpp_reduce_op(op: torch.distributed.ReduceOp) -> mscclpp.ReduceOp:
+    if op == torch.distributed.ReduceOp.SUM:
+        return mscclpp.ReduceOp.SUM
+    elif op == torch.distributed.ReduceOp.MIN:
+        return mscclpp.ReduceOp.MIN
+    else:
+        raise ValueError(f"unsupported op: {op}")
+
 
 class CustomizedComm:
     def __init__(self, comm: mscclpp_comm.CommGroup):
@@ -73,8 +81,6 @@ class CustomizedComm:
             algo = self._algorithm_nvls_packet
         else:
             algo = self._algorithm_nvls_nonzero_copy
-        ctype_op = ctypes.c_int32(op.value)
-        extras: dict[str, int] = {"op": ctypes.addressof(ctype_op)}
         algo.execute(
             comm=self.comm.communicator,
             input_buffer=tensor.data_ptr(),
@@ -82,8 +88,8 @@ class CustomizedComm:
             input_size=tensor.nbytes,
             output_size=tensor.nbytes,
             dtype=dtype_to_mscclpp_dtype(tensor.dtype),
+            op=to_mscclpp_reduce_op(op),
             stream=stream.cuda_stream if stream is not None else 0,
-            extras=extras,
         )
 
     def barrier(self):
@@ -131,6 +137,7 @@ def main():
     comm.all_reduce(input_data, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
     comm.barrier()
     comm.destroy()
+    logging.info("All-reduce operation completed successfully.")
 
 
 if __name__ == "__main__":
