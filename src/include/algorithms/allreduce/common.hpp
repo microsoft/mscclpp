@@ -20,6 +20,8 @@ namespace algorithm {
 constexpr ReduceOp SUM = ReduceOp::SUM;
 constexpr ReduceOp MIN = ReduceOp::MIN;
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
   static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
@@ -492,6 +494,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
   }
 }
 #endif  // defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
