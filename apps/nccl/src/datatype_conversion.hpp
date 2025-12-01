@@ -51,4 +51,15 @@ inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   }
 }
 
+inline mscclpp::Algorithm::Op ncclRedOpToMscclpp(ncclRedOp_t op) {
+  switch (op) {
+    case ncclSum:
+      return mscclpp::Algorithm::Op::SUM;
+    case ncclMin:
+      return mscclpp::Algorithm::Op::MIN;
+    default:
+      return mscclpp::Algorithm::Op::None;
+  }
+}
+
 #endif  // MSCCLPP_DATATYPE_CONVERSION_HPP_

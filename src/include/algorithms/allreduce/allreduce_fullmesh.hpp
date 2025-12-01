@@ -7,14 +7,14 @@ namespace algorithm {
 class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceFullmesh(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, DataType dtype, cudaStream_t stream,
-                                 std::unordered_map<std::string, uintptr_t>& extras);
+                                 size_t inputSize, DataType dtype, Algorithm::Op op, cudaStream_t stream, int nBlocks,
+                                 int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<AlgorithmCtx> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output,
                                                      size_t, DataType);

@@ -183,11 +183,10 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
 }
 
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                void* output, size_t inputSize, [[maybe_unused]] DataType dtype,
-                                                cudaStream_t stream,
-                                                std::unordered_map<std::string, uintptr_t>& extras) {
-  Algorithm::Op op = *reinterpret_cast<Algorithm::Op*>(extras.at("op"));
-  std::pair<int, int> blockAndThreadNum = getBlockNumAndThreadNum(extras);
+                                                void* output, size_t inputSize, [[maybe_unused]] DataType dtype, Op op,
+                                                cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+                                                const std::unordered_map<std::string, uintptr_t>&) {
+  std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode);
   }
@@ -249,9 +248,10 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) {
-        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, stream, extras);
+             [[maybe_unused]] size_t outputSize, DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
+                                         extras);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

@@ -58,8 +58,6 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
 
-std::pair<int, int> getBlockNumAndThreadNum(const std::unordered_map<std::string, uintptr_t>& extra);
-
 }  // namespace algorithm
 }  // namespace mscclpp
 #endif  // ALGORITHM_UTILS_HPP

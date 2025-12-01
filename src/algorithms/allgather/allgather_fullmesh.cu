@@ -5,6 +5,8 @@
 namespace mscclpp {
 namespace algorithm {
 
+using Op = Algorithm::Op;
+
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
@@ -106,11 +108,12 @@ void AllgatherFullmesh::initialize(std::shared_ptr<mscclpp::Communicator> comm) 
 }
 
 CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                  void* output, size_t inputSize, cudaStream_t stream,
-                                                  std::unordered_map<std::string, uintptr_t>& extras) {
+                                                  void* output, size_t inputSize, cudaStream_t stream, int nBlocks,
+                                                  int nThreadsPerBlock,
+                                                  const std::unordered_map<std::string, uintptr_t>&) {
   int rank = ctx->rank;
   const size_t nElem = inputSize / sizeof(int);
-  std::pair<int, int> numBlocksAndThreads = getBlockNumAndThreadNum(extras);
+  std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first > 56) {
     WARN("AllgatherFullmesh: number of blocks exceeds maximum supported blocks, which is 56");
     return mscclpp::CommResult::commInvalidArgument;
@@ -177,9 +180,10 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
       "default_allgather_fullmesh", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
-        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, [[maybe_unused]] Op op,
+             cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+             const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, nBlocks, nThreadsPerBlock, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

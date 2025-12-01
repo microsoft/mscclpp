@@ -48,8 +48,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
       constraint_(constraint) {}
 
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                    size_t inputSize, size_t outputSize, DataType dtype, cudaStream_t stream,
-                                    std::shared_ptr<Executor>, std::unordered_map<std::string, uintptr_t>& extras) {
+                                    size_t inputSize, size_t outputSize, DataType dtype, Op op, cudaStream_t stream,
+                                    std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
+                                    const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -60,7 +61,8 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
     contexts_[ctxKey] = ctx;
   }
-  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, stream, extras);
+  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
+                           nThreadsPerBlock, extras);
 }
 
 const std::string& NativeAlgorithm::name() const { return name_; }
@@ -172,8 +174,7 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultNat
   collection->registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
   auto allreduceNvls = std::make_shared<algorithm::AllreduceNvls>()->build();
   collection->registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
-  auto allreduceFullmesh =
-      std::make_shared<algorithm::AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceFullmesh = std::make_shared<algorithm::AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection->registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
 
   auto allgatherFullmesh = std::make_shared<algorithm::AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
@@ -280,8 +281,9 @@ const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
 Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                                 size_t outputSize, DataType dtype, cudaStream_t stream,
-                                 std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t>&) {
+                                 size_t outputSize, DataType dtype, Op, cudaStream_t stream,
+                                 std::shared_ptr<Executor> executor, int, int,
+                                 const std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }

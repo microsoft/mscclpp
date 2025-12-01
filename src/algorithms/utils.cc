@@ -148,17 +148,6 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
   return ptr;
 }
 
-std::pair<int, int> getBlockNumAndThreadNum(const std::unordered_map<std::string, uintptr_t>& extra) {
-  int blockNum = 0;
-  int threadNum = 0;
-  if (extra.find("blockNum") != extra.cend()) {
-    blockNum = *reinterpret_cast<int*>(extra.at("blockNum"));
-  }
-  if (extra.find("threadNum") != extra.cend()) {
-    threadNum = *reinterpret_cast<int*>(extra.at("threadNum"));
-  }
-  return {blockNum, threadNum};
-}
 }  // namespace algorithm
 
 }  // namespace mscclpp

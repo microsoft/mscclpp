@@ -59,15 +59,22 @@ void register_algorithm(nb::module_& m) {
           .def(
               "execute",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
-                 size_t inputSize, size_t outputSize, DataType dtype, uintptr_t stream,
-                 std::shared_ptr<Executor> executor, std::unordered_map<std::string, uintptr_t> extras) {
+                 size_t inputSize, size_t outputSize, DataType dtype, Algorithm::Op op, uintptr_t stream,
+                 std::shared_ptr<Executor> executor, int nBlocks, int nThreadsPerBlock,
+                 std::unordered_map<std::string, uintptr_t> extras) {
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
-                                    inputSize, outputSize, dtype, reinterpret_cast<cudaStream_t>(stream), executor,
-                                    extras);
+                                    inputSize, outputSize, dtype, op, reinterpret_cast<cudaStream_t>(stream), executor,
+                                    nBlocks, nThreadsPerBlock, extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
-              nb::arg("dtype"), nb::arg("stream"), nb::arg("executor") = nullptr,
+              nb::arg("dtype"), nb::arg("op") = Algorithm::Op::None, nb::arg("stream") = 0,
+              nb::arg("executor") = nullptr, nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0,
               nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
+
+  nb::enum_<Algorithm::Op>(algorithmClass, "Op")
+      .value("SUM", Algorithm::Op::SUM)
+      .value("MIN", Algorithm::Op::MIN)
+      .value("None", Algorithm::Op::None);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
       .def(nb::init<>())
@@ -96,8 +103,8 @@ void register_algorithm(nb::module_& m) {
       .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
            nb::arg("selector"))
       .def("build", &AlgorithmCollectionBuilder::build)
-      .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms,
-           nb::arg("scratch_buffer"), nb::arg("scratch_buffer_size"), nb::arg("rank"))
+      .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms, nb::arg("scratch_buffer"),
+           nb::arg("scratch_buffer_size"), nb::arg("rank"))
       .def_static("reset", &AlgorithmCollectionBuilder::reset);
 
   nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")

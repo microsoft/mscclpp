@@ -5,12 +5,14 @@
 namespace mscclpp {
 namespace algorithm {
 
+using Op = Algorithm::Op;
+
 __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh2(void* sendbuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                      size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode,
-                      size_t nelemsPerGPU) {
+                       size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode,
+                       size_t nelemsPerGPU) {
   const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t lid = tid % WARP_SIZE;
   const size_t wid = tid / WARP_SIZE;
@@ -116,9 +118,10 @@ void AllgatherFullmesh2::initialize(std::shared_ptr<Communicator> comm) {
 }
 
 CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                   void* output, size_t inputSize, cudaStream_t stream,
-                                                   std::unordered_map<std::string, uintptr_t>& extras) {
-  std::pair<int, int> numBlocksAndThreads = getBlockNumAndThreadNum(extras);
+                                                   void* output, size_t inputSize, cudaStream_t stream, int nBlocks,
+                                                   int nThreadsPerBlock,
+                                                   const std::unordered_map<std::string, uintptr_t>&) {
+  std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   const size_t nElem = inputSize / sizeof(int);
   int rank = ctx->rank;
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
@@ -207,11 +210,13 @@ mscclpp::AlgorithmCtxKey AllgatherFullmesh2::generateAllgatherContextKey(const v
 std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
   auto self = std::make_shared<AllgatherFullmesh2>();
   return std::make_shared<NativeAlgorithm>(
-      "default_allgather_fullmesh2", "allgather", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
+      "default_allgather_fullmesh2", "allgather",
+      [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {
-        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, extras);
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, [[maybe_unused]] Op op,
+             cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+             const std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {
+        return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, nBlocks, nThreadsPerBlock, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

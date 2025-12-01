@@ -2,26 +2,26 @@
 
 namespace mscclpp {
 namespace algorithm {
-class AllreduceNvls : public mscclpp::AlgorithmBuilder {
+class AllreduceNvls : public AlgorithmBuilder {
  public:
   AllreduceNvls() = default;
-  std::shared_ptr<mscclpp::Algorithm> build() override;
+  std::shared_ptr<Algorithm> build() override;
 
  private:
-  void initialize(std::shared_ptr<mscclpp::Communicator> comm);
-  CommResult allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, mscclpp::DataType dtype, cudaStream_t stream,
-                                 std::unordered_map<std::string, uintptr_t>& extras);
+  void initialize(std::shared_ptr<Communicator> comm);
+  CommResult allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,
+                                 size_t inputSize, DataType dtype, Algorithm::Op op, cudaStream_t stream, int nBlocks,
+                                 int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras);
 
-  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, mscclpp::DataType);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+  std::shared_ptr<AlgorithmCtx> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output,
+                                                     size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
 
   const size_t nvlsBufferSize_ = (1 << 30);
   uint32_t nSwitchChannels_;
-  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
-  std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
-  std::vector<mscclpp::Connection> conns_;
+  std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<BaseMemoryChannel> baseChannels_;
+  std::vector<Connection> conns_;
 };
 
 }  // namespace algorithm

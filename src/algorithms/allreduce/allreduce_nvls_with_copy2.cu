@@ -176,15 +176,15 @@ void AllreduceNvlsWithCopy2::initialize(std::shared_ptr<Communicator> comm) {
 }
 
 CommResult AllreduceNvlsWithCopy2::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                       void* output, size_t inputSize, DataType dtype,
-                                                       cudaStream_t stream,
-                                                       std::unordered_map<std::string, uintptr_t>& extras) {
-  AllreduceFunc allreduce = dispatch<NvlsWithCopy2Adapter>(Algorithm::Op::SUM, dtype);
+                                                       void* output, size_t inputSize, DataType dtype, Algorithm::Op op,
+                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+                                                       const std::unordered_map<std::string, uintptr_t>&) {
+  AllreduceFunc allreduce = dispatch<NvlsWithCopy2Adapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  std::pair<int, int> blockAndThreadNum = getBlockNumAndThreadNum(extras);
+  std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = {ctx->nRanksPerNode * 5, 1024};
   }
@@ -224,9 +224,10 @@ std::shared_ptr<Algorithm> AllreduceNvlsWithCopy2::build() {
       "default_allreduce_nvls_with_copy2", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) {
-        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, stream, extras);
+             [[maybe_unused]] size_t outputSize, DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
+                                         extras);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

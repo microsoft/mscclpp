@@ -79,8 +79,8 @@ struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
-                          int rank, int, int worldSize, size_t inputSize, cudaStream_t stream, void* flags,
-                          uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          int rank, int, int worldSize, size_t inputSize, cudaStream_t stream, void* flags, uint32_t,
+                          int nBlocks, int nThreadsPerBlock) {
     if (nBlocks == 4 || nBlocks == 8) {
       allreduceNvlsPacket<OpType, T, true>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output, nvlsChannels,
@@ -126,10 +126,10 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext
 
 CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
                                                     void* output, size_t inputSize, mscclpp::DataType dtype,
-                                                    cudaStream_t stream,
-                                                    std::unordered_map<std::string, uintptr_t>& extra) {
-  int op = *reinterpret_cast<int*>(extra.at("op"));
-  std::pair<int, int> blockAndThreadNum = getBlockNumAndThreadNum(extra);
+                                                    Algorithm::Op op, cudaStream_t stream, int nBlocks,
+                                                    int nThreadsPerBlock,
+                                                    const std::unordered_map<std::string, uintptr_t>&) {
+  std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize);
   }
@@ -137,7 +137,7 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclp
     WARN("Block number %d exceeds the maximum limit %d", blockAndThreadNum.first, maxBlockNum_);
     return CommResult::commInvalidArgument;
   }
-  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(static_cast<Algorithm::Op>(op), dtype);
+  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
@@ -145,8 +145,7 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclp
   void* flags = this->flags_.get();
   if (blockAndThreadNum.first == 4) {
     flags = this->flags4_.get();
-  }
-  else if (blockAndThreadNum.first == 8) {
+  } else if (blockAndThreadNum.first == 8) {
     flags = this->flags8_.get();
   }
   cudaError_t error =
@@ -166,9 +165,10 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
       "default_allreduce_nvls_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, cudaStream_t stream,
-             std::unordered_map<std::string, uintptr_t>& extras) {
-        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, stream, extras);
+             [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+        return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
+                                         extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
