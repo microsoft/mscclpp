@@ -252,7 +252,6 @@ ncclResult_t AllreducePacket::allreduceKernelFunc(const std::shared_ptr<mscclpp:
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return ncclInvalidArgument;
   }
-
   cudaError_t error = allreduce(input, this->scratchBuffer_.get(), output, ctx->memoryChannelDeviceHandles.get(),
                                 nullptr, nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
                                 ctx->nRanksPerNode, ctx->workSize, count, stream, deviceFlag7_.get(),
