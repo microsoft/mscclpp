@@ -8,6 +8,7 @@
 
 namespace mscclpp {
 namespace algorithm {
+using ReduceOp = Algorithm::ReduceOp;
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
@@ -17,7 +18,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, mscclpp::DataType dtype, Algorithm::Op op, cudaStream_t stream,
+                                 size_t inputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream,
                                  int nBlocks, int nThreadsPerBlock,
                                  const std::unordered_map<std::string, uintptr_t>& extras);
 

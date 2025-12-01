@@ -54,6 +54,8 @@ from ._mscclpp import (
     npkit,
 )
 
+from ._mscclpp.Algorithm import ReduceOp
+
 __all__ = [
     "Device",
     "DeviceType",
@@ -93,6 +95,7 @@ __all__ = [
     "AlgorithmCollectionBuilder",
     "AlgorithmCollection",
     "AlgoSpec",
+    "ReduceOp",
 ]
 
 

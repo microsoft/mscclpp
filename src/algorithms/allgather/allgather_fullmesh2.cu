@@ -5,7 +5,7 @@
 namespace mscclpp {
 namespace algorithm {
 
-using Op = Algorithm::Op;
+using ReduceOp = Algorithm::ReduceOp;
 
 __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
@@ -213,7 +213,7 @@ std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
       "default_allgather_fullmesh2", "allgather",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, [[maybe_unused]] Op op,
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, [[maybe_unused]] ReduceOp op,
              cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
              const std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, nBlocks, nThreadsPerBlock, extras);

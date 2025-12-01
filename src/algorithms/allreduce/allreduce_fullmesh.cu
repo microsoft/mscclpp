@@ -9,7 +9,7 @@
 namespace mscclpp {
 namespace algorithm {
 
-template <Op OpType, typename T>
+template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset,
@@ -145,7 +145,7 @@ __global__ void __launch_bounds__(512, 1)
   }
 }
 
-template <Op OpType, typename T>
+template <ReduceOp OpType, typename T>
 struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelOutDataOffset,
@@ -175,7 +175,7 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
 }
 
 CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                  void* output, size_t inputSize, DataType dtype, Algorithm::Op op,
+                                                  void* output, size_t inputSize, DataType dtype, ReduceOp op,
                                                   cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                   const std::unordered_map<std::string, uintptr_t>&) {
   size_t recvBytes;
@@ -250,7 +250,7 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
       "default_allreduce_allconnect", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
                                          extras);

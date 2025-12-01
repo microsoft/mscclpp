@@ -45,7 +45,7 @@ class Algorithm {
     int nRanksPerNode;
   };
 
-  enum Op { SUM = 0, MIN = 3, None = 255 };
+  enum ReduceOp { SUM = 0, MIN = 3, None = 255 };
 
   virtual ~Algorithm() = default;
 
@@ -57,7 +57,7 @@ class Algorithm {
   virtual AlgorithmType type() const = 0;
   virtual Constraint constraint() const = 0;
   virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                             size_t outputSize, DataType dtype, Op op, cudaStream_t stream,
+                             size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                              std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                              const std::unordered_map<std::string, uintptr_t>& extras = {}) = 0;
   virtual void reset() = 0;
@@ -132,8 +132,8 @@ class NativeAlgorithm : public Algorithm {
  public:
   using InitFunc = std::function<void(std::shared_ptr<Communicator>)>;
   using KernelFunc =
-      std::function<CommResult(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, DataType, Op,
-                               cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
+      std::function<CommResult(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, DataType,
+                               ReduceOp, cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
                                                                       size_t, size_t, DataType)>;
   using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
@@ -154,8 +154,8 @@ class NativeAlgorithm : public Algorithm {
   /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
   /// will be launched with the AlgorithmCtx.
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                     size_t outputSize, DataType dtype, Op op, cudaStream_t stream, std::shared_ptr<Executor> executor,
-                     int nBlocks = 0, int nThreadsPerBlock = 0,
+                     size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
+                     std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                      const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   const std::string& name() const override;
   const std::string& collective() const override;
@@ -193,8 +193,8 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                     size_t outputSize, DataType dtype, Op op, cudaStream_t stream, std::shared_ptr<Executor> executor,
-                     int nBlocks = 0, int nThreadsPerBlock = 0,
+                     size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
+                     std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                      const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;

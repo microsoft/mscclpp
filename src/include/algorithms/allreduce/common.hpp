@@ -17,9 +17,9 @@
 namespace mscclpp {
 
 namespace algorithm {
-using Op = Algorithm::Op;
-constexpr Algorithm::Op SUM = Algorithm::Op::SUM;
-constexpr Algorithm::Op MIN = Algorithm::Op::MIN;
+using ReduceOp = Algorithm::ReduceOp;
+constexpr ReduceOp SUM = ReduceOp::SUM;
+constexpr ReduceOp MIN = ReduceOp::MIN;
 
 template <typename To, typename From>
 __forceinline__ __device__ To bit_cast(const From& src) {
@@ -328,7 +328,7 @@ __forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m
 #endif  // !defined(__HIP_PLATFORM_AMD__)
 #endif  // __FP8_TYPES_EXIST__
 
-template <typename T, Op OpType>
+template <typename T, ReduceOp OpType>
 __forceinline__ __device__ T cal_elements(T a, T b) {
   if constexpr (OpType == SUM) {
     return add_elements(a, b);
@@ -339,7 +339,7 @@ __forceinline__ __device__ T cal_elements(T a, T b) {
   return a;
 }
 
-template <typename T, Op OpType>
+template <typename T, ReduceOp OpType>
 __forceinline__ __device__ int4 cal_vectors_helper(int4 a, int4 b) {
   int4 ret;
   ret.w = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
@@ -349,7 +349,7 @@ __forceinline__ __device__ int4 cal_vectors_helper(int4 a, int4 b) {
   return ret;
 }
 
-template <typename T, Op OpType>
+template <typename T, ReduceOp OpType>
 __forceinline__ __device__ uint2 cal_vectors_helper(uint2 a, uint2 b) {
   uint2 ret;
   ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
@@ -357,7 +357,7 @@ __forceinline__ __device__ uint2 cal_vectors_helper(uint2 a, uint2 b) {
   return ret;
 }
 
-template <typename T, Op OpType>
+template <typename T, ReduceOp OpType>
 __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
   return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
@@ -408,7 +408,7 @@ __forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
 }
 #endif
 
-template <typename T, Op OpType, typename DataType>
+template <typename T, ReduceOp OpType, typename DataType>
 __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
 #if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
   // For FP8 types on HIP gfx942, use specialized helper that dispatches based on scalar type
@@ -499,8 +499,8 @@ using AllreduceFunc =
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
                               size_t, cudaStream_t, void*, uint32_t, int, int)>;
 
-template <template <Op, typename> class Adapter>
-AllreduceFunc dispatch(Op op, mscclpp::DataType dtype) {
+template <template <ReduceOp, typename> class Adapter>
+AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
   if (op == SUM) {
     if (dtype == mscclpp::DataType::FLOAT16) {
       return Adapter<SUM, half>::call;

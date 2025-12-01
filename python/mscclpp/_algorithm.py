@@ -20,6 +20,8 @@ from ._mscclpp import (
     ExecutionPlan,
 )
 
+from ._mscclpp.Algorithm import ReduceOp
+
 
 class Algorithm:
 
@@ -102,8 +104,11 @@ class Algorithm:
         input_size: int,
         output_size: int,
         dtype: DataType,
-        stream: int,
+        op: ReduceOp,
+        stream: int = 0,
         executor: Optional[Executor] = None,
+        nblocks = 0,
+        nthreads_per_block = 0,
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         return self._algorithm.execute(
@@ -113,8 +118,11 @@ class Algorithm:
             input_size,
             output_size,
             dtype,
+            op,
             int(stream),
             executor,
+            nblocks,
+            nthreads_per_block,
             extras if extras is not None else {},
         )
 

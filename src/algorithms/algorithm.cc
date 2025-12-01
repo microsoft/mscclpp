@@ -48,8 +48,8 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
       constraint_(constraint) {}
 
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
-                                    size_t inputSize, size_t outputSize, DataType dtype, Op op, cudaStream_t stream,
-                                    std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
+                                    size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
+                                    cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
                                     const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
@@ -281,7 +281,7 @@ const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
 Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
-                                 size_t outputSize, DataType dtype, Op, cudaStream_t stream,
+                                 size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
                                  std::shared_ptr<Executor> executor, int, int,
                                  const std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {

@@ -11,7 +11,7 @@ namespace algorithm {
 
 __device__ uint32_t deviceFlag = 1;
 
-template <Op OpType, typename T>
+template <ReduceOp OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
                                   int worldSize, size_t nelems, uint32_t numScratchBuff, LL8Packet* flags) {
@@ -74,7 +74,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
   return {(worldSize - 1) * 4, 512};
 }
 
-template <Op OpType, typename T>
+template <ReduceOp OpType, typename T>
 struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
@@ -101,7 +101,8 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
 
 CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
                                                        void* output, size_t inputSize, [[maybe_unused]] DataType dtype,
-                                                       Op op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+                                                       ReduceOp op, cudaStream_t stream, int nBlocks,
+                                                       int nThreadsPerBlock,
                                                        const std::unordered_map<std::string, uintptr_t>&) {
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -166,7 +167,7 @@ std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
       "default_allreduce_allpair_packet", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
                                          extras);

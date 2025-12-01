@@ -3,6 +3,7 @@
 
 namespace mscclpp {
 namespace algorithm {
+using ReduceOp = Algorithm::ReduceOp;
 
 class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
  public:
@@ -13,7 +14,7 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
  private:
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, DataType dtype, Algorithm::Op op, cudaStream_t stream, int nBlocks,
+                                 size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
                                  int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras);
 
   std::shared_ptr<AlgorithmCtx> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output,

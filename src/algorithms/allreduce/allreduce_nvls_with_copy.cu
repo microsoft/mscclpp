@@ -8,7 +8,6 @@
 namespace mscclpp {
 namespace algorithm {
 
-using Op = Algorithm::Op;
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
@@ -106,7 +105,7 @@ __global__ void __launch_bounds__(1024, 1)
 #endif
 }
 
-template <Op OpType, typename T>
+template <ReduceOp OpType, typename T>
 struct NvlsWithCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
@@ -140,7 +139,7 @@ void AllreduceNvlsWithCopy::initialize(std::shared_ptr<Communicator> comm) {
 }
 
 CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                      void* output, size_t inputSize, DataType dtype, Algorithm::Op op,
+                                                      void* output, size_t inputSize, DataType dtype, ReduceOp op,
                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                       const std::unordered_map<std::string, uintptr_t>&) {
   AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(op, dtype);
@@ -188,7 +187,7 @@ std::shared_ptr<Algorithm> AllreduceNvlsWithCopy::build() {
       "default_allreduce_nvls_with_copy", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, DataType dtype, Op op, cudaStream_t stream, int nBlocks,
+             [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
                                          extras);

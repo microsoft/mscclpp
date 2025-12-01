@@ -51,14 +51,14 @@ inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   }
 }
 
-inline mscclpp::Algorithm::Op ncclRedOpToMscclpp(ncclRedOp_t op) {
+inline mscclpp::Algorithm::ReduceOp ncclRedOpToMscclpp(ncclRedOp_t op) {
   switch (op) {
     case ncclSum:
-      return mscclpp::Algorithm::Op::SUM;
+      return mscclpp::Algorithm::ReduceOp::SUM;
     case ncclMin:
-      return mscclpp::Algorithm::Op::MIN;
+      return mscclpp::Algorithm::ReduceOp::MIN;
     default:
-      return mscclpp::Algorithm::Op::None;
+      return mscclpp::Algorithm::ReduceOp::None;
   }
 }
 

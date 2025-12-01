@@ -5,7 +5,7 @@
 namespace mscclpp {
 namespace algorithm {
 
-using Op = Algorithm::Op;
+using ReduceOp = Algorithm::ReduceOp;
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
@@ -180,7 +180,7 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
       "default_allgather_fullmesh", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-             [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, [[maybe_unused]] Op op,
+             [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, [[maybe_unused]] ReduceOp op,
              cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
              const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, nBlocks, nThreadsPerBlock, extras);
