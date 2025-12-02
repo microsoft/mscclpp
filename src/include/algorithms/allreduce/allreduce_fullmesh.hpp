@@ -3,7 +3,6 @@
 
 namespace mscclpp {
 namespace algorithm {
-using ReduceOp = ReduceOp;
 
 class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
  public:

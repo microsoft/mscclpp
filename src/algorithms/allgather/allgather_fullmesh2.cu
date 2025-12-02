@@ -5,7 +5,7 @@
 namespace mscclpp {
 namespace algorithm {
 
-using ReduceOp = ReduceOp;
+
 
 __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
