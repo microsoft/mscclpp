@@ -255,6 +255,7 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
   MSCCLPP_CUDATHROW(cudaFree(recvbuff));
 
   ncclCommDestroy(comm);
+  algoCollectionBuilder->reset();
 }
 
 int main() {
