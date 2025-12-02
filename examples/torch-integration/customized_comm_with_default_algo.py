@@ -9,7 +9,6 @@ import mscclpp.comm as mscclpp_comm
 import mscclpp
 import netifaces as ni
 import ipaddress
-import logging
 
 
 def load_algorithms(scratch_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
@@ -138,7 +137,7 @@ def main():
     comm.all_reduce(input_data, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
     comm.barrier()
     comm.destroy()
-    logging.info("All-reduce operation completed successfully.")
+    print(f"rank {local} All-reduce operation completed successfully.")
 
 
 if __name__ == "__main__":

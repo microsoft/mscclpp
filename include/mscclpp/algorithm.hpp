@@ -38,7 +38,7 @@ enum class CommResult {
   commNumResults = 8
 };
 
-enum ReduceOp { SUM = 0, MIN = 3, None = 255 };
+enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };
 
 class Algorithm {
  public:

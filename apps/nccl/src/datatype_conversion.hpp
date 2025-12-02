@@ -58,7 +58,7 @@ inline mscclpp::ReduceOp ncclRedOpToMscclpp(ncclRedOp_t op) {
     case ncclMin:
       return mscclpp::ReduceOp::MIN;
     default:
-      return mscclpp::ReduceOp::None;
+      return mscclpp::ReduceOp::NOP;
   }
 }
 

@@ -40,8 +40,6 @@ class CustomizedComm:
         )
         capsule = mscclpp_native.create_allgather_algorithm()
         self.algorithm = mscclpp.Algorithm.create_from_native_capsule(capsule)
-        collection = mscclpp.AlgorithmCollection()
-        self.algo_list = [collection.get("allreduce_nvls"), collection.get("allgather_customized")]
 
     def all_gather(self, tensor: torch.Tensor, out_tensor: torch.Tensor, stream: torch.cuda.Stream = None):
         self.algorithm.execute(
@@ -51,7 +49,7 @@ class CustomizedComm:
             tensor.nbytes,
             out_tensor.nbytes,
             mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
-            stream.cuda_stream if stream is not None else 0,
+            stream = stream.cuda_stream if stream is not None else 0,
         )
 
     def barrier_cpu(self):
@@ -78,6 +76,7 @@ def main():
     comm.all_gather(tensor, out_tensor, stream=torch.cuda.current_stream())
     torch.cuda.synchronize()
     comm = None
+    print(f"Rank {rank} allgather completed successfully.")
 
 
 if __name__ == "__main__":

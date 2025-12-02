@@ -103,7 +103,7 @@ class Algorithm:
         input_size: int,
         output_size: int,
         dtype: DataType,
-        op: ReduceOp,
+        op: ReduceOp = ReduceOp.NOP,
         stream: int = 0,
         executor: Optional[Executor] = None,
         nblocks=0,

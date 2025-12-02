@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 #include <Python.h>
 #include <mscclpp/nccl.h>
 #include <pybind11/pybind11.h>
@@ -56,9 +59,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
         "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-               size_t outputSize, mscclpp::DataType dtype, cudaStream_t stream,
-               std::unordered_map<std::string, uintptr_t>& extras) {
-          return self->allgatherKernelFunc(ctx, input, output, inputSize, dtype, stream, extras);
+               size_t outputSize, mscclpp::DataType dtype, [[maybe_unused]] mscclpp::ReduceOp op, cudaStream_t stream,
+               int nBlocks, int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+          return self->allgatherKernelFunc(ctx, input, output, inputSize, dtype, stream);
         },
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                size_t outputSize,
@@ -89,18 +92,18 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     proxyService_->startProxy(true);
   }
 
-  ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                   size_t inputBytes, [[maybe_unused]] mscclpp::DataType dtype, cudaStream_t stream,
-                                   std::unordered_map<std::string, uintptr_t>& extras) {
+  mscclpp::CommResult allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
+                                          void* output, size_t inputBytes, [[maybe_unused]] mscclpp::DataType dtype,
+                                          cudaStream_t stream) {
     int rank = ctx->rank;
     int worldSize = ctx->workSize;
 
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
     allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputBytes);
     if (cudaGetLastError() == cudaSuccess) {
-      return ncclSuccess;
+      return mscclpp::CommResult::commSuccess;
     }
-    return ncclInternalError;
+    return mscclpp::CommResult::commInternalError;
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
