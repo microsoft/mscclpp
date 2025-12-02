@@ -193,8 +193,9 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
 
   // register algorithm
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
-  mscclpp::AlgorithmCollectionBuilder::getInstance()->addAlgorithmBuilder(allgatherAlgoBuilder);
-  mscclpp::AlgorithmCollectionBuilder::getInstance()->setAlgorithmSelector(
+  auto algoCollectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+  algoCollectionBuilder->addAlgorithmBuilder(allgatherAlgoBuilder);
+  algoCollectionBuilder->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
              algoMapByCollective,
          const mscclpp::CollectiveRequest& request) -> std::shared_ptr<mscclpp::Algorithm> {
