@@ -266,8 +266,7 @@ class AlgorithmCollectionBuilder {
   /// @param builder The algorithm builder.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
-  std::shared_ptr<AlgorithmCollection> buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
-                                                              int rank);
+  AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
 
   /// @brief Set a new algorithm selection function.
   /// @param selector The algorithm selection function.
@@ -281,7 +280,7 @@ class AlgorithmCollectionBuilder {
 
   /// @brief Build the AlgorithmCollection instance.
   /// @return The AlgorithmCollection instance.
-  std::shared_ptr<AlgorithmCollection> build();
+  AlgorithmCollection build();
 
  private:
   AlgorithmCollectionBuilder() = default;
@@ -290,8 +289,8 @@ class AlgorithmCollectionBuilder {
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
   static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
-  std::shared_ptr<AlgorithmCollection> buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
-  std::shared_ptr<AlgorithmCollection> buildDefaultDslAlgorithms(int rank);
+  AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
+  AlgorithmCollection buildDefaultDslAlgorithms(int rank);
 };
 
 }  // namespace mscclpp

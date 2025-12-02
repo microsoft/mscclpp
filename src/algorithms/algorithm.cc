@@ -145,48 +145,47 @@ void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBu
   this->algoBuilders_.push_back(builder);
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
-                                                                                        size_t scratchBufferSize,
-                                                                                        int rank) {
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
+                                                                       size_t scratchBufferSize, int rank) {
   auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
   auto dslCollection = buildDefaultDslAlgorithms(rank);
-  nativeCollection->extend(*dslCollection);
+  nativeCollection.extend(dslCollection);
   return nativeCollection;
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(
-    uintptr_t scratchBuffer, size_t scratchBufferSize) {
-  auto collection = std::make_shared<AlgorithmCollection>();
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
+                                                                             size_t scratchBufferSize) {
+  AlgorithmCollection collection;
   auto allreduceAllpairPkt =
       std::make_shared<algorithm::AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);
+  collection.registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);
   auto allreduceNvlsPkt = std::make_shared<algorithm::AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceNvlsPkt->collective(), allreduceNvlsPkt->name(), allreduceNvlsPkt);
+  collection.registerAlgorithm(allreduceNvlsPkt->collective(), allreduceNvlsPkt->name(), allreduceNvlsPkt);
   auto allreduceNvlsWithCopyPkt =
       std::make_shared<algorithm::AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceNvlsWithCopyPkt->collective(), allreduceNvlsWithCopyPkt->name(),
-                                allreduceNvlsWithCopyPkt);
+  collection.registerAlgorithm(allreduceNvlsWithCopyPkt->collective(), allreduceNvlsWithCopyPkt->name(),
+                               allreduceNvlsWithCopyPkt);
   auto allreduceNvlsWithCopy2Pkt =
       std::make_shared<algorithm::AllreduceNvlsWithCopy2>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceNvlsWithCopy2Pkt->collective(), allreduceNvlsWithCopy2Pkt->name(),
-                                allreduceNvlsWithCopy2Pkt);
+  collection.registerAlgorithm(allreduceNvlsWithCopy2Pkt->collective(), allreduceNvlsWithCopy2Pkt->name(),
+                               allreduceNvlsWithCopy2Pkt);
   auto allreducePkt = std::make_shared<algorithm::AllreducePacket>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
+  collection.registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
   auto allreduceNvls = std::make_shared<algorithm::AllreduceNvls>()->build();
-  collection->registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
+  collection.registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
   auto allreduceFullmesh = std::make_shared<algorithm::AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
+  collection.registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
 
   auto allgatherFullmesh = std::make_shared<algorithm::AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
-  collection->registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
+  collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
   auto allgatherFullmesh2 = std::make_shared<algorithm::AllgatherFullmesh2>()->build();
-  collection->registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
-  collection->algoSelector_ = algoSelector_;
-  collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  collection.registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
+  collection.algoSelector_ = algoSelector_;
+  collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int rank) {
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int rank) {
   struct DslAlgoConfig {
     std::string filename;
     std::string collective;
@@ -197,9 +196,9 @@ std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::buildDefaultDsl
   static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
       {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
       {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
-  auto collection = std::make_shared<AlgorithmCollection>();
-  collection->algoSelector_ = algoSelector_;
-  collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  AlgorithmCollection collection;
+  collection.algoSelector_ = algoSelector_;
+  collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
 
   static auto generateFileId = [](const std::string& input) {
     std::hash<std::string> hasher;
@@ -242,14 +241,14 @@ void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc sel
   fallbackAlgoSelector_ = selector;
 }
 
-std::shared_ptr<AlgorithmCollection> AlgorithmCollectionBuilder::build() {
-  auto collection = std::make_shared<AlgorithmCollection>();
+AlgorithmCollection AlgorithmCollectionBuilder::build() {
+  AlgorithmCollection collection;
   for (const auto& builder : algoBuilders_) {
     auto algo = builder->build();
-    collection->registerAlgorithm(algo->collective(), algo->name(), algo);
+    collection.registerAlgorithm(algo->collective(), algo->name(), algo);
   }
-  collection->algoSelector_ = algoSelector_;
-  collection->fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  collection.algoSelector_ = algoSelector_;
+  collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;
 }
 

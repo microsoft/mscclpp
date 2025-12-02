@@ -167,7 +167,7 @@ struct splitCommInfo {
 struct ncclComm {
   std::shared_ptr<mscclpp::Communicator> comm;
   std::shared_ptr<mscclpp::Executor> executor;
-  std::shared_ptr<mscclpp::AlgorithmCollection> algorithmCollection;
+  mscclpp::AlgorithmCollection algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
   int nRanksPerNode;
@@ -330,7 +330,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->algorithmCollection = algoBuilder->buildDefaultAlgorithms(
       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_, rank);
   // Extend with user-defined algorithms
-  commPtr->algorithmCollection->extend(*algoBuilder->build());
+  commPtr->algorithmCollection.extend(algoBuilder->build());
 
   *comm = commPtr;
 #if defined(ENABLE_NPKIT)
@@ -592,7 +592,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                         .collective = "broadcast",
                                         .dtype = dtype,
                                         .hints = hints};
-  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
@@ -645,7 +645,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                         .dtype = dtype,
                                         .hints = {}};
 
-  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
                                                    ncclRedOpToMscclpp(reductionOperation), stream, comm->executor));
@@ -698,7 +698,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         .collective = "reducescatter",
                                         .dtype = dtype,
                                         .hints = {}};
-  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
                                                    ncclRedOpToMscclpp(op), stream, comm->executor));
@@ -751,7 +751,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                         .dtype = dtype,
                                         .hints = {}};
 
-  auto algo = comm->algorithmCollection->selectAlgorithm(request);
+  auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
                                                    mscclpp::ReduceOp::None, stream, comm->executor));
