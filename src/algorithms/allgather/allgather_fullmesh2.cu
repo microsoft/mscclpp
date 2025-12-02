@@ -5,8 +5,6 @@
 namespace mscclpp {
 namespace algorithm {
 
-
-
 __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)

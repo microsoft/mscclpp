@@ -49,7 +49,7 @@ class CustomizedComm:
             tensor.nbytes,
             out_tensor.nbytes,
             mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
-            stream = stream.cuda_stream if stream is not None else 0,
+            stream=stream.cuda_stream if stream is not None else 0,
         )
 
     def barrier_cpu(self):
