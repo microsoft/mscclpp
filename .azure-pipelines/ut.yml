@@ -107,3 +107,24 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+
+- job: UnitTestNoIBEnv
+  timeoutInMinutes: 40
+  displayName: Test No IB Environment
+  pool:
+    name: msccl-ci-h100
+
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut-no-ib-env.yaml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
+      sshKeySecureFile: mscclpp.pem
