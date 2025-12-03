@@ -100,17 +100,6 @@ def init_dist() -> CustomizedComm:
     interface = interfaces_for_ip_netifaces(master_addr)
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
-    nranks_per_node = os.environ.get("MSCCLPP_NRANKS_PER_NODE")
-    if nranks_per_node is None:
-        nranks_per_node = os.environ.get("LOCAL_WORLD_SIZE")
-    if nranks_per_node is None:
-        nnodes = int(os.environ.get("NNODES", "1"))
-        if world % nnodes == 0:
-            nranks_per_node = world // nnodes
-    if nranks_per_node is None:
-        nranks_per_node = torch.cuda.device_count()
-    nranks_per_node = int(nranks_per_node)
-    nranks_per_node = max(1, min(world, nranks_per_node))
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
     return CustomizedComm(mscclpp_group)
