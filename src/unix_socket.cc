@@ -134,7 +134,7 @@ void UnixSocketServer::start() {
         return;
       }
       WARN("Unix socket server main loop exited with exception: %s", e.what());
-      // throw e;
+      throw e;
     }
   });
 }
@@ -207,9 +207,9 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
-      printf("Unexpected event on unix socket listen fd: revents=0x%x\n", listenPfd.revents);
-      // throw Error(std::string("Unexpected event on unix socket listen fd: revents=0x") +
-      // std::to_string(listenPfd.revents), ErrorCode::InternalError);
+      throw Error(
+          std::string("Unexpected event on unix socket listen fd: revents=0x") + std::to_string(listenPfd.revents),
+          ErrorCode::InternalError);
     }
 
     if (listenPfd.revents & POLLIN) {

@@ -6,6 +6,7 @@
 import os
 import torch
 import mscclpp.comm as mscclpp_comm
+import mscclpp.utils as mscclpp_utils
 import mscclpp
 import netifaces as ni
 import ipaddress
@@ -29,19 +30,6 @@ def interfaces_for_ip_netifaces(ip: str):
                     if addr == target:
                         return interface
     return None
-
-
-def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
-    if dtype == torch.float16:
-        return mscclpp.DataType.float16
-    elif dtype == torch.float32:
-        return mscclpp.DataType.float32
-    elif dtype == torch.int32:
-        return mscclpp.DataType.int32
-    elif dtype == torch.bfloat16:
-        return mscclpp.DataType.bfloat16
-    else:
-        raise ValueError(f"Unknown data type: {dtype}")
 
 
 def to_mscclpp_reduce_op(op: torch.distributed.ReduceOp) -> mscclpp.ReduceOp:
@@ -87,7 +75,7 @@ class CustomizedComm:
             output_buffer=tensor.data_ptr(),
             input_size=tensor.nbytes,
             output_size=tensor.nbytes,
-            dtype=dtype_to_mscclpp_dtype(tensor.dtype),
+            dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
             op=to_mscclpp_reduce_op(op),
             stream=stream.cuda_stream if stream is not None else 0,
         )

@@ -239,5 +239,5 @@ class NativeCodeCompiler:
         module.__mscclpp_cache_key__ = cache_key
         sys.modules[module_name] = module
         spec.loader.exec_module(module)
-        logging.info(f"Successfully compiled and loaded module '{name}' from '{output_file}'")
+        logging.debug(f"Successfully compiled and loaded module '{name}' from '{output_file}'")
         return module
