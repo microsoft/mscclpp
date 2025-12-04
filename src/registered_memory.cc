@@ -29,21 +29,22 @@
     }                                                       \
   } while (false)
 
-namespace std {
-template <>
-struct hash<cudaIpcMemHandle_t> {
+namespace {
+
+// Custom hash and equality for cudaIpcMemHandle_t
+struct CudaIpcMemHandleHash {
   size_t operator()(const cudaIpcMemHandle_t& handle) const {
     std::string_view view(handle.reserved, sizeof(handle.reserved));
     return std::hash<std::string_view>{}(view);
   }
 };
-}  // namespace std
 
-inline bool operator==(const cudaIpcMemHandle_t& lhs, const cudaIpcMemHandle_t& rhs) {
-  return std::memcmp(lhs.reserved, rhs.reserved, sizeof(lhs.reserved)) == 0;
-}
+struct CudaIpcMemHandleEqual {
+  bool operator()(const cudaIpcMemHandle_t& lhs, const cudaIpcMemHandle_t& rhs) const noexcept {
+    return std::memcmp(lhs.reserved, rhs.reserved, sizeof(lhs.reserved)) == 0;
+  }
+};
 
-namespace {
 
 CUmemAllocationHandleType getNvlsMemHandleType() {
 #if (CUDA_NVLS_API_AVAILABLE)
@@ -68,7 +69,8 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
     }
   };
 #if defined(__HIP_PLATFORM_AMD__)
-  static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>> peerMemoryHandleMap;
+  static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>
+      peerMemoryHandleMap;
   static std::mutex mutex;
   std::lock_guard<std::mutex> lock(mutex);
   auto it = peerMemoryHandleMap.find(ipcHandle);
