@@ -310,9 +310,6 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
     } else if (getHostHash() == this->hostHash) {
       this->peerHandle = getPeerMemoryHandle(entry.cudaIpcBaseHandle);
-      if (!this->peerHandle) {
-        throw Error("Failed to open CUDA IPC handle, may already be closed", ErrorCode::InvalidUsage);
-      }
       this->data = static_cast<char*>(this->peerHandle.get()) + entry.cudaIpcOffsetFromBase;
     }
   }
