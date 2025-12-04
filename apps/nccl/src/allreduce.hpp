@@ -843,7 +843,7 @@ __global__ void __launch_bounds__(1024, 1)
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
   if (bid == nBlocks - 1) {
-    sizePerBlock = (sizePerRank - sizePerBlock * (nBlocks - 1) + 15) / 16 * 16;
+    sizePerBlock = sizePerRank - sizePerBlock * (nBlocks - 1);
   }
   handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
                              threadIdx.x, blockDim.x);
