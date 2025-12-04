@@ -821,7 +821,10 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
-  size_t sizePerBlock = sizePerRank / nBlocks;
+  size_t sizePerBlock = (sizePerRank / nBlocks) / 16 * 16;
+  // if (bid == nBlocks - 1) {
+  //   sizePerBlock = (sizePerRank - sizePerBlock * (nBlocks - 1) + 15) / 16 * 16;
+  // }
   size_t rankOffset = sizePerRank * rank;
   size_t blockOffset = sizePerBlock * bid + rankOffset;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
