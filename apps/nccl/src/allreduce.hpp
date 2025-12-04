@@ -963,8 +963,20 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocksForReduce = nRanksPerNode;
   int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
   size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
-  size_t sizePerRank = size / nRanksPerNode;
-  assert(sizePerRank % alignment == 0);
+
+  // Pad size to be divisible by (nRanksPerNode * alignment)
+  // This ensures each rank gets an aligned portion
+  size_t paddingNeeded = (nRanksPerNode * alignment - (size % (nRanksPerNode * alignment))) % (nRanksPerNode * alignment);
+  size_t paddedSize = size + paddingNeeded;
+  size_t sizePerRank = paddedSize / nRanksPerNode;  // Always aligned to 16 bytes
+
+  // Calculate actual size this rank should process (without padding)
+  size_t actualSizeThisRank = sizePerRank;
+  if (rank == nRanksPerNode - 1) {
+    // Last rank might have less actual data due to padding
+    actualSizeThisRank = size - (sizePerRank * (nRanksPerNode - 1));
+  }
+
   uint32_t sizePerBlock =
       ((sizePerRank + (nBlocksForCopy - 1)) / nBlocksForCopy + alignment - 1) / alignment * alignment;
   uint32_t lastBlockSize = sizePerRank - (nBlocksForCopy - 1) * sizePerBlock;
@@ -1008,7 +1020,16 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t scratchOffset = scratchIt * unitSize + bid * scratchSizePerBlock + i * scratchSizePerRank;
         char* srcData = (char*)src + blockOffset;
         char* dstData = (char*)scratch + scratchOffset;
-        mscclpp::copy(dstData, srcData, iterSize, tid, blockDim.x);
+        // Calculate actual copy size - don't copy beyond actual data on last rank
+        size_t actualCopySize = iterSize;
+        if (i == nRanksPerNode - 1 && blockOffset + iterSize > i * sizePerRank + actualSizeThisRank) {
+          // On last rank, clamp to actual data size
+          actualCopySize = (i * sizePerRank + actualSizeThisRank > blockOffset)
+                           ? (i * sizePerRank + actualSizeThisRank - blockOffset) : 0;
+        }
+        if (actualCopySize > 0) {
+          mscclpp::copy(dstData, srcData, actualCopySize, tid, blockDim.x);
+        }
       }
       __syncthreads();
       if (tid < nPeers) {
@@ -1067,7 +1088,16 @@ __global__ void __launch_bounds__(1024, 1)
                                  i * scratchSizePerRank;
         char* srcData = (char*)scratch + scratchOffset;
         char* dstData = (char*)dst + blockOffset;
-        mscclpp::copy(dstData, srcData, iterSize, tid, blockDim.x);
+        // Calculate actual copy size - don't copy beyond actual data on last rank
+        size_t actualCopySize = iterSize;
+        if (i == nRanksPerNode - 1 && blockOffset + iterSize > i * sizePerRank + actualSizeThisRank) {
+          // On last rank, clamp to actual data size
+          actualCopySize = (i * sizePerRank + actualSizeThisRank > blockOffset)
+                           ? (i * sizePerRank + actualSizeThisRank - blockOffset) : 0;
+        }
+        if (actualCopySize > 0) {
+          mscclpp::copy(dstData, srcData, actualCopySize, tid, blockDim.x);
+        }
       }
       __syncthreads();
       if (tid == 0) {
