@@ -104,14 +104,16 @@ struct NvlsWithCopyAdapter {
     {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       if (sizeof(T) * nelems < (1 << 24)) {
+	      printf("allreduce10\n");
         int nBlocks = nRanksPerNode * 4;
         int nThreadsPerBlock = 1024;
         allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
                                                                  nvlsChannels, nelems * sizeof(T), scratchBufferSize,
                                                                  rank, nRanksPerNode);
       } else {
-        int nBlocks = nRanksPerNode * 5;
+        int nBlocks = 48; //8*6; //nRanksPerNode * 5;
         int nThreadsPerBlock = 1024;
+	//printf("allreduce11\n");
         allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
                                                                  nvlsChannels, nelems * sizeof(T), scratchBufferSize,
                                                                  rank, nRanksPerNode);
@@ -429,7 +431,7 @@ mscclpp::Algorithm AllreduceNvls::build() {
 
 void AllreduceNvlsWithCopy::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                        std::unordered_map<std::string, std::shared_ptr<void>>& extras) {
-  nSwitchChannels_ = 8;
+  nSwitchChannels_ = 24;
   int nBaseChannels = 64;
   scratchBuffer_ = std::static_pointer_cast<char>(extras.at("scratch"));
   scratchBufferSize_ = *(size_t*)(extras.at("scratch_size").get());

@@ -962,8 +962,8 @@ __global__ void __launch_bounds__(1024, 1)
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
-  int nBlocksForCopy = nRanksPerNode * 2;
-  int nBlocksForReduce = nRanksPerNode;
+  int nBlocksForCopy = 8 * 2;
+  int nBlocksForReduce = 16;
   int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
   size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
   size_t sizePerRank = size / nRanksPerNode;
