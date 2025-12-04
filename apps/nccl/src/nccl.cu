@@ -291,10 +291,10 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy2");
     }
 #if defined(__HIP_PLATFORM_AMD__)
-    return algoMapByCollective.at(collective).at("default_allreduce_allconnect");
+    return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
 #else
     if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_allconnect");
+      return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
     }
 #endif
   }

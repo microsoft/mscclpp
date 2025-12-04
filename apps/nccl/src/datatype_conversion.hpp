@@ -51,6 +51,30 @@ inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   }
 }
 
+static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
+  switch (dtype) {
+    case mscclpp::DataType::INT32:
+      return ncclInt32;
+    case mscclpp::DataType::UINT32:
+      return ncclUint32;
+    case mscclpp::DataType::FLOAT16:
+      return ncclFloat16;
+    case mscclpp::DataType::FLOAT32:
+      return ncclFloat32;
+    case mscclpp::DataType::BFLOAT16:
+      return ncclBfloat16;
+#ifdef __FP8_TYPES_EXIST__
+    case mscclpp::DataType::FP8_E4M3:
+      return ncclFloat8e4m3;
+    case mscclpp::DataType::FP8_E5M2:
+      return ncclFloat8e5m2;
+#endif
+    default:
+      assert(false && "Unsupported mscclpp::DataType");
+      return ncclNumTypes;
+  }
+}
+
 inline mscclpp::ReduceOp ncclRedOpToMscclpp(ncclRedOp_t op) {
   switch (op) {
     case ncclSum:

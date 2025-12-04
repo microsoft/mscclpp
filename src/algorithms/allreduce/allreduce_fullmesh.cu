@@ -247,7 +247,7 @@ std::shared_ptr<AlgorithmCtx> AllreduceFullmesh::initAllreduceContext(std::share
 std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
   auto self = std::make_shared<AllreduceFullmesh>((uintptr_t)scratchBuffer_, scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
-      "default_allreduce_allconnect", "allreduce",
+      "default_allreduce_fullmesh", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,

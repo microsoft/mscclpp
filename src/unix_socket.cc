@@ -171,12 +171,8 @@ void UnixSocketServer::unregisterFd(int fd) {
 void UnixSocketServer::mainLoop(int listenUnixSockFd) {
   std::vector<pollfd> pollFds;
   pollFds.push_back({listenUnixSockFd, POLLIN | POLLERR | POLLHUP | POLLNVAL | POLLRDHUP, 0});
-  auto removeClient = [&pollFds, listenUnixSockFd](size_t index) {
+  auto removeClient = [&pollFds](size_t index) {
     if (index == 0 || index >= pollFds.size()) {
-      return;
-    }
-    if (pollFds[index].fd == listenUnixSockFd) {
-      WARN("Attempted to remove listen fd from pollfds");
       return;
     }
     close(pollFds[index].fd);
