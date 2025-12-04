@@ -75,6 +75,8 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
   if (it != peerMemoryHandleMap.end()) {
     if (auto ptr = it->second.lock()) {
       return ptr;
+    } else {
+      peerMemoryHandleMap.erase(it);
     }
   }
   MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
