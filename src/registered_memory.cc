@@ -45,7 +45,6 @@ struct CudaIpcMemHandleEqual {
   }
 };
 
-
 CUmemAllocationHandleType getNvlsMemHandleType() {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (mscclpp::detail::nvlsCompatibleMemHandleType & CU_MEM_HANDLE_TYPE_FABRIC) {
