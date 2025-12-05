@@ -11,20 +11,25 @@ namespace algorithm {
 
 __device__ uint32_t deviceFlag = 1;
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, bool flagPerBlock = false>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                                  int worldSize, size_t nelems, uint32_t numScratchBuff, LL8Packet* flags) {
+                                  int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
 
   if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
-  uint32_t flag = deviceFlag;
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    flags[blockIdx.x].write(0, flag);
+  uint32_t flag = 0;
+  if constexpr (flagPerBlock) {
+    flag = ((uint32_t*)flags)[blockIdx.x];
+  } else {
+    flag = deviceFlag;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      ((LL8Packet*)flags)[blockIdx.x].write(0, flag);
+    }
   }
 
   size_t scratchBaseOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
@@ -55,15 +60,22 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     }
     dst[idx] = data;
   }
-  // Make sure all threadblocks have finished reading before incrementing the flag
-  if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
-    flags[threadIdx.x].read(flag, -1);
-  }
-  if (blockIdx.x == 0) {
+  if constexpr (flagPerBlock) {
     __syncthreads();
-  }
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    deviceFlag++;
+    if (threadIdx.x == 0) {
+      ((uint32_t*)flags)[blockIdx.x] = flag + 1;
+    }
+  } else {
+    // Make sure all threadblocks have finished reading before incrementing the flag
+    if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
+      ((LL8Packet*)flags)[threadIdx.x].read(flag, -1);
+    }
+    if (blockIdx.x == 0) {
+      __syncthreads();
+    }
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+      deviceFlag++;
+    }
   }
 }
 
@@ -83,9 +95,15 @@ struct AllpairAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    if (nBlocks == 7 || nBlocks == 28) {
+      allreduceAllPairs<OpType, T, true><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+          (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
+          nRanksPerNode, worldSize, nelems, numScratchBuff, flags);
+      return cudaGetLastError();
+    }
+    allreduceAllPairs<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, numScratchBuff, (LL8Packet*)flags);
+        nRanksPerNode, worldSize, nelems, numScratchBuff, flags);
     return cudaGetLastError();
   }
 };
@@ -97,6 +115,11 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
   registeredMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), scratchMemory);
   registeredMemories_.push_back(scratchMemory);
   flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
+  std::vector<uint32_t> flags(28, 1);
+  flags7_ = detail::gpuCallocShared<uint32_t>(7);
+  flags28_ = detail::gpuCallocShared<uint32_t>(28);
+  gpuMemcpy<uint32_t>(flags7_.get(), flags.data(), 7, cudaMemcpyHostToDevice);
+  gpuMemcpy<uint32_t>(flags28_.get(), flags.data(), 28, cudaMemcpyHostToDevice);
 }
 
 CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
@@ -107,6 +130,12 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize);
+  }
+  void* flags = this->flags_.get();
+  if (blockAndThreadNum.first == 7) {
+    flags = this->flags7_.get();
+  } else if (blockAndThreadNum.first == 28) {
+    flags = this->flags28_.get();
   }
 
   size_t sendBytes;
@@ -119,10 +148,10 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  cudaError_t error = allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr,
-                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
-                                ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags_.get(),
-                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
+                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
+                stream, flags, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;

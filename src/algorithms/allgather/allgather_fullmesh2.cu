@@ -112,7 +112,7 @@ AllgatherFullmesh2::AllgatherFullmesh2() : disableChannelCache_(false) {
 
 void AllgatherFullmesh2::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
-  this->memorySemaphores_ = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_));
+  this->memorySemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
 }
 
 CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
@@ -181,8 +181,8 @@ std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherFullmesh2::initAllgatherContext(
   mscclpp::RegisteredMemory localMemory =
       comm->registerMemory((void*)recvBasePtr, recvBytes, mscclpp::Transport::CudaIpc);
   std::vector<mscclpp::RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
-  ctx->memoryChannels = std::move(
-      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection_));
+  ctx->memoryChannels =
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection_);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference

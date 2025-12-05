@@ -147,7 +147,7 @@ std::shared_ptr<AlgorithmCtx> AllgatherFullmesh::initAllgatherContext(std::share
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
-  ctx->memorySemaphores = std::move(setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection));
+  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
 
   // register the memory for the broadcast operation
   RegisteredMemory localMemory = comm->registerMemory((void*)input, inputSize, Transport::CudaIpc);
@@ -155,8 +155,8 @@ std::shared_ptr<AlgorithmCtx> AllgatherFullmesh::initAllgatherContext(std::share
   std::vector<RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, scratchMemory);
 
   // setup channels
-  ctx->memoryChannels = std::move(
-      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection));
+  ctx->memoryChannels =
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, nChannelsPerConnection);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference

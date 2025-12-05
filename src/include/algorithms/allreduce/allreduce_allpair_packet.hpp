@@ -31,6 +31,8 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
   std::shared_ptr<LL8Packet> flags_;
+  std::shared_ptr<uint32_t> flags7_;
+  std::shared_ptr<uint32_t> flags28_;
 };
 }  // namespace algorithm
 }  // namespace mscclpp

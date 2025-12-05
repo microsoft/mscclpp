@@ -7,7 +7,7 @@ namespace mscclpp {
 namespace algorithm {
 
 __device__ uint32_t deviceFlag = 1;
-template <ReduceOp OpType, typename T, bool flagPerThread = false>
+template <ReduceOp OpType, typename T, bool flagPerBlock = false>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
@@ -15,7 +15,7 @@ __global__ void __launch_bounds__(1024, 1)
                         [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   uint32_t flag = 0;
-  if constexpr (flagPerThread) {
+  if constexpr (flagPerBlock) {
     flag = ((uint32_t*)flags)[blockIdx.x];
   } else {
     flag = deviceFlag;
@@ -48,8 +48,11 @@ __global__ void __launch_bounds__(1024, 1)
     }
     dst[i] = data;
   }
-  if constexpr (flagPerThread) {
-    ((uint32_t*)flags)[blockIdx.x] = flag + 1;
+  if constexpr (flagPerBlock) {
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      ((uint32_t*)flags)[blockIdx.x] = flag + 1;
+    }
   } else {
     if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
       ((LL8Packet*)flags)[threadIdx.x].read(flag, -1);
@@ -77,10 +80,9 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize) {
 template <ReduceOp OpType, typename T>
 struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
-                          mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
-                          mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
-                          int rank, int, int worldSize, size_t inputSize, cudaStream_t stream, void* flags, uint32_t,
-                          int nBlocks, int nThreadsPerBlock) {
+                          DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
+                          size_t scratchBufferSize, int rank, int, int worldSize, size_t inputSize, cudaStream_t stream,
+                          void* flags, uint32_t, int nBlocks, int nThreadsPerBlock) {
     if (nBlocks == 4 || nBlocks == 8) {
       allreduceNvlsPacket<OpType, T, true>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output, nvlsChannels,
@@ -94,23 +96,22 @@ struct AllreduceNvlsPacketAdapter {
   }
 };
 
-void AllreduceNvlsPacket::initialize(std::shared_ptr<mscclpp::Communicator>) {
+void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator>) {
   std::vector<uint32_t> flags(8, 1);
-  flags_ = mscclpp::detail::gpuCallocShared<LL8Packet>(16);
-  flags4_ = mscclpp::detail::gpuCallocShared<uint32_t>(4);
-  flags8_ = mscclpp::detail::gpuCallocShared<uint32_t>(8);
-  mscclpp::gpuMemcpy<uint32_t>(flags4_.get(), flags.data(), 4, cudaMemcpyHostToDevice);
-  mscclpp::gpuMemcpy<uint32_t>(flags8_.get(), flags.data(), 8, cudaMemcpyHostToDevice);
+  flags_ = detail::gpuCallocShared<LL8Packet>(16);
+  flags4_ = detail::gpuCallocShared<uint32_t>(4);
+  flags8_ = detail::gpuCallocShared<uint32_t>(8);
+  gpuMemcpy<uint32_t>(flags4_.get(), flags.data(), 4, cudaMemcpyHostToDevice);
+  gpuMemcpy<uint32_t>(flags8_.get(), flags.data(), 8, cudaMemcpyHostToDevice);
 }
 
-mscclpp::AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t,
-                                                                          mscclpp::DataType) {
-  return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
+AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType) {
+  return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext(
-    std::shared_ptr<mscclpp::Communicator> comm, const void*, void*, size_t, mscclpp::DataType) {
-  auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+std::shared_ptr<AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+                                                                        void*, size_t, DataType) {
+  auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
