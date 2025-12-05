@@ -965,10 +965,10 @@ __global__ void __launch_bounds__(1024, 1)
   size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
 
   // Pad size to be divisible by (nRanksPerNode * alignment)
-  // This ensures each rank gets an aligned portion
-  size_t paddingNeeded = (nRanksPerNode * alignment - (size % (nRanksPerNode * alignment))) % (nRanksPerNode * alignment);
+  size_t paddingNeeded =
+      (nRanksPerNode * alignment - (size % (nRanksPerNode * alignment))) % (nRanksPerNode * alignment);
   size_t paddedSize = size + paddingNeeded;
-  size_t sizePerRank = paddedSize / nRanksPerNode;  // Always aligned to 16 bytes
+  size_t sizePerRank = paddedSize / nRanksPerNode;
 
   // Calculate actual size this rank should process (without padding)
   size_t actualSizeThisRank = sizePerRank;
@@ -1025,7 +1025,8 @@ __global__ void __launch_bounds__(1024, 1)
         if (i == nRanksPerNode - 1 && blockOffset + iterSize > i * sizePerRank + actualSizeThisRank) {
           // On last rank, clamp to actual data size
           actualCopySize = (i * sizePerRank + actualSizeThisRank > blockOffset)
-                           ? (i * sizePerRank + actualSizeThisRank - blockOffset) : 0;
+                               ? (i * sizePerRank + actualSizeThisRank - blockOffset)
+                               : 0;
         }
         if (actualCopySize > 0) {
           mscclpp::copy(dstData, srcData, actualCopySize, tid, blockDim.x);
@@ -1088,12 +1089,12 @@ __global__ void __launch_bounds__(1024, 1)
                                  i * scratchSizePerRank;
         char* srcData = (char*)scratch + scratchOffset;
         char* dstData = (char*)dst + blockOffset;
-        // Calculate actual copy size - don't copy beyond actual data on last rank
+
         size_t actualCopySize = iterSize;
         if (i == nRanksPerNode - 1 && blockOffset + iterSize > i * sizePerRank + actualSizeThisRank) {
-          // On last rank, clamp to actual data size
           actualCopySize = (i * sizePerRank + actualSizeThisRank > blockOffset)
-                           ? (i * sizePerRank + actualSizeThisRank - blockOffset) : 0;
+                               ? (i * sizePerRank + actualSizeThisRank - blockOffset)
+                               : 0;
         }
         if (actualCopySize > 0) {
           mscclpp::copy(dstData, srcData, actualCopySize, tid, blockDim.x);
