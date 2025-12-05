@@ -12,8 +12,8 @@ namespace algorithm {
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                      DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset,
-                      size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+                      DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
+                      int nRanksPerNode, int worldSize, size_t nelems) {
   const int nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
@@ -23,7 +23,7 @@ __global__ void __launch_bounds__(512, 1)
   auto memoryOutChans = memoryOutChannels + chanOffset;
 
   int4* buff4 = reinterpret_cast<int4*>(buff);
-  int4* scratch4 = reinterpret_cast<int4*>((char*)scratch + channelScratchOffset);
+  int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
@@ -44,7 +44,6 @@ __global__ void __launch_bounds__(512, 1)
   const size_t chunkSizePerRank = nNeededBlocks * nInt4PerChunk;
   const size_t blockOffset = nInt4PerChunk * blockIdx.x;
   const size_t scratchChunkRankOffset = chunkSizePerRank * rank;
-  const size_t scratchBaseOffsetInt4 = channelScratchOffset / sizeof(int4);
 
   __shared__ DeviceHandle<MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   __shared__ DeviceHandle<MemoryChannel> outChannels[MAX_NRANKS_PER_NODE - 1];
@@ -68,7 +67,7 @@ __global__ void __launch_bounds__(512, 1)
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
-        channels[peerIdx].write(scratchBaseOffsetInt4 + scratchChunkRankOffset + blockOffset + idx, val);
+        channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
       }
     }
 
@@ -109,7 +108,7 @@ __global__ void __launch_bounds__(512, 1)
         const int peerIdx = (i + blockIdx.x) % nPeer;
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = buff4[nInt4PerRank * remoteRank + idx + offsetOfThisBlock];
-        channels[peerIdx].write(scratchBaseOffsetInt4 + scratchChunkRankOffset + blockOffset + idx, val);
+        channels[peerIdx].write(scratchChunkRankOffset + blockOffset + idx, val);
       }
     }
 
@@ -148,8 +147,8 @@ __global__ void __launch_bounds__(512, 1)
 template <ReduceOp OpType, typename T>
 struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
-                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelOutDataOffset,
-                          size_t channelScratchOffset, size_t, int rank, int nRanksPerNode, int worldSize,
+                          DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t,
+                          size_t channelOutDataOffset, size_t, int rank, int nRanksPerNode, int worldSize,
                           size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
@@ -157,7 +156,7 @@ struct AllreduceAllconnectAdapter {
     if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
     allreduceFullmesh<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
-        channelOutDataOffset, channelScratchOffset, rank, nRanksPerNode, worldSize, nelems);
+        channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
     return cudaGetLastError();
   }
 };
