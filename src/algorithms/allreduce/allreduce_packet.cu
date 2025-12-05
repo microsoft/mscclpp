@@ -14,7 +14,7 @@ template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreducePacket(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                     size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize,
-                    size_t nelems, LL8Packet* flags, uint32_t numScratchBuff
+                    size_t nelems, void* flags, uint32_t numScratchBuff
 #if defined(ENABLE_NPKIT)
                     ,
                     NpKitEventCollectContext* npKitEventCollectContexts, uint64_t* cpuTimestamp) {
@@ -58,6 +58,10 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t nPkts = nelems / 2;
 
   uint32_t flag = deviceFlag;
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    ((LL8Packet*)flags)[blockIdx.x].write(0, flag);
+  }
   size_t channelScratchOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
 
   int nelemsPerRank = nelems / worldSize;
@@ -84,10 +88,7 @@ __global__ void __launch_bounds__(1024, 1)
   if (lid < nPeers) {
     channels[lid] = memoryChannels[lid];
   }
-  __syncthreads();
-  if (threadIdx.x == 0) {
-    flags[blockIdx.x].write(0, flag);
-  }
+  __syncwarp();
   // step 1: write to scratch buffer
   channels[peerIdx].putPackets<mscclpp::LLPacket>(scratchOffset, srcOffset, nelemsPerRank * sizeof(int), tid,
                                                   blockDim.x * nBlocksPerPeer, flag);
@@ -125,11 +126,15 @@ __global__ void __launch_bounds__(1024, 1)
     result[idx].y = data.y;
   }
 
+  // Make sure all threadblocks have finished reading before incrementing the flag
   if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
-    flags[threadIdx.x].read(flag, -1);
+    ((LL8Packet*)flags)[threadIdx.x].read(flag, -1);
   }
   if (blockIdx.x == 0) {
     __syncthreads();
+  }
+  if (threadIdx.x == 0 && blockIdx.x == 0) {
+    deviceFlag++;
   }
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_ENTRY) && \
     defined(ENABLE_NPKIT_EVENT_KERNEL_ALLREDUCE_EXIT)
@@ -141,9 +146,6 @@ __global__ void __launch_bounds__(1024, 1)
 #if defined(ENABLE_NPKIT)
   NpKit::StoreGpuEventShm(npKitEventCollectContexts, event_buffer, event_buffer_head);
 #endif
-  if (threadIdx.x == 0 && blockIdx.x == 0) {
-    deviceFlag++;
-  }
 }
 
 template <ReduceOp OpType, typename T>
@@ -157,7 +159,7 @@ struct PacketAdapter {
     const size_t nelems = inputSize / sizeof(T);
     allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, (LL8Packet*)flags, numScratchBuff);
+        nRanksPerNode, worldSize, nelems, flags, numScratchBuff);
     return cudaGetLastError();
   }
 };
@@ -165,7 +167,7 @@ struct PacketAdapter {
 inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerNode, int worldSize) {
   int nBlocks = (nRanksPerNode - 1) * 4;
   int nThreadsPerBlock = 1024;
-  if (inputSize >= 16384) {
+  if (inputSize >= 32768) {
     nBlocks = (worldSize - 1) * 8;
     nThreadsPerBlock = (inputSize <= 153600) ? 512 : 1024;
   }
@@ -195,15 +197,16 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmC
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
+  void* flags = this->flags_.get();
   AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::commInvalidArgument;
   }
-  cudaError_t error = allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr,
-                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, ctx->rank,
-                                ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags_.get(),
-                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
+                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
+                stream, flags, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;

@@ -32,7 +32,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     }
   }
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? (scratchBufferSize / numScratchBuff) : 0;
   size_t channelScratchOffset = scratchBaseOffset;
 
   const int nBlocksPerPeer = gridDim.x / nPeers;

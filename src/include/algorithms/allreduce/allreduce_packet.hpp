@@ -26,7 +26,7 @@ class AllreducePacket : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
-  const int maxBlockNum_ = 28;
+  const int maxBlockNum_ = 56;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
