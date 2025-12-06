@@ -39,11 +39,7 @@ enum class CommResult {
   commNumResults = 8
 };
 
-enum ReduceOp {
-  SUM = 0,
-  MIN = 3,
-  NOP = 255
-};
+enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };
 
 /// Base class for collective communication algorithms.
 ///
@@ -256,7 +252,6 @@ class NativeAlgorithm : public Algorithm {
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
-
 
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
