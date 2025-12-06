@@ -43,6 +43,20 @@ def _stable_json_bytes(obj: Any) -> bytes:
 
 
 class DslCompiler:
+    """Compiler for MSCCL++ DSL (Domain-Specific Language) algorithms.
+
+    This compiler transforms high-level algorithm descriptions written in Python
+    into execution plans that can be run on GPUs. The compiled plans are cached
+    to disk for reuse.
+
+    The cache location can be configured via the `MSCCLPP_EXECUTION_PLAN_DIR`
+    environment variable (defaults to `~/.cache/mscclpp`).
+
+    Example:
+        >>> compiler = DslCompiler()
+        >>> algo = compiler.compile(my_allreduce_algo, algo_spec, rank=0)
+    """
+
     def __init__(self):
         pass
 
@@ -56,17 +70,44 @@ class DslCompiler:
         rank: int,
         **kwargs,
     ) -> Algorithm:
-        """Compile a MSCCL++ program from a high-level algorithm description.
+        """Compile a MSCCL++ DSL program from a high-level algorithm description.
+
+        This method takes a Python function that defines a collective communication
+        algorithm and compiles it into an executable Algorithm. The compilation
+        result is cached based on a hash of the source code and algorithm specification.
+
         Args:
-            algo: The high-level algorithm description (e.g., a function or class).
-            algo_spec (AlgoSpec): Algorithm specification containing collective type,
-                world size, ranks per node, instances, protocol, and other configuration.
-            rank (int): The rank of the current process.
+            algo: A callable (function or class) that takes an AlgoSpec and returns
+                a CollectiveProgram. This defines the communication pattern.
+            algo_spec: Algorithm specification containing:
+                - collective: The collective operation type (e.g., allreduce, allgather)
+                - world_size: Total number of ranks
+                - nranks_per_node: Number of ranks per node
+                - instances: Number of algorithm instances
+                - protocol: Communication protocol to use
+                - name: Human-readable algorithm name
+                - tags: Dictionary of tags for algorithm selection
+            rank: The rank of the current process (0 to world_size-1).
             **kwargs: Additional keyword arguments passed to the algorithm function.
+
         Returns:
-            ExecutionPlanHandle: The compiled execution plan handle.
+            Algorithm: The compiled algorithm ready for execution.
+
         Raises:
             ValueError: If the 'algo' argument is not callable.
+
+        Note:
+            Compiled execution plans are cached to disk. The cache key is computed
+            from the algorithm source code, specification, and MSCCL++ version.
+            Subsequent calls with the same inputs will reuse the cached plan.
+
+        Example:
+            >>> def my_ring_allreduce(spec: AlgoSpec) -> CollectiveProgram:
+            ...     # Define algorithm using MSCCL++ DSL
+            ...     ...
+            >>> compiler = DslCompiler()
+            >>> spec = AlgoSpec(collective=Collective.allreduce, world_size=8, ...)
+            >>> algo = compiler.compile(my_ring_allreduce, spec, rank=0)
         """
         if not callable(algo):
             raise ValueError("The 'algo' argument must be a callable (e.g., a function or class).")
@@ -126,6 +167,30 @@ class DslCompiler:
 
 
 class NativeCodeCompiler:
+    """Compiler for native CUDA/HIP algorithm implementations.
+
+    This compiler takes CUDA or HIP source files containing custom collective
+    algorithm kernels and compiles them into loadable Python modules using
+    pybind11 bindings.
+
+    The compiler automatically detects whether to use NVCC (CUDA) or HIPCC (ROCm)
+    based on the runtime environment. Compiled modules are cached to avoid
+    recompilation.
+
+    The cache location can be configured via the `MSCCLPP_NATIVE_CACHE_DIR`
+    environment variable (defaults to `~/.cache/mscclpp/native`).
+
+    Attributes:
+        _is_hip: True if running on AMD/ROCm, False for NVIDIA/CUDA.
+        _device_arch: The GPU architecture string (e.g., "sm_90" or "gfx90a").
+        _compiler: Path to the compiler executable (nvcc or hipcc).
+
+    Example:
+        >>> compiler = NativeCodeCompiler()
+        >>> module = compiler.compile("my_kernel", "path/to/kernel.cu")
+        >>> algo = module.create_algorithm()
+    """
+
     def __init__(self):
         self._is_hip = cp.cuda.runtime.is_hip
         self._device_arch = get_device_arch()
@@ -148,6 +213,7 @@ class NativeCodeCompiler:
             self._default_options += ["--linker-options", f"-rpath,{self._lib_home}/lib"]
         else:
             # Format for HIP: --offload-arch=gfx90a
+            # TODO: need to verify
             arch_flag = f"--offload-arch={self._device_arch}"
             self._default_options.append(arch_flag)
             self._default_options += ["-fPIC"]
@@ -162,6 +228,11 @@ class NativeCodeCompiler:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_compiler(self) -> str:
+        """Get the path to the appropriate compiler.
+
+        Returns:
+            Path to nvcc (CUDA) or hipcc (ROCm) compiler.
+        """
         if self._is_hip:
             rocm_home = os.environ.get("ROCM_HOME")
             return os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
@@ -170,21 +241,54 @@ class NativeCodeCompiler:
             return os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
 
     def get_arch(self):
+        """Get the target GPU architecture.
+
+        Returns:
+            str: The GPU architecture string (e.g., "sm_90" for NVIDIA or "gfx90a" for AMD).
+        """
         return self._device_arch
 
     def __call__(self, name: str, file: str, **kwds):
         return self.compile(name, file, **kwds)
 
     def compile(self, name: str, file: str):
-        """Compile a MSCCL++ native program from a CUDA/HIP source file.
+        """Compile a native CUDA/HIP source file into a Python module.
+
+        This method compiles a CUDA (.cu) or HIP source file containing custom
+        collective algorithm kernels into a dynamically loadable Python module.
+        The module is expected to use pybind11 bindings to expose algorithm
+        creation functions.
+
+        Compilation results are cached based on a hash of the source code,
+        compiler options, and GPU architecture. Subsequent calls with unchanged
+        inputs will return the cached module.
+
         Args:
-            name (str): The name of the python module to be created.
-            file (str): The path to the CUDA/HIP source file.
+            name: The name of the Python module to create. This will be the
+                module name used for importing (e.g., `import name`).
+            file: Path to the CUDA/HIP source file to compile.
+
         Returns:
-            str: The path to the compiled shared library.
+            module: The compiled and loaded Python module containing the
+                algorithm implementation.
+
         Raises:
             FileNotFoundError: If the specified source file does not exist.
-            RuntimeError: If compilation fails.
+            RuntimeError: If compilation fails (compiler not found, syntax errors, etc.).
+            ImportError: If the compiled module cannot be loaded.
+
+        Note:
+            - The source file should include pybind11 bindings to expose functions.
+            - MSCCLPP headers are automatically included in the compilation.
+            - The module is cached in `MSCCLPP_NATIVE_CACHE_DIR` (default: ~/.cache/mscclpp/native).
+            - File locking is used to prevent race conditions during parallel compilation.
+
+        Example:
+            >>> compiler = NativeCodeCompiler()
+            >>> # Compile a custom allreduce kernel
+            >>> module = compiler.compile("my_allreduce", "kernels/allreduce.cu")
+            >>> # Use the module to create an algorithm
+            >>> algo = module.create_allreduce_algorithm(comm, buffer, size)
         """
         if not os.path.isfile(file):
             raise FileNotFoundError(f"The specified source file does not exist: {file}")

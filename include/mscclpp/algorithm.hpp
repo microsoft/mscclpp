@@ -13,6 +13,7 @@
 
 namespace mscclpp {
 
+/// Capsule name for native algorithm pointers used in Python bindings.
 constexpr char ALGORITHM_NATIVE_CAPSULE_NAME[] = "mscclpp::AlgorithmPtr";
 
 enum class CollectiveBufferMode {
@@ -38,8 +39,17 @@ enum class CommResult {
   commNumResults = 8
 };
 
-enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };
+enum ReduceOp {
+  SUM = 0,
+  MIN = 3,
+  NOP = 255
+};
 
+/// Base class for collective communication algorithms.
+///
+/// This abstract class defines the interface for implementing collective communication
+/// algorithms such as allreduce, allgather, and reduce-scatter. Concrete implementations
+/// can be either native C++/CUDA algorithms or DSL-defined algorithms.
 class Algorithm {
  public:
   struct Constraint {
@@ -49,26 +59,76 @@ class Algorithm {
 
   virtual ~Algorithm() = default;
 
+  /// Get the name of the algorithm.
+  /// @return A reference to the algorithm name string.
   virtual const std::string& name() const = 0;
+
+  /// Get the collective operation this algorithm implements.
+  /// @return A reference to the collective name (e.g., "allreduce", "allgather").
   virtual const std::string& collective() const = 0;
+
+  /// Get the valid message size range for this algorithm.
+  /// @return A pair of (minMessageSize, maxMessageSize) in bytes.
   virtual const std::pair<size_t, size_t>& messageRange() const = 0;
+
+  /// Get the tags associated with this algorithm.
+  /// @return An unordered map of tag names to tag values.
   virtual const std::unordered_map<std::string, uint64_t>& tags() const = 0;
+
+  /// Get the buffer mode supported by this algorithm.
+  /// @return The CollectiveBufferMode indicating in-place, out-of-place, or any.
   virtual const CollectiveBufferMode& bufferMode() const = 0;
+
+  /// Get the type of this algorithm.
+  /// @return AlgorithmType::NATIVE or AlgorithmType::DSL.
   virtual AlgorithmType type() const = 0;
+
+  /// Get the execution constraints for this algorithm.
+  /// @return The Constraint struct specifying worldSize and nRanksPerNode requirements.
   virtual Constraint constraint() const = 0;
+
+  /// Execute the algorithm.
+  /// @param comm The communicator to use.
+  /// @param input Pointer to the input buffer.
+  /// @param output Pointer to the output buffer.
+  /// @param inputSize Size of the input buffer in bytes.
+  /// @param outputSize Size of the output buffer in bytes.
+  /// @param dtype The data type of the elements.
+  /// @param op The reduction operation (for reduce-type collectives).
+  /// @param stream The CUDA stream to execute on.
+  /// @param executor The executor for DSL algorithms (may be nullptr for native).
+  /// @param nBlocks Number of CUDA blocks (0 for auto-selection).
+  /// @param nThreadsPerBlock Number of threads per block (0 for auto-selection).
+  /// @param extras Additional parameters for algorithm-specific customization.
+  /// @return The result of the operation.
   virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                              size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                              std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                              const std::unordered_map<std::string, uintptr_t>& extras = {}) = 0;
+
+  /// Reset the algorithm state, clearing any cached contexts.
   virtual void reset() = 0;
 };
 
+/// Interface for building Algorithm instances.
+///
+/// Implement this interface to create custom algorithm factories that can be
+/// registered with the AlgorithmCollectionBuilder.
 class AlgorithmBuilder {
  public:
   virtual ~AlgorithmBuilder() = default;
+
+  /// Build and return an Algorithm instance.
+  /// @return A shared pointer to the constructed Algorithm.
   virtual std::shared_ptr<Algorithm> build() = 0;
 };
 
+/// Context holding resources for algorithm execution.
+///
+/// This struct contains all the channels, semaphores, and memory handles
+/// needed for executing a native algorithm. It is created once per unique
+/// buffer configuration and cached for reuse.
+/// @note This struct may be changed in future releases.
 class AlgorithmCtx {
  public:
   int rank;
@@ -88,6 +148,11 @@ class AlgorithmCtx {
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 
+/// Key for identifying cached AlgorithmCtx instances.
+///
+/// The context key uniquely identifies a buffer configuration, allowing
+/// the algorithm to cache and reuse contexts for repeated operations with
+/// the same buffers.
 struct AlgorithmCtxKey {
   void* baseSendBuff;
   void* baseRecvBuff;
@@ -128,31 +193,71 @@ struct hash<mscclpp::AlgorithmCtxKey> {
 
 namespace mscclpp {
 
+/// Native C++/CUDA implementation of a collective algorithm.
+///
+/// NativeAlgorithm allows users to implement custom collective algorithms in C++/CUDA.
+/// It provides a framework for initialization, context management, and kernel execution.
+/// Contexts are cached based on buffer configurations to avoid redundant setup.
 class NativeAlgorithm : public Algorithm {
  public:
   using InitFunc = std::function<void(std::shared_ptr<Communicator>)>;
+
+  /// Function type for the kernel that executes the collective operation.
+  /// @param ctx The algorithm context containing channels and semaphores.
+  /// @param input Pointer to the input buffer.
+  /// @param output Pointer to the output buffer.
+  /// @param inputSize Size of the input buffer in bytes.
+  /// @param outputSize Size of the output buffer in bytes.
+  /// @param dtype Data type of the elements.
+  /// @param op Reduction operation (for reduce-type collectives).
+  /// @param stream CUDA stream to execute on.
+  /// @param nBlocks Number of CUDA blocks.
+  /// @param nThreadsPerBlock Number of threads per block.
+  /// @param extras Additional algorithm-specific parameters.
+  /// @return The result of the operation.
   using KernelFunc =
       std::function<CommResult(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, DataType,
                                ReduceOp, cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
+
+  /// Function type for creating algorithm contexts.
+  /// @param comm The communicator.
+  /// @param input Pointer to the input buffer.
+  /// @param output Pointer to the output buffer.
+  /// @param inputSize Size of the input buffer.
+  /// @param outputSize Size of the output buffer.
+  /// @param dtype Data type of the elements.
+  /// @return A shared pointer to the created context.
   using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
                                                                       size_t, size_t, DataType)>;
+
+  /// Function type for generating context keys.
+  /// @param input Pointer to the input buffer.
+  /// @param output Pointer to the output buffer.
+  /// @param inputSize Size of the input buffer.
+  /// @param outputSize Size of the output buffer.
+  /// @param dtype Data type of the elements.
+  /// @return A key uniquely identifying this buffer configuration.
   using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
                                                           size_t outputSize, DataType dtype)>;
+
+  /// Construct a NativeAlgorithm.
+  /// @param name Human-readable name of the algorithm.
+  /// @param collective The collective operation (e.g., "allreduce").
+  /// @param initFunc Function called once to initialize the algorithm.
+  /// @param kernelFunc Function that launches the CUDA kernel.
+  /// @param contextInitFunc Function that creates execution contexts.
+  /// @param contextKeyGenFunc Function that generates cache keys for contexts.
+  /// @param minMessageSize Minimum supported message size in bytes (default: 0).
+  /// @param maxMessageSize Maximum supported message size in bytes (default: UINT64_MAX).
+  /// @param bufferMode Buffer mode supported by this algorithm (default: ANY).
+  /// @param tags Tags for algorithm selection hints.
+  /// @param constraint Execution constraints (worldSize, nRanksPerNode).
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
-  /// @brief Execute the algorithm.
-  /// @brief comm The communicator.
-  /// @param input The input buffer.
-  /// @param output The output buffer.
-  /// @param count The number of elements.
-  /// @param dtype The data type.
-  /// @param stream The CUDA stream.
-  /// @details This method will call ContextKeyGenFunc to generate a context key based on the input parameters,
-  /// and then use the context key to retrieve or create an AlgorithmCtx. The kernel function
-  /// will be launched with the AlgorithmCtx.
+
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
@@ -183,8 +288,18 @@ class NativeAlgorithm : public Algorithm {
   bool initialized_ = false;
 };
 
+/// DSL-based implementation of a collective algorithm.
+///
+/// DslAlgorithm wraps an ExecutionPlan loaded from a DSL specification file.
+/// It implements both Algorithm and AlgorithmBuilder interfaces, allowing it
+/// to be used directly or registered with AlgorithmCollectionBuilder.
 class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enable_shared_from_this<DslAlgorithm> {
  public:
+  /// Construct a DslAlgorithm from an execution plan.
+  /// @param id Identifier for this algorithm instance.
+  /// @param plan The execution plan defining the algorithm.
+  /// @param tags Tags for algorithm selection hints.
+  /// @param constraint Execution constraints (worldSize, nRanksPerNode).
   DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags = {},
                Constraint constraint = {});
   const std::string& name() const override;
@@ -209,6 +324,10 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   Constraint constraint_;
 };
 
+/// Request parameters for selecting and executing a collective operation.
+///
+/// This struct encapsulates all the information needed to select an appropriate
+/// algorithm for a collective operation.
 struct CollectiveRequest {
   int worldSize;
   int nRanksPerNode;
@@ -223,30 +342,48 @@ struct CollectiveRequest {
   CollectiveBufferMode bufferMode() const;
 };
 
+/// Function type for custom algorithm selection.
+/// @param algoMapByCollective Map of collective names to available algorithms.
+/// @param request The collective request parameters.
+/// @return The selected algorithm, or nullptr if no suitable algorithm is found.
 using AlgoSelectFunc = std::function<std::shared_ptr<Algorithm>(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>>&
         algoMapByCollective,
     const CollectiveRequest& request)>;
 
+/// Collection of algorithms for collective operations.
+///
+/// AlgorithmCollection manages a set of algorithms indexed by collective operation
+/// name and algorithm name. It provides methods to select the best algorithm for
+/// a given request and to register new algorithms.
 class AlgorithmCollection {
  public:
   AlgorithmCollection() = default;
 
-  /// @brief Select an algorithm based on the collective operation name and message size.
+  /// Select an algorithm based on the collective operation name and message size.
   /// @param request The collective request containing all necessary parameters.
-  /// @return The selected algorithm. If no suitable algorithm is found, a nullptr will be returned.
+  /// @return The selected algorithm. If no suitable algorithm is found, nullptr is returned.
   std::shared_ptr<Algorithm> selectAlgorithm(const CollectiveRequest& request);
 
-  /// @brief Register a new algorithm.
-  /// @param collective The collective operation name.
+  /// Register a new algorithm.
+  /// @param collective The collective operation name (e.g., "allreduce").
   /// @param algoName The algorithm name.
   /// @param algorithm The algorithm implementation.
   void registerAlgorithm(const std::string collective, const std::string algoName,
                          std::shared_ptr<Algorithm> algorithm);
 
+  /// Get all algorithms for a specific collective operation.
+  /// @param collective The collective operation name.
+  /// @return A map of algorithm names to algorithm instances.
   std::unordered_map<std::string, std::shared_ptr<Algorithm>> getAlgorithmsByCollective(
       const std::string& collective) const;
+
+  /// Get all registered algorithms.
+  /// @return A vector containing all algorithm instances.
   std::vector<std::shared_ptr<Algorithm>> getAllAlgorithms() const;
+
+  /// Extend this collection with algorithms from another collection.
+  /// @param other The other AlgorithmCollection to merge in.
   void extend(const AlgorithmCollection& other);
 
  private:
@@ -257,29 +394,49 @@ class AlgorithmCollection {
   friend class AlgorithmCollectionBuilder;
 };
 
+/// Builder for creating AlgorithmCollection instances.
+///
+/// AlgorithmCollectionBuilder provides a singleton interface for registering
+/// algorithm builders and configuring algorithm selection functions. It can
+/// build both default algorithms and custom algorithms registered by users.
+///
+/// Typical usage:
+///   1. Get the singleton instance with getInstance()
+///   2. Add algorithm builders with addAlgorithmBuilder()
+///   3. Optionally set custom selectors with setAlgorithmSelector()
+///   4. Build the collection with build() or buildDefaultAlgorithms()
 class AlgorithmCollectionBuilder {
  public:
+  /// Get the singleton instance of the builder.
+  /// @return A shared pointer to the singleton instance.
   static std::shared_ptr<AlgorithmCollectionBuilder> getInstance();
+
+  /// Reset the singleton instance.
   static void reset();
 
-  /// @brief Add a new algorithm builder for a specific collective operation.
-  /// @param builder The algorithm builder.
+  /// Add a new algorithm builder.
+  /// @param builder The algorithm builder to add.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
+  /// Build the default algorithms with a scratch buffer.
+  /// @param scratchBuffer Address of the scratch buffer for algorithm use.
+  /// @param scratchBufferSize Size of the scratch buffer in bytes.
+  /// @param rank The rank of the current process.
+  /// @return An AlgorithmCollection containing the default algorithms.
   AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
 
-  /// @brief Set a new algorithm selection function.
+  /// Set a custom algorithm selection function.
   /// @param selector The algorithm selection function.
   void setAlgorithmSelector(AlgoSelectFunc selector);
 
-  /// @brief Set a fallback algorithm selection function.
+  /// Set a fallback algorithm selection function.
   /// @param selector The fallback algorithm selection function.
-  /// @details The fallback selector will be used if the primary selector returns an empty algorithm. MSCCL++ will
-  /// assign a predefined selector as the fallback selector.
+  /// @note The fallback selector is used if the primary selector returns nullptr.
+  ///       MSCCL++ assigns a predefined selector as the fallback by default.
   void setFallbackAlgorithmSelector(AlgoSelectFunc selector);
 
-  /// @brief Build the AlgorithmCollection instance.
-  /// @return The AlgorithmCollection instance.
+  /// Build the AlgorithmCollection instance.
+  /// @return The built AlgorithmCollection containing all registered algorithms.
   AlgorithmCollection build();
 
  private:
