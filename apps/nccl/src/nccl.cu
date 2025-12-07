@@ -230,6 +230,9 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
         algoMapByCollective,
     const mscclpp::CollectiveRequest& request) {
+  if (algoMapByCollective.find(request.collective) == algoMapByCollective.end()) {
+    return nullptr;
+  }
   for (const auto& pair : algoMapByCollective.at(request.collective)) {
     const auto& algo = pair.second;
     if (algo->type() == mscclpp::AlgorithmType::DSL) {
