@@ -103,21 +103,21 @@ struct NvlsWithCopyAdapter {
 #endif
     {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-      if (sizeof(T) * nelems < (1 << 24)) {
+      /*if (sizeof(T) * nelems < (1 << 24)) {
 	      printf("allreduce10\n");
         int nBlocks = nRanksPerNode * 4;
         int nThreadsPerBlock = 1024;
         allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
                                                                  nvlsChannels, nelems * sizeof(T), scratchBufferSize,
                                                                  rank, nRanksPerNode);
-      } else {
+      } else {*/
         int nBlocks = 48; //8*6; //nRanksPerNode * 5;
         int nThreadsPerBlock = 1024;
 	//printf("allreduce11\n");
         allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
                                                                  nvlsChannels, nelems * sizeof(T), scratchBufferSize,
                                                                  rank, nRanksPerNode);
-      }
+      //}
       return cudaGetLastError();
     }
   }

@@ -881,9 +881,9 @@ __global__ void __launch_bounds__(1024, 1)
   }
   size_t scratchSizePerBlock = (scratchSizePerRank / nBlocks) / copyPerIter * copyPerIter;
   size_t blockScratchOffset = scratchSizePerBlock * bid + scratchSizePerRank * rank;
-  constexpr int NCOPY_WARPS = 14;
-  constexpr int NREDUCE_WARPS = 4;
-  constexpr int NRECV_COPY_WARPS = 14;
+  constexpr int NCOPY_WARPS = 12;
+  constexpr int NREDUCE_WARPS = 8;
+  constexpr int NRECV_COPY_WARPS = 12;
   constexpr int endCopyWid = NCOPY_WARPS;
   constexpr int startRecvCopyWid = NCOPY_WARPS;
   constexpr int endRecvCopyWid = NCOPY_WARPS + NRECV_COPY_WARPS;

@@ -18,7 +18,7 @@
 #define WARP_SIZE 32
 #endif
 
-constexpr int NUM_NVLS_CONNECTION = 8;
+constexpr int NUM_NVLS_CONNECTION = 16;
 constexpr int NUM_SEMAPHORES = 64;
 
 constexpr int MAX_NRANKS_PER_NODE = 8;
