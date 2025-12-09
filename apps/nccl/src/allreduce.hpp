@@ -821,7 +821,11 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
+#if __CUDA_ARCH__ >=1000
+  size_t sizePerBlock = (sizePerRank / nBlocks) / 16 * 16;
+#else
   size_t sizePerBlock = sizePerRank / nBlocks;
+#endif
   size_t rankOffset = sizePerRank * rank;
   size_t blockOffset = sizePerBlock * bid + rankOffset;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
@@ -842,6 +846,11 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
+#if __CUDA_ARCH__ >= 1000
+  if (bid == nBlocks - 1) {
+    sizePerBlock = sizePerRank - sizePerBlock * (nBlocks - 1);
+  }
+#endif
   handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
                              threadIdx.x, blockDim.x);
   __syncthreads();

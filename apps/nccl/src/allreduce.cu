@@ -79,7 +79,9 @@ struct NvlsAdapter {
 #endif
     {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-      int nBlocks = nRanksPerNode;
+      cudaDeviceProp prop;
+      cudaGetDeviceProperties(&prop, 0);
+      int nBlocks = (prop.major == 10) ? 24 : nRanksPerNode;
       int nThreadsPerBlock = 1024;
       allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
                                                               nvlsOutChannels, channelInOffset, channelOutOffset,
@@ -331,7 +333,13 @@ mscclpp::Algorithm AllreducePacket::build() {
 
 void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                std::unordered_map<std::string, std::shared_ptr<void>>&) {
-  nSwitchChannels_ = 8;
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, 0);
+  if (prop.major == 10) {
+    nSwitchChannels_ = 24;
+  } else {
+    nSwitchChannels_ = 8;
+  }
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
