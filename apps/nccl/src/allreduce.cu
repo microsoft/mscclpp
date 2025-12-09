@@ -335,11 +335,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                std::unordered_map<std::string, std::shared_ptr<void>>&) {
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, 0);
-  if (prop.major == 10) {
-    nSwitchChannels_ = 24;
-  } else {
-    nSwitchChannels_ = 8;
-  }
+  nSwitchChannels_ = (prop.major == 10) ? 24 : 8;
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
