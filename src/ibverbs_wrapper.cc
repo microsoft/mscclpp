@@ -6,6 +6,7 @@
 #include <dlfcn.h>
 
 #include <memory>
+#include <mscclpp/env.hpp>
 
 #include "logger.hpp"
 
@@ -15,12 +16,19 @@ static std::unique_ptr<void, int (*)(void*)> globalIBVerbsHandle(nullptr, &::dlc
 
 void* IBVerbs::dlsym(const std::string& symbol, bool allowReturnNull) {
   if (!globalIBVerbsHandle) {
-    const char* possibleLibNames[] = {"libibverbs.so", "libibverbs.so.1", nullptr};
-    for (int i = 0; possibleLibNames[i] != nullptr; i++) {
-      void* handle = ::dlopen(possibleLibNames[i], RTLD_NOW);
+    if (mscclpp::env()->ibvSo != "") {
+      void* handle = ::dlopen(mscclpp::env()->ibvSo.c_str(), RTLD_NOW);
       if (handle) {
         globalIBVerbsHandle.reset(handle);
-        break;
+      }
+    } else {
+      const char* possibleLibNames[] = {"libibverbs.so", "libibverbs.so.1", nullptr};
+      for (int i = 0; possibleLibNames[i] != nullptr; i++) {
+        void* handle = ::dlopen(possibleLibNames[i], RTLD_NOW);
+        if (handle) {
+          globalIBVerbsHandle.reset(handle);
+          break;
+        }
       }
     }
     if (!globalIBVerbsHandle) {
