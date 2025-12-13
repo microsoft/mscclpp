@@ -309,8 +309,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       throw Error("Unexpected error", ErrorCode::InternalError);
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
     } else if (getHostHash() == this->hostHash) {
-      this->peerHandle = getPeerMemoryHandle(entry.cudaIpcBaseHandle);
-      this->data = static_cast<char*>(this->peerHandle.get()) + entry.cudaIpcOffsetFromBase;
+      this->peerMemHandle = getPeerMemoryHandle(entry.cudaIpcBaseHandle);
+      this->data = static_cast<char*>(this->peerMemHandle.get()) + entry.cudaIpcOffsetFromBase;
     }
   }
   if (this->data != nullptr) {

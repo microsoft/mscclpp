@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import atexit
 import mpi4py
 import os
@@ -20,6 +23,7 @@ def pytest_configure(config):
         shm_comm.Free()
         cp.cuda.Device(MPI.COMM_WORLD.rank % N_GPUS_PER_NODE).use()
 
+        # only print process with rank 0 to avoid bad fd issue
         if MPI.COMM_WORLD.rank != 0:
             sys.stdout = open(os.devnull, "w")
             sys.stderr = open(os.devnull, "w")
