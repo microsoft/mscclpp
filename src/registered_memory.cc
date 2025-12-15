@@ -12,21 +12,21 @@
 
 #include "api.h"
 #include "context.hpp"
-#include "debug.h"
+#include "logger.hpp"
 #include "serialization.hpp"
 #include "unix_socket.hpp"
 #include "utils_internal.hpp"
 
-#define MSCCLPP_CULOG_WARN(cmd)                             \
-  do {                                                      \
-    CUresult err = cmd;                                     \
-    if (err != CUDA_SUCCESS) {                              \
-      const char* errStr;                                   \
-      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) { \
-        errStr = "failed to get error string";              \
-      }                                                     \
-      WARN("Call to " #cmd " failed, error is %s", errStr); \
-    }                                                       \
+#define MSCCLPP_CULOG_WARN(cmd)                                         \
+  do {                                                                  \
+    CUresult err = cmd;                                                 \
+    if (err != CUDA_SUCCESS) {                                          \
+      const char* errStr;                                               \
+      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) {             \
+        errStr = "failed to get error string";                          \
+      }                                                                 \
+      WARN(mscclpp::P2P, "Call to " #cmd " failed, error is ", errStr); \
+    }                                                                   \
   } while (false)
 
 namespace {
@@ -62,12 +62,14 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
   auto deleter = [](void* p) {
     cudaError_t err = cudaIpcCloseMemHandle(p);
     if (err != cudaSuccess) {
-      WARN("Failed to close CUDA IPC handle at pointer %p: %s", p, cudaGetErrorString(err));
+      WARN(mscclpp::P2P, "Failed to close CUDA IPC handle at pointer ", std::hex, p, ": ", cudaGetErrorString(err));
     } else {
-      INFO(MSCCLPP_P2P, "Closed CUDA IPC handle at pointer %p", p);
+      INFO(mscclpp::P2P, "Closed CUDA IPC handle at pointer ", std::hex, p);
     }
   };
 #if defined(__HIP_PLATFORM_AMD__)
+  // Unlike Nvidia, ROCm will not reuse the same ipc handle for same memory region.
+  // We cache the opened ipc handles to avoid opening multiple times. (May exceed system limit on vm.max_map_count)
   static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>
       peerMemoryHandleMap;
   static std::mutex mutex;
@@ -146,7 +148,7 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       transportInfo.ibLocal = true;
       transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
       this->transportInfos.push_back(transportInfo);
-      INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
+      INFO(NET, "IB mr for address ", data, " with size ", size, " is registered");
     };
     if (transports.has(Transport::IB0)) addIb(Transport::IB0);
     if (transports.has(Transport::IB1)) addIb(Transport::IB1);
@@ -280,8 +282,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         // TODO: only open handle if in same MNNVL domain
         CUresult err = cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType());
         if (err != CUDA_SUCCESS) {
-          INFO(MSCCLPP_P2P, "Failed to import shareable handle from host: 0x%lx, may not be in the same MNNVL domain",
-               hostHash);
+          INFO(P2P, "Failed to import shareable handle from host: 0x", std::hex, hostHash,
+               ", may not be in the same MNNVL domain");
           return;
         }
       } else {
@@ -290,7 +292,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         } else {
           int fd =
               UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootPid), entry.rootFd);
-          INFO(MSCCLPP_P2P, "Get file descriptor %d from peer 0x%lx", fd, hostHash);
+          INFO(P2P, "Get file descriptor ", fd, " from peer 0x", std::hex, hostHash);
           MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
                                                          CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
           close(fd);
@@ -314,7 +316,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     }
   }
   if (this->data != nullptr) {
-    INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
+    INFO(P2P, "Opened CUDA IPC handle at pointer ", this->data);
   }
 }
 
