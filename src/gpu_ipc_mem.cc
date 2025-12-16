@@ -106,7 +106,8 @@ struct CudaIpcMemHandleHash {
 
 struct CudaIpcMemHandleEqual {
   bool operator()(const cudaIpcMemHandle_t& lhs, const cudaIpcMemHandle_t& rhs) const noexcept {
-    return std::memcmp(lhs.reserved, rhs.reserved, sizeof(lhs.reserved)) == 0;
+    return std::string_view(lhs.reserved, sizeof(lhs.reserved)) ==
+           std::string_view(rhs.reserved, sizeof(rhs.reserved));
   }
 };
 
