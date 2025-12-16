@@ -49,6 +49,7 @@ void ExecutorTest::TearDown() {
 
 TEST_F(ExecutorTest, TwoNodesAllreduce) {
   if (gEnv->worldSize != 2 || gEnv->nRanksPerNode != 2) {
+    GTEST_SKIP() << "This test requires world size to be 2 and ranks per node to be 2";
     return;
   }
   std::string executablePath = getExecutablePath();
