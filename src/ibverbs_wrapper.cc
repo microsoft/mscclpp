@@ -20,6 +20,9 @@ void* IBVerbs::dlsym(const std::string& symbol, bool allowReturnNull) {
       void* handle = ::dlopen(mscclpp::env()->ibvSo.c_str(), RTLD_NOW);
       if (handle) {
         globalIBVerbsHandle.reset(handle);
+      } else {
+        THROW(NET, SysError, errno, "Failed to load libibverbs library specified by MSCCLPP_IBV_SO ('",
+              mscclpp::env()->ibvSo, "'): ", std::string(::dlerror()));
       }
     } else {
       const char* possibleLibNames[] = {"libibverbs.so", "libibverbs.so.1", nullptr};
