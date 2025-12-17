@@ -57,6 +57,8 @@ constexpr std::string_view logSubsysToString(LogSubsys subsys) {
   switch (subsys) {
     case LogSubsys::ENV:
       return "ENV";
+    case LogSubsys::GPU:
+      return "GPU";
     case LogSubsys::NET:
       return "NET";
     case LogSubsys::CONN:
