@@ -51,6 +51,8 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
     std::string token = upperStr.substr(start, end - start);
     if (token == "ENV") {
       set.set(static_cast<size_t>(LogSubsys::ENV));
+    } else if (token == "GPU") {
+      set.set(static_cast<size_t>(LogSubsys::GPU));
     } else if (token == "NET") {
       set.set(static_cast<size_t>(LogSubsys::NET));
     } else if (token == "CONN") {
