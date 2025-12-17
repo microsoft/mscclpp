@@ -80,7 +80,7 @@ struct NvlsAdapter {
     {
       using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
       cudaDeviceProp prop;
-      MSCCLPP_CUTHROW(cudaGetDeviceProperties(&prop, 0));
+      MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&prop, 0));
       // On GB200, the optimal number of blocks depends on the GPU issue rate +
       // NVLink switch reduction capacity, which is 24 here
       int nBlocks = (prop.major == 10) ? 24 : nRanksPerNode;
@@ -336,7 +336,7 @@ mscclpp::Algorithm AllreducePacket::build() {
 void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm,
                                std::unordered_map<std::string, std::shared_ptr<void>>&) {
   cudaDeviceProp prop;
-  MSCCLPP_CUTHROW(cudaGetDeviceProperties(&prop, 0));
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&prop, 0));
   // On GB200, the optimal number of blocks depends on the GPU issue rate +
   // NVLink switch reduction capacity, which is 24 here
   nSwitchChannels_ = (prop.major == 10) ? 24 : 8;
