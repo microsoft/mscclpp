@@ -334,7 +334,7 @@ class OperationDependencyGraph:
         def get_operations(self):
             operations = []
             for node in self.nodes:
-                operations.append(node)
+                operations.extend(node.get_operations())
             return operations
 
         def print(self):

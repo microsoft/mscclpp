@@ -289,7 +289,7 @@ class Rank:
         if len(tb_list) == 0:
             raise RuntimeError("Barrier requires at least thread block.")
         elif len(tb_list) == 1:
-            op = SyncOperation()
+            op = SyncOperation(self.rank, tb_list[0])
             get_program().add_operation(self.rank, tb_list[0], op)
         else:
             for tb in tb_list:

@@ -91,7 +91,7 @@ class BaseOperation(ABC):
         self.pipeline_context = pipeline_context
 
     def basic_fusion_check(self, other_op):
-        return self.rank == other_op.rank and self.threadblock == other_op.thread_block and self.pipeline_context == other_op.pipeline_context
+        return self.rank == other_op.rank and self.threadblock == other_op.thread_block and self.pipeline_context is other_op.pipeline_context
 
     def __add__(self, other):
         """Attempt to fuse this operation with another operation.
@@ -163,9 +163,9 @@ class CopyOperation(BaseOperation):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            super().__init__(rank, threadblock, Instruction.copy_packet)
+            super().__init__(rank, threadblock, Instruction.unpack_packet)
         elif to_packet:
-            super().__init__(rank, threadblock, Instruction.transform_to_packet)
+            super().__init__(rank, threadblock, Instruction.copy_packet)
         else:
             super().__init__(rank, threadblock, Instruction.copy)
 
