@@ -89,27 +89,22 @@ const TransportFlags AllIBTransports = Transport::IB0 | Transport::IB1 | Transpo
 
 const TransportFlags AllTransports = AllIBTransports | Transport::CudaIpc | Transport::Ethernet;
 
+std::ostream& operator<<(std::ostream& os, const Transport& transport) {
+  static const std::string TransportNames[] = {"UNK", "IPC", "IB0", "IB1", "IB2", "IB3",
+                                               "IB4", "IB5", "IB6", "IB7", "ETH", "NUM"};
+  os << TransportNames[static_cast<size_t>(transport)];
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const DeviceType& deviceType) {
+  static const std::string DeviceTypeNames[] = {"Unknown", "CPU", "GPU"};
+  os << DeviceTypeNames[static_cast<size_t>(deviceType)];
+  return os;
+}
+
+std::ostream& operator<<(std::ostream& os, const Device& device) {
+  os << "Device(type=" << device.type << ", id=" << device.id << ")";
+  return os;
+}
+
 }  // namespace mscclpp
-
-namespace std {
-
-std::string to_string(const mscclpp::Transport& transport) {
-  static const std::string TransportNames[] = {"UNK", "IPC", "NVLS", "IB0", "IB1", "IB2", "IB3",
-                                               "IB4", "IB5", "IB6",  "IB7", "ETH", "NUM"};
-  return TransportNames[static_cast<size_t>(transport)];
-}
-
-std::string to_string(const mscclpp::Device& device) {
-  std::stringstream ss;
-  ss << "Device(type=" << to_string(device.type) << ", id=" << device.id << ")";
-  return ss.str();
-}
-
-template <>
-struct hash<mscclpp::TransportFlags> {
-  size_t operator()(const mscclpp::TransportFlags& flags) const {
-    return hash<mscclpp::detail::TransportFlagsBase>()(flags.toBitset());
-  }
-};
-
-}  // namespace std

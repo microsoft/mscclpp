@@ -930,18 +930,24 @@ DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
 template <class T>
 using PacketPayload = typename T::Payload;
 
+/// Convert Transport to string and output to stream.
+/// @param os Output stream.
+/// @param transport Input transport.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const Transport& transport);
+
+/// Convert DeviceType to string and output to stream.
+/// @param os Output stream.
+/// @param deviceType Input device type.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const DeviceType& deviceType);
+
+/// Convert Device to string and output to stream.
+/// @param os Output stream.
+/// @param device Input device.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const Device& device);
+
 }  // namespace mscclpp
-
-namespace std {
-
-std::string to_string(const mscclpp::Transport& transport);
-
-std::string to_string(const mscclpp::Device& device);
-
-/// Specialization of the std::hash template for mscclpp::TransportFlags.
-template <>
-struct hash<mscclpp::TransportFlags>;
-
-}  // namespace std
 
 #endif  // MSCCLPP_CORE_HPP_
