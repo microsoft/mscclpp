@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "mp_unit_tests.hpp"
 
@@ -35,7 +35,11 @@ MultiProcessTestEnv::MultiProcessTestEnv(int argc, const char** argv) : argc(arg
 static std::unordered_map<std::string, std::string> parseArgs(int argc, const char* argv[]) {
   auto printUsage = [](const char* prog) {
     std::stringstream ss;
-    ss << "Usage: " << prog << " [-ip_port IP:PORT]\n";
+    ss << "Usage: " << prog << " [--key=value | --key value | -k value]\n"
+       << "Options:\n"
+       << "  --ip_port=<ip>:<port>    IP and port for MPI to connect to. Default: " << gDefaultIpPort << "\n"
+       << "  --ib_gid_index=<index>   InfiniBand GID index. Default: 0\n"
+       << "  -h                       Show this help message and exit.\n";
     std::cout << ss.str();
   };
 
@@ -43,23 +47,60 @@ static std::unordered_map<std::string, std::string> parseArgs(int argc, const ch
 
   // Default values
   options["ip_port"] = gDefaultIpPort;
+  options["ib_gid_index"] = "0";
 
-  // Parse the command line arguments
-  for (int i = 1; i < argc; i++) {
-    std::string arg = argv[i];
-    if (arg == "-ip_port") {
-      if (i + 1 < argc) {
-        options["ip_port"] = argv[++i];
-      } else {
-        throw std::invalid_argument("Error: -ip_port option requires an argument.\n");
-      }
-    } else if (arg == "-help" || arg == "-h") {
+  auto setKV = [&](const std::string& k, const std::string& v) {
+    if (!k.empty()) options[k] = v;
+  };
+
+  for (int i = 1; i < argc; ++i) {
+    std::string token = argv[i];
+    if (token == "-h") {
       printUsage(argv[0]);
+      MPI_Finalize();
       exit(0);
-    } else {
-      throw std::invalid_argument("Error: Unknown option " + std::string(argv[i]) + "\n");
     }
+
+    // --key=value
+    if (token.rfind("--", 0) == 0) {
+      auto eq = token.find('=');
+      if (eq != std::string::npos) {
+        setKV(token.substr(2, eq - 2), token.substr(eq + 1));
+        continue;
+      }
+      // --key value (next arg)
+      std::string key = token.substr(2);
+      if (i + 1 < argc) {
+        std::string next = argv[i + 1];
+        if (next.rfind("-", 0) != 0) {  // treat next as value if not another flag
+          setKV(key, next);
+          ++i;
+          continue;
+        }
+      }
+      // boolean-style flag
+      setKV(key, "1");
+      continue;
+    }
+
+    // -k value (short form): interpret single-dash as key without leading '-'
+    if (token.rfind('-', 0) == 0 && token.size() > 1) {
+      std::string key = token.substr(1);
+      if (i + 1 < argc) {
+        std::string next = argv[i + 1];
+        if (next.rfind('-', 0) != 0) {
+          setKV(key, next);
+          ++i;
+          continue;
+        }
+      }
+      setKV(key, "1");
+      continue;
+    }
+
+    // Unrecognized positional token: ignore to keep parser permissive for gtest/MPI extras
   }
+
   return options;
 }
 

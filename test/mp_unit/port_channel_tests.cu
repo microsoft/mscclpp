@@ -41,13 +41,16 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     if (r == rank) {
       continue;
     }
+    mscclpp::EndpointConfig cfg;
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
+      cfg.transport = mscclpp::Transport::CudaIpc;
     } else if (useIb) {
-      connectionFutures[r] = communicator->connect(ibTransport, r);
+      cfg.transport = ibTransport;
+      cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connect(mscclpp::Transport::Ethernet, r);
+      cfg.transport = mscclpp::Transport::Ethernet;
     }
+    connectionFutures[r] = communicator->connect(cfg, r);
 
     if (isInPlace) {
       communicator->sendMemory(sendBufRegMem, r);

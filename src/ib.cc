@@ -129,9 +129,11 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
-IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
-           int maxWrPerSend)
-    : info_(),
+IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
+           int maxRecvWr, int maxWrPerSend)
+    : portNum_(portNum),
+      gidIndex_(gidIndex),
+      info_(),
       qp_(nullptr),
       cq_(nullptr),
       wcs_(),
@@ -164,25 +166,25 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   }
 
   struct ibv_port_attr portAttr;
-  if (IBVerbs::ibv_query_port(ctx, port, &portAttr) != 0) {
+  if (IBVerbs::ibv_query_port(ctx, portNum_, &portAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ")");
   }
   info_.lid = portAttr.lid;
-  info_.port = port;
   info_.linkLayer = portAttr.link_layer;
   info_.qpn = qp->qp_num;
   info_.mtu = portAttr.active_mtu;
   info_.is_grh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
 
   if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.is_grh) {
-    // portAttr.gid_tbl_len contains the number of valid GID entries
-    if (portAttr.gid_tbl_len == 0) {
-      THROW(NET, Error, ErrorCode::SystemError, "No GID table entries available for port ", port);
+    if (gidIndex_ >= portAttr.gid_tbl_len) {
+      THROW(NET, Error, ErrorCode::InvalidUsage, "invalid GID index ", gidIndex_, " for port ", portNum_,
+            " (max index is ", portAttr.gid_tbl_len - 1, ")");
     }
 
     union ibv_gid gid = {};
-    if (IBVerbs::ibv_query_gid(ctx, port, 0, &gid) != 0) {
-      THROW(NET, IbError, errno, "ibv_query_gid failed for port ", port, " index 0 (errno ", errno, ")");
+    if (IBVerbs::ibv_query_gid(ctx, portNum_, gidIndex_, &gid) != 0) {
+      THROW(NET, IbError, errno, "ibv_query_gid failed for port ", portNum_, " index ", gidIndex_, " (errno ", errno,
+            ")");
     }
     info_.spn = gid.global.subnet_prefix;
     info_.iid = gid.global.interface_id;
@@ -191,7 +193,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollN
   struct ibv_qp_attr qpAttr = {};
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
-  qpAttr.port_num = port;
+  qpAttr.port_num = portNum_;
   qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
   if (IBVerbs::ibv_modify_qp(qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
@@ -220,7 +222,7 @@ void IbQp::rtr(const IbQpInfo& info) {
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info.spn;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info.iid;
     qp_attr.ah_attr.grh.flow_label = 0;
-    qp_attr.ah_attr.grh.sgid_index = 0;
+    qp_attr.ah_attr.grh.sgid_index = gidIndex_;
     qp_attr.ah_attr.grh.hop_limit = 255;
     qp_attr.ah_attr.grh.traffic_class = 0;
   } else {
@@ -229,7 +231,7 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.ah_attr.dlid = info.lid;
   qp_attr.ah_attr.sl = 0;
   qp_attr.ah_attr.src_path_bits = 0;
-  qp_attr.ah_attr.port_num = info.port;
+  qp_attr.ah_attr.port_num = portNum_;
   int ret = IBVerbs::ibv_modify_qp(qp_, &qp_attr,
                                    IBV_QP_STATE | IBV_QP_AV | IBV_QP_PATH_MTU | IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
                                        IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER);
@@ -374,7 +376,7 @@ IbCtx::~IbCtx() {
   }
 }
 
-bool IbCtx::isPortUsable(int port) const {
+bool IbCtx::isPortUsable(int port, int gidIndex) const {
   struct ibv_port_attr portAttr = {};
   if (IBVerbs::ibv_query_port(ctx_, port, &portAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_port failed (errno ", errno, ", port ", port, ")");
@@ -388,45 +390,47 @@ bool IbCtx::isPortUsable(int port) const {
     return false;
   }
 
-  // For Ethernet/RoCE or InfiniBand with GRH, check if GID table has entries
-  if (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || (portAttr.flags & IBV_QPF_GRH_REQUIRED)) {
-    if (portAttr.gid_tbl_len == 0) {
-      return false;
-    }
-    // Verify that at least one GID entry is queryable
-    union ibv_gid gid = {};
-    if (IBVerbs::ibv_query_gid(ctx_, port, 0, &gid) != 0) {
-      return false;
+  if (gidIndex >= 0) {
+    // For Ethernet/RoCE or InfiniBand with GRH, check if GID table has entries
+    if (portAttr.link_layer == IBV_LINK_LAYER_ETHERNET || (portAttr.flags & IBV_QPF_GRH_REQUIRED)) {
+      if (gidIndex >= portAttr.gid_tbl_len) {
+        return false;
+      }
+      union ibv_gid gid = {};
+      if (IBVerbs::ibv_query_gid(ctx_, port, gidIndex, &gid) != 0) {
+        return false;
+      }
     }
   }
 
   return true;
 }
 
-int IbCtx::getAnyUsablePort() const {
+int IbCtx::getAnyUsablePort(int gidIndex) const {
   struct ibv_device_attr devAttr;
   if (IBVerbs::ibv_query_device(ctx_, &devAttr) != 0) {
     THROW(NET, IbError, errno, "ibv_query_device failed (errno ", errno, ")");
   }
   for (uint8_t port = 1; port <= devAttr.phys_port_cnt; ++port) {
-    if (this->isPortUsable(port)) {
+    if (this->isPortUsable(port, gidIndex)) {
       return port;
     }
   }
   return -1;
 }
 
-std::shared_ptr<IbQp> IbCtx::createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
-                                      int port /*=-1*/) {
+std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
+                                      int maxRecvWr, int maxWrPerSend) {
   if (port == -1) {
-    port = this->getAnyUsablePort();
+    port = this->getAnyUsablePort(gidIndex);
     if (port == -1) {
       THROW(NET, Error, ErrorCode::InvalidUsage, "No usable port found (device: ", devName_, ")");
     }
-  } else if (!this->isPortUsable(port)) {
+  } else if (!this->isPortUsable(port, gidIndex)) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
-  return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+  return std::shared_ptr<IbQp>(
+      new IbQp(ctx_, pd_, port, gidIndex, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {

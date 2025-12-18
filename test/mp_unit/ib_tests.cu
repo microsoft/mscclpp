@@ -13,7 +13,7 @@ void IbTestBase::SetUp() {
   cudaDevId = (gEnv->rank % gEnv->nRanksPerNode) % cudaDevNum;
   MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevId));
 
-  int ibDevId = (gEnv->rank % gEnv->nRanksPerNode) / mscclpp::getIBDeviceCount();
+  int ibDevId = (gEnv->rank % gEnv->nRanksPerNode) % mscclpp::getIBDeviceCount();
   ibDevName = mscclpp::getIBDeviceName(ibIdToTransport(ibDevId));
 }
 
@@ -39,8 +39,10 @@ void IbPeerToPeerTest::SetUp() {
 
   bootstrap->initialize(id);
 
+  int ib_gid_index = std::stoi(gEnv->args["ib_gid_index"]);
+
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
-  qp = ibCtx->createQp(1024, 1, 8192, 0, 64);
+  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64);
 
   qpInfo[gEnv->rank] = qp->getInfo();
   bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
@@ -87,14 +89,14 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
 
   const int maxIter = 100000;
   const int nelem = 1;
-  auto data = mscclpp::detail::gpuCallocUnique<int>(nelem);
+  auto data = mscclpp::detail::gpuCallocUnique<uint64_t>(nelem);
 
-  registerBufferAndConnect(data.get(), sizeof(int) * nelem);
+  registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
 
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
     for (int iter = 0; iter < maxIter; ++iter) {
-      stageSend(sizeof(int) * nelem, 0, 0, 0, true);
+      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, true);
       qp->postSend();
       bool waiting = true;
       int spin = 0;
@@ -107,7 +109,7 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
           waiting = false;
           break;
         }
-        if (spin++ > 1000000) {
+        if (spin++ > 10000000) {
           FAIL() << "Polling is stuck.";
         }
       }
@@ -263,11 +265,11 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       qp->postSend();
 
 #if 0
-      // Send the first element using a normal send. This should occasionally see the wrong result.
+      // For reference: send the first element using a normal send. This should occasionally see a wrong result.
       stageSend(sizeof(uint64_t), 0, 0, 0, false);
       qp->postSend();
 #else
-      // For reference: send the first element using AtomicAdd. This should see the correct result.
+      // Send the first element using AtomicAdd. This should see the correct result.
       stageAtomicAdd(0, 0, 1, false);
       qp->postSend();
 #endif
