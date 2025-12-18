@@ -40,3 +40,4 @@ endfunction()
 
 # Add FIFO test  
 add_perf_test_executable(fifo_test "framework.cc;fifo_test.cu")
+add_perf_test_executable(fifo_test_multi_gpu_data_transfer "framework.cc;fifo_test_multi_gpu_data_transfer.cu")
