@@ -46,6 +46,7 @@ from ._mscclpp import (
     Transport,
     TransportFlags,
     DataType,
+    ErrorCode,
     Executor,
     ExecutionPlan,
     PacketType,
