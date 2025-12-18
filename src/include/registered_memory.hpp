@@ -32,8 +32,8 @@ struct TransportInfo {
         char shareableHandle[64];
         struct {
           // These are only defined for multicast (NVLS) capability
-          pid_t rootPid;
-          int fileDesc;
+          int rootFd;
+          int rootPid;
         };
       };
       size_t offsetFromBase;
@@ -57,7 +57,7 @@ struct RegisteredMemory::Impl {
   std::vector<TransportInfo> transportInfos;
 
   // Only used for IB transport
-  std::unique_ptr<const IbMr> ibMr;
+  std::unordered_map<Transport, std::unique_ptr<const IbMr>> ibMrMap;
 
   // For sharing memory handle via file descriptor
   int fileDesc = -1;

@@ -4,8 +4,12 @@
 #ifndef ALLGATHER_HPP_
 #define ALLGATHER_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
@@ -206,34 +210,46 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <bool IsOutOfPlace, typename T>
-cudaError_t allgather(T* buff, [[maybe_unused]] T* scratch, [[maybe_unused]] T* resultBuff,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels, size_t channelOutOffset, int rank,
-                      int nRanksPerNode, [[maybe_unused]] int worldSize, size_t nelems, cudaStream_t stream) {
-  int nBlocks = 28;
-  if (nelems * sizeof(T) <= 32 * (1 << 20)) {
-    if (nelems <= 4096) {
-      nBlocks = 7;
-    } else if (nelems <= 32768) {
-      nBlocks = 14;
-    } else if (nelems >= 2097152) {
-      nBlocks = 35;
-    }
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-  } else {
-#if defined(__HIP_PLATFORM_AMD__)
-    nBlocks = 35;
-    allgather6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, memoryChannels, channelOutOffset, rank,
-                                                           worldSize, nRanksPerNode, nelems * sizeof(T) / sizeof(int));
-#else
-    nBlocks = 56;
-    allgather8<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff,
-                                                           memoryChannels, rank, nRanksPerNode, worldSize,
-                                                           nelems * sizeof(T) / sizeof(int));
-#endif
-  }
-  return cudaGetLastError();
-}
+class AllgatherAlgo6 : public mscclpp::AlgorithmBuilder {
+ public:
+  AllgatherAlgo6();
+  mscclpp::Algorithm build() override;
+
+ private:
+  bool disableChannelCache_;
+  std::vector<mscclpp::Connection> conns_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores_;
+  const int nChannelsPerConnection_ = 35;
+
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
+  ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
+};
+
+class AllgatherAlgo8 : public mscclpp::AlgorithmBuilder {
+ public:
+  mscclpp::Algorithm build() override;
+
+ private:
+  std::vector<mscclpp::Connection> conns_;
+
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  size_t scratchBufferSize_;
+  std::shared_ptr<char> scratchBuffer_;
+};
 
 #endif  // ALLGATHER_HPP_

@@ -75,8 +75,10 @@ def bench_correctness(
         coll = "all_gather"
     elif "reducescatter" in collective:
         coll = "reduce_scatter"
-    else:
+    elif "allreduce" in collective:
         coll = "all_reduce"
+    else:
+        coll = "all_to_all"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -184,8 +186,8 @@ def main(
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan(execution_plan_path)
-    collective = execution_plan.collective()
+    execution_plan = ExecutionPlan(execution_plan_path, mscclpp_group.my_rank)
+    collective = execution_plan.collective
 
     dtype = parse_dtype(dtype_str)
     input_buf, result_buf, test_buf = build_bufs(

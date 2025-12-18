@@ -99,3 +99,25 @@ TEST_DATA_ALL_REDUCE(int32, int)
 TEST_DATA_REDUCE_SCATTER(float16, __half)
 TEST_DATA_REDUCE_SCATTER(float32, float)
 TEST_DATA_REDUCE_SCATTER(int32, int)
+
+#define TEST_DATA_ALL_TO_ALL(FuncNameType, DataType)                                                       \
+  extern "C" __global__ void __launch_bounds__(1024, 1) test_data_all_to_all_##FuncNameType(               \
+      DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {   \
+    int nem_elems_per_rank = num_elems / num_ranks;                                                        \
+    int offset = nem_elems_per_rank * my_rank;                                                             \
+    for (int rank = 0; rank < num_ranks; rank++) {                                                         \
+      size_t rank_offset = rank * nem_elems_per_rank;                                                      \
+      unsigned int seed = (unsigned int)(blockIdx.x * blockDim.x + threadIdx.x + rank + seq);              \
+      for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) { \
+        seed = ranqd1(seed);                                                                               \
+        if (i >= my_rank * nem_elems_per_rank && i < (my_rank + 1) * nem_elems_per_rank) {                 \
+          test_buf[rank_offset + i - offset] = DataType(seed % blockDim.x) / DataType(blockDim.x);         \
+          assert(result_buf[rank_offset + i - offset] == test_buf[rank_offset + i - offset]);              \
+        }                                                                                                  \
+      }                                                                                                    \
+    }                                                                                                      \
+  }
+
+TEST_DATA_ALL_TO_ALL(float16, __half)
+TEST_DATA_ALL_TO_ALL(float32, float)
+TEST_DATA_ALL_TO_ALL(int32, int)

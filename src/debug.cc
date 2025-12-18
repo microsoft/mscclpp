@@ -12,6 +12,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
+#include <mutex>
 #include <string>
 
 int mscclppDebugLevel = -1;
@@ -22,7 +23,7 @@ char mscclppLastError[1024] = "";          // Global string for the last error i
 uint64_t mscclppDebugMask = MSCCLPP_INIT;  // Default debug sub-system mask is INIT
 FILE* mscclppDebugFile = stdout;
 mscclppLogHandler_t mscclppDebugLogHandler = NULL;
-pthread_mutex_t mscclppDebugLock = PTHREAD_MUTEX_INITIALIZER;
+std::recursive_mutex mscclppDebugMutex;
 std::chrono::steady_clock::time_point mscclppEpoch;
 
 static __thread int tid = -1;
@@ -30,9 +31,8 @@ static __thread int tid = -1;
 void mscclppDebugDefaultLogHandler(const char* msg) { fwrite(msg, 1, strlen(msg), mscclppDebugFile); }
 
 void mscclppDebugInit() {
-  pthread_mutex_lock(&mscclppDebugLock);
+  std::lock_guard<std::recursive_mutex> lock(mscclppDebugMutex);
   if (mscclppDebugLevel != -1) {
-    pthread_mutex_unlock(&mscclppDebugLock);
     return;
   }
   const char* mscclpp_debug = mscclpp::env()->debug.c_str();
@@ -88,8 +88,10 @@ void mscclppDebugInit() {
         mask = MSCCLPP_ALLOC;
       } else if (strcasecmp(subsys, "CALL") == 0) {
         mask = MSCCLPP_CALL;
-      } else if (strcasecmp(subsys, "MSCCLPP_EXECUTOR") == 0) {
+      } else if (strcasecmp(subsys, "EXECUTOR") == 0) {
         mask = MSCCLPP_EXECUTOR;
+      } else if (strcasecmp(subsys, "NCCL") == 0) {
+        mask = MSCCLPP_NCCL;
       } else if (strcasecmp(subsys, "ALL") == 0) {
         mask = MSCCLPP_ALL;
       }
@@ -152,7 +154,6 @@ void mscclppDebugInit() {
 
   mscclppEpoch = std::chrono::steady_clock::now();
   __atomic_store_n(&mscclppDebugLevel, tempNcclDebugLevel, __ATOMIC_RELEASE);
-  pthread_mutex_unlock(&mscclppDebugLock);
 }
 
 /* Common logging function used by the INFO, WARN and TRACE macros
@@ -168,12 +169,11 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
   }
   // Save the last error (WARN) as a human readable string
   if (level == MSCCLPP_LOG_WARN) {
-    pthread_mutex_lock(&mscclppDebugLock);
+    std::lock_guard<std::recursive_mutex> lock(mscclppDebugMutex);
     va_list vargs;
     va_start(vargs, fmt);
     (void)vsnprintf(mscclppLastError, sizeof(mscclppLastError), fmt, vargs);
     va_end(vargs);
-    pthread_mutex_unlock(&mscclppDebugLock);
   }
   if (mscclppDebugLevel < level || ((flags & mscclppDebugMask) == 0)) return;
 
@@ -219,9 +219,8 @@ void mscclppDebugLog(mscclppDebugLogLevel level, unsigned long flags, const char
 mscclppResult_t mscclppDebugSetLogHandler(mscclppLogHandler_t handler) {
   if (__atomic_load_n(&mscclppDebugLevel, __ATOMIC_ACQUIRE) == -1) mscclppDebugInit();
   if (handler == NULL) return mscclppInvalidArgument;
-  pthread_mutex_lock(&mscclppDebugLock);
+  std::lock_guard<std::recursive_mutex> lock(mscclppDebugMutex);
   mscclppDebugLogHandler = handler;
-  pthread_mutex_unlock(&mscclppDebugLock);
   return mscclppSuccess;
 }
 

@@ -83,8 +83,8 @@ The connection is created by calling `connect` on the context object:
 
 ```cpp
 // From gpu_ping_pong.cu, lines 76 and 82
-std::shared_ptr<mscclpp::Connection> conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
-std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
+mscclpp::Connection conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
+mscclpp::Connection conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
 ```
 
 The `localEndpoint` and `remoteEndpoint` parameters specify which endpoints are used for the connection. A connection is asymmetric by nature, meaning that we need to create one connection for each endpoint. In this case, `conn0` is created for `ep0` to communicate with `ep1`, and `conn1` is created for `ep1` to communicate with `ep0`.
@@ -101,7 +101,7 @@ sendToProcessB(serializedEp0);  // send serializedEp0 to Process B using any IPC
 mscclpp::Endpoint ep1 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 1}});
 std::vector<char> serializedEp0 = recvFromProcessA();  // receive serializedEp0 from Process A
 mscclpp::Endpoint ep0 = mscclpp::Endpoint::deserialize(serializedEp0);
-std::shared_ptr<mscclpp::Connection> conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
+mscclpp::Connection conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
 ```
 
 ## SemaphoreStub and Semaphore

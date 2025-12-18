@@ -14,17 +14,17 @@
 
 #include "api.h"
 #include "context.hpp"
-#include "debug.h"
 #include "endpoint.hpp"
+#include "logger.hpp"
 
 namespace mscclpp {
 
 static void validateTransport(RegisteredMemory mem, Transport transport, uint64_t offset = 0, uint64_t size = 0) {
   if (!mem.transports().has(transport)) {
-    throw Error("RegisteredMemory does not support this transport", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory does not support this transport");
   }
   if (offset + size > mem.size()) {
-    throw Error("RegisteredMemory out of bounds", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "RegisteredMemory out of bounds");
   }
 }
 
@@ -32,55 +32,74 @@ static bool isSameProcess(const Endpoint& a, const Endpoint& b) {
   return a.hostHash() == b.hostHash() && a.pidHash() == b.pidHash();
 }
 
-// Connection
+// BaseConnection
 
-const Endpoint::Impl& Connection::getImpl(const Endpoint& endpoint) { return *(endpoint.pimpl_); }
+const Endpoint::Impl& BaseConnection::getImpl(const Endpoint& endpoint) { return *(endpoint.pimpl_); }
 
-const RegisteredMemory::Impl& Connection::getImpl(const RegisteredMemory& memory) { return *(memory.pimpl_); }
+const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& memory) { return *(memory.pimpl_); }
 
-Context::Impl& Connection::getImpl(Context& context) { return *(context.pimpl_); }
+Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
-MSCCLPP_API_CPP Connection::Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
+MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
     : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
 
-MSCCLPP_API_CPP std::shared_ptr<Context> Connection::context() const { return context_; }
+MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
-MSCCLPP_API_CPP const Device& Connection::localDevice() const { return localEndpoint_.device(); }
+MSCCLPP_API_CPP const Device& BaseConnection::localDevice() const { return localEndpoint_.device(); }
 
-MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+MSCCLPP_API_CPP int BaseConnection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+
+// Connection wrapper
+
+Connection::Connection(std::shared_ptr<BaseConnection> impl) : impl_(impl) {}
+
+MSCCLPP_API_CPP void Connection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src,
+                                       uint64_t srcOffset, uint64_t size) {
+  impl_->write(dst, dstOffset, src, srcOffset, size);
+}
+
+MSCCLPP_API_CPP void Connection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src,
+                                               uint64_t newValue) {
+  impl_->updateAndSync(dst, dstOffset, src, newValue);
+}
+
+MSCCLPP_API_CPP void Connection::flush(int64_t timeoutUsec) { impl_->flush(timeoutUsec); }
+
+MSCCLPP_API_CPP Transport Connection::transport() const { return impl_->transport(); }
+
+MSCCLPP_API_CPP Transport Connection::remoteTransport() const { return impl_->remoteTransport(); }
+
+MSCCLPP_API_CPP std::shared_ptr<Context> Connection::context() const { return impl_->context(); }
+
+MSCCLPP_API_CPP const Device& Connection::localDevice() const { return impl_->localDevice(); }
+
+MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->getMaxWriteQueueSize(); }
 
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
-    : Connection(context, localEndpoint) {
+    : BaseConnection(context, localEndpoint) {
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
-    throw Error("CudaIpc transport is required for CudaIpcConnection", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for local endpoint", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "No GPU device ID provided for local endpoint");
   }
   if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
-    throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InternalError);
+    THROW(CONN, Error, ErrorCode::InternalError, "No GPU device ID provided for remote endpoint");
   }
   int localDeviceId = localEndpoint.device().id;
   int remoteDeviceId = remoteEndpoint.device().id;
   if (localEndpoint.device().type != DeviceType::GPU && remoteEndpoint.device().type != DeviceType::GPU) {
-    throw Error("CudaIpcConnection requires at least one GPU endpoint", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "CudaIpcConnection requires at least one GPU endpoint");
   } else if (localEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().type == DeviceType::GPU) {
     if (isSameProcess(localEndpoint, remoteEndpoint) && localDeviceId != remoteDeviceId) {
       // Connecting two GPUs in the same process - need to enable peer access explicitly
-      int originalDeviceId;
-      MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));
-      if (originalDeviceId != localDeviceId) {
-        MSCCLPP_CUDATHROW(cudaSetDevice(localDeviceId));
-      }
+      CudaDeviceGuard deviceGuard(localDeviceId);
       auto ret = cudaDeviceEnablePeerAccess(remoteDeviceId, 0);
       if (ret != cudaSuccess && ret != cudaErrorPeerAccessAlreadyEnabled) {
         MSCCLPP_CUDATHROW(ret);
-      }
-      if (originalDeviceId != localDeviceId) {
-        MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));
       }
     }
   }
@@ -114,7 +133,7 @@ void CudaIpcConnection::write(RegisteredMemory dst, uint64_t dstOffset, Register
 
   stream_->memcpyD2D(dstPtr + dstOffset, srcPtr + srcOffset, size);
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection write: from %p to %p, size %lu", srcPtr + srcOffset, dstPtr + dstOffset, size);
+  INFO(CONN, "CudaIpcConnection write: from ", srcPtr + srcOffset, " to ", dstPtr + dstOffset, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -133,7 +152,7 @@ void CudaIpcConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, 
 
   stream_->memcpyH2D(dstPtr + dstOffset, src, sizeof(uint64_t));
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+  INFO(CONN, "CudaIpcConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_UPDATE_AND_SYNC_EXIT)
@@ -147,12 +166,12 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #endif
 
   if (timeoutUsec >= 0) {
-    INFO(MSCCLPP_P2P, "CudaIpcConnection flush: timeout is not supported, ignored");
+    INFO(CONN, "CudaIpcConnection flush: timeout is not supported, ignored");
   }
 
   stream_->sync();
 
-  INFO(MSCCLPP_P2P, "CudaIpcConnection flushing connection");
+  INFO(CONN, "CudaIpcConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -163,20 +182,17 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                            const Endpoint& remoteEndpoint)
-    : Connection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
-  if (maxWriteQueueSize_ == -1) {
-    maxWriteQueueSize_ = EndpointConfig::DefaultMaxCqSize;
-  }
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
   dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   validateTransport(dummyAtomicSourceMem_, transport_);
   dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
-  INFO(MSCCLPP_NET, "IB connection via %s created", getIBDeviceName(transport_).c_str());
+  INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created");
 }
 
 Transport IBConnection::transport() const { return transport_; }
@@ -194,11 +210,11 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
 
   auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
   auto srcTransportInfo = getImpl(src).getTransportInfo(transport());
   if (!srcTransportInfo.ibLocal) {
-    throw Error("src is remote, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "src is remote, which is not supported");
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -208,8 +224,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
                         /*signaled=*/true);
 
   qp_.lock()->postSend();
-  INFO(MSCCLPP_NET, "IBConnection write: from %p to %p, size %lu", (uint8_t*)srcMr->getBuff() + srcOffset,
-       (uint8_t*)dstMrInfo.addr + dstOffset, size);
+  INFO(CONN, "IBConnection write: from ", (uint8_t*)srcMr->getBuff() + srcOffset, " to ",
+       (uint8_t*)dstMrInfo.addr + dstOffset, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -224,7 +240,7 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   validateTransport(dst, remoteTransport());
   auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
   if (dstTransportInfo.ibLocal) {
-    throw Error("dst is local, which is not supported", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
 
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
@@ -236,8 +252,8 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
                              /*signaled=*/true);
 
   qp_.lock()->postSend();
-  INFO(MSCCLPP_NET, "IBConnection atomic Write: from %p to %p, %lu -> %lu", src, (uint8_t*)dstMrInfo.addr + dstOffset,
-       oldValue, newValue);
+  INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
+       " -> ", newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -253,23 +269,22 @@ void IBConnection::flush(int64_t timeoutUsec) {
   while (qp_.lock()->getNumCqItems()) {
     int wcNum = qp_.lock()->pollCq();
     if (wcNum < 0) {
-      throw mscclpp::IbError("pollCq failed: error no " + std::to_string(errno), errno);
+      THROW(NET, IbError, errno, "pollCq failed");
     } else if (timeoutUsec >= 0) {
       auto elapsed = timer.elapsed();
       if (elapsed > timeoutUsec) {
-        throw Error("pollCq timed out: waited for " + std::to_string(elapsed / 1e6) + " seconds. Expected " +
-                        std::to_string(qp_.lock()->getNumCqItems()) + " signals",
-                    ErrorCode::Timeout);
+        THROW(CONN, Error, ErrorCode::Timeout, "pollCq timed out: waited for ", elapsed / 1e6, " seconds. Expected ",
+              qp_.lock()->getNumCqItems(), " signals");
       }
     }
     for (int i = 0; i < wcNum; ++i) {
       int status = qp_.lock()->getWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
-        throw mscclpp::IbError("a work item failed: status " + std::to_string(status), status);
+        THROW(NET, Error, ErrorCode::SystemError, "an IB work item failed: ", qp_.lock()->getWcStatusString(i));
       }
     }
   }
-  INFO(MSCCLPP_NET, "IBConnection flushing connection");
+  INFO(CONN, "IBConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -280,13 +295,13 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize)
-    : Connection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint),
       abortFlag_(0),
       sendBufferSize_(sendBufferSize),
       recvBufferSize_(recvBufferSize) {
   // Validating Transport Protocol
   if (localEndpoint.transport() != Transport::Ethernet || remoteEndpoint.transport() != Transport::Ethernet) {
-    throw Error("Ethernet connection can only be made from Ethernet endpoints", ErrorCode::InvalidUsage);
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "Ethernet connection can only be made from Ethernet endpoints");
   }
 
   // Instanciating Buffers
@@ -316,7 +331,7 @@ EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const E
     this->recvMessages();
   });
 
-  INFO(MSCCLPP_NET, "Ethernet connection created");
+  INFO(CONN, "Ethernet connection created");
 }
 
 EthernetConnection::~EthernetConnection() {
@@ -365,7 +380,7 @@ void EthernetConnection::write(RegisteredMemory dst, uint64_t dstOffset, Registe
     headerSize = 0;
   }
 
-  INFO(MSCCLPP_NET, "EthernetConnection write: from %p to %p, size %lu", srcPtr, dstPtr, size);
+  INFO(CONN, "EthernetConnection write: from ", srcPtr, " to ", dstPtr, ", size ", size);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_WRITE_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_WRITE_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 0);
@@ -401,7 +416,7 @@ void EthernetConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset,
   // Sending Message
   sendSocket_->send(sendBuffer_.data(), messageSize);
 
-  INFO(MSCCLPP_NET, "EthernetConnection atomic write: from %p to %p, %lu -> %lu", src, dstPtr + dstOffset, oldValue,
+  INFO(CONN, "EthernetConnection atomic write: from ", src, " to ", dstPtr + dstOffset, ", ", oldValue, " -> ",
        newValue);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_UPDATE_AND_SYNC_EXIT)
@@ -414,7 +429,7 @@ void EthernetConnection::flush(int64_t) {
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
 
-  INFO(MSCCLPP_NET, "EthernetConnection flushing connection");
+  INFO(CONN, "EthernetConnection flushing connection");
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);

@@ -4,14 +4,18 @@
 #ifndef ALLREDUCE_HPP_
 #define ALLREDUCE_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
-#include <mscclpp/nvls.hpp>
 #include <mscclpp/packet_device.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <type_traits>
 
 #if defined(ENABLE_NPKIT)
@@ -124,6 +128,208 @@ __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b
   return __hmin2(a, b);
 }
 
+#if defined(__FP8_TYPES_EXIST__)
+// FP8 E4M3 clipping function
+template <>
+__forceinline__ __device__ __fp8_e4m3 clip(__fp8_e4m3 val) {
+  // FP8 E4M3 has range [-448, 448], no infinities
+  // Built-in saturation in FP8 arithmetic
+  return val;
+}
+
+// FP8 E5M2 clipping function - prevent infinities by clamping to max finite value
+template <>
+__forceinline__ __device__ __fp8_e5m2 clip(__fp8_e5m2 val) {
+  // FP8 E5M2 has infinities - clamp to max finite value to prevent overflow
+  // Max finite value for E5M2 is 57344.0f (0x7B), min is -57344.0f (0xFB)
+  float fval = float(val);
+  fval = fmaxf(fval, -57344.0f);
+  fval = fminf(fval, 57344.0f);
+  return __fp8_e5m2(fval);
+}
+
+// FP8 E4M3 addition using __hadd for efficiency (single element)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
+  // NVIDIA CUDA FP8 addition (CUDA 11.8+)
+  __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
+  return UseClip ? clip(result) : result;
+#else
+  // Fallback for non-gfx942 HIP platforms
+  __fp8_e4m3 result = __fp8_e4m3(float(a) + float(b));
+  return UseClip ? clip(result) : result;
+#endif
+}
+
+// FP8 E4M3 vectorized addition for 2 elements
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
+  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
+  __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
+  return result;
+#else
+  // Fallback for non-gfx942 HIP: element-wise using single-element operations
+  union {
+    __fp8_e4m3 fp8[2];
+    __fp8x2_e4m3 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = add_elements<UseClip>(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = add_elements<UseClip>(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#endif
+}
+
+// FP8 E4M3 vectorized addition for 4 elements (via 2x __fp8x2_e4m3)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+  // Process as two __fp8x2_e4m3 using add_elements for 2 elements
+  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
+  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
+
+  __fp8x2_e4m3 result[2];
+  result[0] = add_elements<UseClip>(a_pair[0], b_pair[0]);
+  result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e4m3*>(result);
+}
+
+// FP8 E5M2 addition using __hadd for efficiency (single element)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__) && defined(__gfx942__)
+  // Optimized assembly for gfx942 (bfloat8)
+  float2 v;
+  uint32_t ival = 0;
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false);
+#elif !defined(__HIP_PLATFORM_AMD__)
+  // NVIDIA CUDA FP8 addition
+  __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
+  return UseClip ? clip(result) : result;
+#else
+  // Fallback for non-gfx942 HIP platforms
+  __fp8_e5m2 result = __fp8_e5m2(float(a) + float(b));
+  return UseClip ? clip(result) : result;
+#endif
+}
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// FP8 E5M2 vectorized addition for 2 elements (CUDA only)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
+  __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+  return result;
+}
+
+// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
+template <bool UseClip = true>
+__forceinline__ __device__ __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  // Process as two __fp8x2_e5m2 using add_elements for 2 elements
+  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
+  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+
+  __fp8x2_e5m2 result[2];
+  result[0] = add_elements<UseClip>(a_pair[0], b_pair[0]);
+  result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e5m2*>(result);
+}
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+
+// FP8 E4M3 min operation (single element)
+template <>
+__forceinline__ __device__ __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  return __fp8_e4m3(fminf(float(a), float(b)));
+#else
+  return __fp8_e4m3(__hmin(__half(a), __half(b)));
+#endif
+}
+
+// FP8 E4M3 vectorized min for 2 elements
+__forceinline__ __device__ __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  // HIP implementation: use union and process element-wise
+  union {
+    __fp8_e4m3 fp8[2];
+    __fp8x2_e4m3 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#else
+  return __fp8x2_e4m3(__hmin2(__half2(a), __half2(b)));
+#endif
+}
+
+// FP8 E4M3 vectorized min for 4 elements
+__forceinline__ __device__ __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+  // Process as two __fp8x2_e4m3 using min_elements for 2 elements
+  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
+  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
+
+  __fp8x2_e4m3 result[2];
+  result[0] = min_elements(a_pair[0], b_pair[0]);
+  result[1] = min_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e4m3*>(result);
+}
+
+// FP8 E5M2 min operation (single element)
+template <>
+__forceinline__ __device__ __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  return __fp8_e5m2(fminf(float(a), float(b)));
+#else
+  return __fp8_e5m2(__hmin(__half(a), __half(b)));
+#endif
+}
+
+#if !defined(__HIP_PLATFORM_AMD__)
+// FP8 E5M2 vectorized min for 2 elements (CUDA only)
+__forceinline__ __device__ __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+  return __fp8x2_e5m2(__hmin2(__half2(a), __half2(b)));
+}
+
+// FP8 E5M2 vectorized min for 4 elements (CUDA only)
+__forceinline__ __device__ __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+  // Process as two __fp8x2_e5m2 using min_elements for 2 elements
+  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
+  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
+
+  __fp8x2_e5m2 result[2];
+  result[0] = min_elements(a_pair[0], b_pair[0]);
+  result[1] = min_elements(a_pair[1], b_pair[1]);
+
+  return *reinterpret_cast<__fp8x4_e5m2*>(result);
+}
+#endif  // !defined(__HIP_PLATFORM_AMD__)
+#endif  // __FP8_TYPES_EXIST__
+
 template <typename T, Op OpType>
 __forceinline__ __device__ T cal_elements(T a, T b) {
   if constexpr (OpType == SUM) {
@@ -158,27 +364,112 @@ __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
   return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
 }
 
+#if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
+// Helper function to perform FP8 vector addition - dispatches based on scalar type
+// Uses AMD builtins from hip/amd_detail/amd_hip_fp8.h:
+//   - __builtin_amdgcn_cvt_pk_f32_fp8/bf8: Convert 2 FP8 values to 2 floats
+//   - __builtin_amdgcn_cvt_pk_fp8/bf8_f32: Convert 2 floats to 2 FP8 values
+// The 'word' parameter (false/true) selects low/high 16-bit word from uint32_t
+template <typename ScalarT>
+__forceinline__ __device__ int add_fp8x4_hip(int a, int b) {
+  uint32_t a32 = static_cast<uint32_t>(a);
+  uint32_t b32 = static_cast<uint32_t>(b);
+
+  float2 v_low, v_high;
+  uint32_t ival = 0;
+
+  if constexpr (std::is_same_v<ScalarT, __fp8_e4m3>) {
+    // E4M3 using fp8 conversion - process low word (false) and high word (true)
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_low)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
+    uint16_t result_low = __builtin_amdgcn_cvt_pk_fp8_f32(v_low.x, v_low.y, ival, false);
+
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_high)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
+    uint16_t result_high = __builtin_amdgcn_cvt_pk_fp8_f32(v_high.x, v_high.y, ival, false);
+
+    uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
+    return static_cast<int>(result);
+  } else {  // __fp8_e5m2
+    // E5M2 using bf8 conversion - process low word (false) and high word (true)
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_low)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
+    uint16_t result_low = __builtin_amdgcn_cvt_pk_bf8_f32(v_low.x, v_low.y, ival, false);
+
+    asm volatile("v_pk_add_f32 %0, %1, %2"
+                 : "=v"(v_high)
+                 : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
+    uint16_t result_high = __builtin_amdgcn_cvt_pk_bf8_f32(v_high.x, v_high.y, ival, false);
+
+    uint32_t result = (static_cast<uint32_t>(result_high) << 16) | result_low;
+    return static_cast<int>(result);
+  }
+}
+#endif
+
 template <typename T, Op OpType, typename DataType>
 __forceinline__ __device__ DataType cal_vectors(DataType a, DataType b) {
-  using CompType = typename std::conditional_t<std::is_same_v<T, __half>, __half2,
-                                               std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162, T>>;
+#if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
+  // For FP8 types on HIP gfx942, use specialized helper that dispatches based on scalar type
+  if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    if constexpr (OpType == SUM) {
+      if constexpr (std::is_same_v<DataType, int> || std::is_same_v<DataType, uint32_t>) {
+        // Handle int/uint32_t (4 FP8 elements)
+        return add_fp8x4_hip<T>(a, b);
+      } else if constexpr (std::is_same_v<DataType, int4>) {
+        // Handle int4 (16 FP8 elements) - process as 4 ints
+        int4 ret;
+        ret.w = add_fp8x4_hip<T>(a.w, b.w);
+        ret.x = add_fp8x4_hip<T>(a.x, b.x);
+        ret.y = add_fp8x4_hip<T>(a.y, b.y);
+        ret.z = add_fp8x4_hip<T>(a.z, b.z);
+        return ret;
+      } else if constexpr (std::is_same_v<DataType, uint2>) {
+        // Handle uint2 (8 FP8 elements) - process as 2 ints
+        uint2 ret;
+        ret.x = add_fp8x4_hip<T>(a.x, b.x);
+        ret.y = add_fp8x4_hip<T>(a.y, b.y);
+        return ret;
+      }
+    }
+  }
+#endif
+
+  // Define the vectorized computation type based on the element type
+  using CompType = typename std::conditional_t<
+      std::is_same_v<T, __half>, __half2,
+      std::conditional_t<std::is_same_v<T, __bfloat16>, __bfloat162,
+#if defined(__FP8_TYPES_EXIST__)
+                         std::conditional_t<std::is_same_v<T, __fp8_e4m3>, __fp8x4_e4m3,
+                                            std::conditional_t<std::is_same_v<T, __fp8_e5m2>, __fp8x4_e5m2,
+#endif
+                                                               T
+#if defined(__FP8_TYPES_EXIST__)
+                                                               >>>>;
+#else
+                         >>;
+#endif
   return cal_vectors_helper<CompType, OpType>(a, b);
 }
 
 template <Op OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
                                   mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                                  size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode,
+                                  size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
                                   int worldSize, size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
-  if (sizeof(T) == 2) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
+
+  if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
   uint32_t flag = deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
-  channelScratchOffset = scratchBaseOffset;
+  size_t scratchBaseOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
+  size_t channelScratchOffset = scratchBaseOffset;
 
   const int nBlocksPerPeer = gridDim.x / nPeers;
   const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
@@ -214,7 +505,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff,
 template <Op OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce7(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-               size_t channelDataOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
+               size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize,
                size_t nelems, uint32_t* deviceFlag, uint32_t numScratchBuff
 #if defined(ENABLE_NPKIT)
                ,
@@ -250,7 +541,7 @@ __global__ void __launch_bounds__(1024, 1)
                             &event_buffer_head);
 #endif
 
-  if (sizeof(T) == 2)
+  if (sizeof(T) == 2 || sizeof(T) == 1)
     nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   else
     nelems = nelems / (sizeof(int) / sizeof(T));
@@ -260,8 +551,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   uint32_t flag = (uint32_t)deviceFlag[blockIdx.x];
 
-  size_t scratchBaseOffset = (flag % numScratchBuff) ? SCRATCH_SIZE / numScratchBuff : 0;
-  channelScratchOffset = scratchBaseOffset;
+  size_t channelScratchOffset = (flag % numScratchBuff) ? scratchBufferSize / numScratchBuff : 0;
 
   int nelemsPerRank = nelems / worldSize;
   if ((nelemsPerRank % 2)) nelemsPerRank = (nelemsPerRank * sizeof(T) + sizeof(T)) / sizeof(T);
@@ -479,38 +769,53 @@ __global__ void __launch_bounds__(512, 1)
 }
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <class T>
+MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
+  using U = std::remove_cv_t<std::remove_reference_t<T>>;
+  if constexpr (std::is_same_v<U, std::int32_t> || std::is_same_v<U, std::uint32_t>) {
+    return 1;
+  } else {
+    static_assert(16 % sizeof(U) == 0, "16 bytes must be divisible by sizeof(T).");
+    return 16 / sizeof(U);
+  }
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
                                                       int tid, int nThreads) {
   // nvls can only handle 4 bytes alignment
   MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
-  const size_t n16B = size / sizeof(mscclpp::f16x8);
-  const size_t srcOffset4 = srcOffset / sizeof(mscclpp::f16x8);
-  const size_t dstOffset4 = dstOffset / sizeof(mscclpp::f16x8);
-  mscclpp::f16x8* src4 = (mscclpp::f16x8*)src;
-  mscclpp::f16x8* dst4 = (mscclpp::f16x8*)dst;
-  for (size_t idx = tid; idx < n16B; idx += nThreads) {
+  constexpr size_t nElem = calcVectorSize<T>();
+  using vectorType = mscclpp::VectorType<T, nElem>;
+  const size_t nVec = size / sizeof(vectorType);
+  const size_t srcOffset4 = srcOffset / sizeof(vectorType);
+  const size_t dstOffset4 = dstOffset / sizeof(vectorType);
+  vectorType* src4 = (vectorType*)src;
+  vectorType* dst4 = (vectorType*)dst;
+  for (size_t idx = tid; idx < nVec; idx += nThreads) {
     auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(src4 + srcOffset4 + idx);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
   }
   // handle rest of data
-  size_t processed = n16B * sizeof(mscclpp::f16x8);
-  const size_t startIdx = (srcOffset + processed) / sizeof(mscclpp::f16x2);
-  const size_t endIdx = (dstOffset + size) / sizeof(mscclpp::f16x2);
+  size_t processed = nVec * sizeof(vectorType);
+  constexpr size_t nRestElem = 4 / sizeof(T);
+  using restVectorType = mscclpp::VectorType<T, nRestElem>;
+  const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
+  const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
   for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
-    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((mscclpp::f16x2*)src + idx);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (mscclpp::f16x2*)dst + idx);
+    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((restVectorType*)src + idx);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
   }
 }
 #endif
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+    allreduce9([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOut,
                [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
-               [[maybe_unused]] size_t size, [[maybe_unused]] int rank, int nRanksPerNode) {
+               [[maybe_unused]] size_t size, [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   int nPeers = nRanksPerNode - 1;
   int nBlocks = gridDim.x;
@@ -524,7 +829,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
+  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nRanksPerNode - 1) {
     channels[lid] = memoryChans[lid];
@@ -550,9 +855,10 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
-                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast, [[maybe_unused]] size_t size,
-                [[maybe_unused]] int rank, int nRanksPerNode) {
+                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
+                [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
@@ -560,7 +866,7 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
-  size_t scratchSizePerRank = SCRATCH_SIZE / nRanksPerNode;
+  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
   const size_t maxSizePerBlock = ((sizePerRank + nBlocks - 1) / nBlocks + alignment - 1) / alignment * alignment;
   size_t start = bid * maxSizePerBlock;
   size_t end = min(start + maxSizePerBlock, sizePerRank);
@@ -589,7 +895,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x * 2;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
+  __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
   const int lid = threadIdx.x % WARP_SIZE;
   if (lid < nPeers * 2) {
     channels[lid] = memoryChans[lid];
@@ -646,16 +952,17 @@ __global__ void __launch_bounds__(1024, 1)
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduce11([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
-                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
+                [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                 [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* switchChannels,
-                [[maybe_unused]] size_t size, [[maybe_unused]] int rank, int nRanksPerNode) {
+                [[maybe_unused]] size_t size, [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
+                [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
   int nBlocksForCopy = nRanksPerNode * 2;
   int nBlocksForReduce = nRanksPerNode;
   int copyReduceRatio = nBlocksForCopy / nBlocksForReduce;
-  size_t scratchSizePerRank = SCRATCH_SIZE / nRanksPerNode;
+  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
   size_t sizePerRank = size / nRanksPerNode;
   assert(sizePerRank % alignment == 0);
   uint32_t sizePerBlock =
@@ -706,7 +1013,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       if (tid < nPeers) {
         int chanId = bid * nPeers + tid;
-        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
+        mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
       }
@@ -748,7 +1055,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       if (tid < nPeers) {
         int chanId = (bid - nBlocksForReduce) * nPeers + tid;
-        mscclpp::DeviceHandle<mscclpp::MemoryChannel>* channels = memoryChannels + chanId;
+        mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* channels = memoryChannels + chanId;
         channels->signal();
         channels->wait();
       }
@@ -775,76 +1082,167 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 template <Op OpType, typename T>
-cudaError_t allreduce(const void* buff, void* scratch, void* resultBuff,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                      mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryOutChannels,
-                      mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
-                      mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
-                      size_t channelOutOffset, size_t channelScratchOffset, int rank, int nRanksPerNode, int worldSize,
-                      size_t nelems, cudaStream_t stream, uint32_t* deviceFlag7, uint32_t* deviceFlag28,
-                      uint32_t* deviceFlag56, uint32_t numScratchBuff) {
-  bool useNvlsWithZeroCopy = mscclpp::isNvlsSupported() && !mscclppDisableChannelCache;
-  int nPeers = nRanksPerNode - 1;
-
-  if (sizeof(T) * nelems < worldSize * sizeof(int)) {
-    int nBlocks = nPeers;
-    int nThreadsPerBlock = 32;
-    allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag7, numScratchBuff);
-  } else if (sizeof(T) * nelems <= (1 << 14)) {
-    int nBlocks = nPeers * 4;
-    int nThreadsPerBlock = 512;
-    allreduceAllPairs<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag28, numScratchBuff);
-  } else if (sizeof(T) * nelems <= (1 << 16) || (sizeof(T) * nelems <= (1 << 20) && !useNvlsWithZeroCopy)) {
-    int nBlocks = (nRanksPerNode - 1) * 4;
-    int nThreadsPerBlock = 1024;
-    uint32_t* deviceFlag = deviceFlag28;
-    if (nelems >= 8192) {
-      nBlocks = nPeers * 8;
-      nThreadsPerBlock = (nelems <= 76800) ? 512 : 1024;
-      deviceFlag = deviceFlag56;
-    }
-#if defined(ENABLE_NPKIT)
-    size_t NpkitSharedMemSize = NPKIT_SHM_NUM_EVENTS * sizeof(NpKitEvent);
-    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, NpkitSharedMemSize, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
-        NpKit::GetCpuTimestamp());
-#else
-    allreduce7<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, channelInOffset, channelScratchOffset, rank,
-        nRanksPerNode, worldSize, nelems, deviceFlag, numScratchBuff);
-#endif
-  } else if (useNvlsWithZeroCopy) {
-    int nBlocks = nRanksPerNode;
-    int nThreadsPerBlock = 1024;
-    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(memoryChannels, nvlsChannels, nvlsOutChannels,
-                                                            channelInOffset, channelOutOffset, nelems * sizeof(T), rank,
-                                                            nRanksPerNode);
-  } else if (mscclpp::isNvlsSupported()) {
-    if (sizeof(T) * nelems < (1 << 24)) {
-      int nBlocks = nRanksPerNode * 4;
-      int nThreadsPerBlock = 1024;
-      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
-                                                               nelems * sizeof(T), rank, nRanksPerNode);
-    } else {
-      int nBlocks = nRanksPerNode * 5;
-      int nThreadsPerBlock = 1024;
-      allreduce11<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(buff, scratch, resultBuff, memoryChannels, nvlsChannels,
-                                                               nelems * sizeof(T), rank, nRanksPerNode);
-    }
-  } else {
-    int nBlocks = nPeers * 5;
-    int nThreadsPerBlock = 512;
-    allreduce8<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)buff, (T*)scratch, (T*)resultBuff, memoryChannels, memoryOutChannels, channelOutOffset,
-        channelScratchOffset, rank, nRanksPerNode, worldSize, nelems);
+__global__ void __launch_bounds__(1024, 1)
+    allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
+                        [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
+                        [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
+                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize,
+                        [[maybe_unused]] uint32_t* deviceFlag) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+  uint32_t flag = deviceFlag[blockIdx.x];
+  size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
+  uint32_t tid = threadIdx.x + blockIdx.x * blockDim.x;
+  uint32_t nPktPerRank = nelems / worldSize / (sizeof(mscclpp::LL8Packet::Payload) / sizeof(T));
+  mscclpp::LL8Packet* multiPkt =
+      (mscclpp::LL8Packet*)((char*)multicast->mcPtr + scratchBaseOffset) + rank * worldSize * nPktPerRank;
+  uint* src = (uint*)(input);
+  uint* dst = (uint*)(output);
+  mscclpp::LL8Packet* scratchPkt = (mscclpp::LL8Packet*)((char*)scratch + scratchBaseOffset);
+  for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
+    mscclpp::LL8Packet pkt(src[i], flag);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x2*)(&pkt), multiPkt + i);
   }
-
-  return cudaGetLastError();
+  for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
+    uint data = src[i];
+    for (int peer = 0; peer < worldSize; peer++) {
+      if (peer == rank) {
+        continue;
+      }
+      uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
+      data = cal_vectors<T, OpType>(data, val);
+    }
+    dst[i] = data;
+  }
+  if (threadIdx.x == 0) {
+    deviceFlag[blockIdx.x] = deviceFlag[blockIdx.x] + 1;
+  }
+#endif
 }
+
+enum Op getReduceOp(ncclRedOp_t op);
+
+class AllreducePacket : public mscclpp::AlgorithmBuilder {
+ public:
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  size_t scratchBufferSize_;
+  std::shared_ptr<char> scratchBuffer_;
+  const int nSegmentsForScratchBuffer_ = 2;
+  std::vector<mscclpp::Connection> conns_;
+
+  std::shared_ptr<uint32_t> deviceFlag7_;
+  std::shared_ptr<uint32_t> deviceFlag28_;
+  std::shared_ptr<uint32_t> deviceFlag56_;
+  std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
+};
+
+class AllreduceNvls : public mscclpp::AlgorithmBuilder {
+ public:
+  AllreduceNvls() = default;
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm, std::unordered_map<std::string, std::shared_ptr<void>>&);
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  const size_t nvlsBufferSize_ = (1 << 30);
+  uint32_t nSwitchChannels_;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
+  std::vector<mscclpp::Connection> conns_;
+};
+
+class AllreduceNvlsWithCopy : public mscclpp::AlgorithmBuilder {
+ public:
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  const size_t nvlsBufferSize_ = (1 << 30);
+  size_t scratchBufferSize_;
+  std::shared_ptr<char> scratchBuffer_;
+  uint32_t nSwitchChannels_;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> memoryChannelsDeviceHandle_;
+  std::vector<mscclpp::BaseMemoryChannel> baseChannels_;
+  std::vector<mscclpp::Connection> conns_;
+};
+
+class Allreduce8 : public mscclpp::AlgorithmBuilder {
+ public:
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  size_t scratchBufferSize_;
+  std::shared_ptr<mscclpp::Communicator> comm_;
+  int nChannelsPerConnection_;
+  std::vector<mscclpp::Connection> conns_;
+  std::shared_ptr<char> scratchBuffer_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> outputSemaphores_;
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
+  std::vector<mscclpp::RegisteredMemory> remoteScratchMemories_;
+  mscclpp::RegisteredMemory localScratchMemory_;
+  std::unordered_map<const void*, std::pair<std::vector<mscclpp::MemoryChannel>,
+                                            std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>>>>
+      memoryChannelsMap_;
+};
+
+class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
+ public:
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  size_t scratchBufferSize_;
+  std::shared_ptr<char> scratchBuffer_;
+  const size_t nvlsBufferSize_ = (1 << 30);
+
+  std::shared_ptr<uint32_t> deviceFlag_;
+  std::shared_ptr<mscclpp::AlgorithmCtx> ctx_;
+};
 
 #endif  // ALLREDUCE_KERNEL_H

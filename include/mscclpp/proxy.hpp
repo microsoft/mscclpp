@@ -42,7 +42,7 @@ class Proxy {
   ~Proxy();
 
   /// Start proxy.
-  void start();
+  void start(bool blocking = false);
 
   /// Stop proxy.
   void stop();

@@ -19,7 +19,7 @@ class BaseProxyService {
  public:
   BaseProxyService() = default;
   virtual ~BaseProxyService() = default;
-  virtual void startProxy() = 0;
+  virtual void startProxy(bool blocking = false) = 0;
   virtual void stopProxy() = 0;
 };
 
@@ -33,7 +33,7 @@ class ProxyService : public BaseProxyService {
   /// Build and add a semaphore to the proxy service.
   /// @param connection The connection associated with the semaphore.
   /// @return The ID of the semaphore.
-  SemaphoreId buildAndAddSemaphore(Communicator& communicator, std::shared_ptr<Connection> connection);
+  SemaphoreId buildAndAddSemaphore(Communicator& communicator, const Connection& connection);
 
   /// Add a semaphore to the proxy service.
   /// @param semaphore The semaphore to be added
@@ -49,6 +49,11 @@ class ProxyService : public BaseProxyService {
   /// @param memory The memory region to register.
   /// @return The ID of the memory region.
   MemoryId addMemory(RegisteredMemory memory);
+
+  /// Get the next available memory ID.
+  /// @param count The number of consecutive IDs required (default: 1).
+  /// @return The first ID of an available range [first, first + count).
+  MemoryId nextMemoryId(uint32_t count = 1) const;
 
   /// Get a semaphore by ID.
   /// @param id The ID of the semaphore.
@@ -68,7 +73,8 @@ class ProxyService : public BaseProxyService {
   PortChannel portChannel(SemaphoreId id, MemoryId dst, MemoryId src);
 
   /// Start the proxy service.
-  void startProxy();
+  /// @param blocking Whether to block until the proxy thread has started (default: false).
+  void startProxy(bool blocking = false);
 
   /// Stop the proxy service.
   void stopProxy();
@@ -77,7 +83,7 @@ class ProxyService : public BaseProxyService {
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> semaphores_;
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
-  std::unordered_map<std::shared_ptr<Connection>, int> inflightRequests_;
+  std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };

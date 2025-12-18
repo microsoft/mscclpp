@@ -4,6 +4,7 @@
 #include "context.hpp"
 
 #include <mscclpp/env.hpp>
+#include <sstream>
 
 #include "api.h"
 #include "connection.hpp"
@@ -18,26 +19,28 @@ CudaIpcStream::CudaIpcStream(int deviceId)
 
 void CudaIpcStream::setStreamIfNeeded() {
   if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
-    MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
     stream_->set(cudaStreamNonBlocking);
   }
 }
 
 void CudaIpcStream::memcpyD2D(void *dst, const void *src, size_t nbytes) {
+  CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToDevice, *stream_));
   dirty_ = true;
 }
 
 void CudaIpcStream::memcpyH2D(void *dst, const void *src, size_t nbytes) {
+  CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyHostToDevice, *stream_));
   dirty_ = true;
 }
 
 void CudaIpcStream::sync() {
-  setStreamIfNeeded();
   if (dirty_) {
+    CudaDeviceGuard deviceGuard(deviceId_);
+    setStreamIfNeeded();
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
     dirty_ = false;
   }
@@ -56,6 +59,13 @@ IbCtx *Context::Impl::getIbContext(Transport ibTransport) {
   return it->second.get();
 }
 
+std::shared_ptr<uint64_t> Context::Impl::getToken() {
+  if (!tokenPool_) {
+    tokenPool_ = std::make_shared<TokenPool>(maxNumTokens_);
+  }
+  return tokenPool_->getToken();
+}
+
 MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
 
 MSCCLPP_API_CPP Context::~Context() = default;
@@ -68,34 +78,33 @@ MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
   return Endpoint(std::make_shared<Endpoint::Impl>(config, *pimpl_));
 }
 
-MSCCLPP_API_CPP std::shared_ptr<Connection> Context::connect(const Endpoint &localEndpoint,
-                                                             const Endpoint &remoteEndpoint) {
+MSCCLPP_API_CPP Connection Context::connect(const Endpoint &localEndpoint, const Endpoint &remoteEndpoint) {
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
     throw Error("No GPU device ID provided for local endpoint", ErrorCode::InvalidUsage);
   }
   if (remoteEndpoint.device().type == DeviceType::GPU && remoteEndpoint.device().id < 0) {
     throw Error("No GPU device ID provided for remote endpoint", ErrorCode::InvalidUsage);
   }
-  std::shared_ptr<Connection> conn;
-  if (localEndpoint.transport() == Transport::CudaIpc) {
-    if (remoteEndpoint.transport() != Transport::CudaIpc) {
-      throw Error("Local transport is CudaIpc but remote is not", ErrorCode::InvalidUsage);
-    }
+  auto localTransport = localEndpoint.transport();
+  auto remoteTransport = remoteEndpoint.transport();
+  if (localTransport != remoteTransport &&
+      !(AllIBTransports.has(localTransport) && AllIBTransports.has(remoteTransport))) {
+    std::stringstream ss;
+    ss << "Transport mismatch between local (" << std::to_string(localTransport) << ") and remote ("
+       << std::to_string(remoteEndpoint.transport()) << ") endpoints";
+    throw Error(ss.str(), ErrorCode::InvalidUsage);
+  }
+  std::shared_ptr<BaseConnection> conn;
+  if (localTransport == Transport::CudaIpc) {
     conn = std::make_shared<CudaIpcConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (AllIBTransports.has(localEndpoint.transport())) {
-    if (!AllIBTransports.has(remoteEndpoint.transport())) {
-      throw Error("Local transport is IB but remote is not", ErrorCode::InvalidUsage);
-    }
+  } else if (AllIBTransports.has(localTransport)) {
     conn = std::make_shared<IBConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
-  } else if (localEndpoint.transport() == Transport::Ethernet) {
-    if (remoteEndpoint.transport() != Transport::Ethernet) {
-      throw Error("Local transport is Ethernet but remote is not", ErrorCode::InvalidUsage);
-    }
+  } else if (localTransport == Transport::Ethernet) {
     conn = std::make_shared<EthernetConnection>(shared_from_this(), localEndpoint, remoteEndpoint);
   } else {
     throw Error("Unsupported transport", ErrorCode::InternalError);
   }
-  return conn;
+  return Connection(conn);
 }
 
 }  // namespace mscclpp

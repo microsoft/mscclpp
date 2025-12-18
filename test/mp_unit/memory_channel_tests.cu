@@ -23,9 +23,9 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (outputBuff == nullptr);
-  mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc | ibTransport;
+  mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc;
 
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures(worldSize);
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(worldSize);
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemFutures(worldSize);
 
   mscclpp::RegisteredMemory inputBufRegMem = communicator->registerMemory(inputBuff, inputBuffBytes, transport);
@@ -38,11 +38,8 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
     if (r == rank) {
       continue;
     }
-    if (rankToNode(r) == rankToNode(gEnv->rank)) {
-      connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
-    } else {
-      connectionFutures[r] = communicator->connect(ibTransport, r);
-    }
+    // No IB for MemoryChannel tests
+    connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
 
     if (isInPlace) {
       communicator->sendMemory(inputBufRegMem, r);
@@ -60,6 +57,10 @@ void MemoryChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::Memory
 
     memoryChannels.emplace_back(sema, remoteMemFutures[r].get(), inputBufRegMem,
                                 (isInPlace ? nullptr : outputBufRegMem.data()));
+  }
+  // keep the registered memories alive until TearDown
+  if (!isInPlace) {
+    registeredMemories.push_back(outputBufRegMem);
   }
 }
 

@@ -9,23 +9,24 @@
 #include <mscclpp/errors.hpp>
 // clang-format on
 
-#include "debug.h"
+#include "logger.hpp"
 
 template <typename T>
-T readEnv(const std::string &envName, const T &defaultValue) {
-  const char *envCstr = getenv(envName.c_str());
+T readEnv(const std::string& envName, const T& defaultValue) {
+  const char* envCstr = getenv(envName.c_str());
   if (envCstr == nullptr) return defaultValue;
   if constexpr (std::is_same_v<T, int>) {
     return atoi(envCstr);
   } else if constexpr (std::is_same_v<T, bool>) {
     return (std::string(envCstr) != "0");
+  } else {
+    return T(envCstr);
   }
-  return T(envCstr);
 }
 
 template <typename T>
-void readAndSetEnv(const std::string &envName, T &env) {
-  const char *envCstr = getenv(envName.c_str());
+void readAndSetEnv(const std::string& envName, T& env) {
+  const char* envCstr = getenv(envName.c_str());
   if (envCstr == nullptr) return;
   if constexpr (std::is_same_v<T, int>) {
     env = atoi(envCstr);
@@ -37,15 +38,9 @@ void readAndSetEnv(const std::string &envName, T &env) {
 }
 
 template <typename T>
-void logEnv(const std::string &envName, const T &env) {
+void logEnv(const std::string& envName, const T& env) {
   if (!getenv(envName.c_str())) return;
-  INFO(MSCCLPP_ENV, "%s=%d", envName.c_str(), env);
-}
-
-template <>
-void logEnv(const std::string &envName, const std::string &env) {
-  if (!getenv(envName.c_str())) return;
-  INFO(MSCCLPP_ENV, "%s=%s", envName.c_str(), env.c_str());
+  INFO(mscclpp::ENV, envName, "=", env);
 }
 
 namespace mscclpp {
@@ -54,17 +49,21 @@ Env::Env()
     : debug(readEnv<std::string>("MSCCLPP_DEBUG", "")),
       debugSubsys(readEnv<std::string>("MSCCLPP_DEBUG_SUBSYS", "")),
       debugFile(readEnv<std::string>("MSCCLPP_DEBUG_FILE", "")),
+      logLevel(readEnv<std::string>("MSCCLPP_LOG_LEVEL", "ERROR")),
+      logSubsys(readEnv<std::string>("MSCCLPP_LOG_SUBSYS", "ALL")),
+      logFile(readEnv<std::string>("MSCCLPP_LOG_FILE", "")),
       hcaDevices(readEnv<std::string>("MSCCLPP_HCA_DEVICES", "")),
+      ibvSo(readEnv<std::string>("MSCCLPP_IBV_SO", "")),
       hostid(readEnv<std::string>("MSCCLPP_HOSTID", "")),
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
       socketIfname(readEnv<std::string>("MSCCLPP_SOCKET_IFNAME", "")),
       commId(readEnv<std::string>("MSCCLPP_COMM_ID", "")),
-      executionPlanDir(readEnv<std::string>("MSCCLPP_EXECUTION_PLAN_DIR", "")),
+      executionPlanDir(readEnv<std::string>("MSCCLPP_EXECUTION_PLAN_DIR",
+                                            readEnv<std::string>("HOME", "~") + "/.cache/mscclpp_default")),
       npkitDumpDir(readEnv<std::string>("MSCCLPP_NPKIT_DUMP_DIR", "")),
       cudaIpcUseDefaultStream(readEnv<bool>("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", false)),
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
       forceNcclFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", "")),
-      enableNcclFallback(readEnv<bool>("MSCCLPP_ENABLE_NCCL_FALLBACK", false)),
       disableChannelCache(readEnv<bool>("MSCCLPP_DISABLE_CHANNEL_CACHE", false)),
       forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)) {}
 
@@ -77,7 +76,11 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_DEBUG", globalEnv->debug);
     logEnv("MSCCLPP_DEBUG_SUBSYS", globalEnv->debugSubsys);
     logEnv("MSCCLPP_DEBUG_FILE", globalEnv->debugFile);
+    logEnv("MSCCLPP_LOG_LEVEL", globalEnv->logLevel);
+    logEnv("MSCCLPP_LOG_SUBSYS", globalEnv->logSubsys);
+    logEnv("MSCCLPP_LOG_FILE", globalEnv->logFile);
     logEnv("MSCCLPP_HCA_DEVICES", globalEnv->hcaDevices);
+    logEnv("MSCCLPP_IBV_SO", globalEnv->ibvSo);
     logEnv("MSCCLPP_HOSTID", globalEnv->hostid);
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
     logEnv("MSCCLPP_SOCKET_IFNAME", globalEnv->socketIfname);
@@ -87,7 +90,6 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", globalEnv->cudaIpcUseDefaultStream);
     logEnv("MSCCLPP_NCCL_LIB_PATH", globalEnv->ncclSharedLibPath);
     logEnv("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", globalEnv->forceNcclFallbackOperation);
-    logEnv("MSCCLPP_ENABLE_NCCL_FALLBACK", globalEnv->enableNcclFallback);
     logEnv("MSCCLPP_DISABLE_CHANNEL_CACHE", globalEnv->disableChannelCache);
     logEnv("MSCCLPP_FORCE_DISABLE_NVLS", globalEnv->forceDisableNvls);
   }

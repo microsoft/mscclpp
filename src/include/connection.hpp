@@ -15,7 +15,46 @@
 
 namespace mscclpp {
 
-class CudaIpcConnection : public Connection {
+/// Internal base class for connection implementations between two processes.
+class BaseConnection {
+ public:
+  BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
+
+  virtual ~BaseConnection() = default;
+
+  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
+                     uint64_t size) = 0;
+
+  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
+
+  virtual void flush(int64_t timeoutUsec = -1) = 0;
+
+  virtual Transport transport() const = 0;
+
+  virtual Transport remoteTransport() const = 0;
+
+  std::shared_ptr<Context> context() const;
+
+  const Device& localDevice() const;
+
+  int getMaxWriteQueueSize() const;
+
+ protected:
+  friend class Context;
+  friend class CudaIpcConnection;
+  friend class IBConnection;
+  friend class EthernetConnection;
+
+  static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
+  static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
+  static Context::Impl& getImpl(Context& context);
+
+  std::shared_ptr<Context> context_;
+  Endpoint localEndpoint_;
+  int maxWriteQueueSize_;
+};
+
+class CudaIpcConnection : public BaseConnection {
  private:
   std::shared_ptr<CudaIpcStream> stream_;
 
@@ -33,7 +72,7 @@ class CudaIpcConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 };
 
-class IBConnection : public Connection {
+class IBConnection : public BaseConnection {
  private:
   Transport transport_;
   Transport remoteTransport_;
@@ -56,7 +95,7 @@ class IBConnection : public Connection {
   void flush(int64_t timeoutUsec) override;
 };
 
-class EthernetConnection : public Connection {
+class EthernetConnection : public BaseConnection {
  private:
   std::unique_ptr<Socket> sendSocket_;
   std::unique_ptr<Socket> recvSocket_;

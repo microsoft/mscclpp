@@ -13,21 +13,21 @@
 
 namespace mscclpp {
 
-Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
-    : transport_(config.transport),
-      device_(config.device),
-      hostHash_(getHostHash()),
-      pidHash_(getPidHash()),
-      maxWriteQueueSize_(config.maxWriteQueueSize) {
-  if (device_.type == DeviceType::GPU && device_.id < 0) {
-    MSCCLPP_CUDATHROW(cudaGetDevice(&(device_.id)));
+Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
+    : config_(config), hostHash_(getHostHash()), pidHash_(getPidHash()) {
+  if (config_.device.type == DeviceType::GPU && config_.device.id < 0) {
+    MSCCLPP_CUDATHROW(cudaGetDevice(&(config_.device.id)));
   }
-  if (AllIBTransports.has(transport_)) {
+  if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = true;
-    ibQp_ = contextImpl.getIbContext(transport_)
-                ->createQp(config.ibMaxCqSize, config.ibMaxCqPollNum, config.ibMaxSendWr, 0, config.ibMaxWrPerSend);
+    if (config_.maxWriteQueueSize <= 0) {
+      config_.maxWriteQueueSize = config_.ib.maxCqSize;
+    }
+    ibQp_ = contextImpl.getIbContext(config_.transport)
+                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
+                           config_.ib.maxSendWr, 0, config_.ib.maxWrPerSend);
     ibQpInfo_ = ibQp_->getInfo();
-  } else if (transport_ == Transport::Ethernet) {
+  } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
     abortFlag_ = 0;
     int ret = FindInterfaces(netIfName_, &socketAddress_, MAX_IF_NAME_SIZE, 1);
@@ -42,41 +42,42 @@ Endpoint::Impl::Impl(EndpointConfig config, Context::Impl& contextImpl)
 
 Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   auto it = serialization.begin();
-  it = detail::deserialize(it, transport_);
-  it = detail::deserialize(it, device_);
+  it = detail::deserialize(it, config_);
   it = detail::deserialize(it, hostHash_);
   it = detail::deserialize(it, pidHash_);
-  if (AllIBTransports.has(transport_)) {
+  if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
-  }
-  if (transport_ == Transport::Ethernet) {
+  } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
+  }
+  if (it != serialization.end()) {
+    throw Error("Endpoint deserialization failed", ErrorCode::Aborted);
   }
 }
 
 MSCCLPP_API_CPP Endpoint::Endpoint(std::shared_ptr<Endpoint::Impl> pimpl) : pimpl_(pimpl) {}
 
-MSCCLPP_API_CPP Transport Endpoint::transport() const { return pimpl_->transport_; }
+MSCCLPP_API_CPP const EndpointConfig& Endpoint::config() const { return pimpl_->config_; }
 
-MSCCLPP_API_CPP const Device& Endpoint::device() const { return pimpl_->device_; }
+MSCCLPP_API_CPP Transport Endpoint::transport() const { return pimpl_->config_.transport; }
+
+MSCCLPP_API_CPP const Device& Endpoint::device() const { return pimpl_->config_.device; }
 
 MSCCLPP_API_CPP uint64_t Endpoint::hostHash() const { return pimpl_->hostHash_; }
 
 MSCCLPP_API_CPP uint64_t Endpoint::pidHash() const { return pimpl_->pidHash_; }
 
-MSCCLPP_API_CPP int Endpoint::maxWriteQueueSize() const { return pimpl_->maxWriteQueueSize_; }
+MSCCLPP_API_CPP int Endpoint::maxWriteQueueSize() const { return pimpl_->config_.maxWriteQueueSize; }
 
 MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   std::vector<char> data;
-  detail::serialize(data, pimpl_->transport_);
-  detail::serialize(data, pimpl_->device_);
+  detail::serialize(data, pimpl_->config_);
   detail::serialize(data, pimpl_->hostHash_);
   detail::serialize(data, pimpl_->pidHash_);
-  if (AllIBTransports.has(pimpl_->transport_)) {
+  if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
-  }
-  if ((pimpl_->transport_) == Transport::Ethernet) {
+  } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }
   return data;

@@ -15,18 +15,16 @@
 namespace mscclpp {
 
 struct ChannelKey {
-  BufferType srcBufferType;
-  BufferType dstBufferType;
+  BufferType bufferType;
   ChannelType channelType;
   bool operator==(const ChannelKey& other) const {
-    return srcBufferType == other.srcBufferType && dstBufferType == other.dstBufferType &&
-           channelType == other.channelType;
+    return bufferType == other.bufferType && channelType == other.channelType;
   }
 };
 
 struct NvlsInfo {
   std::vector<int> ranks;
-  size_t bufferSize;
+  uint32_t nChunks;
   BufferType bufferType;
 };
 }  // namespace mscclpp
@@ -35,8 +33,7 @@ namespace std {
 template <>
 struct hash<mscclpp::ChannelKey> {
   std::size_t operator()(const mscclpp::ChannelKey& key) const {
-    return std::hash<int>()(static_cast<int>(key.srcBufferType)) ^
-           std::hash<int>()(static_cast<int>(key.dstBufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
+    return std::hash<int>()(static_cast<int>(key.bufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
   }
 };
 
@@ -54,34 +51,61 @@ struct hash<std::pair<int, mscclpp::ChannelType>> {
 namespace mscclpp {
 
 struct ChannelInfo {
-  BufferType srcBufferType;
-  BufferType dstBufferType;
   ChannelType channelType;
   std::vector<int> connectedPeers;
 };
 
+struct BufferInfo {
+  int rank;
+  int accessRank;
+  BufferType bufferType;
+  std::vector<ChannelType> accessChannelTypes;
+};
+
+struct SemaphoreInfo {
+  int initValue;
+};
+
+struct AlgoConfig {
+  std::string filename;
+  std::string collective;
+  int nRanksPerNode;
+  int worldSize;
+  std::unordered_map<std::string, uint64_t> tags;
+};
+
+struct ExecutionPlanRegistry::Impl {
+  void setSelector(ExecutionPlanSelector selector);
+  void setDefaultSelector(ExecutionPlanSelector selector);
+  void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
+  std::shared_ptr<ExecutionPlanHandle> select(const ExecutionRequest& request);
+  std::vector<ExecutionPlanHandle> getPlans(const std::string& collective);
+  std::shared_ptr<ExecutionPlanHandle> get(const std::string& id);
+  void loadDefaultPlans(int rank);
+
+  ExecutionPlanSelector selector_ = nullptr;
+  ExecutionPlanSelector defaultSelector_ = nullptr;
+  std::unordered_map<std::string, std::vector<std::shared_ptr<ExecutionPlanHandle>>> planMap_;
+  std::unordered_map<std::string, std::shared_ptr<ExecutionPlanHandle>> idMap_;
+};
+
 struct ExecutionPlan::Impl {
  public:
-  Impl(const std::string planPath);
+  Impl(const std::string& planPath, int rank);
   ~Impl() = default;
-
-  std::vector<ChannelInfo> getChannelInfos(int rank, ChannelType channelType) const;
-  std::vector<ChannelInfo> getChannelInfos(int rank, BufferType bufferType) const;
-  std::vector<ChannelInfo> getChannelInfosByDstRank(int rank, BufferType bufferType) const;
-  std::vector<ChannelInfo> getUnpairedChannelInfos(int rank, int worldSize, ChannelType channelType);
-  std::vector<NvlsInfo> getNvlsInfos(int rank, size_t sendBuffserSize = 0, size_t recvBufferSize = 0) const;
-  std::vector<int> getConnectedPeers(int rank) const;
-  std::vector<BufferType> getConnectedBufferTypes(int rank) const;
-  size_t getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const;
-  size_t getMaxScratchBufferSize(int rank) const;
-  std::vector<Operation> getOperations(int rank, int threadblock) const;
-  int getThreadblockCount(int rank) const;
-  int getNThreadsPerBlock() const;
 
   void loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
   void lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset, size_t constDstOffset);
-  void setupChannels(const nlohmann::json& gpus);
-  void setupOperations(const nlohmann::json& gpus, size_t contsSrcOffset, size_t constDstOffset);
+  size_t calScratchBufferSize(size_t inputSize, size_t outputSize) const;
+  size_t calMaxScratchChunkSize(size_t scratchSize) const;
+
+  std::vector<ChannelInfo> getChannelInfos(ChannelType channelType) const;
+  std::vector<ChannelInfo> getUnpairedChannelInfos(int worldSize, ChannelType channelType);
+  std::vector<int> getConnectedPeers() const;
+  std::vector<BufferInfo> getRemoteBufferInfos() const;
+  std::vector<BufferInfo> getLocalBufferToSend() const;
+  std::vector<Operation> getOperations(int threadblock) const;
+  int getThreadblockCount() const;
 
   void reset();
   void operationsReset();
@@ -90,40 +114,63 @@ struct ExecutionPlan::Impl {
   std::string collective;
   const std::string planPath;
   bool isUsingPacket;
-  // operations for [rank][threadblock] = [operations]
-  std::unordered_map<int, std::vector<std::vector<Operation>>> operations;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos;
-  std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank;
-  std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap;
+  bool reuseResources;
+  int rank;
+
+  // operations for current ranks [threadblock] = list[operations]
+  std::vector<std::vector<Operation>> operations;
+  std::vector<SemaphoreInfo> semaphoreInfos;
   // for nvls channels
   std::unordered_map<int, std::vector<NvlsInfo>> nvlsInfos;
-  // threadblockChannelMap[rank][threadblock] = [channelIndex, channelKey]
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockMemoryChannelMap;
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockPortChannelMap;
-  std::unordered_map<int, std::vector<std::vector<std::pair<int, ChannelKey>>>> threadblockNvlsChannelMap;
-  std::unordered_map<int, uint32_t> inputChunks;
-  std::unordered_map<int, uint32_t> outputChunks;
-  std::unordered_map<int, uint32_t> scratchChunks;
-  std::unordered_map<int, uint32_t> chunkGroups;
+
+  // threadblockChannels[threadblock] = channelIndexes
+  std::vector<std::vector<int>> threadblockMemoryChannels;
+  std::vector<std::vector<int>> threadblockPortChannels;
+  std::vector<std::vector<int>> threadblockNvlsChannels;
+  // threadblockBuffers[threadblock] = {bufferIndexes, bufferType}
+  std::vector<std::vector<std::pair<int, BufferType>>> threadblockMemoryChannelBuffers;
+  std::vector<std::vector<std::pair<int, BufferType>>> threadblockPortChannelBuffers;
+
+  uint32_t inputChunks;
+  uint32_t outputChunks;
+  uint32_t scratchChunks;
   size_t inputSize;
   size_t outputSize;
   int nThreadsPerBlock;
   size_t minMessageSize;
   size_t maxMessageSize;
+  uint32_t bufferAlignment;
   bool isInPlace;
+  bool doubleScratchBuffer;
 
  private:
-  std::pair<size_t, uint32_t> getSizeAndChunksForRank(int rank, size_t inputSize, size_t outputSize) const;
-  size_t getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex, uint32_t alignment = 16) const;
-  size_t getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
-                       const std::vector<uint32_t> offsets) const;
-  size_t getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const;
+  std::pair<size_t, uint32_t> getSizeAndChunks(size_t inputSize, size_t outputSize) const;
+  size_t calcOffset(size_t size, uint32_t index, uint32_t slices) const;
+  size_t calcSize(size_t size, uint32_t index, uint32_t slices) const;
+  size_t getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
+                   BufferType bufferType = BufferType::NONE) const;
+  size_t getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const;
+  size_t getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const;
 
+  void setupChannels(const nlohmann::json& gpus);
+  void setupRemoteBuffers(const nlohmann::json& gpus);
+  void setupSemaphores(const nlohmann::json& gpu);
+  void setupOperations(const nlohmann::json& gpu, size_t contsSrcOffset, size_t constDstOffset);
+  void setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
+                      size_t constSrcOffset, size_t constDstOffset);
   // helper functions to setup the channels
-  void parseChannels(
-      const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
-      std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
-      int rank);
+  void parseChannels(const nlohmann::json& gpu, std::vector<ChannelInfo>& channelInfos,
+                     std::vector<NvlsInfo>& nvlsInfos,
+                     std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank);
+  void parseRemoteBuffer(const nlohmann::json& gpus);
+  void checkMessageSize() const;
+
+  std::unordered_map<std::pair<int, ChannelType>, std::unordered_map<int, int>> channelCountMap_;
+  std::unordered_map<int, std::unordered_map<std::pair<int, ChannelType>, int>> bufferIndexMap_;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfos_;
+  std::unordered_map<int, std::vector<ChannelInfo>> channelInfosByDstRank_;
+  std::unordered_map<int, std::vector<BufferInfo>> remoteBufferInfos_;
+  std::unordered_map<int, std::vector<BufferInfo>> localBufferToSend_;
 };
 
 }  // namespace mscclpp

@@ -4,16 +4,13 @@
 #ifndef MSCCLPP_CORE_HPP_
 #define MSCCLPP_CORE_HPP_
 
-#define MSCCLPP_MAJOR 0
-#define MSCCLPP_MINOR 7
-#define MSCCLPP_PATCH 0
-#define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
-
 #include <array>
 #include <bitset>
 #include <future>
 #include <memory>
 #include <mscclpp/errors.hpp>
+#include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/version.hpp>
 #include <string>
 #include <vector>
 
@@ -378,53 +375,88 @@ struct Device {
   int id;
 };
 
-/// Used to configure an endpoint.
+/// Configuration for creating communication endpoints.
 struct EndpointConfig {
-  static const int DefaultMaxCqSize = 1024;
-  static const int DefaultMaxCqPollNum = 1;
-  static const int DefaultMaxSendWr = 8192;
-  static const int DefaultMaxWrPerSend = 64;
+  /// InfiniBand-specific configuration options that control queue pair behavior and performance characteristics.
+  /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
+  /// transports.
+  struct Ib {
+    static const int DefaultPort = -1;
+    static const int DefaultGidIndex = 0;
+    static const int DefaultMaxCqSize = 1024;
+    static const int DefaultMaxCqPollNum = 1;
+    static const int DefaultMaxSendWr = 8192;
+    static const int DefaultMaxWrPerSend = 64;
 
+    /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
+    int deviceIndex;
+    /// Port number.
+    int port;
+    /// GID index.
+    int gidIndex;
+    /// Maximum size of the completion queue.
+    int maxCqSize;
+    /// Maximum number of completion queue polls per operation.
+    int maxCqPollNum;
+    /// Maximum number of outstanding send work requests.
+    int maxSendWr;
+    /// Maximum number of work requests per send operation.
+    int maxWrPerSend;
+
+    /// Constructor.
+    /// @param deviceIndex Device index.
+    /// @param port Port number.
+    /// @param gidIndex GID index.
+    /// @param maxCqSize Maximum completion queue size.
+    /// @param maxCqPollNum Maximum completion queue poll count.
+    /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxWrPerSend Maximum work requests per send operation.
+    Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
+       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend)
+        : deviceIndex(deviceIndex),
+          port(port),
+          gidIndex(gidIndex),
+          maxCqSize(maxCqSize),
+          maxCqPollNum(maxCqPollNum),
+          maxSendWr(maxSendWr),
+          maxWrPerSend(maxWrPerSend) {}
+  };
+
+  /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
   Transport transport;
+  /// Target device for the endpoint (GPU or CPU with optional device ID).
   Device device;
-  int ibMaxCqSize;
-  int ibMaxCqPollNum;
-  int ibMaxSendWr;
-  int ibMaxWrPerSend;
+  /// Maximum number of write requests that can be queued (-1 for default).
   int maxWriteQueueSize;
+  /// InfiniBand-specific options (used only for Transport::IBx).
+  Ib ib;
 
-  /// Constructor that takes a transport and sets the other fields to their default values.
-  ///
-  /// @param transport The transport to use.
-  /// @param device The device to use.
-  /// @param ibMaxCqSize The maximum completion queue size.
-  /// @param ibMaxCqPollNum The maximum completion queue poll number.
-  /// @param ibMaxSendWr The maximum send work requests.
-  /// @param ibMaxWrPerSend The maximum work requests per send.
-  /// @param maxWriteQueueSize The maximum write queue size.
-  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU,
-                 int ibMaxCqSize = DefaultMaxCqSize, int ibMaxCqPollNum = DefaultMaxCqPollNum,
-                 int ibMaxSendWr = DefaultMaxSendWr, int ibMaxWrPerSend = DefaultMaxWrPerSend,
-                 int maxWriteQueueSize = -1)
-      : transport(transport),
-        device(device),
-        ibMaxCqSize(ibMaxCqSize),
-        ibMaxCqPollNum(ibMaxCqPollNum),
-        ibMaxSendWr(ibMaxSendWr),
-        ibMaxWrPerSend(ibMaxWrPerSend),
-        maxWriteQueueSize(maxWriteQueueSize) {}
+  /// Constructs endpoint configuration with specified transport, device, and optional settings.
+  /// @param transport Communication transport to use.
+  /// @param device Target device for the endpoint.
+  /// @param maxWriteQueueSize Maximum write queue size (-1 for system default).
+  /// @param ib IB-specific configuration.
+  EndpointConfig(Transport transport = Transport::Unknown, Device device = DeviceType::GPU, int maxWriteQueueSize = -1,
+                 Ib ib = {})
+      : transport(transport), device(device), maxWriteQueueSize(maxWriteQueueSize), ib(ib) {}
 };
 
 class Context;
 class Connection;
+class BaseConnection;
 class RegisteredMemory;
 class SemaphoreStub;
+class Semaphore;
 
 /// One end of a connection.
 class Endpoint {
  public:
   /// Constructor.
   Endpoint() = default;
+
+  /// Get the configuration used to create the endpoint.
+  /// @return The configuration used to create the endpoint.
+  const EndpointConfig& config() const;
 
   /// Get the transport used.
   /// @return The transport used.
@@ -461,7 +493,7 @@ class Endpoint {
   std::shared_ptr<Impl> pimpl_;
 
   friend class Context;
-  friend class Connection;
+  friend class BaseConnection;
 };
 
 /// Context for communication. This provides a low-level interface for forming connections in use-cases
@@ -508,8 +540,8 @@ class Context : public std::enable_shared_from_this<Context> {
   ///
   /// @param localEndpoint The local endpoint.
   /// @param remoteEndpoint The remote endpoint.
-  /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  /// @return A connection object.
+  Connection connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
  private:
   Context();
@@ -518,8 +550,9 @@ class Context : public std::enable_shared_from_this<Context> {
   std::unique_ptr<Impl> pimpl_;
 
   friend class Endpoint;
-  friend class Connection;
+  friend class BaseConnection;
   friend class RegisteredMemory;
+  friend class SemaphoreStub;
 };
 
 /// Block of memory that has been registered to a Context.
@@ -564,20 +597,16 @@ class RegisteredMemory {
   std::shared_ptr<Impl> pimpl_;
 
   friend class Context;
-  friend class Connection;
+  friend class BaseConnection;
   friend class SemaphoreStub;
+  friend class Semaphore;
 };
 
 /// Connection between two processes.
 class Connection {
  public:
   /// Constructor.
-  /// @param context The context associated with the connection.
-  /// @param localEndpoint The local endpoint of the connection.
-  Connection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
-
-  /// Destructor.
-  virtual ~Connection() = default;
+  Connection() = default;
 
   /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
   ///
@@ -586,8 +615,7 @@ class Connection {
   /// @param src The source RegisteredMemory.
   /// @param srcOffset The offset in bytes from the start of the source RegisteredMemory.
   /// @param size The number of bytes to write.
-  virtual void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
-                     uint64_t size) = 0;
+  void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset, uint64_t size);
 
   /// Update an 8-byte value in a destination RegisteredMemory and synchronize the change with the remote process.
   ///
@@ -595,19 +623,19 @@ class Connection {
   /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
   /// @param src A pointer to the value to update.
   /// @param newValue The new value to write.
-  virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
+  void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue);
 
   /// Flush any pending writes to the remote process.
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
-  virtual void flush(int64_t timeoutUsec = -1) = 0;
+  void flush(int64_t timeoutUsec = -1);
 
   /// Get the transport used by the local process.
   /// @return The transport used by the local process.
-  virtual Transport transport() const = 0;
+  Transport transport() const;
 
   /// Get the transport used by the remote process.
   /// @return The transport used by the remote process.
-  virtual Transport remoteTransport() const = 0;
+  Transport remoteTransport() const;
 
   /// Get the context associated with this connection.
   /// @return A shared pointer to the context associated with this connection.
@@ -621,22 +649,23 @@ class Connection {
   /// @return The maximum number of write requests that can be queued.
   int getMaxWriteQueueSize() const;
 
- protected:
-  static const Endpoint::Impl& getImpl(const Endpoint& endpoint);
-  static const RegisteredMemory::Impl& getImpl(const RegisteredMemory& memory);
-  static Context::Impl& getImpl(Context& context);
+ private:
+  Connection(std::shared_ptr<BaseConnection> impl);
+  std::shared_ptr<BaseConnection> impl_;
 
-  std::shared_ptr<Context> context_;
-  Endpoint localEndpoint_;
-  int maxWriteQueueSize_;
+  friend class Context;
+  friend class Communicator;
+  friend class SemaphoreStub;
+  friend class Semaphore;
+  friend class ProxyService;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.
 class SemaphoreStub {
  public:
   /// Constructor.
-  /// @param connection A shared pointer to the connection associated with this semaphore.
-  SemaphoreStub(std::shared_ptr<Connection> connection);
+  /// @param connection The connection associated with this semaphore.
+  SemaphoreStub(const Connection& connection);
 
   /// Get the memory associated with this semaphore.
   /// @return A reference to the registered memory for this semaphore.
@@ -671,8 +700,8 @@ class Semaphore {
   Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub);
 
   /// Get the connection associated with this semaphore.
-  /// @return A shared pointer to the connection.
-  std::shared_ptr<Connection> connection() const;
+  /// @return The connection.
+  Connection& connection();
 
   /// Get the local memory associated with this semaphore.
   /// @return A reference to the local registered memory.
@@ -687,9 +716,9 @@ class Semaphore {
   std::shared_ptr<Impl> pimpl_;
 };
 
+/// Deprecated.
 template <typename T>
-using NonblockingFuture [[deprecated("Use std::shared_future instead. This will be removed in a future release.")]] =
-    std::shared_future<T>;
+using NonblockingFuture = std::shared_future<T>;
 
 /// A class that sets up all registered memories and connections between processes.
 ///
@@ -855,29 +884,26 @@ class Communicator {
   /// on the last future, it will start receiving the five RegisteredMemory or Connection objects in order,
   /// back to back.
   ///
+  /// @param localEndpoint The local endpoint.
+  /// @param remoteRank The rank of the remote process.
+  /// @param tag The tag to use for identifying the send and receive.
+  /// @return A future of the connection.
+  ///
+  std::shared_future<Connection> connect(const Endpoint& localEndpoint, int remoteRank, int tag = 0);
+
+  /// Connect to a remote rank. Wrapper of `connect(localEndpoint, remoteRank, tag)`.
   /// @param localConfig The configuration for the local endpoint.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the send and receive.
-  /// @return A future of shared pointer to the connection.
-  ///
-  std::shared_future<std::shared_ptr<Connection>> connect(EndpointConfig localConfig, int remoteRank, int tag = 0);
-
-  [[deprecated("Use connect(localConfig, remoteRank, tag) instead. This will be removed in a future release.")]] std::
-      shared_future<std::shared_ptr<Connection>>
-      connect(int remoteRank, int tag, EndpointConfig localConfig);
-
-  [[deprecated("Use connect() instead. This will be removed in a future release.")]] NonblockingFuture<
-      std::shared_ptr<Connection>>
-  connectOnSetup(int remoteRank, int tag, EndpointConfig localConfig) {
-    return connect(localConfig, remoteRank, tag);
-  }
+  /// @return A future of the connection.
+  std::shared_future<Connection> connect(const EndpointConfig& localConfig, int remoteRank, int tag = 0);
 
   /// Build a semaphore for cross-process synchronization.
   /// @param connection The connection associated with this semaphore.
   /// @param remoteRank The rank of the remote process.
   /// @param tag The tag to use for identifying the operation.
   /// @return A future of the built semaphore.
-  std::shared_future<Semaphore> buildSemaphore(std::shared_ptr<Connection> connection, int remoteRank, int tag = 0);
+  std::shared_future<Semaphore> buildSemaphore(const Connection& connection, int remoteRank, int tag = 0);
 
   /// Get the remote rank a connection is connected to.
   ///

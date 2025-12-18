@@ -99,6 +99,10 @@ struct DeviceSemaphore {
   /// Construct a new DeviceSemaphore object.
   MSCCLPP_INLINE DeviceSemaphore() = default;
 
+  // / Construct a new DeviceSemaphore object with an initial value.
+  /// @param initialValue The initial value of the semaphore.
+  MSCCLPP_INLINE DeviceSemaphore(int initialValue) : semaphore_(initialValue) {}
+
   /// Destroy the DeviceSemaphore object.
   MSCCLPP_INLINE ~DeviceSemaphore() = default;
 
@@ -114,7 +118,7 @@ struct DeviceSemaphore {
   MSCCLPP_DEVICE_INLINE void acquire([[maybe_unused]] int maxSpinCount = -1) {
     int oldVal = atomicFetchAdd<int, scopeDevice>(&semaphore_, -1, memoryOrderAcquire);
     if (oldVal <= 0) {
-      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) != oldVal), maxSpinCount);
+      POLL_MAYBE_JAILBREAK((atomicLoad<int, scopeDevice>(&semaphore_, memoryOrderAcquire) < oldVal), maxSpinCount);
     }
   }
 

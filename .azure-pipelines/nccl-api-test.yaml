@@ -1,6 +1,15 @@
 trigger:
-- main
-- release/*
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
 
 pr:
   branches:
@@ -8,6 +17,13 @@ pr:
     - main
     - release/*
   drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
 
 jobs:
 - job: NcclTestA100

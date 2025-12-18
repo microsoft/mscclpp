@@ -10,25 +10,29 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Fetch full history for accurate version info
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
+          sudo apt-get install -y doxygen=1.9.1-* graphviz
           pip install -r docs/requirements.txt
 
       - name: Build docs
         run: |
           cd docs
+          rm -rf doxygen _build py_api
           doxygen
           make html
           touch _build/html/.nojekyll

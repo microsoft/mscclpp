@@ -8,7 +8,7 @@ find_package(MPI REQUIRED)
 
 # Set up common libraries and includes for tests
 set(PERF_TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} Threads::Threads MPI::MPI_CXX)
-if(IBVERBS_FOUND)
+if(MSCCLPP_USE_IB)
     list(APPEND PERF_TEST_LIBS_COMMON ${IBVERBS_LIBRARIES})
 endif()
 
@@ -27,7 +27,7 @@ function(add_perf_test_executable name sources)
     # Link nlohmann_json - use the target from main project
     target_link_libraries(${name} nlohmann_json::nlohmann_json)
     
-    if(IBVERBS_FOUND)
+    if(MSCCLPP_USE_IB)
         target_compile_definitions(${name} PRIVATE USE_IBVERBS)
     endif()
     

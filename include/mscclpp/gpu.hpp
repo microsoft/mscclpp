@@ -24,9 +24,14 @@ using CUmemGenericAllocationHandle = hipMemGenericAllocationHandle_t;
 using CUmemAllocationProp = hipMemAllocationProp;
 using CUmemAccessDesc = hipMemAccessDesc;
 using CUmemAllocationHandleType = hipMemAllocationHandleType;
+using CUmemAllocationGranularity_flags = hipMemAllocationGranularity_flags;
+using CUmemorytype = hipMemoryType;
 
 constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
+constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
+constexpr auto cudaErrorInvalidDevice = hipErrorInvalidDevice;
 constexpr auto cudaSuccess = hipSuccess;
+constexpr auto cudaErrorNotSupported = hipErrorNotSupported;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
 constexpr auto cudaStreamCaptureModeRelaxed = hipStreamCaptureModeRelaxed;
@@ -38,14 +43,26 @@ constexpr auto cudaMemcpyHostToDevice = hipMemcpyHostToDevice;
 constexpr auto cudaMemcpyDeviceToHost = hipMemcpyDeviceToHost;
 constexpr auto cudaIpcMemLazyEnablePeerAccess = hipIpcMemLazyEnablePeerAccess;
 
+constexpr auto cudaDevAttrComputeCapabilityMajor = hipDeviceAttributeComputeCapabilityMajor;
+constexpr auto cudaDevAttrComputeCapabilityMinor = hipDeviceAttributeComputeCapabilityMinor;
+
 constexpr auto CU_MEM_ALLOCATION_TYPE_PINNED = hipMemAllocationTypePinned;
 constexpr auto CU_MEM_LOCATION_TYPE_DEVICE = hipMemLocationTypeDevice;
 constexpr auto CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR = hipMemHandleTypePosixFileDescriptor;
 constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWrite;
+constexpr auto CU_MEM_ALLOC_GRANULARITY_MINIMUM = hipMemAllocationGranularityMinimum;
+constexpr auto CU_MEMORYTYPE_DEVICE = hipMemoryTypeDevice;
+
+constexpr auto CU_POINTER_ATTRIBUTE_MEMORY_TYPE = HIP_POINTER_ATTRIBUTE_MEMORY_TYPE;
+constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
 
 #ifndef CUDA_SUCCESS
 #define CUDA_SUCCESS hipSuccess
 #endif  // CUDA_SUCCESS
+#define CUDA_ERROR_DEINITIALIZED hipErrorDeinitialized
+#define CUDA_ERROR_CONTEXT_IS_DESTROYED hipErrorContextIsDestroyed
+#define CUDA_ERROR_LAUNCH_FAILED hipErrorLaunchFailure
+#define CUDA_ERROR_INVALID_VALUE hipErrorInvalidValue
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
 #define cudaEventCreateWithFlags(...) hipEventCreateWithFlags(__VA_ARGS__)
@@ -57,6 +74,7 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cudaGetDevice(...) hipGetDevice(__VA_ARGS__)
 #define cudaGetDeviceCount(...) hipGetDeviceCount(__VA_ARGS__)
 #define cudaGetDeviceProperties(...) hipGetDeviceProperties(__VA_ARGS__)
+#define cudaDeviceGetAttribute(...) hipDeviceGetAttribute(__VA_ARGS__)
 #define cudaGetLastError(...) hipGetLastError(__VA_ARGS__)
 #define cudaSetDevice(...) hipSetDevice(__VA_ARGS__)
 #define cudaDeviceSynchronize(...) hipDeviceSynchronize(__VA_ARGS__)
@@ -101,6 +119,8 @@ constexpr auto CU_MEM_ACCESS_FLAGS_PROT_READWRITE = hipMemAccessFlagsProtReadWri
 #define cuMemRetainAllocationHandle(...) hipMemRetainAllocationHandle(__VA_ARGS__)
 #define cuMemExportToShareableHandle(...) hipMemExportToShareableHandle(__VA_ARGS__)
 #define cuMemImportFromShareableHandle(...) hipMemImportFromShareableHandle(__VA_ARGS__)
+#define cuMemGetAllocationGranularity(...) hipMemGetAllocationGranularity(__VA_ARGS__)
+#define cuPointerGetAttribute(...) hipPointerGetAttribute(__VA_ARGS__)
 
 #else
 

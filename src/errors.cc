@@ -38,7 +38,7 @@ int BaseError::getErrorCode() const { return errorCode_; }
 const char* BaseError::what() const noexcept { return message_.c_str(); }
 
 MSCCLPP_API_CPP Error::Error(const std::string& message, ErrorCode errorCode) : BaseError(static_cast<int>(errorCode)) {
-  message_ = message + " (Mscclpp failure: " + errorToString(errorCode) + ")";
+  message_ = message + " (mscclpp failure: " + errorToString(errorCode) + ")";
 }
 
 MSCCLPP_API_CPP ErrorCode Error::getErrorCode() const { return static_cast<ErrorCode>(errorCode_); }

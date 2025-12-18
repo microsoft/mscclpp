@@ -19,7 +19,7 @@
             * AMD MI250X GPUs + ROCm >= 5.7
             * AMD MI300X GPUs + ROCm >= 6.0
 * OS
-    * Tested on Ubuntu 18.04 and later
+    * Tested on Ubuntu 20.04 and later
 * Libraries
     * [libnuma](https://github.com/numactl/numactl)
         ```bash
@@ -32,10 +32,7 @@
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
 * Others
-    * For NVIDIA platforms, `nvidia_peermem` driver should be loaded on all nodes. Check it via:
-        ```bash
-        lsmod | grep nvidia_peermem
-        ```
+    * For RDMA (InfiniBand or RoCE) support on NVIDIA platforms, [GPUDirect RDMA](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#gpudirect-rdma-and-gpudirect-storage) should be supported by the system. See the detailed prerequisites from [this NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#common-prerequisites).
     * For NVLink SHARP (NVLS) support on NVIDIA platforms, the Linux kernel version should be 5.6 or above.
 
 (docker-images)=
@@ -91,6 +88,7 @@ There are a few optional CMake options you can set:
 - `-DMSCCLPP_GPU_ARCHS=<arch-list>`: Specify the GPU architectures to build for. For example, `-DMSCCLPP_GPU_ARCHS="80,90"` for NVIDIA A100 and H100 GPUs, `-DMSCCLPP_GPU_ARCHS=gfx942` for AMD MI300x GPU.
 - `-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON`: If the build environment doesn't have GPUs and only has CUDA installed, you can set these options to bypass GPU checks and use CUDA APIs. This is useful for building on CI systems or environments without GPUs.
 - `-DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON`: If the build environment doesn't have GPUs and only has ROCm installed, you can set these options to bypass GPU checks and use ROCm APIs.
+- `-DMSCCLPP_USE_IB=OFF`: Don't build InfiniBand support.
 - `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF`: Don't build the Python module.
 - `-DMSCCLPP_BUILD_TESTS=OFF`: Don't build the tests.
 - `-DMSCCLPP_BUILD_APPS_NCCL=OFF`: Don't build the NCCL API.
@@ -162,6 +160,7 @@ $ python3 -m pip install -r ./python/requirements_cuda12.txt
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
+(nccl-benchmark)=
 ### NCCL/RCCL Benchmark over MSCCL++
 
 We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
@@ -176,8 +175,6 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 ```
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
-
-See limitations of the current NCCL over MSCCL++ from [here](design/nccl-over-mscclpp.md#limitations).
 
 MSCCL++ also supports fallback to NCCL/RCCL collectives by adding following environment variables.
 ```bash
@@ -200,3 +197,38 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/app
 ```
 
 On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with the fallback features.
+
+**NOTE:** We also provide an NCCL audit shim library that can be used as a drop-in replacement for `libnccl.so` without modifying the original application. Set `LD_PRELOAD` as a global environment variable will cause applications to load cuda libraries from the host system, which may lead to errors in some environments (such as building pipeline in the CPU machine). To avoid this, you can use the audit shim library instead of setting `LD_PRELOAD` directly.
+```bash
+export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
+export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
+torchrun --nnodes=1 --nproc_per_node=8 your_script.py
+```
+
+## Version Tracking
+
+The MSCCL++ Python package includes comprehensive version tracking that captures git repository information at build time. This feature allows users to identify the exact source code version of their installed package.
+
+### Version Format
+
+The package version includes the git commit hash directly in the version string for development builds:
+- **Release version**: `0.7.0`
+- **Development version**: `mscclpp-0.8.0.post1.dev0+gc632fee37.d20251007`
+
+### Checking Version Information
+
+After installation, you can check the version information in several ways:
+
+**From Python:**
+```python
+import mscclpp
+
+# Access individual attributes
+print(f"Version: {mscclpp.__version__}")           # Full version with commit
+Version: 0.8.0.post1.dev0+gc632fee37.d20251007
+
+# Get as dictionary
+mscclpp.version
+{'version': '0.8.0.post1.dev0+gc632fee37.d20251007', 'git_commit': 'g50382c567'}
+```
+

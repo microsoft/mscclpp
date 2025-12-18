@@ -364,14 +364,14 @@ std::shared_ptr<mscclpp::BaseProxyService> BaseTestEngine::createProxyService() 
 }
 
 void BaseTestEngine::setupMeshConnectionsInternal(
-    std::vector<std::shared_ptr<mscclpp::Connection>>& connections, mscclpp::RegisteredMemory& localRegMemory,
+    std::vector<mscclpp::Connection>& connections, mscclpp::RegisteredMemory& localRegMemory,
     std::vector<std::shared_future<mscclpp::RegisteredMemory>>& remoteRegMemories, bool addConnections) {
   const int worldSize = args_.totalRanks;
   const int rank = args_.rank;
   const int nRanksPerNode = args_.nRanksPerNode;
   const int thisNode = rank / nRanksPerNode;
   const mscclpp::Transport ibTransport = IBs[args_.gpuNum];
-  std::vector<std::shared_future<std::shared_ptr<mscclpp::Connection>>> connectionFutures;
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
 
   auto rankToNode = [&](int rank) { return rank / nRanksPerNode; };
   for (int r = 0; r < worldSize; r++) {
@@ -393,7 +393,7 @@ void BaseTestEngine::setupMeshConnectionsInternal(
     remoteRegMemories.push_back(remoteMemory);
   }
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
-                 [](const std::shared_future<std::shared_ptr<mscclpp::Connection>>& future) { return future.get(); });
+                 [](const std::shared_future<mscclpp::Connection>& future) { return future.get(); });
 }
 
 // Create mesh connections between all ranks. If recvBuff is nullptr, assume in-place.
@@ -409,13 +409,13 @@ void BaseTestEngine::setupMeshConnections(std::vector<DeviceHandle<mscclpp::Port
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
   }
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<mscclpp::Connection> connections;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory = (outputBuff) ? outputBufRegMem : inputBufRegMem;
 
   // store memory to keep resource alive
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
   if (setupChannel != nullptr) {
@@ -441,18 +441,18 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
   }
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<mscclpp::Connection> connections;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory =
       (outputBuff && semantic == ChannelSemantic::PUT) ? outputBufRegMem : inputBufRegMem;
   // store memory to keep resource alive
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
   std::unordered_map<size_t, std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>>> memorySemaphores;
   for (size_t cid = 0; cid < connections.size(); ++cid) {
-    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+    if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
       for (size_t i = 0; i < nChannelPerConnection; ++i) {
         memorySemaphores[cid].emplace_back(
             std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, connections[cid]));
@@ -462,7 +462,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
 
   for (size_t i = 0; i < nChannelPerConnection; ++i) {
     for (size_t cid = 0; cid < connections.size(); ++cid) {
-      if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+      if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
         memoryChannels.emplace_back(memorySemaphores[cid][i], remoteRegMemories[cid].get(),
                                     (outputBuff && semantic == ChannelSemantic::GET) ? outputBufRegMem : inputBufRegMem,
                                     outputBuff);
@@ -492,14 +492,14 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
     outputBufRegMem = comm_->registerMemory(outputBuff, outputBuffBytes, allTransports);
   }
 
-  std::vector<std::shared_ptr<mscclpp::Connection>> connections;
+  std::vector<mscclpp::Connection> connections;
   std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
   mscclpp::RegisteredMemory& localRegMemory =
       (getPacketBuff) ? getPacketBufRegMem : ((outputBuff) ? outputBufRegMem : inputBufRegMem);
   // store memory to keep resource alive
   scratchMemory_ = getPacketBufRegMem;
-  inputMemory_ = inputBufRegMem;
-  outputMemory_ = outputBufRegMem;
+  inputMemories_.push_back(inputBufRegMem);
+  outputMemories_.push_back(outputBufRegMem);
 
   setupMeshConnectionsInternal(connections, localRegMemory, remoteRegMemories);
 
@@ -513,7 +513,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   auto service = std::dynamic_pointer_cast<mscclpp::ProxyService>(chanService_);
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
-    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+    if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
       memorySemaphores.emplace(cid, std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, connections[cid]));
     } else {
       connIdToSemId[cid] = service->buildAndAddSemaphore(*comm_, connections[cid]);
@@ -521,7 +521,7 @@ void BaseTestEngine::setupMeshConnections(std::vector<mscclpp::MemoryChannel>& m
   }
 
   for (size_t cid = 0; cid < connections.size(); ++cid) {
-    if (connections[cid]->transport() == mscclpp::Transport::CudaIpc) {
+    if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
       memoryChannels.emplace_back(memorySemaphores[cid],
                                   (outputBuff) ? remoteRegMemoriesOutput[cid].get() : remoteRegMemories[cid].get(),
                                   inputBufRegMem, (outputBuff) ? outputBufRegMem.data() : nullptr);

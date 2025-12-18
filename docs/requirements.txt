@@ -1,4 +1,7 @@
-breathe
+sphinx==8.2.3
+breathe==4.36.0
+myst_parser==4.0.1
 sphinx_rtd_theme
-myst_parser
 sphinxcontrib-mermaid
+sphinx-autodoc-typehints
+setuptools_scm

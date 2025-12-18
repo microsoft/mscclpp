@@ -42,7 +42,7 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
-                                                               std::shared_ptr<Connection> connection) {
+                                                               const Connection& connection) {
   semaphores_.push_back(std::make_shared<Host2DeviceSemaphore>(communicator, connection));
   return semaphores_.size() - 1;
 }
@@ -62,6 +62,14 @@ MSCCLPP_API_CPP MemoryId ProxyService::addMemory(RegisteredMemory memory) {
   return memories_.size() - 1;
 }
 
+MSCCLPP_API_CPP MemoryId ProxyService::nextMemoryId([[maybe_unused]] uint32_t count) const {
+  if (count == 0) {
+    throw Error("count must be greater than 0", ErrorCode::InvalidUsage);
+  }
+  MemoryId firstId = memories_.size();
+  return firstId;
+}
+
 MSCCLPP_API_CPP std::shared_ptr<Host2DeviceSemaphore> ProxyService::semaphore(SemaphoreId id) const {
   return semaphores_[id];
 }
@@ -74,33 +82,32 @@ MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId d
   return PortChannel(id, semaphores_[id], proxy_, dst, src);
 }
 
-MSCCLPP_API_CPP void ProxyService::startProxy() { proxy_->start(); }
+MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
 
 MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
 
-ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger triggerRaw) {
-  ChannelTrigger* trigger = reinterpret_cast<ChannelTrigger*>(&triggerRaw);
-  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger->fields.semaphoreId];
+ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
+  std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger.fields.semaphoreId];
 
-  int maxWriteQueueSize = semaphore->connection()->getMaxWriteQueueSize();
-  auto& numRequests = inflightRequests_[semaphore->connection()];
+  auto& conn = semaphore->connection();
+  int maxWriteQueueSize = conn.getMaxWriteQueueSize();
+  auto& numRequests = inflightRequests_[conn.impl_];
 
-  if (trigger->fields.type & TriggerData) {
-    RegisteredMemory& dst = memories_[trigger->fields.dstMemoryId];
-    RegisteredMemory& src = memories_[trigger->fields.srcMemoryId];
-    semaphore->connection()->write(dst, trigger->fields.dstOffset, src, trigger->fields.srcOffset,
-                                   trigger->fields.size);
+  if (trigger.fields.type & TriggerData) {
+    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    RegisteredMemory& src = memories_[trigger.fields.srcMemoryId];
+    conn.write(dst, trigger.fields.dstOffset, src, trigger.fields.srcOffset, trigger.fields.size);
     numRequests++;
   }
 
-  if (trigger->fields.type & TriggerFlag) {
+  if (trigger.fields.type & TriggerFlag) {
     semaphore->signal();
     numRequests++;
   }
 
-  if (((trigger->fields.type & TriggerSync) && numRequests > 0) ||
+  if (((trigger.fields.type & TriggerSync) && numRequests > 0) ||
       (maxWriteQueueSize != -1 && numRequests > maxWriteQueueSize)) {
-    semaphore->connection()->flush();
+    conn.flush();
     numRequests = 0;
   }
 

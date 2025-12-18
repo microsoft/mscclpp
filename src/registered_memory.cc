@@ -13,6 +13,7 @@
 #include "context.hpp"
 #include "debug.h"
 #include "serialization.hpp"
+#include "unix_socket.hpp"
 #include "utils_internal.hpp"
 
 #define MSCCLPP_CULOG_WARN(cmd)                             \
@@ -52,6 +53,8 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       pidHash(getPidHash()),
       transports(transports) {
   if (transports.has(Transport::CudaIpc)) {
+    CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
+
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
 
@@ -66,12 +69,9 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
         MSCCLPP_CUTHROW(cuMemExportToShareableHandle(transportInfo.shareableHandle, handle, getNvlsMemHandleType(), 0));
       } else {
+        MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&this->fileDesc, handle, getNvlsMemHandleType(), 0));
+        transportInfo.rootFd = UnixSocketServer::instance().registerFd(fileDesc);
         transportInfo.rootPid = getpid();
-        if (transportInfo.rootPid < 0) {
-          throw SysError("getpid() failed", errno);
-        }
-        MSCCLPP_CUTHROW(cuMemExportToShareableHandle(&transportInfo.fileDesc, handle, getNvlsMemHandleType(), 0));
-        this->fileDesc = transportInfo.fileDesc;
       }
       transportInfo.offsetFromBase = (char*)data - (char*)baseDataPtr;
       MSCCLPP_CUTHROW(cuMemRelease(handle));
@@ -88,10 +88,10 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     auto addIb = [&](Transport ibTransport) {
       TransportInfo transportInfo;
       transportInfo.transport = ibTransport;
-      this->ibMr = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
-      transportInfo.ibMr = this->ibMr.get();
+      this->ibMrMap[ibTransport] = contextImpl.getIbContext(ibTransport)->registerMr(data, size);
+      transportInfo.ibMr = this->ibMrMap[ibTransport].get();
       transportInfo.ibLocal = true;
-      transportInfo.ibMrInfo = this->ibMr->getInfo();
+      transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
       this->transportInfos.push_back(transportInfo);
       INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
     };
@@ -139,8 +139,8 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           detail::serialize(result, entry.shareableHandle);
         } else {
+          detail::serialize(result, entry.rootFd);
           detail::serialize(result, entry.rootPid);
-          detail::serialize(result, entry.fileDesc);
         }
         detail::serialize(result, entry.offsetFromBase);
       } else {
@@ -180,8 +180,8 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
           it = detail::deserialize(it, transportInfo.shareableHandle);
         } else {
+          it = detail::deserialize(it, transportInfo.rootFd);
           it = detail::deserialize(it, transportInfo.rootPid);
-          it = detail::deserialize(it, transportInfo.fileDesc);
         }
         it = detail::deserialize(it, transportInfo.offsetFromBase);
       } else {
@@ -201,32 +201,47 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
   }
 
   // Next decide how to set this->data
+  this->data = nullptr;
   if (getHostHash() == this->hostHash && getPidHash() == this->pidHash) {
     // The memory is local to the process, so originalDataPtr is valid as is
     this->data = this->originalDataPtr;
-  } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
+    if (this->isCuMemMapAlloc) {
+      // Query which device owns this memory
+      int gpuId = detail::gpuIdFromAddress(this->data);
+      int currentDevice = -1;
+      MSCCLPP_CUDATHROW(cudaGetDevice(&currentDevice));
+
+      // Only set access if we're on a different device than where memory was allocated
+      if (gpuId != currentDevice) {
+        detail::setReadWriteMemoryAccess(this->data, this->baseDataSize);
+      }
+    }
+  } else if (transports.has(Transport::CudaIpc)) {
     // The memory is local to the machine but not to the process, so we need to open the CUDA IPC handle
     auto entry = getTransportInfo(Transport::CudaIpc);
     void* base;
     if (this->isCuMemMapAlloc) {
 #if (CUDA_NVLS_API_AVAILABLE)
       CUmemGenericAllocationHandle handle;
-      if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
-        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
+      if (getHostHash() != this->hostHash) {
+        // TODO: only open handle if in same MNNVL domain
+        CUresult err = cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType());
+        if (err != CUDA_SUCCESS) {
+          INFO(MSCCLPP_P2P, "Failed to import shareable handle from host: 0x%lx, may not be in the same MNNVL domain",
+               hostHash);
+          return;
+        }
       } else {
-        int rootPidFd = syscall(SYS_pidfd_open, entry.rootPid, 0);
-        if (rootPidFd < 0) {
-          throw SysError("pidfd_open() failed", errno);
+        if (getNvlsMemHandleType() == CU_MEM_HANDLE_TYPE_FABRIC) {
+          MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, entry.shareableHandle, getNvlsMemHandleType()));
+        } else {
+          int fd =
+              UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(entry.rootPid), entry.rootFd);
+          INFO(MSCCLPP_P2P, "Get file descriptor %d from peer 0x%lx", fd, hostHash);
+          MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
+                                                         CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
+          close(fd);
         }
-        int fd = syscall(SYS_pidfd_getfd, rootPidFd, entry.fileDesc, 0);
-        if (fd < 0) {
-          throw SysError("pidfd_getfd() failed", errno);
-        }
-        INFO(MSCCLPP_P2P, "Get file descriptor %d from pidfd %d on peer 0x%lx", fd, rootPidFd, hostHash);
-        MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&handle, reinterpret_cast<void*>(fd),
-                                                       CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-        close(rootPidFd);
-        close(fd);
       }
       size_t minGran = detail::getMulticastGranularity(this->baseDataSize, CU_MULTICAST_GRANULARITY_MINIMUM);
       size_t recommendedGran =
@@ -236,18 +251,17 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       MSCCLPP_CUTHROW(cuMemMap((CUdeviceptr)base, size, 0, handle, 0));
       detail::setReadWriteMemoryAccess(base, size);
       this->data = static_cast<char*>(base) + entry.offsetFromBase;
-#else
-      throw Error("CUDA does not support NVLS. Please ensure your CUDA version supports NVLS to use this feature.",
-                  ErrorCode::InvalidUsage);
-#endif
-    } else {
+#else   // !(CUDA_NVLS_API_AVAILABLE)
+      // never reach here.
+      throw Error("Unexpected error", ErrorCode::InternalError);
+#endif  // !(CUDA_NVLS_API_AVAILABLE)
+    } else if (getHostHash() == this->hostHash) {
       MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&base, entry.cudaIpcBaseHandle, cudaIpcMemLazyEnablePeerAccess));
       this->data = static_cast<char*>(base) + entry.cudaIpcOffsetFromBase;
     }
+  }
+  if (this->data != nullptr) {
     INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
-  } else {
-    // No valid data pointer can be set
-    this->data = nullptr;
   }
 }
 
@@ -261,6 +275,7 @@ RegisteredMemory::Impl::~Impl() {
       // For local registered memory
       if (fileDesc >= 0) {
         close(fileDesc);
+        UnixSocketServer::instance().unregisterFd(fileDesc);
         fileDesc = -1;
       }
       return;

@@ -1,54 +1,79 @@
 {
-  "name": "allreduce_pairs",
+  "name": "allreduce_pkt",
   "collective": "allreduce",
   "protocol": "LL",
   "inplace": true,
-  "num_threads_per_block": 768,
+  "reuse_resources": false,
   "gpus": [
     {
       "id": 0,
-      "inputChunks": 4,
-      "outputChunks": 0,
-      "scratchChunks": 8,
-      "chunkGroups": 2,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
-              "name": "rspkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "name": "ppkt",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 4
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
                 }
               ],
-              "src": 0,
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "s",
-                  "off": 2
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 2
                 }
               ],
-              "srcbuff": "i",
-              "srcoff": 0,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 0,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory"
+            },
+            {
+              "name": "respkt",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "s",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -58,72 +83,65 @@
           "id": 1,
           "ops": [
             {
-              "name": "ppkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "name": "respkt",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 0
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
                 }
               ],
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "i",
-                  "off": 2
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
                 }
               ],
-              "ctype": "sm",
-              "cnt": 2
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "rspkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "name": "upkt",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 5
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
                 }
               ],
-              "src": 0,
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "s",
-                  "off": 3
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
                 }
-              ],
-              "srcbuff": "i",
-              "srcoff": 1,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 1,
-              "ctype": "sm",
-              "cnt": 1
-            },
-            {
-              "name": "cpkt",
-              "src": 0,
-              "srcbuff": "s",
-              "srcoff": 6,
-              "dst": 0,
-              "dstbuff": "i",
-              "dstoff": 2,
-              "ctype": "none",
-              "cnt": 2
+              ]
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "s",
-              "ctype": "sm",
-              "cids": [
-                1
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -131,92 +149,109 @@
       ],
       "channels": [
         {
-          "srcbuff": "i",
-          "dstbuff": "s",
-          "type": "sm",
-          "connectedTo": [
-            1,
+          "channel_type": "memory",
+          "connected_to": [
             1
           ]
         }
-      ]
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
     },
     {
       "id": 1,
-      "inputChunks": 4,
-      "outputChunks": 0,
-      "scratchChunks": 8,
-      "chunkGroups": 2,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
       "threadblocks": [
         {
           "id": 0,
           "ops": [
             {
               "name": "ppkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 2
+                  "type": "i",
+                  "index": 0,
+                  "size": 2
                 }
               ],
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "i",
-                  "off": 0
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 2
                 }
               ],
-              "ctype": "sm",
-              "cnt": 2
+              "channel_type": "memory"
             },
             {
-              "name": "rspkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "name": "respkt",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 6
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "s",
-                  "off": 0
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
                 }
               ],
-              "srcbuff": "i",
-              "srcoff": 2,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 2,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             },
             {
-              "name": "cpkt",
-              "src": 1,
-              "srcbuff": "s",
-              "srcoff": 4,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 0,
-              "ctype": "none",
-              "cnt": 2
+              "name": "upkt",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 2
+                }
+              ]
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "s",
-              "ctype": "sm",
-              "cids": [
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
                 0
               ]
             }
@@ -226,40 +261,48 @@
           "id": 1,
           "ops": [
             {
-              "name": "rspkt",
-              "o_buff": {
-                "src": "i",
-                "dst": "s"
-              },
-              "o_cids": [
+              "name": "respkt",
+              "src_buff": [
                 {
-                  "id": 0,
-                  "off": 7
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
                 }
               ],
-              "src": 1,
-              "srcs": [
+              "dst_buff": [
                 {
-                  "buff": "s",
-                  "off": 1
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
                 }
               ],
-              "srcbuff": "i",
-              "srcoff": 3,
-              "dst": 1,
-              "dstbuff": "i",
-              "dstoff": 3,
-              "ctype": "sm",
-              "cnt": 1
+              "channel_type": "memory",
+              "reduce_op": "sum"
             }
           ],
           "channels": [
             {
-              "src": "i",
-              "dst": "s",
-              "ctype": "sm",
-              "cids": [
-                1
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
               ]
             }
           ]
@@ -267,15 +310,27 @@
       ],
       "channels": [
         {
-          "srcbuff": "i",
-          "dstbuff": "s",
-          "type": "sm",
-          "connectedTo": [
-            0,
+          "channel_type": "memory",
+          "connected_to": [
             0
           ]
         }
-      ]
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
     }
-  ]
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": true,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
 }

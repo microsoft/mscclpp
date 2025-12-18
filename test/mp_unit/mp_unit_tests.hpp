@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_MP_UNIT_TESTS_HPP_
 #define MSCCLPP_MP_UNIT_TESTS_HPP_
@@ -108,8 +108,8 @@ class CommunicatorTestBase : public MultiProcessTest {
   std::shared_ptr<mscclpp::Communicator> communicator;
   mscclpp::Transport ibTransport;
   std::vector<mscclpp::RegisteredMemory> registeredMemories;
-  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> connections;
-  std::unordered_map<int, std::shared_ptr<mscclpp::Connection>> cpuConnections;
+  std::unordered_map<int, mscclpp::Connection> connections;
+  std::unordered_map<int, mscclpp::Connection> cpuConnections;
 };
 
 class CommunicatorTest : public CommunicatorTestBase {

@@ -4,8 +4,12 @@
 #ifndef BROADCAST_HPP_
 #define BROADCAST_HPP_
 
+#include <mscclpp/nccl.h>
+
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
@@ -146,17 +150,31 @@ cudaError_t broadcast(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<
                       size_t channelOutOffset, int rank, int nRanksPerNode, int root, int worldSize, size_t nelems,
                       cudaStream_t stream) {
   int nBlocks = 7;
-  // if (nelems <= 4096) {
-  //   nBlocks = 7;
-  // } else if (nelems <= 32768) {
-  //   nBlocks = 14;
-  // } else if (nelems >= 2097152) {
-  //   nBlocks = 35;
-  // }
   broadcast6<IsOutOfPlace><<<nBlocks, 1024, 0, stream>>>((void*)buff, (void*)scratch, (void*)resultBuff, memoryChannels,
                                                          channelOutOffset, rank, worldSize, root, nRanksPerNode,
                                                          nelems * sizeof(T) / sizeof(int));
   return cudaGetLastError();
 }
+
+class BroadcastAlgo6 : public mscclpp::AlgorithmBuilder {
+ public:
+  BroadcastAlgo6() = default;
+  mscclpp::Algorithm build() override;
+
+ private:
+  void initialize(std::shared_ptr<mscclpp::Communicator> comm,
+                  std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+  ncclResult_t broadcastKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
+                                   size_t count, mscclpp::DataType dtype, cudaStream_t stream,
+                                   std::unordered_map<std::string, std::shared_ptr<void>>& extras);
+
+  std::shared_ptr<mscclpp::AlgorithmCtx> initBroadcastContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                              void* output, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateBroadcastContextKey(const void*, void*, size_t, mscclpp::DataType);
+
+  std::vector<mscclpp::Connection> conns_;
+  size_t scratchMemSize_;
+  std::shared_ptr<char> scratchBuffer_;
+};
 
 #endif  // BROADCAST_HPP_

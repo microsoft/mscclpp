@@ -2,23 +2,37 @@
 # Licensed under the MIT license.
 
 [build-system]
-requires = ["scikit-build-core"]
+requires = [
+    "scikit-build-core>=0.10.0",
+    "setuptools-scm[toml]>=8"
+]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "mscclpp"
-version = "0.7.0"
+dynamic = ["version"]
+description = "MSCCL++ Python API"
+requires-python = ">=3.8"
+
+[tool.setuptools_scm]
+write_to = "python/mscclpp/_version.py"
+version_scheme = "no-guess-dev"
 
 [tool.scikit-build]
 cmake.version = ">=3.25.0"
 cmake.build-type = "Release"
 build-dir = "build/{wheel_tag}"
+# Tell scikit-build-core to get version from setuptools-scm
+metadata.version.provider = "scikit_build_core.metadata.setuptools_scm"
 
 [tool.scikit-build.wheel]
 packages = ["python/mscclpp", "python/mscclpp_benchmark"]
 install-dir = "mscclpp"
 license-files = ["VERSION", "LICENSE", "CITATION.cff", "CODE_OF_CONDUCT.md", "README.md", "SECURITY.md", "SUPPORT.md"]
 exclude = ["mscclpp/*.cpp"]
+
+[tool.scikit-build.sdist]
+include= ["python/mscclpp/_version.py"]
 
 [tool.scikit-build.cmake.define]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"

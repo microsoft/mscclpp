@@ -4,10 +4,31 @@
 #include "execution_plan.hpp"
 
 #include <cassert>
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <set>
+#include <sstream>
+
+#include "debug.h"
 
 namespace {
+
+static const std::vector<mscclpp::AlgoConfig> defaultAlgoConfigs = {
+    {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
+    {"allreduce_2nodes_128K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
+
+std::string simpleHash(const std::string& input) {
+  std::hash<std::string> hasher;
+  size_t hashValue = hasher(input);
+  std::ostringstream oss;
+  oss << std::hex << hashValue;
+  return oss.str();
+}
+
+std::string generateFileId(const std::string& filePath) { return simpleHash(filePath); }
+
 template <typename T, typename Predicate>
 std::vector<T> filter(const std::vector<T>& vec, Predicate pred) {
   std::vector<T> filtered;
@@ -38,28 +59,42 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::FLUSH;
   } else if (str == "re") {
     return mscclpp::OperationType::REDUCE;
-  } else if (str == "rs") {
+  } else if (str == "res") {
     return mscclpp::OperationType::REDUCE_SEND;
-  } else if (str == "rrc") {
-    return mscclpp::OperationType::READ_REDUCE_COPY;
-  } else if (str == "rrcs") {
-    return mscclpp::OperationType::READ_REDUCE_COPY_SEND;
+  } else if (str == "rre") {
+    return mscclpp::OperationType::READ_REDUCE;
+  } else if (str == "rres") {
+    return mscclpp::OperationType::READ_REDUCE_SEND;
   } else if (str == "ppkt") {
-    return mscclpp::OperationType::PUT_PACKET;
+    return mscclpp::OperationType::PUT_PACKETS;
   } else if (str == "rppkt") {
-    return mscclpp::OperationType::READ_PUT_PACKET;
-  } else if (str == "rspkt") {
-    return mscclpp::OperationType::REDUCE_SEND_PACKET;
+    return mscclpp::OperationType::READ_PUT_PACKETS;
+  } else if (str == "respkt") {
+    return mscclpp::OperationType::REDUCE_SEND_PACKETS;
   } else if (str == "cpkt") {
-    return mscclpp::OperationType::COPY_PACKET;
-  } else if (str == "tpkt") {
-    return mscclpp::OperationType::TRANSFORM_TO_PACKET;
-  } else if (str == "rpkt") {
-    return mscclpp::OperationType::REDUCE_PACKET;
+    return mscclpp::OperationType::COPY_PACKETS;
+  } else if (str == "upkt") {
+    return mscclpp::OperationType::UNPACK_PACKETS;
+  } else if (str == "repkt") {
+    return mscclpp::OperationType::REDUCE_PACKETS;
+  } else if (str == "recpkt") {
+    return mscclpp::OperationType::REDUCE_COPY_PACKETS;
+  } else if (str == "recspkt") {
+    return mscclpp::OperationType::REDUCE_COPY_SEND_PACKETS;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
+  } else if (str == "rlxsignal") {
+    return mscclpp::OperationType::RELAXED_SIGNAL;
+  } else if (str == "rlxwait") {
+    return mscclpp::OperationType::RELAXED_WAIT;
+  } else if (str == "pipeline") {
+    return mscclpp::OperationType::PIPELINE;
+  } else if (str == "sem_acquire") {
+    return mscclpp::OperationType::SEM_ACQUIRE;
+  } else if (str == "sem_release") {
+    return mscclpp::OperationType::SEM_RELEASE;
   } else {
-    throw mscclpp::Error("Invalid operation type", mscclpp::ErrorCode::ExecutorError);
+    throw mscclpp::Error("Invalid operation type: " + str, mscclpp::ErrorCode::ExecutorError);
   }
 };
 
@@ -76,64 +111,53 @@ auto convertToBufferType = [](const std::string& str) {
 };
 
 auto convertToChannelType = [](const std::string& str) {
-  if (str == "memory" || str == "sm") {
+  if (str == "memory") {
     return mscclpp::ChannelType::MEMORY;
-  } else if (str == "port" || str == "proxy") {
+  } else if (str == "port") {
     return mscclpp::ChannelType::PORT;
   } else if (str == "none") {
     return mscclpp::ChannelType::NONE;
-  } else if (str == "nvls") {
-    return mscclpp::ChannelType::NVLS;
+  } else if (str == "switch") {
+    return mscclpp::ChannelType::SWITCH;
   } else {
     throw mscclpp::Error("Invalid channel type", mscclpp::ErrorCode::ExecutorError);
   }
 };
-
-std::set groupChannelType{mscclpp::ChannelType::NVLS};
 
 }  // namespace
 
 namespace mscclpp {
 using json = nlohmann::json;
 
-ExecutionPlan::Impl::Impl(const std::string planPath) : planPath(planPath), isUsingPacket(false) {
+ExecutionPlan::Impl::Impl(const std::string& planPath, int rank)
+    : planPath(planPath), isUsingPacket(false), rank(rank) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
   this->name = obj["name"];
   this->collective = obj["collective"];
   this->isInPlace = obj["inplace"];
+  this->reuseResources = obj.value("reuse_resources", false);
+  this->doubleScratchBuffer = obj.value("use_double_scratch_buffer", false);
+  this->bufferAlignment = obj.value("buffer_alignment", 16);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
 }
 
-std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, ChannelType channelType) const {
+std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(ChannelType channelType) const {
   auto pred = [channelType](const ChannelInfo& info) { return info.channelType == channelType; };
-  return filter(this->channelInfos.at(rank), pred);
+  return filter(this->channelInfos_.at(rank), pred);
 }
 
-std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfos(int rank, BufferType dstBufferType) const {
-  auto pred = [dstBufferType](const ChannelInfo& info) { return info.dstBufferType == dstBufferType; };
-  return filter(this->channelInfos.at(rank), pred);
-}
-
-std::vector<ChannelInfo> ExecutionPlan::Impl::getChannelInfosByDstRank(int rank, BufferType bufferType) const {
-  auto pred = [bufferType](const ChannelInfo& info) { return info.dstBufferType == bufferType; };
-  return filter(this->channelInfosByDstRank.at(rank), pred);
-}
-
-std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, int worldSize,
-                                                                      ChannelType channelType) {
+std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int worldSize, ChannelType channelType) {
   std::vector<ChannelInfo> unpaired;
   for (int peer = 0; peer < worldSize; peer++) {
     if (peer == rank) {
       continue;
     }
-    if (this->channelCountMap[{rank, channelType}][peer] < this->channelCountMap[{peer, channelType}][rank]) {
-      int count = this->channelCountMap[{peer, channelType}][rank] - this->channelCountMap[{rank, channelType}][peer];
+    if (this->channelCountMap_[{rank, channelType}][peer] < this->channelCountMap_[{peer, channelType}][rank]) {
+      int count = this->channelCountMap_[{peer, channelType}][rank] - this->channelCountMap_[{rank, channelType}][peer];
       for (int i = 0; i < count; i++) {
         ChannelInfo info;
-        info.srcBufferType = BufferType::NONE;
-        info.dstBufferType = BufferType::NONE;
         info.channelType = channelType;
         info.connectedPeers.push_back(peer);
         unpaired.push_back(info);
@@ -143,79 +167,80 @@ std::vector<ChannelInfo> ExecutionPlan::Impl::getUnpairedChannelInfos(int rank, 
   return unpaired;
 }
 
-std::vector<NvlsInfo> ExecutionPlan::Impl::getNvlsInfos(int rank, size_t sendBuffserSize, size_t recvBufferSize) const {
-  if (sendBuffserSize == 0 && recvBufferSize == 0) {
-    return this->nvlsInfos.at(rank);
-  }
-  size_t chunkSize = this->getUpperBoundChunkSize(rank, sendBuffserSize, recvBufferSize);
-  std::vector<NvlsInfo> infos = this->nvlsInfos.at(rank);
-  for (auto& info : infos) {
-    info.bufferSize = info.bufferSize * chunkSize;
-  }
-  return infos;
-}
-
-std::vector<int> ExecutionPlan::Impl::getConnectedPeers(int rank) const {
+std::vector<int> ExecutionPlan::Impl::getConnectedPeers() const {
   std::set<int> peers;
-  for (const auto& info : this->channelInfos.at(rank)) {
+  for (const auto& info : this->channelInfos_.at(rank)) {
     for (int peer : info.connectedPeers) {
       peers.insert(peer);
     }
   }
-  for (const auto& info : this->channelInfosByDstRank.at(rank)) {
-    for (int peer : info.connectedPeers) {
-      peers.insert(peer);
+  if (this->channelInfosByDstRank_.find(rank) != this->channelInfosByDstRank_.end()) {
+    for (const auto& info : this->channelInfosByDstRank_.at(rank)) {
+      for (int peer : info.connectedPeers) {
+        peers.insert(peer);
+      }
     }
   }
   return std::vector<int>(peers.begin(), peers.end());
 }
 
-std::vector<BufferType> ExecutionPlan::Impl::getConnectedBufferTypes(int rank) const {
-  std::set<BufferType> bufferTypes;
-  for (const auto& info : this->channelInfos.at(rank)) {
-    bufferTypes.insert(info.dstBufferType);
+std::vector<BufferInfo> ExecutionPlan::Impl::getRemoteBufferInfos() const {
+  if (this->remoteBufferInfos_.find(rank) == this->remoteBufferInfos_.end()) {
+    return std::vector<BufferInfo>();
   }
-  return std::vector<BufferType>(bufferTypes.begin(), bufferTypes.end());
+  return this->remoteBufferInfos_.at(rank);
 }
 
-size_t ExecutionPlan::Impl::getScratchBufferSize(int rank, size_t inputSize, size_t outputSize) const {
-  size_t sizePerRank = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerRank = inputSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerRank = outputSize / this->outputChunks.at(rank);
-  else
-    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
+std::vector<BufferInfo> ExecutionPlan::Impl::getLocalBufferToSend() const {
+  if (this->localBufferToSend_.find(rank) == this->localBufferToSend_.end()) {
+    return std::vector<BufferInfo>();
+  }
+  return this->localBufferToSend_.at(rank);
+}
+
+size_t ExecutionPlan::Impl::calScratchBufferSize(size_t inputSize, size_t outputSize) const {
+  if (reuseResources && this->scratchChunks > 0) {
+    return PREDFINED_SCRATCH_SIZE;
+  }
+
+  size_t sizePerChunk = 0;
+  size_t size = 0;
+  if (this->inputChunks != 0) {
+    sizePerChunk = (inputSize + this->inputChunks - 1) / this->inputChunks;
+  } else if (this->outputChunks != 0) {
+    sizePerChunk = (outputSize + this->outputChunks - 1) / this->outputChunks;
+  } else {
+    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+  }
 
   if (this->isUsingPacket) {
-    return sizePerRank * this->scratchChunks.at(rank) * 2 /* data + flag*/ * 2 /*double buffer*/;
+    size = sizePerChunk * this->scratchChunks * 2; /* data + flag*/
+  } else {
+    size = sizePerChunk * this->scratchChunks;
   }
-  return sizePerRank * this->scratchChunks.at(rank);
-}
 
-size_t ExecutionPlan::Impl::getMaxScratchBufferSize(int rank) const {
-  if (this->maxMessageSize == std::numeric_limits<uint64_t>::max()) {
-    return std::numeric_limits<size_t>::max();
+  if (this->doubleScratchBuffer) {
+    size = size * 2;
   }
-  size_t sizePerChunk = 0;
-  if (this->inputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->inputChunks.at(rank);
-  else if (this->outputChunks.at(rank) != 0)
-    sizePerChunk = maxMessageSize / this->outputChunks.at(rank);
-  else
-    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
-
-  return this->getScratchBufferSize(rank, sizePerChunk * this->inputChunks.at(rank),
-                                    sizePerChunk * this->outputChunks.at(rank));
+  return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
 
-std::vector<Operation> ExecutionPlan::Impl::getOperations(int rank, int threadblock) const {
-  return this->operations.at(rank)[threadblock];
+size_t ExecutionPlan::Impl::calMaxScratchChunkSize(size_t scratchSize) const {
+  if (this->scratchChunks == 0) {
+    return 0;
+  }
+  if (this->doubleScratchBuffer) {
+    scratchSize = scratchSize / 2;
+  }
+  size_t size = (scratchSize + this->scratchChunks - 1) / this->scratchChunks;
+  return (size + this->bufferAlignment - 1) / this->bufferAlignment * this->bufferAlignment;
 }
 
-int ExecutionPlan::Impl::getThreadblockCount(int rank) const { return this->operations.at(rank).size(); }
+std::vector<Operation> ExecutionPlan::Impl::getOperations(int threadblock) const {
+  return this->operations[threadblock];
+}
 
-int ExecutionPlan::Impl::getNThreadsPerBlock() const { return this->nThreadsPerBlock; }
+int ExecutionPlan::Impl::getThreadblockCount() const { return this->operations.size(); }
 
 void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
                                             size_t constDstOffset) {
@@ -234,18 +259,23 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
   this->nThreadsPerBlock = obj.value("num_threads_per_block", 1024);
   this->minMessageSize = obj.value("min_message_size", 0);
   this->maxMessageSize = obj.value("max_message_size", std::numeric_limits<uint64_t>::max());
+
   this->isInPlace = obj["inplace"];
   const auto& gpus = obj["gpus"];
 
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    this->inputChunks[rank] = gpu["inputChunks"];
-    this->outputChunks[rank] = gpu["outputChunks"];
-    this->scratchChunks[rank] = gpu["scratchChunks"];
-    this->chunkGroups[rank] = gpu["chunkGroups"];
+  auto& gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU rank does not match", ErrorCode::ExecutorError);
   }
+  this->inputChunks = gpu["input_chunks"];
+  this->outputChunks = gpu["output_chunks"];
+  this->scratchChunks = gpu["scratch_chunks"];
+  checkMessageSize();
+
   this->setupChannels(gpus);
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+  this->setupRemoteBuffers(gpus);
+  this->setupSemaphores(gpu);
+  this->setupOperations(gpu, contsSrcOffset, constDstOffset);
 }
 
 void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t outputSize, size_t contsSrcOffset,
@@ -260,31 +290,48 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
     this->isUsingPacket = true;
   }
   const auto& gpus = obj["gpus"];
-
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    this->inputChunks[rank] = gpu["inputChunks"];
-    this->outputChunks[rank] = gpu["outputChunks"];
-    this->scratchChunks[rank] = gpu["scratchChunks"];
-    this->chunkGroups[rank] = gpu["chunkGroups"];
+  const auto& gpu = gpus[rank];
+  if (gpu["id"] != rank) {
+    throw Error("GPU rank does not match", ErrorCode::ExecutorError);
   }
+
+  this->inputChunks = gpu["input_chunks"];
+  this->outputChunks = gpu["output_chunks"];
+  this->scratchChunks = gpu["scratch_chunks"];
 
   this->inputSize = inputSize;
   this->outputSize = outputSize;
-  this->setupOperations(gpus, contsSrcOffset, constDstOffset);
+
+  checkMessageSize();
+  this->setupOperations(gpu, contsSrcOffset, constDstOffset);
 }
 
-void ExecutionPlan::Impl::parseChannels(
-    const json& gpu, std::vector<ChannelInfo>& channelInfos, std::vector<NvlsInfo>& nvlsInfos,
-    std::map<std::tuple<int, BufferType, BufferType, ChannelType>, std::vector<int>>& chanConnectedPeersMap, int rank) {
-  for (const auto& channel : gpu["channels"]) {
-    ChannelType chanType = convertToChannelType(channel["type"]);
+void ExecutionPlan::Impl::checkMessageSize() const {
+  size_t size = inputSize;
+  if (inputSize % bufferAlignment != 0 || outputSize % bufferAlignment != 0 ||
+      (inputSize / bufferAlignment) % inputChunks != 0 || (outputSize / bufferAlignment) % outputChunks != 0) {
+    throw Error("Input or output size is not aligned with buffer alignment or chunks", ErrorCode::ExecutorError);
+  }
+  if (this->collective == "allgather") {
+    size = outputSize;
+  }
+  if (size < this->minMessageSize || size > this->maxMessageSize) {
+    throw Error("Input or output size is not within the valid range", ErrorCode::ExecutorError);
+  }
+}
 
-    if (chanType == ChannelType::NVLS) {
+void ExecutionPlan::Impl::parseChannels(const json& gpu, std::vector<ChannelInfo>& channelInfos,
+                                        std::vector<NvlsInfo>& nvlsInfos,
+                                        std::map<std::pair<int, ChannelType>, std::vector<int>>& chanConnectedPeersMap,
+                                        int rank) {
+  for (const auto& channel : gpu["channels"]) {
+    ChannelType chanType = convertToChannelType(channel["channel_type"]);
+
+    if (chanType == ChannelType::SWITCH) {
       NvlsInfo info;
-      info.bufferType = convertToBufferType(channel["buff"]);
-      for (const auto& group : channel["rankGroups"]) {
-        info.bufferSize = (int)group["size"];
+      info.bufferType = convertToBufferType(channel["buffer_type"]);
+      for (const auto& group : channel["rank_groups"]) {
+        info.nChunks = (int)group["size"];
         info.ranks.clear();
         for (int rank : group["ranks"]) {
           info.ranks.push_back(rank);
@@ -293,15 +340,36 @@ void ExecutionPlan::Impl::parseChannels(
       }
     } else {
       ChannelInfo info;
-      info.srcBufferType = convertToBufferType(channel["srcbuff"]);
-      info.dstBufferType = convertToBufferType(channel["dstbuff"]);
-      info.channelType = convertToChannelType(channel["type"]);
-      for (const auto& peer : channel["connectedTo"]) {
+      info.channelType = chanType;
+      for (const auto& peer : channel["connected_to"]) {
         info.connectedPeers.push_back(peer);
-        chanConnectedPeersMap[{peer, info.srcBufferType, info.dstBufferType, info.channelType}].push_back(rank);
-        this->channelCountMap[{rank, info.channelType}][peer]++;
+        chanConnectedPeersMap[{peer, info.channelType}].push_back(rank);
+        this->channelCountMap_[{rank, info.channelType}][peer]++;
       }
       channelInfos.push_back(info);
+    }
+  }
+}
+
+void ExecutionPlan::Impl::parseRemoteBuffer(const nlohmann::json& gpus) {
+  for (const auto& gpu : gpus) {
+    std::unordered_map<ChannelType, int> channelCountMap;
+    int gpuRank = gpu["id"];
+    auto& bufferInfos = this->remoteBufferInfos_[gpuRank];
+    auto& bufferIndexMap = this->bufferIndexMap_[gpuRank];
+    for (auto& remoteBuffer : gpu["remote_buffers"]) {
+      int bufferId = bufferInfos.size();
+      int oriRank = remoteBuffer["rank"];
+      BufferType bufferType = convertToBufferType(remoteBuffer["type"]);
+      std::vector<ChannelType> accessChannels;
+      for (const auto& channel : remoteBuffer["access_channel_types"]) {
+        ChannelType chanType = convertToChannelType(channel);
+        accessChannels.push_back(chanType);
+        bufferIndexMap[{bufferId, chanType}] = channelCountMap[chanType]++;
+      }
+      BufferInfo info{oriRank, gpuRank, bufferType, accessChannels};
+      bufferInfos.push_back(info);
+      this->localBufferToSend_[oriRank].push_back(info);
     }
   }
 }
@@ -309,73 +377,116 @@ void ExecutionPlan::Impl::parseChannels(
 // Construct the channel info. Step 1. Flatten MEMORY and PORT channels into separate vectors.
 // Step 2. For each threadblock, construct a vector of channel indexes and keys.
 void ExecutionPlan::Impl::setupChannels(const json& gpus) {
-  using mapKey = std::tuple<int, BufferType, BufferType, ChannelType>;
+  using mapKey = std::pair<int, ChannelType>;
   std::map<mapKey, std::vector<int>> chanConnectedPeersMap;
   for (const auto& gpu : gpus) {
     int rank = gpu["id"];
     std::vector<ChannelInfo> channelInfos;
     std::vector<NvlsInfo> nvlsInfos;
     this->parseChannels(gpu, channelInfos, nvlsInfos, chanConnectedPeersMap, rank);
-    this->channelInfos[rank] = channelInfos;
+    this->channelInfos_[rank] = channelInfos;
     this->nvlsInfos[rank] = nvlsInfos;
   }
 
   for (const auto& [key, connectedFrom] : chanConnectedPeersMap) {
-    auto [peer, srcBufferType, dstBufferType, channelType] = key;
+    auto [peer, channelType] = key;
     ChannelInfo info;
-    info.srcBufferType = srcBufferType;
-    info.dstBufferType = dstBufferType;
     info.channelType = channelType;
     info.connectedPeers = connectedFrom;
-    this->channelInfosByDstRank[peer].push_back(info);
+    this->channelInfosByDstRank_[peer].push_back(info);
   }
 
-  // setup threadblockChannelMap
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    auto channelTypes = {ChannelType::MEMORY, ChannelType::PORT, ChannelType::NVLS};
-    std::unordered_map<ChannelKey, std::vector<int>> channelMap;
-    for (auto channelType : channelTypes) {
-      const std::vector<ChannelInfo> channelInfos = this->getChannelInfos(rank, channelType);
-      int index = 0;
-      if (channelType == ChannelType::NVLS) {
-        const std::vector<NvlsInfo> nvlsInfos = this->getNvlsInfos(rank);
-        for (const auto& info : nvlsInfos) {
-          ChannelKey key = {info.bufferType, info.bufferType, ChannelType::NVLS};
-          channelMap[key].push_back(index++);
-        }
-      } else {
-        for (const auto& info : channelInfos) {
-          ChannelKey key = {info.srcBufferType, info.dstBufferType, info.channelType};
-          for (size_t i = 0; i < info.connectedPeers.size(); i++) {
-            channelMap[key].push_back(index++);
-          }
-        }
+  // setup threadblockChannels
+  const auto& gpu = gpus[rank];
+  int nthreadblocks = gpu["threadblocks"].size();
+  this->threadblockMemoryChannels.resize(nthreadblocks);
+  this->threadblockPortChannels.resize(nthreadblocks);
+  this->threadblockNvlsChannels.resize(nthreadblocks);
+  for (const auto& threadblock : gpu["threadblocks"]) {
+    for (const auto& channel : threadblock["channels"]) {
+      ChannelType channelType = convertToChannelType(channel["channel_type"]);
+      ChannelKey key = {BufferType::NONE, channelType};
+      if (channel.contains("buff")) {
+        key = {convertToBufferType(channel["buff"]), channelType};
       }
-    }
-    int nthreadblocks = gpu["threadblocks"].size();
-    this->threadblockMemoryChannelMap[rank].resize(nthreadblocks);
-    this->threadblockPortChannelMap[rank].resize(nthreadblocks);
-    this->threadblockNvlsChannelMap[rank].resize(nthreadblocks);
-    for (const auto& threadblock : gpu["threadblocks"]) {
-      for (const auto& channel : threadblock["channels"]) {
-        ChannelType channelType = convertToChannelType(channel["ctype"]);
-        ChannelKey key = {convertToBufferType(channel["src"]), convertToBufferType(channel["dst"]), channelType};
-        for (int id : channel["cids"]) {
-          if (channelType == ChannelType::MEMORY) {
-            this->threadblockMemoryChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
-          } else if (channelType == ChannelType::PORT) {
-            this->threadblockPortChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
-          } else if (channelType == ChannelType::NVLS) {
-            this->threadblockNvlsChannelMap[rank][threadblock["id"]].emplace_back(channelMap[key][id], key);
-          }
+      for (int id : channel["channel_ids"]) {
+        if (channelType == ChannelType::MEMORY) {
+          this->threadblockMemoryChannels[threadblock["id"]].emplace_back(id);
+        } else if (channelType == ChannelType::PORT) {
+          this->threadblockPortChannels[threadblock["id"]].emplace_back(id);
+        } else if (channelType == ChannelType::SWITCH) {
+          this->threadblockNvlsChannels[threadblock["id"]].emplace_back(id);
         }
       }
     }
   }
 }
 
-void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffset, size_t constDstOffset) {
+void ExecutionPlan::Impl::setupRemoteBuffers(const json& gpus) {
+  this->parseRemoteBuffer(gpus);
+
+  // setup threadblockBuffers
+  const auto& gpu = gpus[rank];
+  int nthreadblocks = gpu["threadblocks"].size();
+  this->threadblockMemoryChannelBuffers.resize(nthreadblocks);
+  this->threadblockPortChannelBuffers.resize(nthreadblocks);
+  for (const auto& threadblock : gpu["threadblocks"]) {
+    if (!threadblock.contains("remote_buffer_refs")) {
+      continue;
+    }
+    for (const auto& remoteBuffRef : threadblock["remote_buffer_refs"]) {
+      ChannelType accessChanType = convertToChannelType(remoteBuffRef["access_channel_type"]);
+      if (accessChanType == ChannelType::PORT) {
+        for (const auto& bufferId : remoteBuffRef["remote_buffer_ids"]) {
+          BufferType type = this->remoteBufferInfos_[rank][bufferId].bufferType;
+          this->threadblockPortChannelBuffers[threadblock["id"]].push_back(
+              {this->bufferIndexMap_[rank][{bufferId, accessChanType}], type});
+        }
+      } else if (accessChanType == ChannelType::MEMORY) {
+        for (const auto& bufferId : remoteBuffRef["remote_buffer_ids"]) {
+          BufferType type = this->remoteBufferInfos_[rank][bufferId].bufferType;
+          this->threadblockMemoryChannelBuffers[threadblock["id"]].push_back(
+              {this->bufferIndexMap_[rank][{bufferId, accessChanType}], type});
+        }
+      }
+    }
+  }
+}
+
+void ExecutionPlan::Impl::setupSemaphores(const json& gpu) {
+  if (!gpu.contains("semaphores")) {
+    return;
+  }
+  for (const auto& sem : gpu["semaphores"]) {
+    SemaphoreInfo info;
+    info.initValue = sem["init_value"];
+    this->semaphoreInfos.push_back(info);
+  }
+}
+
+void ExecutionPlan::Impl::setupOperations(const json& gpu, size_t constSrcOffset, size_t constDstOffset) {
+  // setup threadblocks and operations
+  for (const auto& threadblock : gpu["threadblocks"]) {
+    int threadBlockId = threadblock["id"];
+    std::vector<Operation> ops;
+    for (const auto& op : threadblock["ops"]) {
+      Operation operation = {};
+      this->setupOperation(op, operation, rank, threadBlockId, constSrcOffset, constDstOffset);
+      ops.push_back(operation);
+      if (operation.type == OperationType::PIPELINE) {
+        for (const auto& innerOp : op["ops"]) {
+          Operation pipelineOp = {};
+          this->setupOperation(innerOp, pipelineOp, rank, threadBlockId, constSrcOffset, constDstOffset);
+          ops.push_back(pipelineOp);
+        }
+      }
+    }
+    this->operations.push_back(ops);
+  }
+}
+
+void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& operation, int rank, int threadBlockId,
+                                         size_t constSrcOffset, size_t constDstOffset) {
   auto getConstOffset = [&](BufferType type) -> size_t {
     switch (type) {
       case BufferType::INPUT:
@@ -389,220 +500,204 @@ void ExecutionPlan::Impl::setupOperations(const json& gpus, size_t constSrcOffse
     }
   };
 
-  // setup threadblocks and operations
-  for (const auto& gpu : gpus) {
-    int rank = gpu["id"];
-    for (const auto& threadblock : gpu["threadblocks"]) {
-      std::unordered_map<ChannelKey, std::vector<int>> channelIndexes;
-      std::vector<Operation> ops;
-      int threadblockId = threadblock["id"];
-      const auto& memoryChannels = this->threadblockMemoryChannelMap[rank][threadblockId];
-      const auto& portChannels = this->threadblockPortChannelMap[rank][threadblockId];
-      const auto& nvlsChannels = this->threadblockNvlsChannelMap[rank][threadblockId];
-      for (size_t i = 0; i < memoryChannels.size(); i++) {
-        const auto& [_, key] = memoryChannels[i];
-        channelIndexes[key].push_back(i);
-      }
-      for (size_t i = 0; i < portChannels.size(); i++) {
-        const auto& [_, key] = portChannels[i];
-        channelIndexes[key].push_back(i);
-      }
-      for (size_t i = 0; i < nvlsChannels.size(); i++) {
-        const auto& [_, key] = nvlsChannels[i];
-        channelIndexes[key].push_back(i);
-      }
-      for (const auto& op : threadblock["ops"]) {
-        Operation operation = {};
-        std::vector<uint32_t> chunkIndexes;
-        operation.type = static_cast<OperationType>(getOpType(op["name"]));
-        if (op.contains("ctype")) {
-          operation.channelType = convertToChannelType(op["ctype"]);
-        }
-        if (op.contains("i_cids")) {
-          if (operation.channelType == ChannelType::NVLS) {
-            BufferType srcBufferType = convertToBufferType(op["srcbuff"]);
-            operation.nvlsInputIndex =
-                channelIndexes[{srcBufferType, srcBufferType, ChannelType::NVLS}][op["i_cids"][0]["id"]];
-            chunkIndexes.push_back((uint32_t)op["srcoff"]);
-          } else {
-            operation.nInputs = op["i_cids"].size();
-            for (int i = 0; i < operation.nInputs; i++) {
-              BufferType srcBufferType = convertToBufferType(op["i_buff"]["src"]);
-              BufferType dstBufferType = convertToBufferType(op["i_buff"]["dst"]);
-              // Get the relevant channel index in rank channelInfos
-              operation.inputChannelIndexes[i] =
-                  channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["i_cids"][i]["id"]];
-              operation.inputOffsets[i] =
-                  this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["i_cids"][i]["off"]) +
-                  getConstOffset(srcBufferType);
-              chunkIndexes.push_back((uint32_t)op["i_cids"][i]["off"]);
-            }
-          }
-        }
-        // will have either srcs or i_cids
-        if (op.contains("srcs")) {
-          operation.nInputs = op["srcs"].size();
-          operation.inputBufferType = convertToBufferType(op["srcs"][0]["buff"]);
-          for (int i = 0; i < operation.nInputs; i++) {
-            operation.inputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcs"][i]["off"]) +
-                getConstOffset(operation.inputBufferType);
-            chunkIndexes.push_back((uint32_t)op["srcs"][i]["off"]);
-          }
-        }
-        if (op.contains("o_cids")) {
-          operation.nOutputs = op["o_cids"].size();
-          for (int i = 0; i < operation.nOutputs; i++) {
-            if (operation.channelType == ChannelType::NVLS) {
-              BufferType dstBufferType = convertToBufferType(op["dstbuff"]);
-              operation.nvlsOutputIndex =
-                  channelIndexes[{dstBufferType, dstBufferType, ChannelType::NVLS}][op["o_cids"][0]["id"]];
-              chunkIndexes.push_back((uint32_t)op["dstoff"]);
-            } else {
-              BufferType srcBufferType = convertToBufferType(op["o_buff"]["src"]);
-              BufferType dstBufferType = convertToBufferType(op["o_buff"]["dst"]);
-              operation.outputChannelIndexes[i] =
-                  channelIndexes[{srcBufferType, dstBufferType, operation.channelType}][op["o_cids"][i]["id"]];
-              operation.outputOffsets[i] =
-                  this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["o_cids"][i]["off"]) +
-                  getConstOffset(dstBufferType);
-              chunkIndexes.push_back((uint32_t)op["o_cids"][i]["off"]);
-            }
-          }
-        }
-        // will have either dsts or o_cids
-        if (op.contains("dsts")) {
-          operation.nOutputs = op["dsts"].size();
-          operation.outputBufferType = convertToBufferType(op["dsts"][0]["buff"]);
-          for (int i = 0; i < operation.nOutputs; i++) {
-            operation.outputOffsets[i] =
-                this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dsts"][i]["off"]) +
-                getConstOffset(operation.outputBufferType);
-            chunkIndexes.push_back((uint32_t)op["dsts"][i]["off"]);
-          }
-        }
-        if (op.contains("srcbuff")) {
-          operation.srcBufferType = convertToBufferType(op["srcbuff"]);
-        }
-        if (op.contains("srcoff")) {
-          operation.srcOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["srcoff"]);
-          chunkIndexes.push_back((uint32_t)op["srcoff"]);
-        }
-        if (op.contains("dstbuff")) {
-          operation.dstBufferType = convertToBufferType(op["dstbuff"]);
-        }
-        if (op.contains("dstoff")) {
-          operation.dstOffset = this->getOffset(rank, this->inputSize, this->outputSize, (uint32_t)op["dstoff"]);
-          chunkIndexes.push_back((uint32_t)op["dstoff"]);
-        }
-        if (op.contains("cnt")) {
-          operation.size =
-              this->getNChunkSize(rank, this->inputSize, this->outputSize, (uint32_t)op["cnt"], chunkIndexes);
-        }
-        if (op.contains("barrier_id")) {
-          operation.deviceSyncerIndex = op["barrier_id"];
-        }
-        if (op.contains("nthread_blocks")) {
-          operation.nThreadBlocks = op["nthread_blocks"];
-        }
-        ops.push_back(operation);
-      }
-      this->operations[rank].push_back(ops);
+  auto getRemoteBufferTypeWithId = [&](int bufferId, int threadBlockId, ChannelType channelType) -> BufferType {
+    if (channelType == ChannelType::MEMORY) {
+      return this->threadblockMemoryChannelBuffers[threadBlockId][bufferId].second;
     }
+    if (channelType == ChannelType::PORT) {
+      return this->threadblockPortChannelBuffers[threadBlockId][bufferId].second;
+    }
+    throw Error("Invalid channel type", ErrorCode::ExecutorError);
+  };
+
+  uint32_t tbId = 0;
+  uint32_t tbgSize = 1;
+
+  operation.type = static_cast<mscclpp::OperationType>(getOpType(op["name"]));
+  if (op.contains("channel_type")) {
+    operation.channelType = convertToChannelType(op["channel_type"]);
+  }
+  if (op.contains("channel_ids")) {
+    operation.nChannels = op["channel_ids"].size();
+    for (uint32_t i = 0; i < op["channel_ids"].size(); i++) {
+      operation.channelIndexes[i] = op["channel_ids"][i];
+    }
+  }
+  if (op.contains("tbg_info")) {
+    tbId = op["tbg_info"]["tb_id"];
+    tbgSize = op["tbg_info"]["tbg_size"];
+  }
+  if (op.contains("src_buff")) {
+    operation.nInputs = op["src_buff"].size();
+    for (int i = 0; i < operation.nInputs; i++) {
+      auto& buff = op["src_buff"][i];
+      size_t constOffset = 0;
+      BufferType bufferType = BufferType::NONE;
+      if (buff.contains("type")) {
+        bufferType = convertToBufferType(buff["type"]);
+        operation.inputBufferRefs[i].type = bufferType;
+      }
+      if (buff.contains("buffer_id")) {
+        operation.inputBufferRefs[i].id = buff["buffer_id"];
+        bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);
+        constOffset = getConstOffset(bufferType);
+      }
+      if (buff.contains("switch_channel_id")) {
+        int switchChannelIdx = this->threadblockNvlsChannels[threadBlockId][buff["switch_channel_id"]];
+        bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        constOffset = getConstOffset(bufferType);
+        operation.nvlsInputBufferType = bufferType;
+        operation.nvlsInputIndex = buff["switch_channel_id"];
+      }
+      size_t inputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t inputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      inputOffset += calcOffset(inputBufferSize, tbId, tbgSize);
+      inputBufferSize = calcSize(inputBufferSize, tbId, tbgSize);
+      operation.inputOffsets[i] = inputOffset;
+      operation.inputBufferSizes[i] = inputBufferSize;
+    }
+  }
+  if (op.contains("dst_buff")) {
+    operation.nOutputs = op["dst_buff"].size();
+    for (int i = 0; i < operation.nOutputs; i++) {
+      auto& buff = op["dst_buff"][i];
+      size_t constOffset = 0;
+      BufferType bufferType = BufferType::NONE;
+      if (buff.contains("type")) {
+        bufferType = convertToBufferType(buff["type"]);
+        operation.outputBufferRefs[i].type = bufferType;
+      }
+      if (buff.contains("buffer_id")) {
+        operation.outputBufferRefs[i].id = buff["buffer_id"];
+        bufferType = getRemoteBufferTypeWithId(buff["buffer_id"], threadBlockId, operation.channelType);
+        constOffset = getConstOffset(bufferType);
+      }
+      if (buff.contains("switch_channel_id")) {
+        int switchChannelIdx = this->threadblockNvlsChannels[threadBlockId][buff["switch_channel_id"]];
+        bufferType = this->nvlsInfos[rank][switchChannelIdx].bufferType;
+        constOffset = getConstOffset(bufferType);
+        operation.nvlsOutputBufferType = bufferType;
+        operation.nvlsOutputIndex = buff["switch_channel_id"];
+      }
+      size_t outputOffset = this->getOffset(this->inputSize, this->outputSize, buff["index"], bufferType) + constOffset;
+      size_t outputBufferSize = this->getBufferSize(this->inputSize, this->outputSize, buff["index"], buff["size"]);
+      outputOffset += calcOffset(outputBufferSize, tbId, tbgSize);
+      outputBufferSize = calcSize(outputBufferSize, tbId, tbgSize);
+      operation.outputOffsets[i] = outputOffset;
+      operation.outputBufferSizes[i] = outputBufferSize;
+    }
+  }
+  if (op.contains("barrier_id")) {
+    operation.deviceSyncerIndex = op["barrier_id"];
+  }
+  if (op.contains("num_threadblocks")) {
+    operation.nThreadBlocks = op["num_threadblocks"];
+  }
+  if (op.contains("semaphore_ids")) {
+    operation.nDeviceSemaphores = op["semaphore_ids"].size();
+    for (uint32_t id = 0; id < operation.nDeviceSemaphores; id++) {
+      operation.deviceSemaphoreIds[id] = op["semaphore_ids"][id];
+    }
+  }
+  if (op.contains("iter_context")) {
+    operation.unitSize = op["iter_context"]["unit_size"];
+    operation.nOperations = op["ops"].size();
+    int nChunks = op["iter_context"]["num_chunks"];
+    size_t sizes = nChunks * getUpperBoundChunkSize(this->inputSize, this->outputSize);
+    operation.nIterations = (sizes + (operation.unitSize - 1)) / operation.unitSize;
   }
 }
 
-std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunksForRank(int rank, size_t inputSize,
-                                                                         size_t outputSize) const {
+std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSize, size_t outputSize) const {
   std::pair<size_t, uint32_t> sizePerRank;
-  if (this->inputChunks.at(rank) == 0 && this->outputChunks.at(rank) == 0) {
-    throw Error("Output or Input chunks must be greater than 0", ErrorCode::ExecutorError);
-  } else if (this->inputChunks.at(rank) != 0 && this->outputChunks.at(rank) != 0) {
-    if (inputSize / this->inputChunks.at(rank) != outputSize / this->outputChunks.at(rank))
-      throw Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
-                      std::to_string(this->inputChunks.at(rank)) + " outputSize " + std::to_string(outputSize) +
-                      " outputChunks " + std::to_string(this->outputChunks.at(rank)),
-                  ErrorCode::ExecutorError);
+  if (this->inputChunks == 0 && this->outputChunks == 0) {
+    throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
+  } else if (this->inputChunks != 0 && this->outputChunks != 0) {
+    if (inputSize / this->inputChunks != outputSize / this->outputChunks)
+      throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
+                               std::to_string(this->inputChunks) + " outputSize " + std::to_string(outputSize) +
+                               " outputChunks " + std::to_string(this->outputChunks),
+                           mscclpp::ErrorCode::ExecutorError);
     else
-      sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
-  } else if (this->inputChunks.at(rank) != 0) {
-    sizePerRank = std::make_pair(inputSize, this->inputChunks.at(rank));
-  } else if (this->outputChunks.at(rank) != 0) {
-    sizePerRank = std::make_pair(outputSize, this->outputChunks.at(rank));
+      sizePerRank = std::make_pair(inputSize, this->inputChunks);
+  } else if (this->inputChunks != 0) {
+    sizePerRank = std::make_pair(inputSize, this->inputChunks);
+  } else if (this->outputChunks != 0) {
+    sizePerRank = std::make_pair(outputSize, this->outputChunks);
   }
   return sizePerRank;
 }
 
-size_t ExecutionPlan::Impl::getOffset(int rank, size_t inputSize, size_t outputSize, uint32_t chunkIndex,
-                                      uint32_t alignment) const {
-  if (inputSize % alignment != 0) {
-    throw Error("inputSize must be a multiple of alignment", ErrorCode::ExecutorError);
-  }
+size_t ExecutionPlan::Impl::calcOffset(size_t size, uint32_t index, uint32_t slices) const {
+  uint32_t nelems = size / (this->bufferAlignment * sizeof(uint8_t));
+  uint32_t minNelems = nelems / slices;
+  uint32_t remainder = nelems % slices;
+  uint32_t offset = index * minNelems + (index % nelems < remainder ? index % nelems : remainder);
+  return static_cast<size_t>(offset) * this->bufferAlignment;
+}
 
-  const int nGroups = this->chunkGroups.at(rank);
-  auto rankSizeAndChunks = getSizeAndChunksForRank(rank, inputSize, outputSize);
+size_t ExecutionPlan::Impl::calcSize(size_t size, uint32_t index, uint32_t slices) const {
+  uint32_t beginOff = calcOffset(size, index, slices);
+  uint32_t endOff = calcOffset(size, index + 1, slices);
+  return endOff - beginOff;
+}
+
+size_t ExecutionPlan::Impl::getOffset(size_t inputSize, size_t outputSize, uint32_t chunkIndex,
+                                      BufferType bufferType) const {
+  auto rankSizeAndChunks = getSizeAndChunks(inputSize, outputSize);
   uint32_t nChunks = rankSizeAndChunks.second;
-  uint32_t nelems = rankSizeAndChunks.first / (alignment * sizeof(uint8_t));
-  if (nelems % nGroups != 0) {
-    throw Error("Input size must be a multiple of nGroups", ErrorCode::ExecutorError);
+  uint32_t chunkSize = (rankSizeAndChunks.first + nChunks - 1) / nChunks;
+  uint32_t scratchChunkSize = this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
+
+  // Reuse scratch buffer for large input/output chunks
+  if (bufferType == BufferType::SCRATCH && this->reuseResources && scratchChunkSize < chunkSize) {
+    return chunkIndex * this->calMaxScratchChunkSize(PREDFINED_SCRATCH_SIZE);
   }
 
-  int nelemsPerGroup = nelems / nGroups;
-  int nChunksPerGroup = nChunks / nGroups;
-  uint32_t minNelems = nelemsPerGroup / nChunksPerGroup;
-  uint32_t remainder = nelemsPerGroup % nChunksPerGroup;
-  uint32_t groupIdx = chunkIndex / nChunksPerGroup;
-  uint32_t chunkIndexInGroup = chunkIndex % nChunksPerGroup;
-  uint32_t offset = groupIdx * nelemsPerGroup + chunkIndexInGroup * minNelems +
-                    (chunkIndexInGroup % nelemsPerGroup < remainder ? chunkIndexInGroup % nelemsPerGroup : remainder);
-  return static_cast<size_t>(offset) * alignment;
+  return calcOffset(rankSizeAndChunks.first, chunkIndex, nChunks);
 }
 
-size_t ExecutionPlan::Impl::getNChunkSize(int rank, size_t inputSize, size_t outputSize, uint32_t nChunks,
-                                          const std::vector<uint32_t> chunkIndexes) const {
-  size_t nChunkSize = 0;
-  for (uint32_t index : chunkIndexes) {
-    uint32_t beginOff = getOffset(rank, inputSize, outputSize, index);
-    uint32_t endOff = getOffset(rank, inputSize, outputSize, index + nChunks);
-    if (nChunkSize == 0) {
-      nChunkSize = endOff - beginOff;
-    } else if (nChunkSize != endOff - beginOff) {
-      throw Error("Inconsistent chunk size", ErrorCode::ExecutorError);
-    }
-  }
-  return nChunkSize;
+size_t ExecutionPlan::Impl::getBufferSize(size_t inputSize, size_t outputSize, uint32_t index, uint32_t nChunks) const {
+  uint32_t beginOff = getOffset(inputSize, outputSize, index);
+  uint32_t endOff = getOffset(inputSize, outputSize, index + nChunks);
+  return endOff - beginOff;
 }
 
-size_t ExecutionPlan::Impl::getUpperBoundChunkSize(int rank, size_t inputSize, size_t outputSize) const {
-  size_t nInputChunks = this->inputChunks.at(rank);
-  size_t nOutputChunks = this->outputChunks.at(rank);
-  size_t inputChunkSize = 0;
-  size_t outputChunkSize = 0;
+size_t ExecutionPlan::Impl::getUpperBoundChunkSize(size_t inputSize, size_t outputSize) const {
+  size_t nInputChunks = this->inputChunks;
+  size_t nOutputChunks = this->outputChunks;
   if (nInputChunks != 0) {
-    inputChunkSize = inputSize / nInputChunks;
+    size_t nelems = inputSize / this->bufferAlignment;
+    return (nelems + nInputChunks - 1) / nInputChunks * this->bufferAlignment;
   }
   if (nOutputChunks != 0) {
-    outputChunkSize = outputSize / nOutputChunks;
+    size_t nelems = outputSize / this->bufferAlignment;
+    return (nelems + nOutputChunks - 1) / nOutputChunks * this->bufferAlignment;
   }
-  return std::max(inputChunkSize, outputChunkSize);
+  throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
 }
 
 void ExecutionPlan::Impl::reset() {
   this->operations.clear();
-  this->channelInfos.clear();
   this->nvlsInfos.clear();
-  this->threadblockMemoryChannelMap.clear();
-  this->threadblockPortChannelMap.clear();
-  this->threadblockNvlsChannelMap.clear();
-  this->inputChunks.clear();
-  this->outputChunks.clear();
-  this->scratchChunks.clear();
-  this->chunkGroups.clear();
+  this->threadblockMemoryChannels.clear();
+  this->threadblockPortChannels.clear();
+  this->threadblockNvlsChannels.clear();
+  this->threadblockMemoryChannelBuffers.clear();
+  this->threadblockPortChannelBuffers.clear();
+  this->semaphoreInfos.clear();
+
+  this->channelInfos_.clear();
+  this->channelCountMap_.clear();
+  this->channelInfosByDstRank_.clear();
+  this->remoteBufferInfos_.clear();
+  this->localBufferToSend_.clear();
+  this->bufferIndexMap_.clear();
 }
 
 void ExecutionPlan::Impl::operationsReset() { this->operations.clear(); }
 
-ExecutionPlan::ExecutionPlan(const std::string& planPath) : impl_(std::make_shared<Impl>(planPath)) {}
+ExecutionPlan::ExecutionPlan(const std::string& planPath, int rank) : impl_(std::make_shared<Impl>(planPath, rank)) {}
 
 std::string ExecutionPlan::name() const { return this->impl_->name; }
 
@@ -613,5 +708,150 @@ size_t ExecutionPlan::minMessageSize() const { return this->impl_->minMessageSiz
 size_t ExecutionPlan::maxMessageSize() const { return this->impl_->maxMessageSize; }
 
 bool ExecutionPlan::isInPlace() const { return this->impl_->isInPlace; }
+
+void ExecutionPlanRegistry::Impl::setSelector(ExecutionPlanSelector selector) { selector_ = selector; }
+
+void ExecutionPlanRegistry::Impl::setDefaultSelector(ExecutionPlanSelector selector) { defaultSelector_ = selector; }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::Impl::select(const ExecutionRequest& request) {
+  std::vector<std::shared_ptr<ExecutionPlanHandle>> plans;
+  for (auto plan : planMap_[request.collective]) {
+    if (plan->match(request)) {
+      plans.push_back(plan);
+    }
+  }
+  if (selector_) {
+    auto plan = selector_(plans, request);
+    if (plan) {
+      return plan;
+    }
+  }
+  if (defaultSelector_) {
+    auto plan = defaultSelector_(plans, request);
+    if (plan) {
+      return plan;
+    }
+  }
+  INFO(MSCCLPP_EXECUTOR, "No suitable execution plan found for collective: %s", request.collective.c_str());
+  return nullptr;
+}
+
+void ExecutionPlanRegistry::Impl::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  if (!planHandle) {
+    throw Error("Cannot register a null plan", ErrorCode::ExecutorError);
+  }
+  planMap_[planHandle->plan->collective()].push_back(planHandle);
+  idMap_[planHandle->id] = planHandle;
+}
+
+void ExecutionPlanRegistry::Impl::loadDefaultPlans(int rank) {
+  std::string planDir = mscclpp::env()->executionPlanDir;
+  if (!std::filesystem::exists(planDir)) {
+    INFO(MSCCLPP_EXECUTOR, "Plan directory does not exist: %s", planDir.c_str());
+    return;
+  }
+
+  for (const auto& config : defaultAlgoConfigs) {
+    std::string planPath = planDir + "/" + config.filename;
+    INFO(MSCCLPP_EXECUTOR, "Loading plan: %s", planPath.c_str());
+    if (!std::filesystem::exists(planPath)) {
+      INFO(MSCCLPP_EXECUTOR, "Plan file does not exist: %s", planPath.c_str());
+      continue;
+    }
+    std::string planId = generateFileId(planPath);
+    if (idMap_.find(planId) != idMap_.end()) {
+      INFO(MSCCLPP_EXECUTOR, "Plan already registered: %s", planId.c_str());
+      continue;
+    }
+    try {
+      auto executionPlan = std::make_shared<ExecutionPlan>(planPath, rank);
+      auto handle =
+          ExecutionPlanHandle::create(planId, config.worldSize, config.nRanksPerNode, executionPlan, config.tags);
+      registerPlan(handle);
+      INFO(MSCCLPP_EXECUTOR, "Successfully loaded plan: %s for collective: %s", planId.c_str(),
+           config.collective.c_str());
+    } catch (const std::exception& e) {
+      WARN("Failed to load plan %s: %s", planPath.c_str(), e.what());
+    }
+  }
+}
+
+std::shared_ptr<ExecutionPlanRegistry> ExecutionPlanRegistry::getInstance() {
+  static std::shared_ptr<ExecutionPlanRegistry> instance(new ExecutionPlanRegistry);
+  return instance;
+}
+
+void ExecutionPlanRegistry::registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle) {
+  impl_->registerPlan(planHandle);
+}
+
+void ExecutionPlanRegistry::setSelector(ExecutionPlanSelector selector) { impl_->setSelector(selector); }
+
+void ExecutionPlanRegistry::setDefaultSelector(ExecutionPlanSelector selector) { impl_->setDefaultSelector(selector); }
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::select(
+    const std::string& collective, int worldSize, int nRanksPerNode, int rank, const void* sendBuffer, void* recvBuffer,
+    size_t messageSize, const std::unordered_map<std::string, std::vector<uint64_t>>& hints) {
+  ExecutionRequest request{worldSize, nRanksPerNode, rank, sendBuffer, recvBuffer, messageSize, collective, hints};
+  return impl_->select(request);
+}
+
+std::vector<std::shared_ptr<ExecutionPlanHandle>> ExecutionPlanRegistry::getPlans(const std::string& collective) {
+  if (impl_->planMap_.find(collective) != impl_->planMap_.end()) {
+    return impl_->planMap_[collective];
+  }
+  return {};
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanRegistry::get(const std::string& id) {
+  if (impl_->idMap_.find(id) != impl_->idMap_.end()) {
+    return impl_->idMap_[id];
+  }
+  return nullptr;
+}
+
+ExecutionPlanRegistry::ExecutionPlanRegistry() : impl_(std::make_unique<Impl>()) {}
+
+ExecutionPlanRegistry::~ExecutionPlanRegistry() = default;
+
+void ExecutionPlanRegistry::clear() {
+  impl_->planMap_.clear();
+  impl_->idMap_.clear();
+  impl_->selector_ = nullptr;
+  impl_->defaultSelector_ = nullptr;
+}
+
+void ExecutionPlanRegistry::loadDefaultPlans(int rank) { impl_->loadDefaultPlans(rank); }
+
+bool ExecutionRequest::isInPlace() const {
+  if (inputBuffer == outputBuffer) return true;
+  if (collective == "allgather") {
+    size_t rankOffset = rank * messageSize;
+    const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
+    return static_cast<const void*>(expectedInput) == inputBuffer;
+  }
+  return false;
+}
+
+std::shared_ptr<ExecutionPlanHandle> ExecutionPlanHandle::create(
+    const std::string& id, int worldSize, int nRanksPerNode, std::shared_ptr<ExecutionPlan> plan,
+    const std::unordered_map<std::string, uint64_t>& tags) {
+  std::shared_ptr<ExecutionPlanHandle> handle(new ExecutionPlanHandle{id, {worldSize, nRanksPerNode}, plan, tags});
+  return handle;
+}
+
+bool ExecutionPlanHandle::match(const ExecutionRequest& request) {
+  bool worldSizeMatch = constraint.worldSize == request.worldSize;
+  bool ranksPerNodeMatch = constraint.nRanksPerNode == request.nRanksPerNode;
+  bool collectiveMatch = plan->collective() == request.collective;
+  bool inPlaceMatch = plan->isInPlace() == request.isInPlace();
+  size_t effectiveSize =
+      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
+  bool minSizeMatch = effectiveSize >= plan->minMessageSize();
+  bool maxSizeMatch = effectiveSize <= plan->maxMessageSize();
+
+  bool result = worldSizeMatch && ranksPerNodeMatch && collectiveMatch && inPlaceMatch && minSizeMatch && maxSizeMatch;
+  return result;
+}
 
 }  // namespace mscclpp

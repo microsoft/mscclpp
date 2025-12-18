@@ -1,6 +1,6 @@
 # Before You Start
 
-This tutorial introduces how to use the MSCCL++ Primitive API to write highly flexible and optimized GPU communication kernels from the lowest level. If you are looking for the high-level APIs, please refer to the DSL API or the NCCL API.
+This tutorial introduces how to use the MSCCL++ Primitive API to write highly flexible and optimized GPU communication kernels from the lowest level. If you are looking for the high-level APIs, please refer to the [DSL API](../guide/mscclpp-dsl.md) or the [NCCL API](../quickstart.md#nccl-benchmark).
 
 ## Hardware Requirements
 

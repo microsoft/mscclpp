@@ -14,6 +14,7 @@
 #include "api.h"
 #include "debug.h"
 #include "socket.h"
+#include "unix_socket.hpp"
 #include "utils_internal.hpp"
 
 namespace mscclpp {
@@ -114,6 +115,8 @@ class TcpBootstrap::Impl {
   std::shared_ptr<Socket> getPeerSendSocket(int peer, int tag);
   std::shared_ptr<Socket> getPeerRecvSocket(int peer, int tag);
 
+  UnixSocketServer& unixSocketServer_;
+
   static void assignPortToUniqueId(UniqueIdInternal& uniqueId);
   static void netInit(std::string ipPortPair, std::string interface, SocketAddress& netIfAddr);
 
@@ -149,7 +152,8 @@ TcpBootstrap::Impl::Impl(int rank, int nRanks)
       peerCommAddresses_(nRanks, SocketAddress()),
       barrierArr_(nRanks, 0),
       abortFlagStorage_(new uint32_t(0)),
-      abortFlag_(abortFlagStorage_.get()) {}
+      abortFlag_(abortFlagStorage_.get()),
+      unixSocketServer_(UnixSocketServer::instance()) {}
 
 UniqueId TcpBootstrap::Impl::getUniqueId() const { return getUniqueId(uniqueId_); }
 
@@ -172,6 +176,9 @@ void TcpBootstrap::Impl::initialize(const UniqueId& uniqueId, int64_t timeoutSec
   SocketToString(&uniqueId_.addr, line);
   INFO(MSCCLPP_INIT, "rank %d nranks %d - connecting to %s", rank_, nRanks_, line);
   establishConnections(timeoutSec);
+
+  unixSocketServer_.start();
+  INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
 }
 
 void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t timeoutSec) {
@@ -204,6 +211,8 @@ void TcpBootstrap::Impl::initialize(const std::string& ifIpPortTrio, int64_t tim
   }
 
   establishConnections(timeoutSec);
+  unixSocketServer_.start();
+  INFO(MSCCLPP_INIT, "rank %d - unix socket server started", rank_);
 }
 
 TcpBootstrap::Impl::~Impl() {
@@ -567,6 +576,8 @@ void TcpBootstrap::Impl::close() {
   ringSendSocket_.reset(nullptr);
   peerSendSockets_.clear();
   peerRecvSockets_.clear();
+  unixSocketServer_.stop();
+  UnixSocketClient::instance().reset();
 }
 
 MSCCLPP_API_CPP UniqueId TcpBootstrap::createUniqueId() { return Impl::createUniqueId(); }

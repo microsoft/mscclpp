@@ -1,0 +1,13 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
+#ifndef MSCCLPP_VERSION_HPP_
+#define MSCCLPP_VERSION_HPP_
+
+#define MSCCLPP_MAJOR @MSCCLPP_MAJOR@
+#define MSCCLPP_MINOR @MSCCLPP_MINOR@
+#define MSCCLPP_PATCH @MSCCLPP_PATCH@
+#define MSCCLPP_VERSION (MSCCLPP_MAJOR * 10000 + MSCCLPP_MINOR * 100 + MSCCLPP_PATCH)
+#define MSCCLPP_GIT_COMMIT "@GIT_HASH@"
+
+#endif  // MSCCLPP_VERSION_HPP_

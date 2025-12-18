@@ -27,10 +27,18 @@ def parse_npkit_event_header(npkit_event_header_path):
         "FLUSH",
         "REDUCE",
         "REDUCE_PACKET",
+        "REDUCE_COPY_PACKETS",
         "REDUCE_SEND",
         "REDUCE_SEND_PACKET",
+        "REDUCE_COPY_SEND_PACKETS",
         "READ_REDUCE_COPY",
         "READ_REDUCE_COPY_SEND",
+        "MULTI_LOAD_REDUCE_STORE",
+        "RELAXED_SIGNAL",
+        "RELAXED_WAIT",
+        "PIPELINE",
+        "SEM_RELEASE",
+        "SEM_ACQUIRE",
     ]
     executor_op_to_offset = {}
     for executor_op in executor_ops:

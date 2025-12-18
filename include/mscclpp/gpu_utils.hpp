@@ -41,7 +41,24 @@ namespace mscclpp {
 struct AvoidCudaGraphCaptureGuard {
   AvoidCudaGraphCaptureGuard();
   ~AvoidCudaGraphCaptureGuard();
+  AvoidCudaGraphCaptureGuard(const AvoidCudaGraphCaptureGuard&) = delete;
+  AvoidCudaGraphCaptureGuard& operator=(const AvoidCudaGraphCaptureGuard&) = delete;
+  AvoidCudaGraphCaptureGuard(AvoidCudaGraphCaptureGuard&&) = delete;
+  AvoidCudaGraphCaptureGuard& operator=(AvoidCudaGraphCaptureGuard&&) = delete;
   cudaStreamCaptureMode mode_;
+  bool active_;
+};
+
+/// A RAII guard that will set the current device on construction and restore the previous device on destruction.
+struct CudaDeviceGuard {
+  CudaDeviceGuard(int deviceId);
+  ~CudaDeviceGuard();
+  CudaDeviceGuard(const CudaDeviceGuard&) = delete;
+  CudaDeviceGuard& operator=(const CudaDeviceGuard&) = delete;
+  CudaDeviceGuard(CudaDeviceGuard&&) = delete;
+  CudaDeviceGuard& operator=(CudaDeviceGuard&&) = delete;
+  int deviceId_;
+  int origDeviceId_;
 };
 
 /// A RAII wrapper around cudaStream_t that will call cudaStreamDestroy on destruction.
@@ -127,6 +144,7 @@ std::shared_ptr<GpuStreamPool> gpuStreamPool();
 namespace detail {
 
 void setReadWriteMemoryAccess(void* base, size_t size);
+int gpuIdFromAddress(void* ptr);
 
 void* gpuCalloc(size_t bytes);
 void* gpuCallocHost(size_t bytes, unsigned int flags);
@@ -253,6 +271,7 @@ auto gpuCallocPhysicalUnique(size_t nelems = 1, size_t gran = 0, size_t align = 
 }
 
 size_t getMulticastGranularity(size_t size, CUmulticastGranularity_flags granFlag);
+size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag);
 
 #endif  // CUDA_NVLS_API_AVAILABLE
 

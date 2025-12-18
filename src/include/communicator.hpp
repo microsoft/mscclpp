@@ -36,7 +36,7 @@ class RecvItem : public BaseRecvItem {
 
 class LocalRecvMemory {
  public:
-  LocalRecvMemory() : future_(std::move(promise_.get_future())) {}
+  LocalRecvMemory() : future_(promise_.get_future()) {}
 
   void set(RegisteredMemory memory) { promise_.set_value(std::move(memory)); }
 
@@ -59,7 +59,7 @@ struct ConnectionInfo {
 struct Communicator::Impl {
   std::shared_ptr<Bootstrap> bootstrap_;
   std::shared_ptr<Context> context_;
-  std::unordered_map<const Connection*, ConnectionInfo> connectionInfos_;
+  std::unordered_map<const BaseConnection*, ConnectionInfo> connectionInfos_;
 
   // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
   // If the RecvItem gets ready, it will be removed at the next call to getLastRecvItem.

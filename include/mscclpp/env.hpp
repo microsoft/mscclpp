@@ -25,17 +25,34 @@ class Env {
   /// Env name: `MSCCLPP_DEBUG_SUBSYS`. The debug subsystem, a comma-separated list of subsystems to enable
   /// debug logging for.
   /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
-  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, ALL.
-  /// Unset by default.
+  /// Possible values are INIT, COLL, P2P, SHM, NET, GRAPH, TUNING, ENV, ALLOC, CALL, MSCCLPP_EXECUTOR, MSCCLPP_NCCL,
+  /// ALL. Unset by default.
   const std::string debugSubsys;
 
   /// Env name: `MSCCLPP_DEBUG_FILE`. A file path to write debug logs to. Unset by default.
   const std::string debugFile;
 
+  /// Env name: `MSCCLPP_LOG_LEVEL`. One of DEBUG, INFO, WARN, or ERROR, in the order of severity
+  /// (lower to higher level). A lower level is a superset of a higher level. Default is ERROR.
+  const std::string logLevel;
+
+  /// Env name: `MSCCLPP_LOG_SUBSYS`. The log subsystem, a comma-separated list of subsystems to enable
+  /// logging for. Possible values are ENV, NET, CONN, EXEC, NCCL, ALL (default).
+  /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
+  /// For example, "^NET,CONN" enables all subsystems except NET and CONN.
+  const std::string logSubsys;
+
+  /// Env name: `MSCCLPP_LOG_FILE`. A file path to write log messages to. Unset by default.
+  const std::string logFile;
+
   /// Env name: `MSCCLPP_HCA_DEVICES`. A comma-separated list of HCA devices to use for IB transport. i-th device
   /// in the list will be used for the i-th GPU in the system. If unset, it will use ibverbs APIs to find the
   /// devices automatically.
   const std::string hcaDevices;
+
+  /// Env name: `MSCCLPP_IBV_SO`. The path to the libibverbs shared library to use. If unset, it will use the
+  /// default libibverbs library found in the system.
+  const std::string ibvSo;
 
   /// Env name: `MSCCLPP_HOSTID`. A string that uniquely identifies the host. If unset, it will use the hostname.
   /// This is used to determine whether the host is the same across different processes.
@@ -74,10 +91,6 @@ class Env {
   /// always use the fallback implementation, even if the MSCCL++ NCCL can handle them. This is useful for
   /// debugging purposes. Currently supports `all`, `broadcast`, `allreduce`, `reducescatter`, and `allgather`.
   const std::string forceNcclFallbackOperation;
-
-  /// Env name: `MSCCLPP_ENABLE_NCCL_FALLBACK`. If set to true, it will enable the fallback implementation for NCCL
-  /// operations. This is useful for debugging purposes. Default is false.
-  const bool enableNcclFallback;
 
   /// Env name: `MSCCLPP_DISABLE_CHANNEL_CACHE`. If set to true, it will disable the channel cache for NCCL APIs.
   /// Currently, this should be set to true if the application may call NCCL APIs on the same local buffer with

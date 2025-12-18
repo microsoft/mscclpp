@@ -290,7 +290,8 @@ def test_h2h_semaphores(mpi_group: MpiGroup):
     connections = {rank: group.communicator.connect(endpoint, rank) for rank in remote_nghrs}
     connections = {rank: conn.get() for rank, conn in connections.items()}
 
-    semaphores = group.make_semaphore(connections, Host2HostSemaphore)
+    semaphores = group.make_semaphores(connections)
+    semaphores = {rank: Host2HostSemaphore(sema) for rank, sema in semaphores.items()}
     for rank in connections:
         semaphores[rank].signal()
 
@@ -309,7 +310,8 @@ def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
     connections = {rank: group.communicator.connect(endpoint, rank) for rank in remote_nghrs}
     connections = {rank: conn.get() for rank, conn in connections.items()}
 
-    semaphores = group.make_semaphore(connections, Host2HostSemaphore)
+    semaphores = group.make_semaphores(connections)
+    semaphores = {rank: Host2HostSemaphore(sema) for rank, sema in semaphores.items()}
 
     def target_wait(sems, conns):
         for rank in conns:
@@ -457,7 +459,8 @@ def test_h2d_semaphores(mpi_group: MpiGroup, connection_type: str):
 
     group, connections = create_group_and_connection(mpi_group, connection_type)
 
-    semaphores = group.make_semaphore(connections, Host2DeviceSemaphore)
+    semaphores = group.make_semaphores(connections)
+    semaphores = {rank: Host2DeviceSemaphore(sema) for rank, sema in semaphores.items()}
     kernel = MscclppKernel("h2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
 
@@ -473,7 +476,8 @@ def test_h2d_semaphores(mpi_group: MpiGroup, connection_type: str):
 def test_d2d_semaphores(mpi_group: MpiGroup):
     group, connections = create_group_and_connection(mpi_group, "NVLink")
 
-    semaphores = group.make_semaphore(connections, MemoryDevice2DeviceSemaphore)
+    semaphores = group.make_semaphores(connections)
+    semaphores = {rank: MemoryDevice2DeviceSemaphore(sema) for rank, sema in semaphores.items()}
     group.barrier()
     kernel = MscclppKernel("d2d_semaphore", group.my_rank, group.nranks, semaphores)
     kernel()
@@ -545,29 +549,29 @@ def test_proxy(mpi_group: MpiGroup, nelem: int, connection_type: str):
     group.barrier()
     all_reg_memories = group.register_tensor_with_connections(memory, connections)
 
-    semaphores = group.make_semaphore(connections, Host2DeviceSemaphore)
+    semaphores = group.make_semaphores(connections)
 
-    list_conn = []
     list_sem = []
     list_reg_mem = []
-    first_conn = next(iter(connections.values()))
     first_sem = next(iter(semaphores.values()))
     for rank in range(group.nranks):
         if rank in connections:
-            list_conn.append(connections[rank])
             list_sem.append(semaphores[rank])
         else:
-            list_conn.append(first_conn)  # just for simplicity of indexing
             list_sem.append(first_sem)
 
         list_reg_mem.append(all_reg_memories[rank])
 
-    proxy = _ext.MyProxyService(group.my_rank, group.nranks, nelem * memory.itemsize, list_conn, list_reg_mem, list_sem)
+    proxy = _ext.MyProxyService(group.my_rank, group.nranks, nelem * memory.itemsize, list_reg_mem, list_sem)
 
     fifo_device_handle = proxy.fifo_device_handle()
 
     kernel = MscclppKernel(
-        "proxy", my_rank=group.my_rank, nranks=group.nranks, semaphore_or_channels=semaphores, fifo=fifo_device_handle
+        "proxy",
+        my_rank=group.my_rank,
+        nranks=group.nranks,
+        semaphore_or_channels={rank: Host2DeviceSemaphore(sema) for rank, sema in semaphores.items()},
+        fifo=fifo_device_handle,
     )
     proxy.start()
     group.barrier()
@@ -632,7 +636,8 @@ def test_nvls(mpi_group: MpiGroup):
     mem_handle = nvls_connection.bind_allocated_memory(memory.data.ptr, memory.data.mem.size)
 
     nvlinks_connections = create_connection(group, "NVLink")
-    semaphores = group.make_semaphore(nvlinks_connections, MemoryDevice2DeviceSemaphore)
+    semaphores = group.make_semaphores(nvlinks_connections)
+    semaphores = {rank: MemoryDevice2DeviceSemaphore(sema) for rank, sema in semaphores.items()}
 
     kernel = MscclppKernel(
         "nvls",
@@ -659,7 +664,9 @@ def test_executor(mpi_group: MpiGroup, filename: str):
     npkit_dump_dir = env().npkit_dump_dir
     if npkit_dump_dir != "":
         npkit.init(mscclpp_group.my_rank)
-    execution_plan = ExecutionPlan(os.path.join(project_dir, "test", "execution-files", filename))
+    execution_plan = ExecutionPlan(
+        os.path.join(project_dir, "test", "execution-files", filename), mscclpp_group.my_rank
+    )
 
     nelems = 1024 * 1024
     cp.random.seed(42)
