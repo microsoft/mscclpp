@@ -58,20 +58,19 @@ __global__ void bidirPutKernel(mscclpp::PortChannelDeviceHandle *devHandle, size
   }
 }
 
-void worker(int gpuId) {
+void worker(int rank, int gpuId, const std::string &ipPort, mscclpp::Transport transport) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
-  const int myRank = gpuId;
+  const int myRank = rank;
   const int remoteRank = myRank == 0 ? 1 : 0;
   const int nRanks = 2;
   const int iter = 1000;
-  const mscclpp::Transport transport = mscclpp::Transport::CudaIpc;
   const size_t bufferBytes = 256 * 1024 * 1024;
 
-  log("GPU ", gpuId, ": Preparing for tests ...");
+  log("Rank ", myRank, " (GPU ", gpuId, "): Preparing for tests ...");
 
   // Build a connection and a semaphore
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(myRank, nRanks);
-  bootstrap->initialize("lo:127.0.0.1:" PORT_NUMBER);
+  bootstrap->initialize(ipPort);
   mscclpp::Communicator comm(bootstrap);
   auto conn = comm.connect({transport, {mscclpp::DeviceType::GPU, gpuId}}, remoteRank).get();
   auto sema = comm.buildSemaphore(conn, remoteRank).get();
@@ -106,7 +105,7 @@ void worker(int gpuId) {
   };
 
   cudaEvent_t start, end;
-  if (gpuId == 0) {
+  if (myRank == 0) {
     MSCCLPP_CUDATHROW(cudaEventCreate(&start));
     MSCCLPP_CUDATHROW(cudaEventCreate(&end));
   }
@@ -138,13 +137,13 @@ void worker(int gpuId) {
       proxyService.startProxy();
       bootstrap->barrier();
 
-      if (gpuId == 0) {
+      if (myRank == 0) {
         MSCCLPP_CUDATHROW(cudaEventRecord(start, stream));
       }
 
       MSCCLPP_CUDATHROW(cudaGraphLaunch(graphExec, stream));
 
-      if (gpuId == 0) {
+      if (myRank == 0) {
         MSCCLPP_CUDATHROW(cudaEventRecord(end, stream));
         MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
         float elapsedTime;
@@ -153,7 +152,7 @@ void worker(int gpuId) {
         MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
         elapsedTimePerIter = elapsedTime / iter;
         gbps = float(copyBytes) / elapsedTimePerIter * 1e-6f;
-        log("GPU ", gpuId, ": [", testName, "] bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ",
+        log("Rank ", myRank, ": [", testName, "] bytes ", copyBytes, ", elapsed ", elapsedTimePerIter, " ms/iter, BW ",
             gbps, " GB/s");
       }
       MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
@@ -167,23 +166,50 @@ void worker(int gpuId) {
   bootstrap->barrier();
 }
 
-int main() {
-  int pid0 = spawn_process([]() { worker(0); });
-  int pid1 = spawn_process([]() { worker(1); });
-  if (pid0 < 0 || pid1 < 0) {
-    log("Failed to spawn processes.");
+mscclpp::Transport parseTransport(const std::string &transportStr) {
+  if (transportStr == "CudaIpc") return mscclpp::Transport::CudaIpc;
+  if (transportStr == "IB0") return mscclpp::Transport::IB0;
+  if (transportStr == "IB1") return mscclpp::Transport::IB1;
+  if (transportStr == "IB2") return mscclpp::Transport::IB2;
+  if (transportStr == "IB3") return mscclpp::Transport::IB3;
+  if (transportStr == "IB4") return mscclpp::Transport::IB4;
+  if (transportStr == "IB5") return mscclpp::Transport::IB5;
+  if (transportStr == "IB6") return mscclpp::Transport::IB6;
+  if (transportStr == "IB7") return mscclpp::Transport::IB7;
+  if (transportStr == "Ethernet") return mscclpp::Transport::Ethernet;
+  throw std::runtime_error("Unknown transport: " + transportStr);
+}
+
+int main(int argc, char **argv) {
+  if (argc == 1) {
+    int pid0 = spawn_process([]() { worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER, mscclpp::Transport::CudaIpc); });
+    int pid1 = spawn_process([]() { worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER, mscclpp::Transport::CudaIpc); });
+    if (pid0 < 0 || pid1 < 0) {
+      log("Failed to spawn processes.");
+      return -1;
+    }
+    int status0 = wait_process(pid0);
+    int status1 = wait_process(pid1);
+    if (status0 < 0 || status1 < 0) {
+      log("Failed to wait for processes.");
+      return -1;
+    }
+    if (status0 != 0 || status1 != 0) {
+      log("One of the processes failed.");
+      return -1;
+    }
+    log("Succeed!");
+    return 0;
+  } else if (argc == 5) {
+    std::string ipPort = argv[1];
+    int rank = std::atoi(argv[2]);
+    int gpuId = std::atoi(argv[3]);
+    mscclpp::Transport transport = parseTransport(argv[4]);
+    worker(rank, gpuId, ipPort, transport);
+    log("Rank ", rank, ": Succeed!");
+    return 0;
+  } else {
+    std::cerr << "Usage: " << argv[0] << " [<ip_port> <rank> <gpu_id> <transport>]" << std::endl;
     return -1;
   }
-  int status0 = wait_process(pid0);
-  int status1 = wait_process(pid1);
-  if (status0 < 0 || status1 < 0) {
-    log("Failed to wait for processes.");
-    return -1;
-  }
-  if (status0 != 0 || status1 != 0) {
-    log("One of the processes failed.");
-    return -1;
-  }
-  log("Succeed!");
-  return 0;
 }
