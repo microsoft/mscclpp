@@ -61,6 +61,8 @@ constexpr std::string_view logSubsysToString(LogSubsys subsys) {
       return "NET";
     case LogSubsys::CONN:
       return "CONN";
+    case LogSubsys::P2P:
+      return "P2P";
     case LogSubsys::EXEC:
       return "EXEC";
     case LogSubsys::NCCL:

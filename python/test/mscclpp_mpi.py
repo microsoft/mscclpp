@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 import logging
 
@@ -21,6 +21,10 @@ class MpiGroup:
         else:
             group = world_group.Incl(ranks)
             self.comm = MPI.COMM_WORLD.Create(group)
+
+    def __del__(self):
+        if self.comm != MPI.COMM_NULL and MPI.Is_initialized() and not MPI.Is_finalized():
+            self.comm.Free()
 
 
 @pytest.fixture

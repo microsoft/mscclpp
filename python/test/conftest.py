@@ -10,7 +10,6 @@ mpi4py.rc.finalize = True
 
 import cupy as cp
 from mpi4py import MPI
-import pytest
 
 
 def pytest_configure(config):

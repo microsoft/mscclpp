@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
+#include <unordered_map>
 
 #include "api.h"
 #include "context.hpp"
@@ -70,25 +71,26 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
 #if defined(__HIP_PLATFORM_AMD__)
   // Unlike Nvidia, ROCm will not reuse the same ipc handle for same memory region.
   // We cache the opened ipc handles to avoid opening multiple times. (May exceed system limit on vm.max_map_count)
-  static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>
-      peerMemoryHandleMap;
-  static std::mutex mutex;
-  std::lock_guard<std::mutex> lock(mutex);
-  auto it = peerMemoryHandleMap.find(ipcHandle);
-  if (it != peerMemoryHandleMap.end()) {
+  static auto peerMemoryHandleMap = std::make_shared<
+      std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>>();
+  static auto mutex = std::make_shared<std::mutex>();
+  std::lock_guard<std::mutex> lock(*mutex);
+  auto it = peerMemoryHandleMap->find(ipcHandle);
+  if (it != peerMemoryHandleMap->end()) {
     if (auto ptr = it->second.lock()) {
       return ptr;
     } else {
-      peerMemoryHandleMap.erase(it);
+      peerMemoryHandleMap->erase(it);
     }
   }
   MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
-  std::shared_ptr<void> ptr = std::shared_ptr<void>(addr, [ipcHandle, deleter](void* p) {
-    deleter(p);
-    std::lock_guard<std::mutex> lock(mutex);
-    peerMemoryHandleMap.erase(ipcHandle);
-  });
-  peerMemoryHandleMap[ipcHandle] = ptr;
+  std::shared_ptr<void> ptr =
+      std::shared_ptr<void>(addr, [ipcHandle, deleter, m = mutex, map = peerMemoryHandleMap](void* p) {
+        deleter(p);
+        std::lock_guard<std::mutex> lock(*m);
+        map->erase(ipcHandle);
+      });
+  peerMemoryHandleMap->emplace(ipcHandle, ptr);
   return ptr;
 #else
   MSCCLPP_CUDATHROW(cudaIpcOpenMemHandle(&addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess));
