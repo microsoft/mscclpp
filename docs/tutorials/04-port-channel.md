@@ -146,7 +146,7 @@ If your bootstrap IP address is not on the default network interface of your nod
 
 ### What's Happening in Terms of InfiniBand?
 
-When we use InfiniBand transport, each `Endpoint` holds a unique InfiniBand context, and each `Connection` holds a unique InfiniBand queue pair (QP). Therefore, multiple `Semaphore`s and `PortChannel`s will share the same QP if they are created out of the same `Connection`. If you want multiple QPs between two endpoints, you need to create multiple parallel `Connection`s, and then create `Semaphore`s and `PortChannel`s from different `Connection`s.
+When we use InfiniBand transport, each `Connection` holds a unique InfiniBand queue pair (QP). Therefore, multiple `Semaphore`s and `PortChannel`s will share the same QP if they are created out of the same `Connection`. If you want multiple QPs between two endpoints, you need to create multiple parallel `Connection`s, and then create `Semaphore`s and `PortChannel`s from different `Connection`s.
 
 The `PortChannel` methods would have the following behavior in terms of InfiniBand operations:
 - `put()`: Posts an RDMA Write operation to the QP to transfer data.
