@@ -50,6 +50,10 @@ class Env {
   /// devices automatically.
   const std::string hcaDevices;
 
+  /// Env name: `MSCCLPP_IBV_SO`. The path to the libibverbs shared library to use. If unset, it will use the
+  /// default libibverbs library found in the system.
+  const std::string ibvSo;
+
   /// Env name: `MSCCLPP_HOSTID`. A string that uniquely identifies the host. If unset, it will use the hostname.
   /// This is used to determine whether the host is the same across different processes.
   const std::string hostid;
