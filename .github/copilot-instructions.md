@@ -1,4 +1,4 @@
-# Project contribution guidelines
+# Project Contribution Guidelines
 
 This document outlines a few useful informations for contributing to this project.
 
