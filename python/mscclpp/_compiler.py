@@ -218,6 +218,8 @@ class NativeCodeCompiler:
             arch_flag = f"--offload-arch={self._device_arch}"
             self._default_options.append(arch_flag)
             self._default_options += ["-fPIC"]
+            self._default_options += ["-D__HIP_PLATFORM_AMD__"]
+            self._default_options += [f"-Wl,-rpath,{self._lib_home}/lib"]
 
         self._default_options = self._default_options + [
             "-I" + os.path.join(self._lib_home, "include"),
