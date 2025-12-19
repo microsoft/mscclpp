@@ -85,7 +85,6 @@ class CustomizedComm:
         self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
 
     def destroy(self):
-        self.executor = None
         self._algorithm_nvls_nonzero_copy = None
         self._algorithm_nvls_packet = None
         self.scratch_buffer = None

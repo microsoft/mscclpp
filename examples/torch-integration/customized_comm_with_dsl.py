@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm.py
+# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm_with_dsl.py
 
 import os
 import torch
@@ -151,9 +151,7 @@ class CustomizedComm:
     def destroy(self):
         self.algorithms = None
         self.executor = None
-        if self.comm is not None:
-            self.comm.destroy()
-            self.comm = None
+        self.comm = None
 
 
 def init_dist() -> CustomizedComm:
@@ -164,17 +162,7 @@ def init_dist() -> CustomizedComm:
     interface = interfaces_for_ip_netifaces(master_addr)
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
-    nranks_per_node = os.environ.get("MSCCLPP_NRANKS_PER_NODE")
-    if nranks_per_node is None:
-        nranks_per_node = os.environ.get("LOCAL_WORLD_SIZE")
-    if nranks_per_node is None:
-        nnodes = int(os.environ.get("NNODES", "1"))
-        if world % nnodes == 0:
-            nranks_per_node = world // nnodes
-    if nranks_per_node is None:
-        nranks_per_node = torch.cuda.device_count()
-    nranks_per_node = int(nranks_per_node)
-    nranks_per_node = max(1, min(world, nranks_per_node))
+    nranks_per_node = int(torch.cuda.device_count())
     algorithms = setup_plan(rank, world, nranks_per_node)
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
@@ -185,22 +173,16 @@ def main():
     local = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     comm = init_dist()
-    print(f"Rank {comm.rank}: entering barrier #1", flush=True)
     comm.barrier_cpu()
-    print(f"Rank {comm.rank}: completed barrier #1", flush=True)
     buffer = mscclpp.RawGpuBuffer(24 << 20)
     dlpack = buffer.to_dlpack(data_type=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()
     comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
-    torch.cuda.current_stream().synchronize()
-    print(f"Rank {comm.rank}: allreduce completed, entering barrier #2", flush=True)
+    torch.cuda.synchronize()
     comm.barrier_cpu()
-    print(f"Rank {comm.rank}: completed barrier #2", flush=True)
-    rank_id = comm.rank
-    print(f"Rank {rank_id}: destroying communicator", flush=True)
+    print(f"Rank {comm.rank} allreduce completed successfully.")
     comm.destroy()
-    print(f"Rank {rank_id} allreduce completed successfully.", flush=True)
 
 
 if __name__ == "__main__":

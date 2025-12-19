@@ -68,8 +68,6 @@ void register_core(nb::module_& m) {
       .def("recv", static_cast<void (Bootstrap::*)(std::vector<char>&, int, int)>(&Bootstrap::recv), nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"));
 
-  nb::class_<UniqueId>(m, "UniqueId");
-
   nb::class_<TcpBootstrap, Bootstrap>(m, "TcpBootstrap")
       .def(nb::init<int, int>(), "Do not use this constructor. Use create instead.")
       .def_static(

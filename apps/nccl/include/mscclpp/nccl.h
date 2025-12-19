@@ -5,7 +5,6 @@
 #ifndef NCCL_H_
 #define NCCL_H_
 
-#include <cassert>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 

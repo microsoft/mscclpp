@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
+from __future__ import annotations
 from typing import Optional, Tuple, Dict, Union
 from functools import cached_property
 import atexit
