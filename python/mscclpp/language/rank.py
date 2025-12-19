@@ -117,16 +117,12 @@ class Rank:
                 threadblock=tb_id,
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
             operations.append(op)
-        
+
         if tb_group is None:
             get_program().add_operation(self.rank, tb_id, operations[0])
         else:
@@ -256,11 +252,7 @@ class Rank:
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
                 local_dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 packet=packet,
             )
             operations.append(op)

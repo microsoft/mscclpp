@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 from mscclpp.language.internal.globals import *
+from typing import Dict
 
 
 class LoopIterationContext:
@@ -34,6 +35,7 @@ class LoopIterationContext:
         """
         self.unit = unit
         self.num_chunks = num_chunks
+        self.pre_operations = dict()
 
     def __enter__(self):
         """Enter the context and set this as the active loop context.
@@ -52,7 +54,7 @@ class LoopIterationContext:
         """
         get_program().set_loop_context(None)
 
-    def process_operation(self, operation):
+    def process_operation(self, operations):
         """Add an operation to be included in the pipeline.
 
         This method is called internally to collect operations that should be
@@ -64,4 +66,5 @@ class LoopIterationContext:
             tb (int): The thread block ID that will execute this operation.
             operation: The operation object to be added to the pipeline.
         """
-        operation.set_pipeline_context(self)
+        for operation in operations:
+            operation.set_pipeline_context(self)

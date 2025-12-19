@@ -70,5 +70,3 @@ class ThreadBlockGroup:
     def end_offset(self, tb, size):
         tb_id = self.get_internal_id(tb)
         return (size / self.numtb()) * (tb_id + 1)
-        
-

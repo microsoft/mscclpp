@@ -12,6 +12,7 @@ from mscclpp.language.channel import *
 from mscclpp.language.rank import Semaphore
 from mscclpp.language.collectives import *
 from mscclpp.language.utils import AlgoSpec, ReplicationPolicy
+from mscclpp.language.internal.operations import add_data_sync
 from typing import List
 import json
 
@@ -214,15 +215,19 @@ class CollectiveProgram:
 
     def add_operation(self, rank, tb, operation):
         if self.loop_context != None:
-            self.loop_context.process_operation(operation)
+            self.loop_context.process_operation([operation])
         self.op_dep_dag.add_operation(operation)
 
     def add_tbg_operation(self, operations):
+        if self.loop_context != None:
+            self.loop_context.process_operation(operations)
         self.op_dep_dag.add_tbg_operation(operations)
 
     def post_process_operations(self):
         self.op_dep_dag.add_semaphore_dependency()
+        self.op_dep_dag.fusion_operations()
         list_op = self.op_dep_dag.get_execution_order()
+        list_op = add_data_sync(list_op)
         list_op = self.buffers_access.process_operations(list_op)
         for op in list_op:
             self.gpus[op.rank].add_operation(op.threadblock, op)

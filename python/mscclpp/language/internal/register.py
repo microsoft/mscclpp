@@ -1,4 +1,3 @@
-
 class ChannelRegister:
     channels = {}
 
@@ -9,7 +8,8 @@ class ChannelRegister:
     @staticmethod
     def get_channel(rank: int, threadblock: int, tb_channel_id: int):
         return ChannelRegister.channels.get((rank, threadblock, tb_channel_id))
-    
+
+
 class SemaphoreRegister:
     semaphores = {}
 

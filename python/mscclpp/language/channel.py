@@ -152,14 +152,10 @@ class MemoryChannel:
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
             )
             operations.append(op)
-            
+
         if tb_group is None:
             get_program().add_operation(self.src_rank, tb_id, operations[0])
         else:
@@ -219,11 +215,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
             )
             operations.append(op)
 
@@ -291,11 +283,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 from_packet=True,
                 to_packet=True,
             )
@@ -363,11 +351,7 @@ class MemoryChannel:
                 dst_buff=[RemoteChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size, tb_chunk_id)],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 from_packet=False,
                 to_packet=True,
             )
@@ -466,11 +450,7 @@ class MemoryChannel:
                 remote_dst_buff=[],
                 channel_ids=tb_channel_ids,
                 channel_type=self.channel_type,
-                tbg=(
-                    tb_group
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 reduce_operation=reduce_op,
             )
             operations.apend(op)
@@ -1004,7 +984,9 @@ class SwitchChannel:
                 )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = GroupStore(self.src_rank, tb, src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
+        op = GroupStore(
+            self.src_rank, tb, src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type
+        )
         get_program().add_operation(self.src_rank, tb, op)
 
     class SwitchChannelRankView:

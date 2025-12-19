@@ -25,8 +25,8 @@ class OperationDependencyGraph:
         self.barrier_nodes: Dict[Tuple[int, int], List[OperationDependencyGraph.Node]] = {}
         self.tb_barriers: Dict[Tuple[int, int, int], int] = {}
         self.node_list = []
-    
-    def add_operation(self, operation, agg_node = None):
+
+    def add_operation(self, operation, agg_node=None):
         """
         Inserts an operation into the DAG, adding edges based on dependencies.
         """
@@ -37,14 +37,16 @@ class OperationDependencyGraph:
             agg_node.add_node(node)
 
         if isinstance(operation, BarrierOperation):
-            if (rank,  threadblock, operation.barrier_id) not in self.tb_barriers:
+            if (rank, threadblock, operation.barrier_id) not in self.tb_barriers:
                 self.tb_barriers[(rank, threadblock, operation.barrier_id)] = 0
             if (rank, operation.barrier_id) not in self.barrier_nodes:
                 self.barrier_nodes[(rank, operation.barrier_id)] = []
 
             barrier_count = self.tb_barriers[(rank, threadblock, operation.barrier_id)]
             if barrier_count > len(self.barrier_nodes[(rank, operation.barrier_id)]):
-                raise RuntimeError(f"Barrier node not create correctly for rank {rank}, threadblock {threadblock}, barrier_id {operation.barrier_id}.")
+                raise RuntimeError(
+                    f"Barrier node not create correctly for rank {rank}, threadblock {threadblock}, barrier_id {operation.barrier_id}."
+                )
             elif barrier_count == len(self.barrier_nodes[(rank, operation.barrier_id)]):
                 agg_node = self.AggregateNode()
                 self.barrier_nodes[(rank, operation.barrier_id)].append(agg_node)
@@ -70,7 +72,9 @@ class OperationDependencyGraph:
                 if node in self.root_nodes:
                     self.root_nodes.remove(node)
 
-        if isinstance(operation, SignalOperation) or (isinstance(operation, PutOperation) and (operation.with_signal or operation.with_signal_and_flush)):
+        if isinstance(operation, SignalOperation) or (
+            isinstance(operation, PutOperation) and (operation.with_signal or operation.with_signal_and_flush)
+        ):
             for tb_channel_id in operation.channel_ids:
                 channel = ChannelRegister.get_channel(rank, threadblock, tb_channel_id)
                 op_info = (channel.src_rank, channel.dst_rank, channel.channel_peer_id)
@@ -121,14 +125,14 @@ class OperationDependencyGraph:
                     sem_op[(operation.rank, id)] = []
                     sem_val[(operation.rank, id)] = SemaphoreRegister.get_semaphore(operation.rank, id).initial_value
                 sem_op[(operation.rank, id)].append((node, operation.pipeline_context))
-            
+
             return True
 
         def process_node(node):
             if node in processed_node:
                 return
             processed_node.add(node)
-            
+
             for next_node in node.next_nodes:
                 next_node.add_reach()
                 if next_node.get_reach() == next_node.get_input():
@@ -136,7 +140,7 @@ class OperationDependencyGraph:
                         for sub_node in next_node.agg_node.nodes:
                             queue.put(sub_node)
                     else:
-                       queue.put(next_node) 
+                        queue.put(next_node)
 
         for node in self.root_nodes:
             queue.put(node)
@@ -165,10 +169,10 @@ class OperationDependencyGraph:
                         get_program().disable_inter_tb_sync()
                         warnings.warn(f"Undefined Behaviour Semaphore Id.", UserWarning)
                         return
-                    
+
                     for sem_rel_node in new_sem_rel_node:
                         process_node(sem_rel_node)
-                    
+
                     if sem_val[key] == len(sem_rel[key]) - len(sem_acq[key]):
                         sem_acq_node, sem_acq_ctx = sem_acq[key][0]
                         sem_val[key] = 0
@@ -182,16 +186,16 @@ class OperationDependencyGraph:
                             sem_acq_node.operation.add_tb_sync(sem_rel_node.operation.threadblock)
                             sem_acq_node.previous_nodes.append(sem_rel_node)
                             sem_acq_node.add_input()
-                    
+
                     removed_keys.append(key)
-                
+
                 for key in removed_keys:
                     sem_rel.pop(key)
                     sem_acq.pop(key)
 
         if len(sem_acq.keys()) > 0:
             raise RuntimeError(f"Semaphore acquire hanging.")
-    
+
     def reset(self):
         for node in self.node_list:
             node.reset()
@@ -199,7 +203,7 @@ class OperationDependencyGraph:
     def print(self):
         self.reset()
         self.check()
-        
+
         queue = Queue()
         for node in self.root_nodes:
             queue.put(node)
@@ -215,7 +219,7 @@ class OperationDependencyGraph:
                         for sub_node in next_node.agg_node.nodes:
                             queue.put(sub_node)
                     else:
-                       queue.put(next_node) 
+                        queue.put(next_node)
             print()
 
     def check(self):
@@ -225,11 +229,39 @@ class OperationDependencyGraph:
         if len(self.signalling) > 0:
             for key, queue in self.signalling.items():
                 if not queue.empty():
-                    raise RuntimeError(f"Signalling from {key[0]} to {key[1]} on channel {key[2]} hasn't equivalent wait operation.")
+                    raise RuntimeError(
+                        f"Signalling from {key[0]} to {key[1]} on channel {key[2]} hasn't equivalent wait operation."
+                    )
         if len(self.waiting) > 0:
             for key, queue in self.waiting.items():
                 if not queue.empty():
-                    raise RuntimeError(f"Waiting for {key[0]} to {key[1]} on channel {key[2]} hasn't equivalent signal operation.")      
+                    raise RuntimeError(
+                        f"Waiting for {key[0]} to {key[1]} on channel {key[2]} hasn't equivalent signal operation."
+                    )
+
+    def fusion_operations(self):
+        self.reset()
+        self.check()
+
+        for node in self.root_nodes:
+            for next_node in node.next_nodes:
+                if isinstance(node, self.Node) and isinstance(next_node, self.Node):
+                    fused_op = node.operation + next_node.operation
+                    if fused_op is not None:
+                        node.operation = fused_op
+                        node.next_nodes.remove(next_node)
+                        next_node.previous_nodes.remove(node)
+                        for nn in next_node.next_nodes:
+                            node.next_nodes.append(nn)
+                            ## Change from list to another data sctruct that allos insert and remove in log(n)
+                            nn.previous_nodes.remove(next_node)
+                            nn.previous_nodes.append(node)
+                        for pn in next_node.previous_nodes:
+                            node.previous_nodes.append(pn)
+                            pn.next_nodes.remove(next_node)
+                            pn.next_nodes.append(node)
+                            node.add_input()
+                        del next_node
 
     def get_execution_order(self):
         """
@@ -237,7 +269,7 @@ class OperationDependencyGraph:
         """
         self.reset()
         self.check()
-        
+
         order = []
         queue = Queue()
         for node in self.root_nodes:
@@ -253,12 +285,13 @@ class OperationDependencyGraph:
                         for sub_node in next_node.agg_node.nodes:
                             queue.put(sub_node)
                     else:
-                       queue.put(next_node) 
+                        queue.put(next_node)
 
         return order
 
-    class BaseNode():
+    class BaseNode:
         def __init__(self):
+            ## Change from list to another data sctruct that allos insert and remove in log(n)
             self.previous_nodes = []
             self.next_nodes = []
             self.input = 0
@@ -266,7 +299,7 @@ class OperationDependencyGraph:
 
         def add_input(self):
             self.input += 1
-        
+
         def add_reach(self):
             self.reach += 1
 
@@ -285,6 +318,11 @@ class OperationDependencyGraph:
             self.agg_node = None
             super().__init__()
 
+        def __del__(self):
+            self.decrease_input(len(self.previous_nodes))
+            if self.agg_node is not None:
+                self.agg_node.nodes.remove(self)
+
         def get_operations(self):
             return [self.operation]
 
@@ -294,6 +332,12 @@ class OperationDependencyGraph:
             else:
                 self.input += 1
 
+        def decrease_input(self, amount=1):
+            if self.agg_node is not None:
+                self.agg_node.input -= amount
+            else:
+                self.input -= amount
+
         def add_reach(self):
             if self.agg_node is not None:
                 self.agg_node.reach += 1
@@ -302,31 +346,30 @@ class OperationDependencyGraph:
 
         def get_input(self):
             if self.agg_node is not None:
-                 return self.agg_node.input
+                return self.agg_node.input
             else:
                 return self.input
-                
+
         def get_reach(self):
             if self.agg_node is not None:
-                 return self.agg_node.reach
+                return self.agg_node.reach
             else:
                 return self.reach
 
         def reset(self):
             if self.agg_node is not None:
-                 self.agg_node.reset()
+                self.agg_node.reset()
             else:
                 self.reach = 0
 
         def print(self):
             return f"rank {self.operation.rank} tb {self.operation.threadblock} {self.operation.name}"
-            
 
     class AggregateNode(BaseNode):
         def __init__(self):
             self.nodes = []
             super().__init__()
-        
+
         def add_node(self, node):
             self.nodes.append(node)
             node.agg_node = self
