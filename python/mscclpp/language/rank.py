@@ -110,20 +110,23 @@ class Rank:
                 "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
+        operations = []
         for tb_id in tb_list:
             op = CopyOperation(
+                rank=self.rank,
+                threadblock=tb_id,
                 src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
-                tbg_info=(
-                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 from_packet=from_packet,
                 to_packet=to_packet,
             )
+            operations.append(op)
 
-            get_program().add_operation(self.rank, tb_id, op)
+        if tb_group is None:
+            get_program().add_operation(self.rank, tb_id, operations[0])
+        else:
+            get_program().add_tbg_operation(operations)
 
     def copy(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Copy data from source chunk to destination chunk.
@@ -240,21 +243,24 @@ class Rank:
                 "Either 'tb' (thread block ID) or 'tb_group' (ThreadBlockGroup) must be provided, but both are None."
             )
 
+        operations = []
         for tb_id in tb_list:
             op = ReduceOperation(
-                [LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
+                rank=self.rank,
+                threadblock=tb_id,
+                local_src_buff=[LocalChunk(src_chunk.buffer, src_chunk.index, src_chunk.size)]
                 + [LocalChunk(chunk.buffer, chunk.index, chunk.size) for chunk in other_chunks],
-                [LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
+                local_dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],
                 reduce_operation=reduce_op,
-                tbg_info=(
-                    ThreadBlockGroupInfo(tb_group.get_internal_id(tb_id), tb_group.numtb())
-                    if tb_group is not None
-                    else None
-                ),
+                tbg=(tb_group if tb_group is not None else None),
                 packet=packet,
             )
+            operations.append(op)
 
-            get_program().add_operation(self.rank, tb_id, op)
+        if tb_group is None:
+            get_program().add_operation(self.rank, tb_id, operations[0])
+        else:
+            get_program().add_tbg_operation(operations)
 
     def barrier(self, tb_list: List[int]):
         """Create a synchronization barrier between thread blocks.
@@ -275,11 +281,11 @@ class Rank:
         if len(tb_list) == 0:
             raise RuntimeError("Barrier requires at least thread block.")
         elif len(tb_list) == 1:
-            op = SyncOperation()
+            op = SyncOperation(self.rank, tb_list[0])
             get_program().add_operation(self.rank, tb_list[0], op)
         else:
-            op = BarrierOperation(self.rank, tb_list)
             for tb in tb_list:
+                op = BarrierOperation(self.rank, tb, tb_list)
                 get_program().add_operation(self.rank, tb, op)
 
 
@@ -413,7 +419,7 @@ class Semaphore:
         Example:
             >>> sem.acquire(tb=0, data_sync=SyncType.before)
         """
-        op = SemaphoreAcquireOperation([self.id], data_sync)
+        op = SemaphoreAcquireOperation(self.rank, tb, [self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
 
     def release(self, tb: int, data_sync: SyncType = SyncType.both):
@@ -431,5 +437,5 @@ class Semaphore:
         Example:
             >>> sem.release(tb=0, data_sync=SyncType.after)
         """
-        op = SemaphoreReleaseOperation([self.id], data_sync)
+        op = SemaphoreReleaseOperation(self.rank, tb, [self.id], data_sync)
         get_program().add_operation(self.rank, tb, op)
