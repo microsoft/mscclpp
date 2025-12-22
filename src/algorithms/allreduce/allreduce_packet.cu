@@ -157,9 +157,17 @@ struct PacketAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
+#if defined(ENABLE_NPKIT)
+    size_t sharedMemSize = sizeof(NpKitEvent) * NPKIT_SHM_NUM_EVENTS;
+    allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, sharedMemSize, stream>>>(
+        (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
+        nRanksPerNode, worldSize, nelems, flags, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
+        NpKit::GetCpuTimestamp());
+#else
     allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, flags, numScratchBuff);
+#endif
     return cudaGetLastError();
   }
 };
