@@ -5,6 +5,9 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
+- name: platform
+  type: string
+  default: 'cuda'
 
 steps:
 - task: Bash@3
@@ -14,7 +17,11 @@ steps:
     targetType: 'inline'
     script: |
       mkdir build && cd build
-      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+      if [ "${{ parameters.platform }}" == "rocm" ]; then
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
+      else
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+      fi
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

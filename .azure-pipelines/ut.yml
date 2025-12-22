@@ -108,6 +108,25 @@ jobs:
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
 
+- job: UnitTestMI300X
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci-mi300x
+  strategy:
+    matrix:
+      rocm6.2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut.yaml
+    parameters:
+      subscription:     mscclpp-ci-mi300
+      vmssName:         mscclpp-mi300-ci
+      sshKeySecureFile: mscclpp.pem
+
 - job: UnitTestNoIBEnv
   timeoutInMinutes: 40
   displayName: Test No IB Environment
