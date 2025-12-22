@@ -1,22 +1,7 @@
-# MSCCL++ DSL Integration Guide
+# Integration
 
 MSCCL++ DSL (domain-specific language) enables concise expression of collective algorithms as Python functions.
 MSCCL++ offers pythonic utilities to author, JIT-compile, register, and select execution plans. This guide walks through two integration paths: a customized MSCCL++ communicator and NCCL interposition that accelerates existing PyTorch `backend="nccl"` workloads.
-
-## Initial Setup
-
-Run the following from the repository root after completing the basic project setup:
-
-1. Install Python dependencies.
-   ```bash
-   pip install -r ./python/<requirements_file>
-   ```
-   Replace `<requirements_file>` with the file that matches your environment (e.g., `requirements_cuda11.txt`, `requirements_cuda12.txt`, or `requirements_rocm6.txt`).
-
-2. Install the module and generate default algorithm plans.
-   ```bash
-   pip install . && python3 -m mscclpp --install
-   ```
 
 ## Integration Options
 

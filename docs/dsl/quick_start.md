@@ -1,4 +1,4 @@
-# DSL Quick Start
+# Quick Start
 
 The MSCCL++ DSL (Domain Specific Language) provides a high-level Python API for defining custom collective communication algorithms. This guide will help you get started with writing and testing your own communication patterns.
 
