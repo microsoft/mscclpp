@@ -2,6 +2,7 @@
 # Licensed under the MIT License.
 
 # MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_allgather.py
+# For AMD: MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> GPU_MAX_HW_QUEUES=7 torchrun --nnodes=1 --nproc_per_node=8 customized_allgather.py
 
 import mscclpp
 import mscclpp.comm as mscclpp_comm
