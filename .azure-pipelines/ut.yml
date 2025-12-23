@@ -123,8 +123,8 @@ jobs:
   steps:
   - template: templates/ut.yaml
     parameters:
-      subscription:     mscclpp-ci-mi300
-      vmssName:         mscclpp-mi300-ci
+      subscription:     mscclpp-ci-mi300x
+      vmssName:         mscclpp-mi300x-ci
       sshKeySecureFile: mscclpp.pem
 
 - job: UnitTestNoIBEnv
