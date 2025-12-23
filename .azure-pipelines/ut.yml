@@ -114,7 +114,7 @@ jobs:
     name: msccl-ci-mi300x
   strategy:
     matrix:
-      rocm6.2:
+      rocm6_2:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
 
   container:
