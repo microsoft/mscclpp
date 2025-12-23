@@ -1,4 +1,4 @@
-# MSCCL++ DSL
+# Concepts
 ## Introduction
 
 The MSCCL++ Domain-Specific Language (DSL) provides a Python-native API for defining and executing GPU-based communication collectives. With a few high-level calls, users can construct complex data movement and synchronization workflows without dealing with low-level CUDA code.
@@ -11,7 +11,7 @@ Here are the highlights of the MSCCL++ DSL:
 - **Flexible execution model**: The MSCCL++ DSL allows users to load different execution plans at runtime, enabling dynamic optimization based on the current workload and hardware configuration.
 
 
-## MSCCL++ DSL Concepts
+## Basic Concepts
 
 ### Collectives
 
@@ -79,8 +79,9 @@ The synchronization inside the thread-block can be inferred by MSCCL++ DSL autom
 
 But for multi-thread-blocks synchronization and cross-ranks synchronization, we need to insert the synchronization point manually.
 
+## Post Processing Steps
 
-## Operation Fusion (Instruction Fusion)
+### Operation Fusion (Instruction Fusion)
 MSCCL++ DSL performs operation fusion by analyzing all operations scheduled within the same thread‐block. For each thread‐block, the DSL builds a directed acyclic graph (DAG) of chunk‐level operations and tracks data dependencies and usage patterns. When two or more operations meet fusion criteria—such as contiguous chunk access, no intervening dependencies, and compatible resource requirements—the DSL merges them into a single operation function. This fusion strategy reduces memory traffic and avoids unnecessary synchronization, resulting in more efficient execution.
 
 For example:
@@ -93,7 +94,7 @@ channel.put(remote_chunk, dst_chunk, tb=0)
 
 When the DSL detects that a reduce operation is immediately followed by a put operation using the same data chunk, it automatically fuses them into a single operation internally, eliminating intermediate memory writes and improving performance.
 
-## Data dependencies analysis
+### Data dependencies analysis
 
 The MSCCL++ DSL automatically tracks data dependencies at the chunk level within each thread block by maintaining the last writer and active readers for each memory slot. When operations have data dependencies, the DSL automatically inserts necessary synchronization points to ensure correct execution order. Additionally, the system analyzes the dependency graph to remove redundant synchronization operations (such as unnecessary barriers) when the execution order already guarantees correctness, optimizing performance while maintaining safety.
 
@@ -112,8 +113,6 @@ rank.copy(dst_chunk, src_chunk, tb=0)
 rank.nop(tb=0)  # Inserted for intra-block synchronization, nop is an internal operation, hidden from users
 channel.put(remote_chunk, dst_chunk, tb=0)
 ```
-
-
 
 ## Pipeline Loop
 Pipeline enables overlapping operations across thread blocks. Using Semaphore for cross-block synchronization, it overlaps stages—such as copying data from the input buffer to a scratch buffer—with subsequent peer transfers. A pipelined loop orchestrates these stages to run concurrently, maximizing overall throughput.

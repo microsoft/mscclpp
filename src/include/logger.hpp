@@ -21,7 +21,7 @@
 namespace mscclpp {
 
 typedef enum : unsigned int { NONE = 0, DEBUG, INFO, WARN, ERROR } LogLevel;
-typedef enum : std::size_t { ENV = 0, NET, CONN, EXEC, NCCL, COUNT } LogSubsys;
+typedef enum : std::size_t { ENV = 0, NET, CONN, P2P, EXEC, NCCL, COUNT } LogSubsys;
 
 namespace detail {
 
@@ -61,6 +61,8 @@ constexpr std::string_view logSubsysToString(LogSubsys subsys) {
       return "NET";
     case LogSubsys::CONN:
       return "CONN";
+    case LogSubsys::P2P:
+      return "P2P";
     case LogSubsys::EXEC:
       return "EXEC";
     case LogSubsys::NCCL:
