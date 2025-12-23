@@ -6,6 +6,7 @@
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
+#include <mscclpp/utils.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <unordered_map>
@@ -33,17 +34,20 @@ namespace std {
 template <>
 struct hash<mscclpp::ChannelKey> {
   std::size_t operator()(const mscclpp::ChannelKey& key) const {
-    return std::hash<int>()(static_cast<int>(key.bufferType)) ^ std::hash<int>()(static_cast<int>(key.channelType));
+    std::size_t seed = 0;
+    mscclpp::detail::hashCombine(seed, static_cast<int>(key.bufferType));
+    mscclpp::detail::hashCombine(seed, static_cast<int>(key.channelType));
+    return seed;
   }
 };
 
 template <>
 struct hash<std::pair<int, mscclpp::ChannelType>> {
   std::size_t operator()(const std::pair<int, mscclpp::ChannelType>& key) const {
-    std::size_t h1 = std::hash<int>()(key.first);
-    std::size_t h2 = std::hash<int>()(static_cast<int>(key.second));
-    // Refer hash_combine from boost
-    return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
+    std::size_t seed = 0;
+    mscclpp::detail::hashCombine(seed, key.first);
+    mscclpp::detail::hashCombine(seed, static_cast<int>(key.second));
+    return seed;
   }
 };
 }  // namespace std

@@ -5,6 +5,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <mscclpp/utils.hpp>
 
 #include "debug.h"
 #include "execution_kernel.hpp"
@@ -55,19 +56,12 @@ struct DeviceExecutionPlanKey {
 
 namespace std {
 
-// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
-template <typename T>
-inline void hash_combine(std::size_t& seed, const T& value) {
-  std::hash<T> hasher;
-  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
 template <>
 struct hash<std::pair<mscclpp::BufferType, int>> {
   std::size_t operator()(const std::pair<mscclpp::BufferType, int>& key) const {
     std::size_t seed = 42;
-    hash_combine(seed, static_cast<int>(key.first));
-    hash_combine(seed, key.second);
+    mscclpp::detail::hashCombine(seed, static_cast<int>(key.first));
+    mscclpp::detail::hashCombine(seed, key.second);
     return seed;
   }
 };
@@ -76,11 +70,11 @@ template <>
 struct hash<mscclpp::ExecutionContextKey> {
   std::size_t operator()(const mscclpp::ExecutionContextKey& key) const {
     size_t seed = 42;
-    hash_combine(seed, key.sendBuff);
-    hash_combine(seed, key.recvBuff);
-    hash_combine(seed, key.sendBuffSize);
-    hash_combine(seed, key.recvBuffSize);
-    hash_combine(seed, key.plan);
+    mscclpp::detail::hashCombine(seed, key.sendBuff);
+    mscclpp::detail::hashCombine(seed, key.recvBuff);
+    mscclpp::detail::hashCombine(seed, key.sendBuffSize);
+    mscclpp::detail::hashCombine(seed, key.recvBuffSize);
+    mscclpp::detail::hashCombine(seed, key.plan);
     return seed;
   }
 };
@@ -89,10 +83,10 @@ template <>
 struct hash<mscclpp::DeviceExecutionPlanKey> {
   std::size_t operator()(const mscclpp::DeviceExecutionPlanKey& key) const {
     std::size_t seed = 42;
-    hash_combine(seed, key.inputMessageSize);
-    hash_combine(seed, key.outputMessageSize);
-    hash_combine(seed, key.constSrcOffset);
-    hash_combine(seed, key.constDstOffset);
+    mscclpp::detail::hashCombine(seed, key.inputMessageSize);
+    mscclpp::detail::hashCombine(seed, key.outputMessageSize);
+    mscclpp::detail::hashCombine(seed, key.constSrcOffset);
+    mscclpp::detail::hashCombine(seed, key.constDstOffset);
     return seed;
   }
 };

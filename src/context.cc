@@ -90,8 +90,8 @@ MSCCLPP_API_CPP Connection Context::connect(const Endpoint &localEndpoint, const
   if (localTransport != remoteTransport &&
       !(AllIBTransports.has(localTransport) && AllIBTransports.has(remoteTransport))) {
     std::stringstream ss;
-    ss << "Transport mismatch between local (" << std::to_string(localTransport) << ") and remote ("
-       << std::to_string(remoteEndpoint.transport()) << ") endpoints";
+    ss << "Transport mismatch between local (" << localTransport << ") and remote (" << remoteEndpoint.transport()
+       << ") endpoints";
     throw Error(ss.str(), ErrorCode::InvalidUsage);
   }
   std::shared_ptr<BaseConnection> conn;

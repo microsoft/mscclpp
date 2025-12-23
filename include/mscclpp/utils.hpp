@@ -4,10 +4,21 @@
 #ifndef MSCCLPP_UTILS_HPP_
 #define MSCCLPP_UTILS_HPP_
 
+#include <functional>
 #include <mscclpp/core.hpp>
 #include <string>
 
 namespace mscclpp {
+namespace detail {
+
+// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
+template <typename T>
+inline void hashCombine(std::size_t& seed, const T& value) {
+  std::hash<T> hasher;
+  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
+}  // namespace detail
 
 /// Get the host name of the system.
 /// @param maxlen The maximum length of the returned string.
