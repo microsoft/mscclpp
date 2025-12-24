@@ -9,7 +9,6 @@
 #include <cstring>
 #include <fstream>
 #include <mscclpp/core.hpp>
-#include <mscclpp/device.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/fifo.hpp>

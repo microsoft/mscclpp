@@ -8,7 +8,6 @@
 
 #include <algorithm>
 #include <cstring>
-#include <mscclpp/device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 
