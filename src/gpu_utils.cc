@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #include <cstring>
-#include <mscclpp/device.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
