@@ -29,17 +29,17 @@ struct SemaphoreStub::Impl {
   Device device_;
 };
 
-std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Context> context) {
+std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken([[maybe_unused]] std::shared_ptr<Context> context) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (isNvlsSupported()) {
     return context->pimpl_->getToken();
   }
 #endif  // CUDA_NVLS_API_AVAILABLE
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_USE_ROCM)
   return detail::gpuCallocUncachedShared<uint64_t>();
-#else   // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(MSCCLPP_USE_ROCM)
   return detail::gpuCallocShared<uint64_t>();
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#endif  // !defined(MSCCLPP_USE_ROCM)
 }
 
 SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection) {

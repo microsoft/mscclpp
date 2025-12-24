@@ -16,7 +16,7 @@ using namespace mscclpp;
 constexpr int BYTE_BITS = 8;
 
 static DLDeviceType getDeviceType() {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_USE_ROCM)
   return kDLROCM;
 #else
   return kDLCUDA;
