@@ -7,6 +7,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <mscclpp/device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -16,7 +17,7 @@ using namespace mscclpp;
 constexpr int BYTE_BITS = 8;
 
 static DLDeviceType getDeviceType() {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
   return kDLROCM;
 #else
   return kDLCUDA;

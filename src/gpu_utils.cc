@@ -2,18 +2,19 @@
 // Licensed under the MIT License.
 
 #include <cstring>
+#include <mscclpp/device.hpp>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
 #include "debug.h"
 
 static inline bool isCudaTeardownError(cudaError_t err) {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
   return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
-#else   // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(MSCCLPP_DEVICE_HIP)
   return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
          err == cudaErrorInvalidDevice || err == cudaErrorLaunchFailure;
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
 static inline bool isCuTeardownError(CUresult r) {
@@ -178,7 +179,7 @@ void* gpuCallocHost(size_t bytes, unsigned int flags) {
   return ptr;
 }
 
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
 void* gpuCallocUncached(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
@@ -188,7 +189,7 @@ void* gpuCallocUncached(size_t bytes) {
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   return ptr;
 }
-#endif  // defined(__HIP_PLATFORM_AMD__)
+#endif  // defined(MSCCLPP_DEVICE_HIP)
 
 #if (CUDA_NVLS_API_AVAILABLE)
 size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
@@ -335,7 +336,7 @@ bool isNvlsSupported() {
 }
 
 bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
   return false;
 #else
   CUmemGenericAllocationHandle handle;

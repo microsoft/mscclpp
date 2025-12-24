@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mscclpp/device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 
@@ -68,7 +69,7 @@ std::shared_ptr<void> getPeerMemoryHandle(cudaIpcMemHandle_t ipcHandle) {
       INFO(mscclpp::P2P, "Closed CUDA IPC handle at pointer ", std::hex, p);
     }
   };
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
   // Unlike Nvidia, ROCm will not reuse the same ipc handle for same memory region.
   // We cache the opened ipc handles to avoid opening multiple times. (May exceed system limit on vm.max_map_count)
   static auto peerMemoryHandleMap = std::make_shared<

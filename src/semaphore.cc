@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 
 #include "api.h"
-#include "atomic.hpp"
 #include "connection.hpp"
 #include "context.hpp"
 #include "debug.h"
@@ -29,17 +29,17 @@ struct SemaphoreStub::Impl {
   Device device_;
 };
 
-std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Context> context) {
+std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken([[maybe_unused]] std::shared_ptr<Context> context) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (isNvlsSupported()) {
     return context->pimpl_->getToken();
   }
 #endif  // CUDA_NVLS_API_AVAILABLE
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocUncachedShared<uint64_t>();
-#else   // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(MSCCLPP_DEVICE_HIP)
   return detail::gpuCallocShared<uint64_t>();
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 }
 
 SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection) {
