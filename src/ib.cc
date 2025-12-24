@@ -24,7 +24,7 @@
 #endif  // defined(USE_IBVERBS)
 #include "logger.hpp"
 
-#if !defined(MSCCLPP_DEVICE_HIP)
+#if !defined(MSCCLPP_USE_ROCM)
 
 // Check if nvidia_peermem kernel module is loaded
 [[maybe_unused]] static bool checkNvPeerMemLoaded() {
@@ -36,7 +36,7 @@
   return false;
 }
 
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(MSCCLPP_USE_ROCM)
 
 namespace mscclpp {
 
@@ -51,11 +51,11 @@ static inline bool isDmabufSupportedByGpu(int gpuId) {
     return cache[gpuId];
   }
   int dmaBufSupported = 0;
-#if !defined(MSCCLPP_DEVICE_HIP)
+#if !defined(MSCCLPP_USE_ROCM)
   CUdevice dev;
   MSCCLPP_CUTHROW(cuDeviceGet(&dev, gpuId));
   MSCCLPP_CUTHROW(cuDeviceGetAttribute(&dmaBufSupported, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, dev));
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(MSCCLPP_USE_ROCM)
   bool ret = dmaBufSupported != 0;
   if (!ret) {
     DEBUG(NET, "GPU ", gpuId, " does not support DMABUF");
@@ -79,7 +79,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   int gpuId = detail::gpuIdFromAddress(buff_);
   bool isGpuBuff = (gpuId != -1);
   if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
-#if !defined(MSCCLPP_DEVICE_HIP)
+#if !defined(MSCCLPP_USE_ROCM)
     int fd;
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
 
@@ -91,11 +91,11 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
-#else   // defined(MSCCLPP_DEVICE_HIP)
+#else   // defined(MSCCLPP_USE_ROCM)
     THROW(NET, Error, ErrorCode::InvalidUsage, "We don't support DMABUF on HIP platforms yet");
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#endif  // defined(MSCCLPP_USE_ROCM)
   } else {
-#if !defined(MSCCLPP_DEVICE_HIP)
+#if !defined(MSCCLPP_USE_ROCM)
     if (isGpuBuff) {
       if (isCuMemMapAllocated(buff_)) {
         THROW(NET, Error, ErrorCode::InvalidUsage, "DMABUF is required but is not supported in this platform.");
@@ -105,7 +105,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
         THROW(NET, Error, ErrorCode::SystemError, "nvidia_peermem kernel module is not loaded");
       }
     }
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(MSCCLPP_USE_ROCM)
     mr_ = IBVerbs::ibv_reg_mr(pd, reinterpret_cast<void*>(addr), pages * pageSize,
                               IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                   IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);

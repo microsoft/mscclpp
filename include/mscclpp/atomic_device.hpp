@@ -6,13 +6,13 @@
 
 #include "device.hpp"
 
-#if defined(MSCCLPP_DEVICE_CUDA)
+#if defined(MSCCLPP_USE_CUDA) || defined(MSCCLPP_DEVICE_CUDA)
 #include <cuda/atomic>
-#endif  // defined(MSCCLPP_DEVICE_CUDA)
+#endif  // defined(MSCCLPP_USE_CUDA) || defined(MSCCLPP_DEVICE_CUDA)
 
 namespace mscclpp {
 
-#if defined(MSCCLPP_DEVICE_CUDA)
+#if defined(MSCCLPP_USE_CUDA) || defined(MSCCLPP_DEVICE_CUDA)
 
 constexpr cuda::memory_order memoryOrderRelaxed = cuda::memory_order_relaxed;
 constexpr cuda::memory_order memoryOrderAcquire = cuda::memory_order_acquire;
@@ -38,7 +38,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
   return cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
 }
 
-#elif defined(MSCCLPP_DEVICE_HIP)
+#elif defined(MSCCLPP_USE_ROCM) || defined(MSCCLPP_DEVICE_HIP)
 
 constexpr auto memoryOrderRelaxed = __ATOMIC_RELAXED;
 constexpr auto memoryOrderAcquire = __ATOMIC_ACQUIRE;
@@ -65,7 +65,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrde
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
 
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#endif  // defined(MSCCLPP_USE_ROCM) || defined(MSCCLPP_DEVICE_HIP)
 
 }  // namespace mscclpp
 
