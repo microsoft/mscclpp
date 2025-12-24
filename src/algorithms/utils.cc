@@ -1,10 +1,13 @@
+#include "algorithms/utils.hpp"
+
 #include <algorithm>
+#include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
-#include "common.hpp"
-
+namespace mscclpp {
+namespace algorithm {
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
                                                            mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
@@ -144,3 +147,7 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
       ptr.get(), memoryChannelDeviceHandles.data(), memoryChannelDeviceHandles.size(), cudaMemcpyHostToDevice);
   return ptr;
 }
+
+}  // namespace algorithm
+
+}  // namespace mscclpp

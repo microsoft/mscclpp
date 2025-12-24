@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm.py
+# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm_with_dsl.py
 
 import os
 import torch
@@ -21,7 +21,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
         spec.name,
         spec.collective,
         gpu_size,
-        instances=8,
+        instances=spec.instances,
         protocol=spec.protocol,
         num_threads_per_block=spec.num_threads_per_block,
         min_message_size=spec.min_message_size,
@@ -74,14 +74,14 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     return program
 
 
-def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
+def setup_plan(rank: int, world_size: int, nranks_per_node: int):
     spec = mscclpp.AlgoSpec(
         name="allreduce_nvls",
-        collective=AllReduce(8, 1, True),
-        nranks_per_node=8,
+        collective=AllReduce(world_size, 1, True),
+        nranks_per_node=nranks_per_node,
         world_size=world_size,
         in_place=True,
-        instances=2,
+        instances=nranks_per_node,
         protocol="Simple",
         num_threads_per_block=1024,
         min_message_size=1 << 20,
@@ -89,17 +89,10 @@ def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: i
         tags={"nvls": 1},
     )
 
-    plan_handle = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
-    registry.register_plan(plan_handle)
-
-
-def selector(plans, req):
-    if req.collective != "allreduce":
-        return None
-    if req.message_size < 1 << 20:
-        return None
-    nvls = [p for p in plans if "nvls" in p.tags]
-    return nvls[0] if nvls else plans[0]
+    algorithms = []
+    algo = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
+    algorithms.append(algo)
+    return algorithms
 
 
 def interfaces_for_ip_netifaces(ip: str):
@@ -129,42 +122,36 @@ def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp_comm.CommGroup, algorithms=[]):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        self.registry = mscclpp.ExecutionPlanRegistry()
         self.executor = mscclpp.Executor(comm.communicator)
+        self.algorithms = algorithms
 
     def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
         assert op == torch.distributed.ReduceOp.SUM
-        plan = self.registry.select(
-            collective="allreduce",
-            world_size=self.world_size,
-            n_ranks_per_node=self.n_ranks_per_node,
-            send_buffer=tensor.data_ptr(),
-            recv_buffer=tensor.data_ptr(),
-            message_size=tensor.numel() * tensor.element_size(),
-        )
-        if plan is None:
-            raise ValueError(
-                f"No suitable plan found for collective allreduce with message size {tensor.numel() * tensor.element_size()}"
-            )
-        self.executor.execute(
-            self.rank,
-            tensor.data_ptr(),
-            tensor.data_ptr(),
-            tensor.numel() * tensor.element_size(),
-            tensor.numel() * tensor.element_size(),
-            dtype_to_mscclpp_dtype(tensor.dtype),
-            plan.plan,
-            stream.cuda_stream if stream is not None else 0,
+        algo: mscclpp.Algorithm = self.algorithms[0]
+        algo.execute(
+            comm=self.comm.communicator,
+            executor=self.executor,
+            input_buffer=tensor.data_ptr(),
+            output_buffer=tensor.data_ptr(),
+            input_size=tensor.nbytes,
+            output_size=tensor.nbytes,
+            dtype=dtype_to_mscclpp_dtype(tensor.dtype),
+            stream=stream.cuda_stream if stream is not None else 0,
         )
 
     def barrier_cpu(self):
         self.comm.barrier()
+
+    def destroy(self):
+        self.algorithms = None
+        self.executor = None
+        self.comm = None
 
 
 def init_dist() -> CustomizedComm:
@@ -175,12 +162,11 @@ def init_dist() -> CustomizedComm:
     interface = interfaces_for_ip_netifaces(master_addr)
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
-    registry = mscclpp.ExecutionPlanRegistry()
-    setup_plan(registry, rank, world)
-    registry.set_selector(selector)
+    nranks_per_node = int(torch.cuda.device_count())
+    algorithms = setup_plan(rank, world, nranks_per_node)
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
     mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
-    return CustomizedComm(mscclpp_group)
+    return CustomizedComm(mscclpp_group, algorithms)
 
 
 def main():
@@ -192,9 +178,11 @@ def main():
     dlpack = buffer.to_dlpack(data_type=str(torch.bfloat16))
     x = torch.utils.dlpack.from_dlpack(dlpack)
     x.normal_()
-    comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM)
+    comm.all_reduce(x, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
+    torch.cuda.synchronize()
     comm.barrier_cpu()
-    comm = None
+    print(f"Rank {comm.rank} allreduce completed successfully.")
+    comm.destroy()
 
 
 if __name__ == "__main__":

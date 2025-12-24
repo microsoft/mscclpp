@@ -66,29 +66,6 @@ struct SemaphoreInfo {
   int initValue;
 };
 
-struct AlgoConfig {
-  std::string filename;
-  std::string collective;
-  int nRanksPerNode;
-  int worldSize;
-  std::unordered_map<std::string, uint64_t> tags;
-};
-
-struct ExecutionPlanRegistry::Impl {
-  void setSelector(ExecutionPlanSelector selector);
-  void setDefaultSelector(ExecutionPlanSelector selector);
-  void registerPlan(const std::shared_ptr<ExecutionPlanHandle> planHandle);
-  std::shared_ptr<ExecutionPlanHandle> select(const ExecutionRequest& request);
-  std::vector<ExecutionPlanHandle> getPlans(const std::string& collective);
-  std::shared_ptr<ExecutionPlanHandle> get(const std::string& id);
-  void loadDefaultPlans(int rank);
-
-  ExecutionPlanSelector selector_ = nullptr;
-  ExecutionPlanSelector defaultSelector_ = nullptr;
-  std::unordered_map<std::string, std::vector<std::shared_ptr<ExecutionPlanHandle>>> planMap_;
-  std::unordered_map<std::string, std::shared_ptr<ExecutionPlanHandle>> idMap_;
-};
-
 struct ExecutionPlan::Impl {
  public:
   Impl(const std::string& planPath, int rank);

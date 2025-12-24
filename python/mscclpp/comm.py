@@ -2,7 +2,7 @@
 # Licensed under the MIT license.
 
 from __future__ import annotations
-from typing import Tuple, Type
+from typing import Type
 
 import cupy as cp
 from ._mscclpp import (

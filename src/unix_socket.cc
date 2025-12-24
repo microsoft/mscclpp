@@ -133,6 +133,7 @@ void UnixSocketServer::start() {
       if (abortFlag_ && *abortFlag_) {
         return;
       }
+      WARN("Unix socket server main loop exited with exception: %s", e.what());
       throw e;
     }
   });
@@ -190,6 +191,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
+      WARN("poll() failed on unix socket server: %s", std::strerror(errno));
       throw SysError("poll() failed on unix socket server", errno);
     }
     if (rc == 0) {
@@ -201,7 +203,9 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
       if (abortFlag_ && *abortFlag_) {
         break;
       }
-      throw Error("Unexpected event on unix socket listen fd", ErrorCode::InternalError);
+      throw Error(
+          std::string("Unexpected event on unix socket listen fd: revents=0x") + std::to_string(listenPfd.revents),
+          ErrorCode::InternalError);
     }
 
     if (listenPfd.revents & POLLIN) {
@@ -212,6 +216,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
         if (abortFlag_ && *abortFlag_) {
           break;
         }
+        WARN("accept() failed for unix socket: %s", std::strerror(errno));
         throw SysError("accept() failed for unix socket", errno);
       }
     }
@@ -229,6 +234,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
           std::lock_guard<std::mutex> lock(mutex_);
           auto it = fdSet_.find(fd);
           if (it == fdSet_.end()) {
+            WARN("Requested fd %d not found, size of fdSet_ is %zu", fd, fdSet_.size());
             throw Error("Requested fd not found: " + std::to_string(fd), ErrorCode::InvalidUsage);
           }
           fdToSend = *it;

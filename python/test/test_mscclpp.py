@@ -13,7 +13,6 @@ import pytest
 
 from mscclpp import (
     ErrorCode,
-    Error,
     DataType,
     EndpointConfig,
     ExecutionPlan,
