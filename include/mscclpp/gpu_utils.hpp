@@ -344,11 +344,11 @@ class GpuBuffer {
 #endif  // CUDA_NVLS_API_AVAILABLE
 
     bytes_ = nelems * sizeof(T);
-#if defined(MSCCLPP_DEVICE_HIP)
+#if defined(MSCCLPP_USE_ROCM)
     memory_ = detail::gpuCallocUncachedShared<T>(nelems);
-#else   // !defined(MSCCLPP_DEVICE_HIP)
+#else   // !defined(MSCCLPP_USE_ROCM)
     memory_ = detail::gpuCallocShared<T>(nelems);
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(MSCCLPP_USE_ROCM)
   }
 
   /// Returns the number of elements in the allocated memory.
