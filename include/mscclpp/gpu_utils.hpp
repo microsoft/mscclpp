@@ -7,7 +7,6 @@
 #include <memory>
 #include <unordered_map>
 
-#include "device.hpp"
 #include "env.hpp"
 #include "errors.hpp"
 #include "gpu.hpp"
@@ -149,9 +148,9 @@ int gpuIdFromAddress(void* ptr);
 
 void* gpuCalloc(size_t bytes);
 void* gpuCallocHost(size_t bytes, unsigned int flags);
-#if defined(MSCCLPP_DEVICE_HIP)
+#if defined(__HIP_PLATFORM_AMD__)
 void* gpuCallocUncached(size_t bytes);
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#endif  // defined(__HIP_PLATFORM_AMD__)
 #if (CUDA_NVLS_API_AVAILABLE)
 extern CUmemAllocationHandleType nvlsCompatibleMemHandleType;
 void* gpuCallocPhysical(size_t bytes, size_t gran = 0, size_t align = 0);
@@ -240,7 +239,7 @@ auto gpuCallocHostUnique(size_t nelems = 1, unsigned int flags = cudaHostAllocMa
   return detail::safeAlloc<T, detail::GpuHostDeleter<T>, UniqueGpuHostPtr<T>>(detail::gpuCallocHost, nelems, flags);
 }
 
-#if defined(MSCCLPP_DEVICE_HIP)
+#if defined(__HIP_PLATFORM_AMD__)
 
 template <class T>
 auto gpuCallocUncachedShared(size_t nelems = 1) {
@@ -252,7 +251,7 @@ auto gpuCallocUncachedUnique(size_t nelems = 1) {
   return detail::safeAlloc<T, detail::GpuDeleter<T>, UniqueGpuPtr<T>>(detail::gpuCallocUncached, nelems);
 }
 
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#endif  // defined(__HIP_PLATFORM_AMD__)
 
 #if (CUDA_NVLS_API_AVAILABLE)
 
