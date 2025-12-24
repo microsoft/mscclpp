@@ -35,11 +35,11 @@ std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken(std::shared_ptr<Co
     return context->pimpl_->getToken();
   }
 #endif  // CUDA_NVLS_API_AVAILABLE
-#if defined(MSCCLPP_DEVICE_HIP)
+#if defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocUncachedShared<uint64_t>();
-#else   // !defined(MSCCLPP_DEVICE_HIP)
+#else   // !defined(__HIP_PLATFORM_AMD__)
   return detail::gpuCallocShared<uint64_t>();
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(__HIP_PLATFORM_AMD__)
 }
 
 SemaphoreStub::Impl::Impl(const Connection& connection) : connection_(connection) {
