@@ -1,0 +1,1119 @@
+{
+  "name": "alltoallv_dynamic_4gpu",
+  "collective": "alltoallv",
+  "protocol": "Simple",
+  "inplace": true,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "threadblocks": [
+        {
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 0
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                1
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 1
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                2
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 2
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            2,
+            3
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 2,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 3,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
+    },
+    {
+      "id": 1,
+      "threadblocks": [
+        {
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 0
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                1
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 1
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                2
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 2
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            2,
+            3
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 2,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 3,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
+    },
+    {
+      "id": 2,
+      "threadblocks": [
+        {
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 0
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0,
+                1
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                1
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 1
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                2
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 2
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            1,
+            3
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 3,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
+    },
+    {
+      "id": 3,
+      "threadblocks": [
+        {
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 0
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                1
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 1
+        },
+        {
+          "ops": [
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0,
+                1,
+                2
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "o",
+                  "dynamic_index": 0,
+                  "dynamic_size": 1
+                }
+              ]
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                2,
+                0,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                2
+              ]
+            }
+          ],
+          "dynamic_tbgroup_id": 2
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            1,
+            2
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 2,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": [],
+      "dynamic_input_chunks": 4,
+      "dynamic_output_chunks": 4,
+      "dynamic_scratch_chunks": 3
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 1024,
+  "max_message_size": 1048576,
+  "dynamic": true,
+  "dynamic_parameters": {
+    "max_thread_blocks": "32",
+    "block_size": "32768"
+  }
+}

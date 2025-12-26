@@ -32,7 +32,14 @@ add_test_executable(allgather_test_host_offloading allgather_test_host_offloadin
 add_test_executable(nvls_test nvls_test.cu)
 add_test_executable(executor_test executor_test.cc)
 
+# Dynamic AllToAllv tests
+add_test_executable(dynamic_alltoallv_mscclpp_test dynamic_alltoallv_mscclpp_test.cpp)
+
 configure_file(run_mpi_test.sh.in run_mpi_test.sh)
+
+# Copy JSON plan file to build directory
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/dynamic_alltoallv_plan.json 
+               ${CMAKE_CURRENT_BINARY_DIR}/dynamic_alltoallv_plan.json COPYONLY)
 
 include(CTest)
 include(FetchContent)
