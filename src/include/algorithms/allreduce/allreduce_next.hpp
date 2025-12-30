@@ -32,7 +32,7 @@ class AllreduceNext : public mscclpp::AlgorithmBuilder {
 
   std::vector<BaseMemoryChannel> baseChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> baseMemoryChannelHandles_;
-  std::vector<void*> remoteMemorieHandles_;
+  std::shared_ptr<void*> remoteMemorieHandles_;
 };
 }  // namespace algorithm
 }  // namespace mscclpp
