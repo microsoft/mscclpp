@@ -8,6 +8,7 @@
 #include "algorithms/allgather/allgather_fullmesh2.hpp"
 #include "algorithms/allreduce/allreduce_allpair_packet.hpp"
 #include "algorithms/allreduce/allreduce_fullmesh.hpp"
+#include "algorithms/allreduce/allreduce_next.hpp"
 #include "algorithms/allreduce/allreduce_nvls.hpp"
 #include "algorithms/allreduce/allreduce_nvls_packet.hpp"
 #include "algorithms/allreduce/allreduce_nvls_with_copy.hpp"
@@ -175,6 +176,8 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   collection.registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
   auto allreduceFullmesh = std::make_shared<algorithm::AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
+  auto allreduceNext = std::make_shared<algorithm::AllreduceNext>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceNext->collective(), allreduceNext->name(), allreduceNext);
 
   auto allgatherFullmesh = std::make_shared<algorithm::AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
