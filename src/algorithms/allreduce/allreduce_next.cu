@@ -128,7 +128,7 @@ __global__ void __launch_bounds__(1024, 1)
     if (offsetIdx > lastInt4Index) {
       continue;
     }
-    if (offsetIdx == lastInt4Index && remainder != 0) {
+    if (remainder != 0 && offsetIdx == lastInt4Index) {
       for (int i = 0; i < remainder; i++) {
         ((T*)&scratch4[offsetIdx])[i] = ((T*)&buff4[offsetIdx])[i];
       }
@@ -180,7 +180,7 @@ __global__ void __launch_bounds__(1024, 1)
     if (offsetIdx > lastInt4Index) {
       continue;
     }
-    if (offsetIdx == lastInt4Index && remainder != 0) {
+    if (remainder != 0 && offsetIdx == lastInt4Index) {
       for (int i = 0; i < remainder; i++) {
         ((T*)&resultBuff4[offsetIdx])[i] = ((T*)&scratch4[offsetIdx])[i];
       }
