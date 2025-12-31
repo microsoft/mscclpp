@@ -297,7 +297,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
 #else
     if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_next");
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag");
     }
 #endif
   }

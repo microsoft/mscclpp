@@ -6,9 +6,9 @@
 namespace mscclpp {
 namespace algorithm {
 
-class AllreduceNext : public mscclpp::AlgorithmBuilder {
+class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
  public:
-  AllreduceNext(uintptr_t scratchBuffer, size_t scratchBufferSize)
+  AllreduceRsAg(uintptr_t scratchBuffer, size_t scratchBufferSize)
       : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
