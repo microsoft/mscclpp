@@ -14,6 +14,7 @@
 #include "algorithms/allreduce/allreduce_nvls_with_copy2.hpp"
 #include "algorithms/allreduce/allreduce_packet.hpp"
 #include "algorithms/allreduce/allreduce_rsag.hpp"
+#include "algorithms/allreduce/allreduce_rsag_pipeline.hpp"
 #include "algorithms/utils.hpp"
 #include "logger.hpp"
 
@@ -178,6 +179,10 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   collection.registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
   auto allreduceRsAg = std::make_shared<algorithm::AllreduceRsAg>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceRsAg->collective(), allreduceRsAg->name(), allreduceRsAg);
+  auto allreduceRsAgPipeline =
+      std::make_shared<algorithm::AllreduceRsAgPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceRsAgPipeline->collective(), allreduceRsAgPipeline->name(),
+                               allreduceRsAgPipeline);
 
   auto allgatherFullmesh = std::make_shared<algorithm::AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
