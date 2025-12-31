@@ -65,7 +65,9 @@ def _init_dist():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ.get("LOCAL_RANK", os.environ["RANK"]))
-    dist.init_process_group(backend=backend, rank=rank, world_size=world_size, device_id=local_rank)
+    dist.init_process_group(
+        backend=backend, rank=rank, world_size=world_size, device_id=torch.device(f"cuda:{local_rank}")
+    )
     torch.cuda.set_device(local_rank)
 
 
