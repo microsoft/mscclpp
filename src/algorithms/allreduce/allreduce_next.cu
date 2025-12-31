@@ -121,14 +121,14 @@ __global__ void __launch_bounds__(1024, 1)
   if (blockId == gridDim.x - 1) {
     nInt4PerBlock += remainderForBlock;
   }
-  uint32_t nInt4ForCopy = nInt4PerBlock * worldSize;
+  if (nInt4PerBlock == 0) return;
+  uint32_t nInt4ForCopy = nInt4PerBlock * nRanksPerNode;
+
   for (uint32_t idx = threadIdx.x; idx < nInt4ForCopy; idx += blockDim.x) {
     int rankIdx = idx / nInt4PerBlock;
     uint32_t offsetIdx = rankIdx * nInt4PerRank + offset4 + (idx % nInt4PerBlock);
-    if (offsetIdx > lastInt4Index) {
-      continue;
-    }
-    if (remainder != 0 && offsetIdx == lastInt4Index) {
+    if (offsetIdx > lastInt4Index) continue;
+    if (offsetIdx == lastInt4Index && remainder != 0) {
       for (int i = 0; i < remainder; i++) {
         ((T*)&scratch4[offsetIdx])[i] = ((T*)&buff4[offsetIdx])[i];
       }
@@ -144,9 +144,7 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   for (uint32_t idx = threadIdx.x; idx < nInt4PerBlock; idx += blockDim.x) {
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
-    if (offset > lastInt4Index) {
-      continue;
-    }
+    if (offset > lastInt4Index) continue;
     int4 tmp = scratch4[offset];
     for (int i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerNode;
@@ -175,12 +173,10 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   for (uint32_t idx = threadIdx.x; idx < nInt4ForCopy; idx += blockDim.x) {
     int rankIdx = idx / nInt4PerBlock;
-    uint32_t offsetIdx = rankIdx * nInt4PerRank + offset4 + (idx % nInt4PerBlock);
     if (rankIdx == rank) continue;
-    if (offsetIdx > lastInt4Index) {
-      continue;
-    }
-    if (remainder != 0 && offsetIdx == lastInt4Index) {
+    uint32_t offsetIdx = rankIdx * nInt4PerRank + offset4 + (idx % nInt4PerBlock);
+    if (offsetIdx > lastInt4Index) continue;
+    if (offsetIdx == lastInt4Index && remainder != 0) {
       for (int i = 0; i < remainder; i++) {
         ((T*)&resultBuff4[offsetIdx])[i] = ((T*)&scratch4[offsetIdx])[i];
       }
