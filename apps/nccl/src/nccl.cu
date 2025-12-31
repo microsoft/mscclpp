@@ -281,7 +281,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     if (messageSize <= (1 << 14)) {
       return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
     }
-    if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
+    if (messageSize <= (1 << 16) || (messageSize <= (1 << 21) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
     }
     if (useNvls && useNvlsWithZeroCopy) {
@@ -297,7 +297,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
 #else
     if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_rsag_pipeline");
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag");
     }
 #endif
   }
