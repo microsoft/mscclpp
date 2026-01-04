@@ -4,7 +4,9 @@
 #ifndef MSCCLPP_GPU_DATA_TYPES_HPP_
 #define MSCCLPP_GPU_DATA_TYPES_HPP_
 
-#if defined(__HIP_PLATFORM_AMD__)
+#include <mscclpp/device.hpp>
+
+#if defined(MSCCLPP_DEVICE_HIP)
 
 #include <hip/hip_bf16.h>
 #include <hip/hip_fp16.h>
@@ -54,8 +56,6 @@ using __bfloat16 = __nv_bfloat16;
 using __bfloat162 = __nv_bfloat162;
 
 #endif
-
-#include <mscclpp/device.hpp>
 
 namespace mscclpp {
 

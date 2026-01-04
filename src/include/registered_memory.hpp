@@ -55,6 +55,7 @@ struct RegisteredMemory::Impl {
   bool isCuMemMapAlloc;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
+  std::shared_ptr<void> peerMemHandle;
 
   // Only used for IB transport
   std::unordered_map<Transport, std::unique_ptr<const IbMr>> ibMrMap;
