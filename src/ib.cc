@@ -321,9 +321,9 @@ void IbQp::postSend() {
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int ret = IBVerbs::ibv_post_send(qp_, wrs_->data(), &bad_wr);
-  if (ret != 0) {
-    THROW(NET, IbError, errno, "ibv_post_send failed (errno ", errno, ")");
+  int err = IBVerbs::ibv_post_send(qp_, wrs_->data(), &bad_wr);
+  if (err != 0) {
+    THROW(NET, IbError, err, "ibv_post_send failed (errno ", err, ")");
   }
   wrn_ = 0;
   numSignaledPostedItems_ += numSignaledStagedItems_;

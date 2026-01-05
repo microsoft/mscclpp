@@ -106,7 +106,7 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   }
 
   if (((trigger.fields.type & TriggerSync) && numRequests > 0) ||
-      (maxWriteQueueSize != -1 && numRequests > maxWriteQueueSize)) {
+      (maxWriteQueueSize != -1 && numRequests >= maxWriteQueueSize)) {
     conn.flush();
     numRequests = 0;
   }
