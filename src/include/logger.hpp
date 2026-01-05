@@ -54,6 +54,7 @@ constexpr std::string_view logLevelToString(LogLevel level) {
 }
 
 constexpr std::string_view logSubsysToString(LogSubsys subsys) {
+  // NOTE: keep this in sync with LogSubsys enum and stringToLogSubsysSet function.
   switch (subsys) {
     case LogSubsys::ENV:
       return "ENV";
@@ -67,8 +68,6 @@ constexpr std::string_view logSubsysToString(LogSubsys subsys) {
       return "EXEC";
     case LogSubsys::NCCL:
       return "NCCL";
-    case LogSubsys::COUNT:
-      return "ALL";
     default:
       return "UNKNOWN";
   }

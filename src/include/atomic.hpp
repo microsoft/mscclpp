@@ -5,13 +5,17 @@
 #define MSCCLPP_ATOMIC_HPP_
 
 #if defined(MSCCLPP_USE_CUDA)
+#ifndef MSCCLPP_DEVICE_CUDA
 #define MSCCLPP_DEVICE_CUDA
 #include <mscclpp/atomic_device.hpp>
 #undef MSCCLPP_DEVICE_CUDA
-#else  // !defined(MSCCLPP_USE_CUDA)
+#endif  // !defined(MSCCLPP_DEVICE_CUDA)
+#else   // !defined(MSCCLPP_USE_CUDA)
+#ifndef MSCCLPP_DEVICE_HIP
 #define MSCCLPP_DEVICE_HIP
 #include <mscclpp/atomic_device.hpp>
 #undef MSCCLPP_DEVICE_HIP
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 #endif  // !defined(MSCCLPP_USE_CUDA)
 
 #endif  // MSCCLPP_ATOMIC_HPP_

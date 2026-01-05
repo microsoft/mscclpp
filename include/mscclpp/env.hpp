@@ -37,7 +37,7 @@ class Env {
   const std::string logLevel;
 
   /// Env name: `MSCCLPP_LOG_SUBSYS`. The log subsystem, a comma-separated list of subsystems to enable
-  /// logging for. Possible values are ENV, NET, CONN, EXEC, NCCL, ALL (default).
+  /// logging for. Possible values are ENV, GPU, NET, CONN, EXEC, NCCL, ALL (default).
   /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
   /// For example, "^NET,CONN" enables all subsystems except NET and CONN.
   const std::string logSubsys;
@@ -49,6 +49,10 @@ class Env {
   /// in the list will be used for the i-th GPU in the system. If unset, it will use ibverbs APIs to find the
   /// devices automatically.
   const std::string hcaDevices;
+
+  /// Env name: `MSCCLPP_IBV_SO`. The path to the libibverbs shared library to use. If unset, it will use the
+  /// default libibverbs library found in the system.
+  const std::string ibvSo;
 
   /// Env name: `MSCCLPP_HOSTID`. A string that uniquely identifies the host. If unset, it will use the hostname.
   /// This is used to determine whether the host is the same across different processes.

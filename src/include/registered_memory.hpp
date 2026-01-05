@@ -39,6 +39,7 @@ struct RegisteredMemory::Impl {
   uint64_t pidHash;
   TransportFlags transports;
   std::vector<TransportInfo> transportInfos;
+  std::shared_ptr<void> peerMemHandle;
 
   UniqueGpuIpcMemHandle localGpuIpcMemHandle;
   std::unique_ptr<GpuIpcMem> remoteGpuIpcMem;

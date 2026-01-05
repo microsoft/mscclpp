@@ -31,12 +31,12 @@ class MyProxyService {
         proxy_([&](mscclpp::ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); }) {
     allRegMem_.reserve(allRegMemList.size());
     for (size_t i = 0; i < allRegMemList.size(); ++i) {
-      auto& regMem = nb::cast<const mscclpp::RegisteredMemory&>(allRegMemList[i]);
-      allRegMem_.push_back(regMem);
+      auto regMem = nb::cast<mscclpp::RegisteredMemory>(allRegMemList[i]);
+      allRegMem_.emplace_back(regMem);
     }
     semaphores_.reserve(semaphoreList.size());
     for (size_t i = 0; i < semaphoreList.size(); ++i) {
-      auto& sema = nb::cast<const mscclpp::Semaphore&>(semaphoreList[i]);
+      auto sema = nb::cast<mscclpp::Semaphore>(semaphoreList[i]);
       semaphores_.emplace_back(sema);
     }
   }

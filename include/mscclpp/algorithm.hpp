@@ -9,6 +9,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <mscclpp/utils.hpp>
 #include <vector>
 
 namespace mscclpp {
@@ -86,22 +87,15 @@ class Algorithm {
 
 namespace std {
 
-// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
-template <typename T>
-inline void hash_combine(std::size_t& seed, const T& value) {
-  std::hash<T> hasher;
-  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
 template <>
 struct hash<mscclpp::AlgorithmCtxKey> {
   std::size_t operator()(const mscclpp::AlgorithmCtxKey& key) const {
     std::size_t seed = 42;
-    hash_combine(seed, key.baseSendBuff);
-    hash_combine(seed, key.baseRecvBuff);
-    hash_combine(seed, key.baseSendSize);
-    hash_combine(seed, key.baseRecvSize);
-    hash_combine(seed, key.tag);
+    mscclpp::detail::hashCombine(seed, key.baseSendBuff);
+    mscclpp::detail::hashCombine(seed, key.baseRecvBuff);
+    mscclpp::detail::hashCombine(seed, key.baseSendSize);
+    mscclpp::detail::hashCombine(seed, key.baseRecvSize);
+    mscclpp::detail::hashCombine(seed, key.tag);
     return seed;
   }
 };

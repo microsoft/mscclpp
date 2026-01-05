@@ -7,25 +7,27 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstring>
 #include <mscclpp/gpu_utils.hpp>
+#include <unordered_map>
 
 #include "api.h"
 #include "context.hpp"
-#include "debug.h"
+#include "logger.hpp"
 #include "serialization.hpp"
 #include "unix_socket.hpp"
 #include "utils_internal.hpp"
 
-#define MSCCLPP_CULOG_WARN(cmd)                             \
-  do {                                                      \
-    CUresult err = cmd;                                     \
-    if (err != CUDA_SUCCESS) {                              \
-      const char* errStr;                                   \
-      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) { \
-        errStr = "failed to get error string";              \
-      }                                                     \
-      WARN("Call to " #cmd " failed, error is %s", errStr); \
-    }                                                       \
+#define MSCCLPP_CULOG_WARN(cmd)                                         \
+  do {                                                                  \
+    CUresult err = cmd;                                                 \
+    if (err != CUDA_SUCCESS) {                                          \
+      const char* errStr;                                               \
+      if (cuGetErrorString(err, &errStr) != CUDA_SUCCESS) {             \
+        errStr = "failed to get error string";                          \
+      }                                                                 \
+      WARN(mscclpp::GPU, "Call to " #cmd " failed, error is ", errStr); \
+    }                                                                   \
   } while (false)
 
 namespace mscclpp {
@@ -54,8 +56,8 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
       transportInfo.ibMr = this->ibMrMap[ibTransport].get();
       transportInfo.ibLocal = true;
       transportInfo.ibMrInfo = this->ibMrMap[ibTransport]->getInfo();
-      this->transportInfos.emplace_back(transportInfo);
-      INFO(MSCCLPP_NET, "IB mr for address %p with size %ld is registered", data, size);
+      this->transportInfos.push_back(transportInfo);
+      INFO(NET, "IB mr for address ", data, " with size ", size, " is registered");
     };
     if (transports.has(Transport::IB0)) addIb(Transport::IB0);
     if (transports.has(Transport::IB1)) addIb(Transport::IB1);
@@ -161,7 +163,7 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     this->data = this->remoteGpuIpcMem->map();
   }
   if (this->data != nullptr) {
-    INFO(MSCCLPP_P2P, "Opened CUDA IPC handle at pointer %p", this->data);
+    INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);
   }
 }
 
