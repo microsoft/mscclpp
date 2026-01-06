@@ -7,6 +7,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
