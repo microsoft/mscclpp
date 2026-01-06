@@ -40,7 +40,15 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints",
+    "sphinx_multiversion",
 ]
+
+smv_tag_whitelist = r'^.*$'
+smv_branch_whitelist = r'^.*$'
+smv_remote_whitelist = None
+smv_released_pattern = r'^tags/.*$'
+smv_outputdir_format = '{ref.name}'
+smv_prefer_remote_refs = False
 
 autosummary_generate = True
 autodoc_default_options = {
@@ -74,3 +82,8 @@ mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+html_sidebars = {
+    '**': [
+        'versioning.html',
+    ],
+}
