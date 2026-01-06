@@ -3,14 +3,13 @@
 
 #include "gpu_ipc_mem.hpp"
 
-#include <linux/version.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
+#include "unix_socket.hpp"
 
 namespace mscclpp {
 
@@ -36,33 +35,19 @@ std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typ
   return os;
 }
 
-static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetFd) {
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
-  // Linux pidfd based cross-process fd duplication
-  int pidfd = syscall(SYS_pidfd_open, pid, 0);
-  if (pidfd < 0) {
-    return -1;
-  }
-  int dupfd = syscall(SYS_pidfd_getfd, pidfd, targetFd, 0);
-  if (dupfd < 0) {
-    close(pidfd);
-    return -1;
-  }
-  close(pidfd);
-  return dupfd;
-#else
-  return -1;
-#endif
-}
-
 [[maybe_unused]] static bool isFabricMemHandleAvailable() {
 #if (CUDA_NVLS_API_AVAILABLE)
+  static int resultCache = -1;  // -1: uninitialized, 0: not available, 1: available
+  if (resultCache != -1) {
+    return resultCache == 1;
+  }
   CUdevice currentDevice;
   int isFabricSupported;
   MSCCLPP_CUTHROW(cuCtxGetDevice(&currentDevice));
   MSCCLPP_CUTHROW(
       cuDeviceGetAttribute(&isFabricSupported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, currentDevice));
   if (isFabricSupported == 0) {
+    resultCache = 0;
     return false;
   }
 
@@ -80,6 +65,7 @@ static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetF
   CUresult result = cuMemCreate(&memHandle, minGran, &prop, 0);
   if (result == CUDA_ERROR_NOT_PERMITTED || result == CUDA_ERROR_NOT_SUPPORTED) {
     // unprivileged user or old kernel version
+    resultCache = 0;
     return false;
   } else {
     MSCCLPP_CUTHROW(result);
@@ -87,6 +73,7 @@ static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetF
 
   // it worked; cleanup now
   MSCCLPP_CUTHROW(cuMemRelease(memHandle));
+  resultCache = 1;
   return true;
 #else   // !(CUDA_NVLS_API_AVAILABLE)
   return false;
@@ -151,6 +138,7 @@ void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
   if (handle) {
     if (handle->typeFlags & GpuIpcMemHandle::Type::PosixFd) {
       ::close(handle->posixFd.fd);
+      UnixSocketServer::instance().unregisterFd(handle->posixFd.fd);
     }
     delete handle;
   }
@@ -189,9 +177,11 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   MSCCLPP_CUTHROW(res);
 
   // POSIX FD handle
-  if (cuMemExportToShareableHandle(&(handle->posixFd.fd), allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
+  int fileDesc;
+  if (cuMemExportToShareableHandle(&fileDesc, allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
       CUDA_SUCCESS) {
-    handle->posixFd.pid = getpid();
+    handle->posixFd.fd = UnixSocketServer::instance().registerFd(fileDesc);
+    handle->posixFd.pid = ::getpid();
     handle->typeFlags |= GpuIpcMemHandle::Type::PosixFd;
   }
 
@@ -244,7 +234,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   // POSIX FD handle
   if (cuMemExportToShareableHandle(&(handle->posixFd.fd), allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
       CUDA_SUCCESS) {
-    handle->posixFd.pid = getpid();
+    handle->posixFd.pid = ::getpid();
     handle->typeFlags |= GpuIpcMemHandle::Type::PosixFd;
   }
 
@@ -285,14 +275,13 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
-    int dupfd = dupFdFromPid(handle_.posixFd.pid, handle_.posixFd.fd);
-    if (dupfd != -1) {
-      if (cuMemImportFromShareableHandle(&allocHandle_, (void*)(uintptr_t)dupfd,
-                                         CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == CUDA_SUCCESS) {
-        type_ = GpuIpcMemHandle::Type::PosixFd;
-      }
-      close(dupfd);
+    int fileDesc = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(handle_.posixFd.pid),
+                                                          static_cast<uint32_t>(handle_.posixFd.fd));
+    if (cuMemImportFromShareableHandle(&allocHandle_, reinterpret_cast<void*>(fileDesc),
+                                       CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == CUDA_SUCCESS) {
+      type_ = GpuIpcMemHandle::Type::PosixFd;
     }
+    ::close(fileDesc);
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
     cudaError_t err = cudaIpcOpenMemHandleWrapper(&basePtr_, handle_.runtimeIpc.handle);
