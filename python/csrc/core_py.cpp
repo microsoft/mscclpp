@@ -9,6 +9,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
+#include <sstream>
 
 namespace nb = nanobind;
 using namespace mscclpp;
@@ -122,14 +123,24 @@ void register_core(nb::module_& m) {
       .def(nb::init<DeviceType, int>(), nb::arg("type"), nb::arg("id") = -1)
       .def_rw("type", &Device::type)
       .def_rw("id", &Device::id)
-      .def("__str__", [](const Device& self) { return std::to_string(self); });
+      .def("__str__", [](const Device& self) {
+        std::stringstream ss;
+        ss << self;
+        return ss.str();
+      });
 
   nb::class_<EndpointConfig::Ib>(m, "EndpointConfigIb")
       .def(nb::init<>())
-      .def(nb::init<int, int, int, int>(), nb::arg("max_cq_size") = EndpointConfig::Ib::DefaultMaxCqSize,
+      .def(nb::init<int, int, int, int, int, int, int>(), nb::arg("device_index") = -1,
+           nb::arg("port") = EndpointConfig::Ib::DefaultPort,
+           nb::arg("gid_index") = EndpointConfig::Ib::DefaultGidIndex,
+           nb::arg("max_cq_size") = EndpointConfig::Ib::DefaultMaxCqSize,
            nb::arg("max_cq_poll_num") = EndpointConfig::Ib::DefaultMaxCqPollNum,
            nb::arg("max_send_wr") = EndpointConfig::Ib::DefaultMaxSendWr,
            nb::arg("max_wr_per_send") = EndpointConfig::Ib::DefaultMaxWrPerSend)
+      .def_rw("device_index", &EndpointConfig::Ib::deviceIndex)
+      .def_rw("port", &EndpointConfig::Ib::port)
+      .def_rw("gid_index", &EndpointConfig::Ib::gidIndex)
       .def_rw("max_cq_size", &EndpointConfig::Ib::maxCqSize)
       .def_rw("max_cq_poll_num", &EndpointConfig::Ib::maxCqPollNum)
       .def_rw("max_send_wr", &EndpointConfig::Ib::maxSendWr)
@@ -177,6 +188,15 @@ void register_core(nb::module_& m) {
       .def_rw("device", &EndpointConfig::device)
       .def_rw("ib", &EndpointConfig::ib)
       .def_prop_rw(
+          "ib_device_index", [](EndpointConfig& self) { return self.ib.deviceIndex; },
+          [](EndpointConfig& self, int v) { self.ib.deviceIndex = v; })
+      .def_prop_rw(
+          "ib_port", [](EndpointConfig& self) { return self.ib.port; },
+          [](EndpointConfig& self, int v) { self.ib.port = v; })
+      .def_prop_rw(
+          "ib_gid_index", [](EndpointConfig& self) { return self.ib.gidIndex; },
+          [](EndpointConfig& self, int v) { self.ib.gidIndex = v; })
+      .def_prop_rw(
           "ib_max_cq_size", [](EndpointConfig& self) { return self.ib.maxCqSize; },
           [](EndpointConfig& self, int v) { self.ib.maxCqSize = v; })
       .def_prop_rw(
@@ -216,6 +236,7 @@ void register_core(nb::module_& m) {
 
   def_shared_future<RegisteredMemory>(m, "RegisteredMemory");
   def_shared_future<Connection>(m, "Connection");
+  def_shared_future<Semaphore>(m, "Semaphore");
 
   nb::class_<Communicator>(m, "Communicator")
       .def(nb::init<std::shared_ptr<Bootstrap>, std::shared_ptr<Context>>(), nb::arg("bootstrap"),
@@ -242,7 +263,7 @@ void register_core(nb::module_& m) {
           nb::arg("remote_rank"), nb::arg("tag"), nb::arg("local_config"))
       .def("send_memory_on_setup", &Communicator::sendMemory, nb::arg("memory"), nb::arg("remote_rank"), nb::arg("tag"))
       .def("recv_memory_on_setup", &Communicator::recvMemory, nb::arg("remote_rank"), nb::arg("tag"))
-      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("local_flag"), nb::arg("remote_rank"),
+      .def("build_semaphore", &Communicator::buildSemaphore, nb::arg("connection"), nb::arg("remote_rank"),
            nb::arg("tag") = 0)
       .def("remote_rank_of", &Communicator::remoteRankOf)
       .def("tag_of", &Communicator::tagOf)

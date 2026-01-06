@@ -41,13 +41,16 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     if (r == rank) {
       continue;
     }
+    mscclpp::EndpointConfig cfg;
     if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
-      connectionFutures[r] = communicator->connect(mscclpp::Transport::CudaIpc, r);
+      cfg.transport = mscclpp::Transport::CudaIpc;
     } else if (useIb) {
-      connectionFutures[r] = communicator->connect(ibTransport, r);
+      cfg.transport = ibTransport;
+      cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
     } else if (useEthernet) {
-      connectionFutures[r] = communicator->connect(mscclpp::Transport::Ethernet, r);
+      cfg.transport = mscclpp::Transport::Ethernet;
     }
+    connectionFutures[r] = communicator->connect(cfg, r);
 
     if (isInPlace) {
       communicator->sendMemory(sendBufRegMem, r);
@@ -306,7 +309,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
     // rank=0: 0, 1, 0, 1, ...
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
-      if (CheckCorrectness) {
+      if constexpr (CheckCorrectness) {
         // If each thread writes 8 bytes at once, we don't need a barrier before copyToPackets().
         for (int j = threadId; j < nPkt; j += numThreads) {
           buffPtr[2 * j] = putOffset + i + 2 * j;
@@ -327,7 +330,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       }
     } else {
       mscclpp::copyFromPackets(buff, getPktBuf, nElem * sizeof(int), threadId, numThreads, flag);
-      if (CheckCorrectness) {
+      if constexpr (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after copyFromPackets().
         // __syncthreads();
         for (int j = threadId; j < nPkt; j += numThreads) {

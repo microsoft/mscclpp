@@ -3,12 +3,9 @@
 
 #include "logger.hpp"
 
-#include <unistd.h>
-
 #include <algorithm>
 #include <chrono>
 #include <ctime>
-#include <filesystem>
 #include <fstream>
 #include <mutex>
 
@@ -54,6 +51,8 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
     std::string token = upperStr.substr(start, end - start);
     if (token == "ENV") {
       set.set(static_cast<size_t>(LogSubsys::ENV));
+    } else if (token == "GPU") {
+      set.set(static_cast<size_t>(LogSubsys::GPU));
     } else if (token == "NET") {
       set.set(static_cast<size_t>(LogSubsys::NET));
     } else if (token == "CONN") {
@@ -76,140 +75,37 @@ static LogSubsysSet stringToLogSubsysSet(const std::string& subsysStr) {
 
 namespace detail {
 
-// Return the full path of the detected project root directory, or empty string if not found.
-static std::filesystem::path guessFindProjectRoot(const std::filesystem::path& filePath) {
-  const std::string rootIndicators[] = {".git", "VERSION", "README.md"};
-
-  // Start from the directory containing the file
-  std::filesystem::path currentDir = filePath.parent_path();
-  if (currentDir.empty()) return {};
-
-  // Walk up the directory tree towards root
-  while (!currentDir.empty() && currentDir != currentDir.root_path()) {
-    bool foundRoot = false;
-    for (const auto& indicator : rootIndicators) {
-      std::filesystem::path potential = currentDir / indicator;
-      std::error_code ec;  // non-throwing exists
-      if (std::filesystem::exists(potential, ec)) {
-        foundRoot = true;
-        break;
-      }
-    }
-    if (foundRoot) {
-      return currentDir;  // Found root directory path
-    }
-    currentDir = currentDir.parent_path();
-  }
-  return {};  // Not found
-}
-
-// Remove the project root prefix (including trailing '/') from filePath if present.
-static std::string removeProjectRootPrefix(const std::filesystem::path& filePath,
-                                           const std::filesystem::path& projectRoot) {
-  if (projectRoot.empty()) return filePath.generic_string();
-
-  std::error_code ec;
-  std::filesystem::path rel = std::filesystem::relative(filePath, projectRoot, ec);
-  if (!ec && !rel.empty()) {
-    std::string relStr = rel.generic_string();
-    if (!(relStr.size() >= 2 && relStr[0] == '.' && relStr[1] == '.')) {
-      return relStr;  // Within project root.
-    }
-  }
-
-  // Fallback: not within project root.
-  return filePath.generic_string();
-}
-
-static std::filesystem::path globalProjectRoot;
-static std::mutex globalProjectRootMutex;
-
-std::string guessRemoveProjectPrefix(const std::string& filePathStr) {
-  std::filesystem::path filePath(filePathStr);
-  if (globalProjectRoot.empty()) {
-    std::lock_guard<std::mutex> lock(globalProjectRootMutex);
-    if (globalProjectRoot.empty()) {
-      auto candidate = guessFindProjectRoot(filePath);
-      if (!candidate.empty()) {
-        globalProjectRoot = std::move(candidate);
-      }
-    }
-  }
-  return removeProjectRootPrefix(filePath, globalProjectRoot);
-}
-
 std::string timestamp(const char* format) {
-  // Thread-safe per-second UTC timestamp cache.
+  // Thread-local per-second UTC timestamp cache.
   struct TimeCache {
-    time_t second;
-    std::string str;
+    time_t second = 0;
+    char buf[64];
+    size_t len = 0;
   };
-  static std::shared_ptr<const TimeCache> cachePtr;  // guarded by cacheMutex
-  static std::mutex cacheMutex;
+  thread_local TimeCache cache;
 
   auto now = std::chrono::system_clock::now();
   time_t currentTime = std::chrono::system_clock::to_time_t(now);
 
-  {
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    if (cachePtr && cachePtr->second == currentTime) {
-      return cachePtr->str;  // Safe stale/current value.
-    }
+  // Fast path: return cached string if still in the same second
+  if (cache.second == currentTime && cache.len > 0) {
+    return std::string(cache.buf, cache.len);
   }
 
-  // Build new formatted timestamp (UTC) for this second.
+  // Slow path: format new timestamp (happens at most once per second per thread)
   std::tm tmBuf;
   if (::gmtime_r(&currentTime, &tmBuf) == nullptr) {
     return "";  // Conversion failure fallback.
   }
-  std::stringstream ss;
-  ss << std::put_time(&tmBuf, format);
-  auto newCache = std::make_shared<TimeCache>(TimeCache{currentTime, ss.str()});
 
-  {
-    std::lock_guard<std::mutex> lock(cacheMutex);
-    cachePtr = std::move(newCache);
-    return cachePtr->str;
+  cache.len = ::strftime(cache.buf, sizeof(cache.buf), format, &tmBuf);
+  cache.second = currentTime;
+  if (cache.len == 0) {
+    // Formatting failure fallback.
+    return "";
   }
+  return std::string(cache.buf, cache.len);
 }
-
-std::string logLevelToString(LogLevel level) {
-  switch (level) {
-    case LogLevel::NONE:
-      return "NONE";
-    case LogLevel::DEBUG:
-      return "DEBUG";
-    case LogLevel::INFO:
-      return "INFO";
-    case LogLevel::WARN:
-      return "WARN";
-    case LogLevel::ERROR:
-      return "ERROR";
-    default:
-      return "UNKNOWN";
-  }
-}
-
-std::string logSubsysToString(LogSubsys subsys) {
-  switch (subsys) {
-    case LogSubsys::ENV:
-      return "ENV";
-    case LogSubsys::NET:
-      return "NET";
-    case LogSubsys::CONN:
-      return "CONN";
-    case LogSubsys::EXEC:
-      return "EXEC";
-    case LogSubsys::NCCL:
-      return "NCCL";
-    case LogSubsys::COUNT:
-      return "ALL";  // COUNT isn't a subsystem; treat only if misused.
-    default:
-      return "UNKNOWN";
-  }
-}
-
-int pid() { return static_cast<int>(::getpid()); }
 
 }  // namespace detail
 

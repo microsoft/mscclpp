@@ -8,12 +8,12 @@
 #include "debug.h"
 
 static inline bool isCudaTeardownError(cudaError_t err) {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_USE_ROCM)
   return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
-#else   // !defined(__HIP_PLATFORM_AMD__)
+#else   // !defined(MSCCLPP_USE_ROCM)
   return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
          err == cudaErrorInvalidDevice || err == cudaErrorLaunchFailure;
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#endif  // !defined(MSCCLPP_USE_ROCM)
 }
 
 static inline bool isCuTeardownError(CUresult r) {
@@ -66,6 +66,21 @@ AvoidCudaGraphCaptureGuard::~AvoidCudaGraphCaptureGuard() {
   (void)cudaThreadExchangeStreamCaptureMode(&mode_);
 }
 
+CudaDeviceGuard::CudaDeviceGuard(int deviceId) : deviceId_(deviceId), origDeviceId_(-1) {
+  if (deviceId_ >= 0) {
+    MSCCLPP_CUDATHROW(cudaGetDevice(&origDeviceId_));
+    if (origDeviceId_ != deviceId_) {
+      MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+    }
+  }
+}
+
+CudaDeviceGuard::~CudaDeviceGuard() {
+  if (deviceId_ >= 0 && origDeviceId_ >= 0 && origDeviceId_ != deviceId_) {
+    (void)cudaSetDevice(origDeviceId_);
+  }
+}
+
 CudaStreamWithFlags::CudaStreamWithFlags() : stream_(nullptr) { MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_)); }
 
 CudaStreamWithFlags::CudaStreamWithFlags(unsigned int flags) {
@@ -79,11 +94,8 @@ CudaStreamWithFlags::~CudaStreamWithFlags() {
 
 void CudaStreamWithFlags::set(unsigned int flags) {
   if (!empty()) throw Error("CudaStreamWithFlags already set", ErrorCode::InvalidUsage);
-  int originalDeviceId;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&originalDeviceId));  // Save the current device
-  MSCCLPP_CUDATHROW(cudaSetDevice(deviceId_));
+  CudaDeviceGuard deviceGuard(deviceId_);
   MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&stream_, flags));
-  MSCCLPP_CUDATHROW(cudaSetDevice(originalDeviceId));  // Restore the original device
 }
 
 bool CudaStreamWithFlags::empty() const { return stream_ == nullptr; }
@@ -123,6 +135,18 @@ namespace detail {
 
 CUmemAllocationHandleType nvlsCompatibleMemHandleType = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
 
+int gpuIdFromAddress(void* ptr) {
+  int deviceId;
+  auto res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, reinterpret_cast<CUdeviceptr>(ptr));
+  if (res == CUDA_ERROR_INVALID_VALUE) {
+    // not a GPU address
+    return -1;
+  } else {
+    MSCCLPP_CUTHROW(res);
+  }
+  return deviceId;
+}
+
 /// set memory access permission to read-write
 /// @param base Base memory pointer.
 /// @param size Size of the memory.
@@ -154,7 +178,7 @@ void* gpuCallocHost(size_t bytes, unsigned int flags) {
   return ptr;
 }
 
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_USE_ROCM)
 void* gpuCallocUncached(size_t bytes) {
   AvoidCudaGraphCaptureGuard cgcGuard;
   void* ptr;
@@ -164,7 +188,7 @@ void* gpuCallocUncached(size_t bytes) {
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
   return ptr;
 }
-#endif  // defined(__HIP_PLATFORM_AMD__)
+#endif  // defined(MSCCLPP_USE_ROCM)
 
 #if (CUDA_NVLS_API_AVAILABLE)
 size_t getCuAllocationGranularity(CUmemAllocationGranularity_flags granFlag) {
@@ -311,7 +335,7 @@ bool isNvlsSupported() {
 }
 
 bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_USE_ROCM)
   return false;
 #else
   CUmemGenericAllocationHandle handle;

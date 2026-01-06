@@ -21,6 +21,9 @@ std::string getExecutablePath() {
 }  // namespace
 
 void ExecutorTest::SetUp() {
+  if (gEnv->worldSize != 2 || gEnv->nRanksPerNode != 2) {
+    GTEST_SKIP() << "This test requires world size to be 2 and ranks per node to be 2";
+  }
   MultiProcessTest::SetUp();
 
   MSCCLPP_CUDATHROW(cudaSetDevice(rankToLocalRank(gEnv->rank)));
@@ -43,15 +46,10 @@ void ExecutorTest::TearDown() {
     NpKit::Dump(npkitDumpDir);
     NpKit::Shutdown();
   }
-  executor.reset();
   MultiProcessTest::TearDown();
 }
 
 TEST_F(ExecutorTest, TwoNodesAllreduce) {
-  if (gEnv->worldSize != 2 || gEnv->nRanksPerNode != 2) {
-    GTEST_SKIP() << "This test requires world size to be 2 and ranks per node to be 2";
-    return;
-  }
   std::string executablePath = getExecutablePath();
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =

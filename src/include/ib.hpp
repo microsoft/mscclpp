@@ -47,7 +47,6 @@ class IbMr {
 // QP info to be shared with the remote peer
 struct IbQpInfo {
   uint16_t lid;
-  uint8_t port;
   uint8_t linkLayer;
   uint32_t qpn;
   uint64_t spn;
@@ -91,9 +90,12 @@ class IbQp {
     ibv_sge* sge;
   };
 
-  IbQp(ibv_context* ctx, ibv_pd* pd, int port, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
-       int maxWrPerSend);
+  IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
+       int maxRecvWr, int maxWrPerSend);
   WrInfo getNewWrInfo();
+
+  int portNum_;
+  int gidIndex_;
 
   IbQpInfo info_;
 
@@ -118,18 +120,14 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  std::shared_ptr<IbQp> createQp(int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr, int maxWrPerSend,
-                                 int port = -1);
+  std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
+                                 int maxWrPerSend);
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
 
-  std::shared_ptr<IbQp> createQp([[maybe_unused]] int maxCqSize, [[maybe_unused]] int maxCqPollNum,
-                                 [[maybe_unused]] int maxSendWr, [[maybe_unused]] int maxRecvWr,
-                                 [[maybe_unused]] int maxWrPerSend, [[maybe_unused]] int port = -1) {
-    return nullptr;
-  }
+  std::shared_ptr<IbQp> createQp(int, int, int, int, int, int, int) { return nullptr; }
   std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
     return nullptr;
   }
@@ -138,8 +136,8 @@ class IbCtx {
   const std::string& getDevName() const { return devName_; };
 
  private:
-  bool isPortUsable(int port) const;
-  int getAnyUsablePort() const;
+  bool isPortUsable(int port, int gidIndex) const;
+  int getAnyUsablePort(int gidIndex) const;
 
   const std::string devName_;
   ibv_context* ctx_;

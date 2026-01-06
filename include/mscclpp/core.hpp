@@ -381,11 +381,19 @@ struct EndpointConfig {
   /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
   /// transports.
   struct Ib {
+    static const int DefaultPort = -1;
+    static const int DefaultGidIndex = 0;
     static const int DefaultMaxCqSize = 1024;
     static const int DefaultMaxCqPollNum = 1;
     static const int DefaultMaxSendWr = 8192;
     static const int DefaultMaxWrPerSend = 64;
 
+    /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
+    int deviceIndex;
+    /// Port number.
+    int port;
+    /// GID index.
+    int gidIndex;
     /// Maximum size of the completion queue.
     int maxCqSize;
     /// Maximum number of completion queue polls per operation.
@@ -396,13 +404,22 @@ struct EndpointConfig {
     int maxWrPerSend;
 
     /// Constructor.
+    /// @param deviceIndex Device index.
+    /// @param port Port number.
+    /// @param gidIndex GID index.
     /// @param maxCqSize Maximum completion queue size.
     /// @param maxCqPollNum Maximum completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
     /// @param maxWrPerSend Maximum work requests per send operation.
-    Ib(int maxCqSize = DefaultMaxCqSize, int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr,
-       int maxWrPerSend = DefaultMaxWrPerSend)
-        : maxCqSize(maxCqSize), maxCqPollNum(maxCqPollNum), maxSendWr(maxSendWr), maxWrPerSend(maxWrPerSend) {}
+    Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
+       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend)
+        : deviceIndex(deviceIndex),
+          port(port),
+          gidIndex(gidIndex),
+          maxCqSize(maxCqSize),
+          maxCqPollNum(maxCqPollNum),
+          maxSendWr(maxSendWr),
+          maxWrPerSend(maxWrPerSend) {}
   };
 
   /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
@@ -930,18 +947,24 @@ DeviceHandle<std::remove_reference_t<T>> deviceHandle(T&& t) {
 template <class T>
 using PacketPayload = typename T::Payload;
 
+/// Convert Transport to string and output to stream.
+/// @param os Output stream.
+/// @param transport Input transport.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const Transport& transport);
+
+/// Convert DeviceType to string and output to stream.
+/// @param os Output stream.
+/// @param deviceType Input device type.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const DeviceType& deviceType);
+
+/// Convert Device to string and output to stream.
+/// @param os Output stream.
+/// @param device Input device.
+/// @return Output stream.
+std::ostream& operator<<(std::ostream& os, const Device& device);
+
 }  // namespace mscclpp
-
-namespace std {
-
-std::string to_string(const mscclpp::Transport& transport);
-
-std::string to_string(const mscclpp::Device& device);
-
-/// Specialization of the std::hash template for mscclpp::TransportFlags.
-template <>
-struct hash<mscclpp::TransportFlags>;
-
-}  // namespace std
 
 #endif  // MSCCLPP_CORE_HPP_
