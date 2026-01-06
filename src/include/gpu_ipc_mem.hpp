@@ -6,9 +6,8 @@
 
 #include <bitset>
 #include <memory>
-#include <ostream>
-
 #include <mscclpp/gpu.hpp>
+#include <ostream>
 
 namespace mscclpp {
 
@@ -63,7 +62,7 @@ struct GpuIpcMemHandle {
 
 using UniqueGpuIpcMemHandle = GpuIpcMemHandle::UniquePtr;
 
-std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typeFlags);
+std::ostream &operator<<(std::ostream &os, const GpuIpcMemHandle::TypeFlags &typeFlags);
 
 static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 
