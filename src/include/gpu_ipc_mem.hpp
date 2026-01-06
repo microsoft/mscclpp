@@ -11,6 +11,14 @@
 
 namespace mscclpp {
 
+/// GpuIpcMemHandle is a generic GPU memory handle that covers all existing methods for GPU memory export/import,
+/// including the original CUDA IPC methods (`RuntimeIpc` type) and the later ones using a POSIX file descriptor
+/// (`PosixFd` type) or a fabric handle by the NVIDIA IMEX service (`Fabric` type). When a GPU memory pointer is
+/// given, RegisteredMemory creates and owns a GpuIpcMemHandle that consists of all types of handles that are
+/// available on the local environment, so that the remote side can choose the most suitable one for import.
+/// Note that multiple types of handles can be present in a single GpuIpcMemHandle, and the `typeFlags` field
+/// indicates which types are available.
+/// Note that InfiniBand memory registration is not covered by GpuIpcMemHandle.
 struct GpuIpcMemHandle {
   struct Type {
     static constexpr uint8_t None = 0;
@@ -66,6 +74,9 @@ std::ostream &operator<<(std::ostream &os, const GpuIpcMemHandle::TypeFlags &typ
 
 static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 
+/// GpuIpcMem represents a GPU memory region that has been imported using a GpuIpcMemHandle.
+/// If a RegisteredMemory instance represents an imported GPU memory, it will manage a unique
+/// GpuIpcMem instance for that memory region.
 class GpuIpcMem {
  public:
   GpuIpcMem(const GpuIpcMemHandle &handle);

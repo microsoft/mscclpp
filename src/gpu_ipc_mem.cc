@@ -114,6 +114,7 @@ static std::unordered_map<cudaIpcMemHandle_t, void*, CudaIpcMemHandleHash, CudaI
 
 static std::mutex openCudaIpcMemHandleMapMutex;
 
+// Cache open ipc handles to avoid opening multiple times (ROCm may exceed system limit on vm.max_map_count).
 static inline cudaError_t cudaIpcOpenMemHandleWrapper(void** addr, cudaIpcMemHandle_t ipcHandle) {
   std::lock_guard<std::mutex> lock(openCudaIpcMemHandleMapMutex);
   auto it = openCudaIpcMemHandleMap.find(ipcHandle);
