@@ -8,7 +8,6 @@
 #include <unistd.h>
 
 #include <mscclpp/gpu_utils.hpp>
-#include <sstream>
 
 #include "logger.hpp"
 
@@ -105,7 +104,7 @@ struct CudaIpcMemHandleHash {
 
 struct CudaIpcMemHandleEqual {
   bool operator()(const cudaIpcMemHandle_t& lhs, const cudaIpcMemHandle_t& rhs) const noexcept {
-    return std::string_view(lhs.reserved, sizeof(lhs.reserved)) == std::string_view(rhs.reserved, sizeof(rhs.reserved));
+    return std::memcmp(lhs.reserved, rhs.reserved, sizeof(lhs.reserved)) == 0;
   }
 };
 
@@ -163,7 +162,11 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   CUdeviceptr basePtr;
   size_t sz;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&basePtr, &sz, ptr));
-  if (sz == 0) return handle;  // No valid memory range found
+  if (sz == 0) {
+    // No valid memory range found
+    WARN(GPU, "Failed to create GpuIpcMemHandle: cuMemGetAddressRange returned size 0 for pointer ", (void*)ptr);
+    return handle;
+  }
   handle->baseSize = sz;
   handle->offsetFromBase = size_t(ptr) - size_t(basePtr);
 
