@@ -12,30 +12,29 @@
 
 #include "logger.hpp"
 
-namespace std {
-
-std::string to_string(const mscclpp::GpuIpcMemHandle::TypeFlags& typeFlags) {
-  std::stringstream ss;
-  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::RuntimeIpc) {
-    ss << "RuntimeIpc|";
-  }
-  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::PosixFd) {
-    ss << "PosixFd|";
-  }
-  if (typeFlags & mscclpp::GpuIpcMemHandle::Type::Fabric) {
-    ss << "Fabric|";
-  }
-  std::string ret = ss.str();
-  if (!ret.empty()) {
-    ret.pop_back();  // Remove the trailing '|'
-    return ret;
-  }
-  return "None";
-}
-
-}  // namespace std
-
 namespace mscclpp {
+
+std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typeFlags) {
+  bool first = true;
+  if (typeFlags & GpuIpcMemHandle::Type::RuntimeIpc) {
+    os << "RuntimeIpc";
+    first = false;
+  }
+  if (typeFlags & GpuIpcMemHandle::Type::PosixFd) {
+    if (!first) os << "|";
+    os << "PosixFd";
+    first = false;
+  }
+  if (typeFlags & GpuIpcMemHandle::Type::Fabric) {
+    if (!first) os << "|";
+    os << "Fabric";
+    first = false;
+  }
+  if (first) {
+    os << "None";
+  }
+  return os;
+}
 
 static int dupFdFromPid([[maybe_unused]] pid_t pid, [[maybe_unused]] int targetFd) {
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0))
@@ -152,6 +151,7 @@ void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
     if (handle->typeFlags & GpuIpcMemHandle::Type::PosixFd) {
       ::close(handle->posixFd.fd);
     }
+    delete handle;
   }
 }
 
@@ -261,6 +261,8 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
 
 GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     : handle_(handle),
+      allocHandle_(0),
+      multicastBuffer_(nullptr),
       isMulticast_(false),
       multicastBindedAddr_(0),
       type_(GpuIpcMemHandle::Type::None),

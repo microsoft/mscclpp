@@ -6,6 +6,8 @@
 
 #include <bitset>
 #include <memory>
+#include <ostream>
+
 #include <mscclpp/gpu.hpp>
 
 namespace mscclpp {
@@ -61,6 +63,8 @@ struct GpuIpcMemHandle {
 
 using UniqueGpuIpcMemHandle = GpuIpcMemHandle::UniquePtr;
 
+std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typeFlags);
+
 static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 
 class GpuIpcMem {
@@ -84,7 +88,7 @@ class GpuIpcMem {
   CUmemGenericAllocationHandle allocHandle_;
   std::shared_ptr<uint8_t> multicastBuffer_;
   bool isMulticast_;
-  [[maybe_unused]] CUdeviceptr multicastBindedAddr_;
+  CUdeviceptr multicastBindedAddr_;
   uint8_t type_;
   void *basePtr_;
   size_t baseSize_;
