@@ -210,10 +210,10 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
                                                        [[maybe_unused]] int numDevices) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (bufferSize == 0) {
-    THROW(GPU, Error, ErrorCode::InvalidUsage, "Multicasting buffer size should be positive");
+    THROW(GPU, Error, ErrorCode::InvalidUsage, "Multicast buffer size should be positive");
   }
   if (numDevices < 1) {
-    THROW(GPU, Error, ErrorCode::InvalidUsage, "Multicasting number of devices should be positive");
+    THROW(GPU, Error, ErrorCode::InvalidUsage, "Number of multicasting devices should be positive");
   }
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
 
