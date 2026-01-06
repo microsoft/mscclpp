@@ -19,8 +19,9 @@ T readEnv(const std::string& envName, const T& defaultValue) {
     return atoi(envCstr);
   } else if constexpr (std::is_same_v<T, bool>) {
     return (std::string(envCstr) != "0");
+  } else {
+    return T(envCstr);
   }
-  return T(envCstr);
 }
 
 template <typename T>
@@ -52,6 +53,7 @@ Env::Env()
       logSubsys(readEnv<std::string>("MSCCLPP_LOG_SUBSYS", "ALL")),
       logFile(readEnv<std::string>("MSCCLPP_LOG_FILE", "")),
       hcaDevices(readEnv<std::string>("MSCCLPP_HCA_DEVICES", "")),
+      ibvSo(readEnv<std::string>("MSCCLPP_IBV_SO", "")),
       hostid(readEnv<std::string>("MSCCLPP_HOSTID", "")),
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
       socketIfname(readEnv<std::string>("MSCCLPP_SOCKET_IFNAME", "")),
@@ -78,6 +80,7 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_LOG_SUBSYS", globalEnv->logSubsys);
     logEnv("MSCCLPP_LOG_FILE", globalEnv->logFile);
     logEnv("MSCCLPP_HCA_DEVICES", globalEnv->hcaDevices);
+    logEnv("MSCCLPP_IBV_SO", globalEnv->ibvSo);
     logEnv("MSCCLPP_HOSTID", globalEnv->hostid);
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
     logEnv("MSCCLPP_SOCKET_IFNAME", globalEnv->socketIfname);

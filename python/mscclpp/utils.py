@@ -123,7 +123,7 @@ class KernelBuilder:
         if self.macros:
             command += self.macros
         try:
-            subprocess.run(command, capture_output=True, text=True, check=True, bufsize=1)
+            subprocess.run(command, capture_output=True, text=True, check=True, bufsize=1, stdin=subprocess.DEVNULL)
             with open(f"{self._tempdir.name}/{output_file}", "rb") as f:
                 return f.read()
         except subprocess.CalledProcessError as e:
