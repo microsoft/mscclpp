@@ -20,7 +20,6 @@ parameters:
 steps:
 - checkout: self
 - checkout: git://One/msccl-users
-
 - task: Bash@3
   name: Build
   displayName: Build
