@@ -57,7 +57,7 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: "single-node-test"
+    arguments: "single-node-test true ${{ parameters.platform }}"
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 
