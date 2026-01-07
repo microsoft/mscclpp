@@ -20,26 +20,6 @@ parameters:
 steps:
 - checkout: self
 - checkout: git://One/msccl-users
-- task: Bash@3
-  displayName: 'Move Docker Storage to /mnt/storage'
-  inputs:
-    targetType: 'inline'
-    script: |
-      echo "Stopping Docker Service..."
-      sudo systemctl stop docker
-
-      echo "Creating new Docker storage directory at /mnt/storage/docker..."
-      sudo mkdir -p /mnt/storage/docker
-      sudo chmod 711 /mnt/storage/docker
-
-      # We write a new daemon.json file pointing 'data-root' to the new location
-      echo '{"data-root": "/mnt/storage/docker"}' | sudo tee /etc/docker/daemon.json
-
-      echo "Restarting Docker Service..."
-      sudo systemctl start docker
-
-      echo "Verifying Docker Root Dir..."
-      docker info | grep "Docker Root Dir"
 
 - task: Bash@3
   name: Build
