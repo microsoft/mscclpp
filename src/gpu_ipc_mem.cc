@@ -212,7 +212,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
 
   // get granularity
   size_t recMcGran;
-  CUmulticastObjectProp prop;
+  CUmulticastObjectProp prop = {};
   prop.size = bufferSize;
   prop.numDevices = numDevices;
   if (isFabricAvailable) {
@@ -232,8 +232,10 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   handle->typeFlags = GpuIpcMemHandle::Type::None;
 
   // POSIX FD handle
-  if (cuMemExportToShareableHandle(&(handle->posixFd.fd), allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
+  int fileDesc;
+  if (cuMemExportToShareableHandle(&fileDesc, allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
       CUDA_SUCCESS) {
+    handle->posixFd.fd = UnixSocketServer::instance().registerFd(fileDesc);
     handle->posixFd.pid = ::getpid();
     handle->typeFlags |= GpuIpcMemHandle::Type::PosixFd;
   }
@@ -399,7 +401,7 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
   MSCCLPP_CUTHROW(cuMulticastAddDevice(allocHandle_, deviceId));
 
   size_t minMcGran;
-  CUmulticastObjectProp prop;
+  CUmulticastObjectProp prop = {};
   prop.size = handle_.baseSize;
   prop.numDevices = numDevices;
   prop.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR | CU_MEM_HANDLE_TYPE_FABRIC;
