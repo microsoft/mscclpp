@@ -34,18 +34,12 @@ class NvlsConnection {
   NvlsConnection() = delete;
   std::vector<char> serialize();
 
-  // Everyone needs to synchronize after creating a NVLS connection before adding devices
-  void addDevice();
-  void addDevice(int cudaDeviceId);
-
   /// Bind the memory allocated via mscclpp::GpuBuffer to the multicast handle. The behavior
   /// is undefined if the devicePtr is not allocated by mscclpp::GpuBuffer.
   /// @param devicePtr The device pointer returned by `mscclpp::GpuBuffer::data()`.
   /// @param size The bytes of the memory to bind to the multicast handle.
   /// @return SwitchChannel with devicePtr, mcPtr and bufferSize
   SwitchChannel bindAllocatedMemory(CUdeviceptr devicePtr, size_t size);
-
-  size_t getMultiCastMinGranularity();
 
  private:
   class Impl;
