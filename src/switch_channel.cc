@@ -55,9 +55,20 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : isRoot_(true), n
   // Compute minimum granularity for user buffer alignment
   CUmulticastObjectProp mcProp = {};
   mcProp.size = localGpuIpcMemHandle_->baseSize;
-  mcProp.numDevices = numDevices;
+  mcProp.numDevices = numDevices_;
+
+  size_t minMcGranPosixFd;
   mcProp.handleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
-  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran_, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
+  MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGranPosixFd, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
+
+  if (localGpuIpcMemHandle_->typeFlags & GpuIpcMemHandle::Type::Fabric) {
+    size_t minMcGranFabric;
+    mcProp.handleTypes = CU_MEM_HANDLE_TYPE_FABRIC;
+    MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGranFabric, &mcProp, CU_MULTICAST_GRANULARITY_MINIMUM));
+    minMcGran_ = std::max(minMcGranPosixFd, minMcGranFabric);
+  } else {
+    minMcGran_ = minMcGranPosixFd;
+  }
 
   INFO(CONN, "NVLS handle created on root with buffer size ", localGpuIpcMemHandle_->baseSize, ", minGranularity ",
        minMcGran_);
@@ -77,6 +88,9 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) : isRoot_(false) {
 }
 
 std::vector<char> NvlsConnection::Impl::serialize() {
+  if (!isRoot_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "Only root NVLS connection can serialize the handle");
+  }
   std::vector<char> result;
   detail::serialize(result, *localGpuIpcMemHandle_);
   detail::serialize(result, minMcGran_);
