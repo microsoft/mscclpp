@@ -82,8 +82,7 @@ mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
-html_sidebars = {
-    '**': [
-        'versioning.html',
-    ],
-}
+html_js_files = [
+    "version-selector.js",
+]
+
