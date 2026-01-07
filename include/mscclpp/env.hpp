@@ -37,7 +37,7 @@ class Env {
   const std::string logLevel;
 
   /// Env name: `MSCCLPP_LOG_SUBSYS`. The log subsystem, a comma-separated list of subsystems to enable
-  /// logging for. Possible values are ENV, NET, CONN, EXEC, NCCL, ALL (default).
+  /// logging for. Possible values are ENV, GPU, NET, CONN, EXEC, NCCL, ALL (default).
   /// If the first character is '^', it inverts the mask, i.e., enables all subsystems except those specified.
   /// For example, "^NET,CONN" enables all subsystems except NET and CONN.
   const std::string logSubsys;
