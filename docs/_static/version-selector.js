@@ -6,7 +6,6 @@
     // This should be updated when new versions are released
     const versions = [
         { name: 'latest (v0.8.0)', path: '', version: 'latest' },
-        { name: 'v0.8.0', path: 'v0.8.0', version: 'v0.8.0' },
         { name: 'v0.7.0', path: 'v0.7.0', version: 'v0.7.0' },
         { name: 'v0.6.0', path: 'v0.6.0', version: 'v0.6.0' },
         { name: 'v0.5.2', path: 'v0.5.2', version: 'v0.5.2' },
@@ -43,23 +42,19 @@
         const searchDiv = document.querySelector('.wy-side-nav-search');
         
         if (!searchDiv) return;
+
+        // Find the title link (mscclpp)
+        const titleLink = searchDiv.querySelector('a.icon-home');
         
         // Create version selector container
         const selectorDiv = document.createElement('div');
         selectorDiv.style.padding = '10px';
-        selectorDiv.style.borderBottom = '1px solid #404040';
-        selectorDiv.style.marginTop = '10px';
-        
-        const label = document.createElement('label');
-        label.htmlFor = 'version-selector';
-        label.style.color = '#b3b3b3';
-        label.style.fontSize = '90%';
-        label.textContent = 'Version:';
+        selectorDiv.style.paddingTop = '5px';
+        selectorDiv.style.paddingBottom = '10px';
         
         const select = document.createElement('select');
         select.id = 'version-selector';
         select.style.width = '100%';
-        select.style.marginTop = '5px';
         select.style.padding = '5px';
         select.style.backgroundColor = '#2c2c2c';
         select.style.color = '#ffffff';
@@ -97,11 +92,21 @@
             }
         });
         
-        selectorDiv.appendChild(label);
         selectorDiv.appendChild(select);
         
-        // Insert after the search form
-        searchDiv.appendChild(selectorDiv);
+        // Insert after the title link in the searchDiv
+        if (titleLink) {
+            // Insert after the title link element
+            const nextElement = titleLink.nextSibling;
+            if (nextElement) {
+                searchDiv.insertBefore(selectorDiv, nextElement);
+            } else {
+                searchDiv.appendChild(selectorDiv);
+            }
+        } else {
+            // Fallback: insert at the beginning of searchDiv
+            searchDiv.insertBefore(selectorDiv, searchDiv.firstChild);
+        }
     }
     
     // Initialize when DOM is ready

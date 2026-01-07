@@ -86,3 +86,19 @@ html_js_files = [
     "version-selector.js",
 ]
 
+# Custom setup function to copy version-selector.js to root build directory
+def setup(app):
+    import shutil
+    from pathlib import Path
+
+    def copy_version_selector(app, exception):
+        if exception is None:  # Only copy if build succeeded
+            source = Path(app.srcdir) / "_static" / "version-selector.js"
+            # Copy to root build directory
+            dest_root = Path(app.outdir).parent / "_static"
+            dest_root.mkdir(parents=True, exist_ok=True)
+            if source.exists():
+                shutil.copy2(source, dest_root / "version-selector.js")
+
+    app.connect('build-finished', copy_version_selector)
+
