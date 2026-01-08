@@ -5,6 +5,7 @@
     // Configuration: list all available versions
     // This should be updated when new versions are released
     const versions = [
+        { name: 'main (dev)', path: 'main', version: 'main' },
         { name: 'latest (v0.8.0)', path: '', version: 'latest' },
         { name: 'v0.7.0', path: 'v0.7.0', version: 'v0.7.0' },
         { name: 'v0.6.0', path: 'v0.6.0', version: 'v0.6.0' },
@@ -19,6 +20,11 @@
     
     function detectCurrentVersion() {
         const path = window.location.pathname;
+        // Check for main branch
+        if (path.includes('/main/')) {
+            return 'main';
+        }
+        // Check for version tags
         const match = path.match(/\/(v\d+\.\d+\.\d+)\//);
         return match ? match[1] : 'latest';
     }
