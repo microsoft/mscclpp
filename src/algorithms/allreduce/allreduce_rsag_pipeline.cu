@@ -18,8 +18,10 @@ __device__ DeviceSemaphore semaphoreForSend[NBLOCKS_FOR_REDUCE];
 __device__ DeviceSemaphore semaphoreForRecv[NBLOCKS_FOR_REDUCE];
 
 template <ReduceOp OpType, typename T>
-__device__ void allreduce(T* buff, T* scratch, T* result, DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                          void* remoteMemories, int rank, int nRanksPerNode, int worldSize, size_t nelems) {
+__global__ void __launch_bounds__(1024, 1)
+    allreduceRsAgPipeline(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
+                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
+                          int nRanksPerNode, int worldSize, size_t nelems) {
   int bid = blockIdx.x;
   const uint32_t nStepsPerIter = 8;
   uint32_t nInt4 = nelems * sizeof(T) / sizeof(int4);
@@ -82,12 +84,14 @@ __device__ void allreduce(T* buff, T* scratch, T* result, DeviceHandle<BaseMemor
         // Map to PUT's step pattern: each REDUCE block handles nStepsPerIter steps
         // subBlockId determines which subset of the REDUCE_COPY_RATIO * nStepsPerIter steps
         uint32_t putStep = subBlockId * nStepsPerIter + step;
-        uint32_t myChunkOffset = baseOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
+        uint32_t myChunkOffset =
+            baseOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
         int4 tmp = buff4[myChunkOffset];
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
         for (int peer = 0; peer < nPeers; peer++) {
           int remoteRankId = (rank + peer + 1) % nRanksPerNode;
-          uint32_t peerSlotOffset = baseOffset + remoteRankId * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
+          uint32_t peerSlotOffset =
+              baseOffset + remoteRankId * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
           int4 data = scratch4[peerSlotOffset];
           tmp = cal_vectors<T, OpType>(data, tmp);
         }
@@ -123,119 +127,13 @@ __device__ void allreduce(T* buff, T* scratch, T* result, DeviceHandle<BaseMemor
       for (int peer = 0; peer < nPeers; peer++) {
         int remoteRankId = (rank + peer + 1) % nRanksPerNode;
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
-          uint32_t offset = baseOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * NBLOCKS_FOR_RECV;
+          uint32_t offset =
+              baseOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * NBLOCKS_FOR_RECV;
           result4[offset] = scratch4[offset];
         }
       }
     }
   }
-}
-
-template <ReduceOp OpType, typename T>
-__global__ void __launch_bounds__(1024, 1)
-    allreduceRsAgPipeline(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
-                          int nRanksPerNode, int worldSize, size_t nelems) {
-  allreduce<OpType, T>(buff, scratch, resultBuff, memoryChannels, remoteMemories, rank, nRanksPerNode, worldSize,
-                       nelems);
-  //   int blockId = blockIdx.x;
-  //   int nPeers = nRanksPerNode - 1;
-  //   const uint32_t nStepsPerIter = 4;
-  //   uint32_t nInt4 = nelems * sizeof(T) / sizeof(int4);
-  //   uint32_t nInt4PerRank = (nInt4 + worldSize - 1) / worldSize;
-  //   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
-  //   int4* resultBuff4 = reinterpret_cast<int4*>((char*)resultBuff);
-  //   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
-
-  //   // Let each reduce block handle 512 data per step
-  //   // 32K * sizeof(int4) = 32K * 16B = 512KB
-  //   uint32_t nInt4PerIter = (blockDim.x * NBLOCKS_FOR_REDUCE) * nStepsPerIter;
-  //   /* m tb for copy, n ranks, (nInt4PerIter) * n (ranks) data = n * nInt4PerIter (km * blockDim.x) = kmn*PerBlock
-  //    * tb 0 for data 0, m, 2m, 3m ... kn(m-1)
-  //    * xm tb for reduce, n ranks, deal with kmn data.
-  //    * For each rank, the begin index is rankIdx = rank * km = rank * nInt4PerIter
-  //    * Assume k % x == 0, let nIter = k / x
-  //    * For tb i in reduce phase, it handles data from at index: rankIdx + (i / x) + ((i % x) * nIter + w) * m
-  //    * ...
-  //    */
-
-  //   uint32_t nIters = (nInt4PerRank + nInt4PerIter - 1) / nInt4PerIter;
-  //   int4 data;
-  //   if (blockId < NBLOCKS_FOR_COPY) {
-  //     DeviceHandle<BaseMemoryChannel>* localMemoryChannels = memoryChannels + blockId * nPeers;
-  //     for (int iter = 0; iter < nIters; iter++) {
-  //       // int threadIdInCopy = blockId * blockDim.x + threadIdx.x;
-  //       // uint32_t idx = iter * nInt4PerIter * worldSize + threadIdInCopy;
-  //       // uint32_t totalSize = nInt4PerIter * worldSize;
-  //       // for (uint32_t idx = threadIdInCopy; idx < totalSize; idx += (blockDim.x * NBLOCKS_FOR_COPY)) {
-  //       //   scratch4[idx] = buff4[idx];
-  //       // }
-  //       __syncthreads();
-  //       if (threadIdx.x < nPeers) {
-  //         localMemoryChannels[threadIdx.x].signal();
-  //         localMemoryChannels[threadIdx.x].wait();
-  //       }
-  //       __syncthreads();
-  //       // if (threadIdx.x < REDUCE_COPY_RATIO) {
-  //       //   semaphoreForSend[blockId * REDUCE_COPY_RATIO + threadIdx.x].release();
-  //       // }
-  //     }
-  //   } else if (blockId < NBLOCKS_FOR_COPY + NBLOCKS_FOR_REDUCE) {
-  //     uint32_t bidInReduce = blockId - NBLOCKS_FOR_COPY;
-  //     for (int iter = 0; iter < nIters; iter++) {
-  // //       uint32_t baseOffset =
-  // //           rank * nInt4PerIter * iter +
-  // //           (bidInReduce / REDUCE_COPY_RATIO + (bidInReduce % REDUCE_COPY_RATIO) * nStepsPerIter * NBLOCKS_FOR_COPY)
-  // //           *
-  // //               blockDim.x;
-  // //       if (threadIdx.x == 0) {
-  // //         semaphoreForSend[bidInReduce].acquire();
-  // //       }
-  // //       __syncthreads();
-  // // #pragma unroll nStepsPerIter
-  // //       for (uint32_t step = 0; step < nStepsPerIter; step++) {
-  // //         uint32_t offset = baseOffset + step * blockDim.x * NBLOCKS_FOR_COPY + threadIdx.x;
-  // //         int4 tmp = scratch4[offset];
-  // //         for (int i = 0; i < nPeers; i++) {
-  // //           int peerIdx = (rank + i + 1) % nRanksPerNode;
-  // //           int index = peerIdx < rank ? peerIdx : peerIdx - 1;
-  // //           int4 data = mscclpp::read<int4>(((void**)remoteMemories)[index], offset);
-  // //           tmp = cal_vectors<T, OpType>(data, tmp);
-  // //         }
-  // //         resultBuff4[offset] = tmp;
-  // //         for (int i = 0; i < nPeers; i++) {
-  // //           int peerIdx = (rank + i + 1) % nRanksPerNode;
-  // //           int index = peerIdx < rank ? peerIdx : peerIdx - 1;
-  // //           mscclpp::write<int4>(((void**)remoteMemories)[index], offset, tmp);
-  // //         }
-  // //       }
-  // //       __syncthreads();
-  // //       if (threadIdx.x == 0) {
-  // //         semaphoreForRecv[bidInReduce].release();
-  // //       }
-  //     }
-  //   } else if (blockId < NBLOCKS_FOR_COPY + NBLOCKS_FOR_REDUCE + NBLOCKS_FOR_RECV) {
-  //     int bidInCopyBack = blockId - NBLOCKS_FOR_COPY - NBLOCKS_FOR_REDUCE;
-  //     int threadIdInCopy = bidInCopyBack * blockDim.x + threadIdx.x;
-  //     DeviceHandle<BaseMemoryChannel>* localMemoryChannels =
-  //         memoryChannels + (NBLOCKS_FOR_REDUCE + bidInCopyBack) * nPeers;
-  //     for (int iter = 0; iter < nIters; iter++) {
-  //       // if (threadIdx.x < REDUCE_COPY_RATIO) {
-  //       //   semaphoreForRecv[bidInCopyBack * REDUCE_COPY_RATIO + threadIdx.x].acquire();
-  //       // }
-  //       __syncthreads();
-  //       if (threadIdx.x < nPeers) {
-  //         localMemoryChannels[threadIdx.x].signal();
-  //         localMemoryChannels[threadIdx.x].wait();
-  //       }
-  //       __syncthreads();
-  //       // uint32_t idx = iter * nInt4PerIter * worldSize + threadIdInCopy;
-  //       // for (uint32_t idx = threadIdInCopy; idx < nInt4PerIter * worldSize && idx < nInt4;
-  //       //      idx += blockDim.x * NBLOCKS_FOR_RECV) {
-  //       //   resultBuff4[idx] = scratch4[idx];
-  //       // }
-  //     }
-  //   }
 }
 
 template <ReduceOp OpType, typename T>
