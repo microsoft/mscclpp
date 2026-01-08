@@ -169,7 +169,7 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Executor> executor;
   mscclpp::AlgorithmCollection algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
-  const size_t scratchBufferSize_ = (1 << 27);  // 128MB
+  const size_t scratchBufferSize_ = (1 << 30);  // 128MB
   int nRanksPerNode;
   int worldSize;
 
@@ -297,7 +297,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
 #else
     if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_rsag");
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag_pipeline");
     }
 #endif
   }
