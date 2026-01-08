@@ -32,7 +32,7 @@ __global__ void __launch_bounds__(1024, 1)
   uint32_t nPeers = nRanksPerNode - 1;
   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
-  int4* result4 = reinterpret_cast<int4*>((char*)result);
+  int4* result4 = reinterpret_cast<int4*>((char*)resultBuff);
   if (bid < NBLOCKS_FOR_PUT) {
     DeviceHandle<BaseMemoryChannel>* localMemoryChannels = memoryChannels + bid * nPeers;
     for (int iter = 0; iter < nIters; iter++) {
