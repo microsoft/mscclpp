@@ -23,17 +23,15 @@ __global__ void __launch_bounds__(1024, 1)
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
                           int nRanksPerNode, int worldSize, size_t nelems, size_t scratchSize) {
   int bid = blockIdx.x;
-  const uint32_t nStepsPerIter = 8;
+  const uint32_t nStepsPerIter = 4;
   uint32_t nInt4 = nelems * sizeof(T) / sizeof(int4);
-  uint32_t nInt4PerRank = (nInt4 + worldSize - 1) / worldSize;
-  // 64 K * sizeof(int4) = 64K * 16B = 1MB * 8 steps = 8MB per rank per iteration
   uint32_t nInt4PerIter = NBLOCKS_FOR_REDUCE * blockDim.x * nStepsPerIter;
-  uint32_t nIters = (nInt4PerRank + nInt4PerIter - 1) / nInt4PerIter;
+  const uint32_t chunkSize = nInt4PerIter * worldSize;
+  uint32_t nIters = (nInt4 + chunkSize - 1) / chunkSize;
   uint32_t nPeers = nRanksPerNode - 1;
   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   int4* result4 = reinterpret_cast<int4*>((char*)resultBuff);
-  const uint32_t chunkSize = nInt4PerIter * worldSize;
   const uint32_t scratchIterStride = 2 * chunkSize;  // one for AS, one for AG
   const uint32_t pipelineDepth = scratchSize / sizeof(int4) / scratchIterStride;
   assert(pipelineDepth >= 1);
@@ -58,7 +56,11 @@ __global__ void __launch_bounds__(1024, 1)
 #pragma unroll
         for (int step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = srcOffset + threadIdInPut + step * blockDim.x * NBLOCKS_FOR_PUT;
-          tmp[step] = buff4[offset];
+          if (offset < nInt4) {
+            tmp[step] = buff4[offset];
+          } else {
+            tmp[step] = make_int4(0, 0, 0, 0);
+          }
         }
 #pragma unroll
         for (int step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
@@ -99,7 +101,12 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t putStep = subBlockId * nStepsPerIter + step;
         uint32_t myChunkOffset =
             baseSrcOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
-        int4 tmp = buff4[myChunkOffset];
+        int4 tmp;
+        if (myChunkOffset < nInt4) {
+          tmp = buff4[myChunkOffset];
+        } else {
+          tmp = make_int4(0, 0, 0, 0);
+        }
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
         for (int peer = 0; peer < nPeers; peer++) {
           int remoteRankId = (rank + peer + 1) % nRanksPerNode;
@@ -108,7 +115,9 @@ __global__ void __launch_bounds__(1024, 1)
           int4 data = scratch4[peerSlotOffset];
           tmp = cal_vectors<T, OpType>(data, tmp);
         }
-        result4[myChunkOffset] = tmp;
+        if (myChunkOffset < nInt4) {
+          result4[myChunkOffset] = tmp;
+        }
         // Broadcast reduced result to all peers' scratch at SCATTER_AG_OFFSET + rank * nInt4PerIter
         uint32_t dstOffset =
             baseOffset + chunkSize + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
@@ -147,7 +156,9 @@ __global__ void __launch_bounds__(1024, 1)
                             step * blockDim.x * NBLOCKS_FOR_RECV;
           uint32_t dstOffset =
               baseDstOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * NBLOCKS_FOR_RECV;
-          result4[dstOffset] = scratch4[offset];
+          if (dstOffset < nInt4) {
+            result4[dstOffset] = scratch4[offset];
+          }
         }
       }
       __syncthreads();
@@ -179,7 +190,7 @@ struct AllreduceRsAgPipelineAdapter {
 
 void AllreduceRsAgPipeline::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
-  nChannelsPerConnection_ = 96;
+  nChannelsPerConnection_ = NBLOCKS_FOR_REDUCE + NBLOCKS_FOR_RECV;
   comm_ = comm;
   // setup semaphores
   this->scratchSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
@@ -206,10 +217,6 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<Algo
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
-  }
-  if (inputSize > this->scratchBufferSize_) {
-    WARN("Input size %zu exceeds scratch buffer size %zu", inputSize, this->scratchBufferSize_);
     return CommResult::commInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
