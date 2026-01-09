@@ -11,6 +11,7 @@ baseImageTable=(
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu22.04"
+    ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/rocm-terminal:6.2.1"
 )
 
@@ -27,13 +28,14 @@ ofedVersionTable=(
     ["cuda12.4"]="23.07-0.5.1.2"
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
+    ["cuda13.0"]="24.10-3.2.5.0"
 )
 
-GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 TARGET=${1}
+OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
@@ -53,7 +55,11 @@ if [[ -z ${OFED_VERSION} ]]; then
     OFED_VERSION=${DEFAULT_OFED_VERSION}
 fi
 
-docker build -t ${GHCR}-common:base-${TARGET} \
+TAG_TMP="tmp-${TARGET}-${OS_ARCH}"
+TAG_BASE="base-${TARGET}-${OS_ARCH}"
+TAG_BASE_DEV="base-dev-${TARGET}-${OS_ARCH}"
+
+docker build -t ${TAG_TMP} \
     -f docker/base-x.dockerfile \
     --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
     --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
@@ -62,20 +68,46 @@ docker build -t ${GHCR}-common:base-${TARGET} \
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
-    docker build -t ${GHCR}:base-${TARGET} \
+    docker build -t ${TAG_BASE} \
         -f docker/base-x-rocm.dockerfile \
-        --build-arg BASE_IMAGE=${GHCR}-common:base-${TARGET} \
+        --build-arg BASE_IMAGE=${TAG_TMP} \
         --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
         --build-arg TARGET=${TARGET} \
-        --build-arg ARCH="gfx942" .
-    docker rmi ${GHCR}-common:base-${TARGET}
+        --build-arg GPU_ARCH="gfx942" .
+    docker rmi ${TAG_TMP}
 else
     echo "Building CUDA base image..."
-    docker tag ${GHCR}-common:base-${TARGET} ${GHCR}:base-${TARGET}
-    docker rmi --no-prune ${GHCR}-common:base-${TARGET}
+    docker tag ${TAG_TMP} ${TAG_BASE}
+    docker rmi --no-prune ${TAG_TMP}
 fi
 
-docker build -t ${GHCR}:base-dev-${TARGET} \
+docker build -t ${TAG_BASE_DEV} \
     -f docker/base-dev-x.dockerfile \
-    --build-arg BASE_IMAGE=${GHCR}:base-${TARGET} \
+    --build-arg BASE_IMAGE=${TAG_BASE} \
     --build-arg TARGET=${TARGET} .
+
+GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
+GHCR_TAG_BASE_DEV=${GHCR}:base-dev-${TARGET}
+GHCR_TAG_BASE_DEV_ARCH=${GHCR}:base-dev-${TARGET}-${OS_ARCH}
+
+echo "Successfully built images:"
+echo "  - ${TAG_BASE}"
+echo "  - ${TAG_BASE_DEV}"
+echo ""
+echo "To push the base-dev image to ghcr.io,"
+echo ""
+echo "0. Login to ghcr.io:"
+echo ""
+echo "    docker login ghcr.io"
+echo ""
+echo "1. Tag and push the arch-specific image:"
+echo ""
+echo "    docker tag ${TAG_BASE_DEV} ${GHCR_TAG_BASE_DEV_ARCH} && \\"
+echo "    docker push ${GHCR_TAG_BASE_DEV_ARCH}"
+echo ""
+echo "2. Create or update the multi-arch manifest:"
+echo ""
+echo "    docker buildx imagetools create \\"
+echo "        --tag ${GHCR_TAG_BASE_DEV} \\"
+echo "        --append ${GHCR_TAG_BASE_DEV_ARCH}"
+echo ""
