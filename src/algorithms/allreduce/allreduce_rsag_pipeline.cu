@@ -12,37 +12,48 @@ namespace algorithm {
 constexpr int NBLOCKS_FOR_PUT = 32;
 constexpr int NBLOCKS_FOR_RECV = 32;
 constexpr int NBLOCKS_FOR_REDUCE = 64;
-constexpr int PIPELINE_DEPTH = 4;
 constexpr int REDUCE_COPY_RATIO = NBLOCKS_FOR_REDUCE / NBLOCKS_FOR_PUT;
 __device__ DeviceSemaphore semaphoreForSend[NBLOCKS_FOR_REDUCE];
 __device__ DeviceSemaphore semaphoreForRecv[NBLOCKS_FOR_REDUCE];
+__device__ DeviceSemaphore semaphoreForReduce[NBLOCKS_FOR_REDUCE];
 
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgPipeline(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
-                          int nRanksPerNode, int worldSize, size_t nelems) {
+                          int nRanksPerNode, int worldSize, size_t nelems, size_t scratchSize) {
   int bid = blockIdx.x;
   const uint32_t nStepsPerIter = 8;
   uint32_t nInt4 = nelems * sizeof(T) / sizeof(int4);
   uint32_t nInt4PerRank = (nInt4 + worldSize - 1) / worldSize;
-  // 32 K * sizeof(int4) = 32K * 16B = 512KB
+  // 64 K * sizeof(int4) = 64K * 16B = 1MB * 8 steps = 8MB per rank per iteration
   uint32_t nInt4PerIter = NBLOCKS_FOR_REDUCE * blockDim.x * nStepsPerIter;
   uint32_t nIters = (nInt4PerRank + nInt4PerIter - 1) / nInt4PerIter;
   uint32_t nPeers = nRanksPerNode - 1;
   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   int4* result4 = reinterpret_cast<int4*>((char*)resultBuff);
+  const uint32_t chunkSize = nInt4PerIter * worldSize;
+  const uint32_t scratchIterStride = 2 * chunkSize;  // one for AS, one for AG
+  const uint32_t pipelineDepth = scratchSize / sizeof(int4) / scratchIterStride;
+  assert(pipelineDepth >= 1);
+
   if (bid < NBLOCKS_FOR_PUT) {
-    DeviceHandle<BaseMemoryChannel>* localMemoryChannels = memoryChannels + bid * nPeers;
+    if (threadIdx.x == 0) {
+      semaphoreForSend[bid].set(pipelineDepth);
+    }
     for (int iter = 0; iter < nIters; iter++) {
+      if (threadIdx.x == 0) {
+        semaphoreForSend[bid].acquire();
+      }
+      __syncthreads();
       int threadIdInPut = bid * blockDim.x + threadIdx.x;
       for (int peer = 0; peer < nPeers; peer++) {
         int remoteRankId = (rank + peer + 1) % nRanksPerNode;
         int peerId = remoteRankId < rank ? remoteRankId : remoteRankId - 1;
         // Read chunk[remoteRankId] from local buff, write to peer's scratch[rank] (sender's slot)
-        uint32_t srcOffset = iter * nInt4PerIter * worldSize + remoteRankId * nInt4PerIter;
-        uint32_t dstOffset = iter * nInt4PerIter * worldSize + rank * nInt4PerIter;
+        uint32_t srcOffset = iter * chunkSize + remoteRankId * nInt4PerIter;
+        uint32_t dstOffset = (iter % pipelineDepth) * scratchIterStride + rank * nInt4PerIter;
         int4 tmp[nStepsPerIter * REDUCE_COPY_RATIO];
 #pragma unroll
         for (int step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
@@ -57,7 +68,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       __syncthreads();
       if (threadIdx.x < REDUCE_COPY_RATIO) {
-        semaphoreForSend[bid * REDUCE_COPY_RATIO + threadIdx.x].release();
+        semaphoreForReduce[bid * REDUCE_COPY_RATIO + threadIdx.x].release();
       }
     }
   } else if (bid < NBLOCKS_FOR_PUT + NBLOCKS_FOR_REDUCE) {
@@ -68,9 +79,11 @@ __global__ void __launch_bounds__(1024, 1)
     uint32_t subBlockId = bidInReduce % REDUCE_COPY_RATIO;
     for (int iter = 0; iter < nIters; iter++) {
       if (threadIdx.x == 0) {
-        semaphoreForSend[bidInReduce].acquire();
+        semaphoreForReduce[bidInReduce].acquire();
       }
-      uint32_t baseOffset = nInt4PerIter * worldSize * iter;
+      uint32_t baseOffset = (iter % pipelineDepth) * scratchIterStride;
+      uint32_t baseSrcOffset = iter * chunkSize;
+
       // Use same thread mapping as PUT: putBlockId * blockDim.x + threadIdx.x
       uint32_t threadIdInPut = putBlockId * blockDim.x + threadIdx.x;
       __syncthreads();
@@ -85,7 +98,7 @@ __global__ void __launch_bounds__(1024, 1)
         // subBlockId determines which subset of the REDUCE_COPY_RATIO * nStepsPerIter steps
         uint32_t putStep = subBlockId * nStepsPerIter + step;
         uint32_t myChunkOffset =
-            baseOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
+            baseSrcOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
         int4 tmp = buff4[myChunkOffset];
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
         for (int peer = 0; peer < nPeers; peer++) {
@@ -96,11 +109,13 @@ __global__ void __launch_bounds__(1024, 1)
           tmp = cal_vectors<T, OpType>(data, tmp);
         }
         result4[myChunkOffset] = tmp;
-        // Broadcast reduced result to all peers' scratch at rank's slot
+        // Broadcast reduced result to all peers' scratch at SCATTER_AG_OFFSET + rank * nInt4PerIter
+        uint32_t dstOffset =
+            baseOffset + chunkSize + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * NBLOCKS_FOR_PUT;
         for (int i = 0; i < nPeers; i++) {
           int peerIdx = (rank + i + 1) % nRanksPerNode;
           int index = peerIdx < rank ? peerIdx : peerIdx - 1;
-          mscclpp::write<int4>(((void**)remoteMemories)[index], myChunkOffset, tmp);
+          mscclpp::write<int4>(((void**)remoteMemories)[index], dstOffset, tmp);
         }
       }
       __syncthreads();
@@ -115,7 +130,8 @@ __global__ void __launch_bounds__(1024, 1)
       if (threadIdx.x < REDUCE_COPY_RATIO) {
         semaphoreForRecv[bidInRecv * REDUCE_COPY_RATIO + threadIdx.x].acquire();
       }
-      uint32_t baseOffset = nInt4PerIter * worldSize * iter;
+      uint32_t baseOffset = scratchIterStride * (iter % pipelineDepth);
+      uint32_t baseDstOffset = chunkSize * iter;
       int threadIdInRecv = bidInRecv * blockDim.x + threadIdx.x;
       __syncthreads();
       if (threadIdx.x < nPeers) {
@@ -127,10 +143,16 @@ __global__ void __launch_bounds__(1024, 1)
       for (int peer = 0; peer < nPeers; peer++) {
         int remoteRankId = (rank + peer + 1) % nRanksPerNode;
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
-          uint32_t offset =
-              baseOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * NBLOCKS_FOR_RECV;
-          result4[offset] = scratch4[offset];
+          uint32_t offset = baseOffset + chunkSize + remoteRankId * nInt4PerIter + threadIdInRecv +
+                            step * blockDim.x * NBLOCKS_FOR_RECV;
+          uint32_t dstOffset =
+              baseDstOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * NBLOCKS_FOR_RECV;
+          result4[dstOffset] = scratch4[offset];
         }
+      }
+      __syncthreads();
+      if (threadIdx.x == 0) {
+        semaphoreForSend[bidInRecv].release();
       }
     }
   }
@@ -140,8 +162,8 @@ template <ReduceOp OpType, typename T>
 struct AllreduceRsAgPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t, int rank, int nRanksPerNode, int worldSize, size_t inputSize, cudaStream_t stream,
-                          void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          size_t scratchSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
+                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
@@ -150,7 +172,7 @@ struct AllreduceRsAgPipelineAdapter {
     }
     allreduceRsAgPipeline<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
-        nRanksPerNode, worldSize, nelems);
+        nRanksPerNode, worldSize, nelems, scratchSize);
     return cudaGetLastError();
   }
 };
@@ -191,10 +213,10 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<Algo
     return CommResult::commInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
-  cudaError_t error =
-      allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
-                this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, 0, ctx->rank, ctx->nRanksPerNode,
-                ctx->workSize, inputSize, stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+  cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
+                                this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
+                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0,
+                                numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::commUnhandledCudaError;
