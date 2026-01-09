@@ -5,8 +5,8 @@
     // Configuration: list all available versions
     // This should be updated when new versions are released
     const versions = [
-        { name: 'main (dev)', path: 'main', version: 'main' },
-        { name: 'latest (v0.8.0)', path: '', version: 'latest' },
+        { name: 'main (dev)', path: '', version: 'main' },
+        { name: 'v0.8.0 (latest)', path: 'v0.8.0', version: 'v0.8.0' },
         { name: 'v0.7.0', path: 'v0.7.0', version: 'v0.7.0' },
         { name: 'v0.6.0', path: 'v0.6.0', version: 'v0.6.0' },
         { name: 'v0.5.2', path: 'v0.5.2', version: 'v0.5.2' },
@@ -20,16 +20,18 @@
     
     function detectCurrentVersion() {
         const path = window.location.pathname;
-        // Check for main branch
+        // Check for version tags first
+        const match = path.match(/\/(v\d+\.\d+\.\d+)\//);
+        if (match) {
+            return match[1];
+        }
+        // Check for main branch directory
         if (path.includes('/main/')) {
             return 'main';
         }
-        // Check for version tags
-        const match = path.match(/\/(v\d+\.\d+\.\d+)\//);
-        return match ? match[1] : 'latest';
-    }
-    
-    function getBasePath() {
+        // If at root (no version in path), it's main
+        return 'main';
+    }    function getBasePath() {
         const path = window.location.pathname;
         // Find how many levels deep we are from the version directory
         const match = path.match(/\/(v\d+\.\d+\.\d+|)\/(.*)/);
@@ -72,19 +74,23 @@
             const option = document.createElement('option');
             const isSelected = currentVersion === version.version;
             
-            // Build the URL relative to current page
-            let url = basePath + (version.path ? version.path + '/' : '');
-            
-            // Try to preserve the current page
+            // Build the URL - use absolute paths from root
+            let url;
             const currentPath = window.location.pathname;
-            const pageName = currentPath.split('/').pop();
-            if (pageName && pageName !== '' && pageName.endsWith('.html')) {
-                url += pageName;
+            const pageName = currentPath.split('/').pop() || 'index.html';
+
+            if (version.version === 'main' && version.path === '') {
+                // For main (dev) at root
+                url = '/' + pageName;
             } else {
-                url += 'index.html';
+                // For versioned releases
+                url = '/' + version.path + '/' + pageName;
             }
             
+            console.log('[Version Selector] Option: ' + version.name + ', absoluteURL=' + url);
+
             option.value = url;
+            console.log('[Version Selector] After setting option.value, option.value=' + option.value);
             option.textContent = version.name;
             if (isSelected) {
                 option.selected = true;
@@ -93,7 +99,11 @@
         });
         
         select.addEventListener('change', function() {
+            console.log('[Version Selector] Change event triggered');
+            console.log('[Version Selector] Selected value:', this.value);
+            console.log('[Version Selector] Current location:', window.location.href);
             if (this.value) {
+                console.log('[Version Selector] Navigating to:', this.value);
                 window.location.href = this.value;
             }
         });

@@ -43,12 +43,12 @@ extensions = [
     "sphinx_multiversion",
 ]
 
-smv_tag_whitelist = r'^.*$'
+smv_tag_whitelist = r'^v\d+\.\d+\.\d+$'
 smv_branch_whitelist = r'^main$'
-smv_remote_whitelist = r'^origin$'
+smv_remote_whitelist = None
 smv_released_pattern = r'^tags/.*$'
 smv_outputdir_format = '{ref.name}'
-smv_prefer_remote_refs = True
+smv_prefer_remote_refs = False
 
 autosummary_generate = True
 autodoc_default_options = {
