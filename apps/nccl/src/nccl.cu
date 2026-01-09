@@ -269,6 +269,8 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
     bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
+    bool isFourRanksBlackwellNonZeroCopy =
+        deviceComputeCapability.first == 10 && mscclppDisableChannelCache && request.worldSize == 4;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
@@ -281,7 +283,16 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     if (messageSize <= (1 << 14)) {
       return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
     }
-    if (messageSize <= (1 << 16) || (messageSize <= (1 << 21) && !useNvlsWithZeroCopy)) {
+    if (isFourRanksBlackwellNonZeroCopy) {
+      if (messageSize <= (1 << 21)) {
+        return algoMapByCollective.at(collective).at("default_allreduce_packet");
+      }
+      if (messageSize <= (1 << 23)) {
+        return algoMapByCollective.at(collective).at("default_allreduce_rsag");
+      }
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag_pipeline");
+    }
+    if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
     }
     if (useNvls && useNvlsWithZeroCopy) {
