@@ -77,17 +77,29 @@
             // Build the URL - use absolute paths from root
             let url;
             const currentPath = window.location.pathname;
-            const pageName = currentPath.split('/').pop() || 'index.html';
+
+            // Exract the page path relative to the version directory
+            // For /v0.7.0/design/design.html -> design/design.html
+            // For /index.html -> index.html
+            let relativePath;
+            const versionMatch = currentPath.match(/^\/(v\d+\.\d+\.\d+)\/(.*)/);
+            if (versionMatch) {
+                // We're in a versioned directory
+                relativePath = versionMatch[2] || 'index.html';
+            } else {
+                // We're at root (main/dev)
+                relativePath = currentPath.substring(1) || 'index.html';
+            }
 
             if (version.version === 'main' && version.path === '') {
                 // For main (dev) at root
-                url = '/' + pageName;
+                url = '/' + relativePath;
             } else {
                 // For versioned releases
-                url = '/' + version.path + '/' + pageName;
+                url = '/' + version.path + '/' + relativePath;
             }
             
-            console.log('[Version Selector] Option: ' + version.name + ', absoluteURL=' + url);
+            console.log('[Version Selector] Option: ' + version.name + ', relativePath=' + relativePath + ', absoluteURL=' + url);
 
             option.value = url;
             console.log('[Version Selector] After setting option.value, option.value=' + option.value);
@@ -103,8 +115,39 @@
             console.log('[Version Selector] Selected value:', this.value);
             console.log('[Version Selector] Current location:', window.location.href);
             if (this.value) {
-                console.log('[Version Selector] Navigating to:', this.value);
-                window.location.href = this.value;
+                const targetUrl = this.value;
+                console.log('[Version Selector] Checking if page exists:', targetUrl);
+
+                // Check if the target page exists using a fetch with abort
+                const controller = new AbortController();
+                const timeoutId = setTimeout(function() { controller.abort(); }, 1000);
+
+                fetch(targetUrl, {
+                    method: 'GET',
+                    signal: controller.signal
+                })
+                    .then(function(response) {
+                        clearTimeout(timeoutId);
+                        console.log('[Version Selector] Response status:', response.status);
+                        if (response.ok) {
+                            // Page exists, navigate to it
+                            console.log('[Version Selector] Page exists, navigating to:', targetUrl);
+                            window.location.href = targetUrl;
+                        } else {
+                            // Page doesn't exist, fall back to version root index.html
+                            const versionMatch = targetUrl.match(/^(\/[^\/]+)/);
+                            const fallbackUrl = versionMatch ? versionMatch[1] + '/index.html' : '/index.html';
+                            console.log('[Version Selector] Page not found, falling back to:', fallbackUrl);
+                            window.location.href = fallbackUrl;
+                        }
+                    })
+                    .catch(function(error) {
+                        clearTimeout(timeoutId);
+                        // On error (including timeout), try to navigate anyway
+                        console.log('[Version Selector] Error checking page:', error.name, error.message);
+                        console.log('[Version Selector] Navigating to target anyway:', targetUrl);
+                        window.location.href = targetUrl;
+                    });
             }
         });
         
