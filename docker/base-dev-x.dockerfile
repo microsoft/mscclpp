@@ -1,4 +1,4 @@
-ARG BASE_IMAGE
+ARG BASE_IMAGE=base-cuda13.0-x86_64
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
@@ -15,22 +15,27 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* /tmp/*
 
 # Install CMake 3.26.4
-RUN ARCH=$(uname -m) && \
+RUN OS_ARCH=$(uname -m) && \
     CMAKE_VERSION="3.26.4" && \
-    CMAKE_HOME="/tmp/cmake-${CMAKE_VERSION}-linux-${ARCH}" && \
-    CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${ARCH}.tar.gz" && \
+    CMAKE_HOME="/tmp/cmake-${CMAKE_VERSION}-linux-${OS_ARCH}" && \
+    CMAKE_URL="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-${OS_ARCH}.tar.gz" && \
     curl -L ${CMAKE_URL} -o ${CMAKE_HOME}.tar.gz && \
     tar xzf ${CMAKE_HOME}.tar.gz -C /usr/local && \
     rm -rf ${CMAKE_HOME}.tar.gz && \
-    ln -s /usr/local/cmake-${CMAKE_VERSION}-linux-${ARCH}/bin/* /usr/bin/
+    ln -s /usr/local/cmake-${CMAKE_VERSION}-linux-${OS_ARCH}/bin/* /usr/bin/
+
+# Create Python venv
+RUN python3 -m venv /root/venv && \
+    echo 'source /root/venv/bin/activate' >> /root/.bashrc
+ENV PATH="/root/venv/bin:${PATH}"
 
 # Install Python dependencies
 ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
-ARG TARGET="cuda12.1"
+ARG TARGET="cuda13.0"
 RUN target_type=$(echo $TARGET | sed 's/\.[0-9]*$//') && \
-    python3 -m pip install --no-cache-dir --upgrade pip && \
-    python3 -m pip install --no-cache-dir -r python/requirements_${target_type}.txt
+    pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r python/requirements_${target_type}.txt
 
 # Cleanup
 RUN rm -rf /tmp/mscclpp
