@@ -74,11 +74,11 @@
             const option = document.createElement('option');
             const isSelected = currentVersion === version.version;
             
-            // Build the URL - use absolute paths from root
+            // Build the URL - use absolute paths from root (without hash)
             let url;
             const currentPath = window.location.pathname;
 
-            // Exract the page path relative to the version directory
+            // Extract the page path relative to the version directory
             // For /v0.7.0/design/design.html -> design/design.html
             // For /index.html -> index.html
             let relativePath;
@@ -115,14 +115,19 @@
             console.log('[Version Selector] Selected value:', this.value);
             console.log('[Version Selector] Current location:', window.location.href);
             if (this.value) {
-                const targetUrl = this.value;
-                console.log('[Version Selector] Checking if page exists:', targetUrl);
+                const baseUrl = this.value;
+                const currentHash = window.location.hash; // Get current hash at selection time
+                const targetUrl = baseUrl + currentHash; // Append current hash to target URL
+
+                console.log('[Version Selector] Current hash:', currentHash);
+                console.log('[Version Selector] Target URL with hash:', targetUrl);
+                console.log('[Version Selector] Checking if page exists:', baseUrl);
 
                 // Check if the target page exists using a fetch with abort
                 const controller = new AbortController();
                 const timeoutId = setTimeout(function() { controller.abort(); }, 1000);
 
-                fetch(targetUrl, {
+                fetch(baseUrl, {
                     method: 'GET',
                     signal: controller.signal
                 })
@@ -130,14 +135,23 @@
                         clearTimeout(timeoutId);
                         console.log('[Version Selector] Response status:', response.status);
                         if (response.ok) {
-                            // Page exists, navigate to it
+                            // Page exists, navigate to it with hash
                             console.log('[Version Selector] Page exists, navigating to:', targetUrl);
                             window.location.href = targetUrl;
                         } else {
                             // Page doesn't exist, fall back to version root index.html
-                            const versionMatch = targetUrl.match(/^(\/[^\/]+)/);
-                            const fallbackUrl = versionMatch ? versionMatch[1] + '/index.html' : '/index.html';
-                            console.log('[Version Selector] Page not found, falling back to:', fallbackUrl);
+                            // For versioned paths like /v0.8.0/... -> /v0.8.0/index.html
+                            // For root paths like /py_api/... -> /index.html
+                            let fallbackUrl;
+                            const versionMatch = baseUrl.match(/^\/(v\d+\.\d+\.\d+)\//);
+                            if (versionMatch) {
+                                // It's a versioned path
+                                fallbackUrl = '/' + versionMatch[1] + '/index.html';
+                            } else {
+                                // It's a root path (main/dev)
+                                fallbackUrl = '/index.html';
+                            }
+                            console.log('[Version Selector] Page not found (status: ' + response.status + '), falling back to:', fallbackUrl);
                             window.location.href = fallbackUrl;
                         }
                     })
