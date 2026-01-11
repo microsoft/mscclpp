@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include "algorithms/allgather/allgather_fullmesh.hpp"
 #include "algorithms/utils.hpp"
 #include "debug.h"

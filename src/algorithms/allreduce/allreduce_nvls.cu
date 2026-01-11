@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include <mscclpp/core.hpp>
 
 #include "algorithms/allreduce/allreduce_nvls.hpp"

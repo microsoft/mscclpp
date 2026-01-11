@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #ifndef ALGORITHM_UTILS_HPP
 #define ALGORITHM_UTILS_HPP
 
