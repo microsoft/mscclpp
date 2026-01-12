@@ -15,7 +15,7 @@ target_include_directories(mscclpp_nccl PRIVATE
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${GPU_INCLUDE_DIRS}
 )
-target_link_libraries(mscclpp_nccl PUBLIC mscclpp)
+target_link_libraries(mscclpp_nccl PUBLIC mscclpp mscclpp_collectives)
 target_link_libraries(mscclpp_nccl PRIVATE ${GPU_LIBRARIES})
 set_target_properties(mscclpp_nccl PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
