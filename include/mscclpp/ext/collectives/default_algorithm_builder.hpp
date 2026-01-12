@@ -1,11 +1,11 @@
-#ifndef MSCCLPP_EXT_COLLECTIVES_COLLECTIVES_HPP_
-#define MSCCLPP_EXT_COLLECTIVES_COLLECTIVES_HPP_
+#ifndef MSCCLPP_EXT_COLLECTIVES_DEFAULT_ALGORITHM_BUILDER_HPP_
+#define MSCCLPP_EXT_COLLECTIVES_DEFAULT_ALGORITHM_BUILDER_HPP_
 
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
 namespace collective {
-class Collectives {
+class DefaultAlgorithmBuilder {
  public:
   AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
 
@@ -16,4 +16,4 @@ class Collectives {
 }  // namespace algorithms
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_EXT_COLLECTIVES_COLLECTIVES_HPP_
+#endif  // MSCCLPP_EXT_COLLECTIVES_DEFAULT_ALGORITHM_BUILDER_HPP_

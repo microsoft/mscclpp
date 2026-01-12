@@ -1,5 +1,5 @@
 #include <filesystem>
-#include <mscclpp/ext/collectives/collectives.hpp>
+#include <mscclpp/ext/collectives/default_algorithm_builder.hpp>
 
 #include "allgather/allgather_fullmesh.hpp"
 #include "allgather/allgather_fullmesh2.hpp"
@@ -14,14 +14,16 @@
 
 namespace mscclpp {
 namespace collective {
-AlgorithmCollection Collectives::buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank) {
+AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
+                                                                    int rank) {
   auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
   auto dslCollection = buildDefaultDslAlgorithms(rank);
   nativeCollection.extend(dslCollection);
   return nativeCollection;
 }
 
-AlgorithmCollection Collectives::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize) {
+AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
+                                                                          size_t scratchBufferSize) {
   AlgorithmCollection collection;
   auto allreduceAllpairPkt = std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);
@@ -47,7 +49,7 @@ AlgorithmCollection Collectives::buildDefaultNativeAlgorithms(uintptr_t scratchB
   return collection;
 }
 
-AlgorithmCollection Collectives::buildDefaultDslAlgorithms(int rank) {
+AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultDslAlgorithms(int rank) {
   struct DslAlgoConfig {
     std::string filename;
     std::string collective;
@@ -59,8 +61,8 @@ AlgorithmCollection Collectives::buildDefaultDslAlgorithms(int rank) {
       {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
       {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
   AlgorithmCollection collection;
-//   collection.algoSelector_ = algoSelector_;
-//   collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
+  //   collection.algoSelector_ = algoSelector_;
+  //   collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
 
   static auto generateFileId = [](const std::string& input) {
     std::hash<std::string> hasher;
@@ -96,5 +98,5 @@ AlgorithmCollection Collectives::buildDefaultDslAlgorithms(int rank) {
   }
   return collection;
 }
-}  // namespace algorithms
+}  // namespace collective
 }  // namespace mscclpp

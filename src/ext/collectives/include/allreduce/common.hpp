@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef MSCCLPP_ALLREDUCE_HPP_
-#define MSCCLPP_ALLREDUCE_HPP_
+#ifndef MSCCLPP_ALLREDUCE_COMMOM_HPP_
+#define MSCCLPP_ALLREDUCE_COMMOM_HPP_
 
 #include <cmath>
 #include <mscclpp/algorithm.hpp>
