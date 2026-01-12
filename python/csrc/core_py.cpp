@@ -8,6 +8,7 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
+#include <sstream>
 
 namespace nb = nanobind;
 using namespace mscclpp;
@@ -129,7 +130,11 @@ void register_core(nb::module_& m) {
       .def(nb::init<DeviceType, int>(), nb::arg("type"), nb::arg("id") = -1)
       .def_rw("type", &Device::type)
       .def_rw("id", &Device::id)
-      .def("__str__", [](const Device& self) { return std::to_string(self); });
+      .def("__str__", [](const Device& self) {
+        std::stringstream ss;
+        ss << self;
+        return ss.str();
+      });
 
   nb::class_<EndpointConfig::Ib>(m, "EndpointConfigIb")
       .def(nb::init<>())

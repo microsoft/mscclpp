@@ -182,6 +182,29 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
     nBlocks = (worldSize - 1) * 8;
     nThreadsPerBlock = (inputSize <= 153600) ? 512 : 1024;
   }
+#if defined(__HIP_PLATFORM_AMD__)
+  if constexpr (std::is_same_v<T, __half>) {
+    // Half-specific tuning for 32KB-256KB range
+    if (inputSize < (64 << 10)) {
+      nThreadsPerBlock = 64;
+    } else if (inputSize >= (64 << 10) && inputSize <= (256 << 10)) {
+      nThreadsPerBlock = 128;
+    }
+  }
+
+#if defined(__FP8_TYPES_EXIST__)
+  // FP8-specific tuning for 32KB-256KB range
+  if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    if (inputSize < (64 << 10)) {
+      nThreadsPerBlock = 64;
+    } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
+      nThreadsPerBlock = 128;
+    } else if (inputSize >= (128 << 10) && inputSize <= (256 << 10)) {
+      nThreadsPerBlock = 256;
+    }
+  }
+#endif
+#endif
   return {nBlocks, nThreadsPerBlock};
 }
 
