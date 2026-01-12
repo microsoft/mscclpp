@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=tmp-rocm6.2-x86_64
+ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 LABEL maintainer="MSCCL++"
