@@ -7,7 +7,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
-#include <mscclpp/ext/collectives/default_algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_builder.hpp>
 #include <mscclpp/utils.hpp>
 #include <unordered_map>
 #include <vector>
@@ -329,10 +329,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
-  auto algoBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
-  mscclpp::collective::DefaultAlgorithmBuilder defaultAlgoBuilder;
+  auto algoBuilder = mscclpp::collective::AlgorithmCollectionBuilder::getInstance();
   algoBuilder->setFallbackAlgorithmSelector(algoSelector);
-  commPtr->algorithmCollection = defaultAlgoBuilder.buildDefaultAlgorithms(
+  commPtr->algorithmCollection = algoBuilder->buildDefaultAlgorithms(
       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_, rank);
   // Extend with user-defined algorithms
   commPtr->algorithmCollection.extend(algoBuilder->build());

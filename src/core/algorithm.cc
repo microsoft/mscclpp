@@ -103,6 +103,11 @@ void AlgorithmCollection::extend(const AlgorithmCollection& other) {
   }
 }
 
+void AlgorithmCollection::setSelectors(AlgoSelectFunc algoSelector, AlgoSelectFunc fallbackAlgoSelector) {
+  algoSelector_ = algoSelector;
+  fallbackAlgoSelector_ = fallbackAlgoSelector;
+}
+
 std::vector<std::shared_ptr<Algorithm>> AlgorithmCollection::getAllAlgorithms() const {
   std::vector<std::shared_ptr<Algorithm>> allAlgos;
   for (const auto& [collective, algoMap] : algoMapByCollective_) {
@@ -122,38 +127,6 @@ std::unordered_map<std::string, std::shared_ptr<Algorithm>> AlgorithmCollection:
     return {};
   }
 }
-
-std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::gAlgorithmCollectionBuilder_;
-std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
-  if (!gAlgorithmCollectionBuilder_) {
-    gAlgorithmCollectionBuilder_ = std::shared_ptr<AlgorithmCollectionBuilder>(new AlgorithmCollectionBuilder());
-  }
-  return gAlgorithmCollectionBuilder_;
-}
-
-void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
-  this->algoBuilders_.push_back(builder);
-}
-
-
-void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
-
-void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {
-  fallbackAlgoSelector_ = selector;
-}
-
-AlgorithmCollection AlgorithmCollectionBuilder::build() {
-  AlgorithmCollection collection;
-  for (const auto& builder : algoBuilders_) {
-    auto algo = builder->build();
-    collection.registerAlgorithm(algo->collective(), algo->name(), algo);
-  }
-  collection.algoSelector_ = algoSelector_;
-  collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
-  return collection;
-}
-
-void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
 
 DslAlgorithm::DslAlgorithm(std::string id, ExecutionPlan plan, std::unordered_map<std::string, uint64_t> tags,
                            Constraint constraint)

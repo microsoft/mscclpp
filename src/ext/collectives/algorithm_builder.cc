@@ -1,5 +1,5 @@
 #include <filesystem>
-#include <mscclpp/ext/collectives/default_algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_builder.hpp>
 
 #include "allgather/allgather_fullmesh.hpp"
 #include "allgather/allgather_fullmesh2.hpp"
@@ -14,15 +14,48 @@
 
 namespace mscclpp {
 namespace collective {
-AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
-                                                                    int rank) {
+
+std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::gAlgorithmCollectionBuilder_;
+std::shared_ptr<AlgorithmCollectionBuilder> AlgorithmCollectionBuilder::getInstance() {
+  if (!gAlgorithmCollectionBuilder_) {
+    gAlgorithmCollectionBuilder_ = std::shared_ptr<AlgorithmCollectionBuilder>(new AlgorithmCollectionBuilder());
+  }
+  return gAlgorithmCollectionBuilder_;
+}
+
+void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder) {
+  this->algoBuilders_.push_back(builder);
+}
+
+
+void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
+
+void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {
+  fallbackAlgoSelector_ = selector;
+}
+
+AlgorithmCollection AlgorithmCollectionBuilder::build() {
+  AlgorithmCollection collection;
+  for (const auto& builder : algoBuilders_) {
+    auto algo = builder->build();
+    collection.registerAlgorithm(algo->collective(), algo->name(), algo);
+  }
+  collection.setSelectors(algoSelector_, fallbackAlgoSelector_);
+  return collection;
+}
+
+void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
+
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
+                                                                       size_t scratchBufferSize, int rank) {
   auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
   auto dslCollection = buildDefaultDslAlgorithms(rank);
   nativeCollection.extend(dslCollection);
+  nativeCollection.setSelectors(algoSelector_, fallbackAlgoSelector_);
   return nativeCollection;
 }
 
-AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
                                                                           size_t scratchBufferSize) {
   AlgorithmCollection collection;
   auto allreduceAllpairPkt = std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
@@ -44,12 +77,10 @@ AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultNativeAlgorithms(uintpt
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
   auto allgatherFullmesh2 = std::make_shared<AllgatherFullmesh2>()->build();
   collection.registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
-  //   collection.algoSelector_ = algoSelector_;
-  //   collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
   return collection;
 }
 
-AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultDslAlgorithms(int rank) {
+AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int rank) {
   struct DslAlgoConfig {
     std::string filename;
     std::string collective;
@@ -61,8 +92,6 @@ AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultDslAlgorithms(int rank)
       {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
       {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
   AlgorithmCollection collection;
-  //   collection.algoSelector_ = algoSelector_;
-  //   collection.fallbackAlgoSelector_ = fallbackAlgoSelector_;
 
   static auto generateFileId = [](const std::string& input) {
     std::hash<std::string> hasher;
@@ -98,5 +127,6 @@ AlgorithmCollection DefaultAlgorithmBuilder::buildDefaultDslAlgorithms(int rank)
   }
   return collection;
 }
+
 }  // namespace collective
 }  // namespace mscclpp
