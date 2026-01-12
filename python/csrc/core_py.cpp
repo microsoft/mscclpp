@@ -27,6 +27,9 @@ extern void register_npkit(nb::module_& m);
 extern void register_gpu_utils(nb::module_& m);
 extern void register_algorithm(nb::module_& m);
 
+// ext
+extern void register_collective(nb::module_& m);
+
 template <typename T>
 void def_shared_future(nb::handle& m, const std::string& typestr) {
   std::string pyclass_name = std::string("shared_future_") + typestr;
@@ -292,4 +295,7 @@ NB_MODULE(_mscclpp, m) {
   register_npkit(m);
   register_gpu_utils(m);
   register_algorithm(m);
+
+  // ext
+  register_collective(m);
 }

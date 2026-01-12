@@ -91,23 +91,6 @@ void register_algorithm(nb::module_& m) {
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
 
-  nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
-      .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
-      .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))
-      .def(
-          "add_dsl_algorithm_builder",
-          [](AlgorithmCollectionBuilder& self, std::shared_ptr<DslAlgorithm> algorithm) {
-            self.addAlgorithmBuilder(algorithm);
-          },
-          nb::arg("algorithm"))
-      .def("set_algorithm_selector", &AlgorithmCollectionBuilder::setAlgorithmSelector, nb::arg("selector"))
-      .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
-           nb::arg("selector"))
-      .def("build", &AlgorithmCollectionBuilder::build)
-      .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms, nb::arg("scratch_buffer"),
-           nb::arg("scratch_buffer_size"), nb::arg("rank"))
-      .def_static("reset", &AlgorithmCollectionBuilder::reset);
-
   nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),
            nb::arg("algorithm"))
