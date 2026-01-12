@@ -4,16 +4,16 @@
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
 
-#include "algorithms/allgather/allgather_fullmesh.hpp"
-#include "algorithms/allgather/allgather_fullmesh2.hpp"
-#include "algorithms/allreduce/allreduce_allpair_packet.hpp"
-#include "algorithms/allreduce/allreduce_fullmesh.hpp"
-#include "algorithms/allreduce/allreduce_nvls.hpp"
-#include "algorithms/allreduce/allreduce_nvls_packet.hpp"
-#include "algorithms/allreduce/allreduce_nvls_with_copy.hpp"
-#include "algorithms/allreduce/allreduce_nvls_with_copy2.hpp"
-#include "algorithms/allreduce/allreduce_packet.hpp"
-#include "algorithms/utils.hpp"
+#include "allgather/allgather_fullmesh.hpp"
+#include "allgather/allgather_fullmesh2.hpp"
+#include "allreduce/allreduce_allpair_packet.hpp"
+#include "allreduce/allreduce_fullmesh.hpp"
+#include "allreduce/allreduce_nvls.hpp"
+#include "allreduce/allreduce_nvls_packet.hpp"
+#include "allreduce/allreduce_nvls_with_copy.hpp"
+#include "allreduce/allreduce_nvls_with_copy2.hpp"
+#include "allreduce/allreduce_packet.hpp"
+#include "utils.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {

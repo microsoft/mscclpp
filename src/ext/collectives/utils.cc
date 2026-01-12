@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "algorithms/utils.hpp"
+#include "utils.hpp"
 
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>

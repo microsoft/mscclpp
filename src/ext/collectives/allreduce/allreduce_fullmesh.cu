@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "algorithms/allreduce/allreduce_fullmesh.hpp"
-#include "algorithms/allreduce/common.hpp"
-#include "algorithms/utils.hpp"
+#include "allreduce/allreduce_fullmesh.hpp"
+#include "allreduce/common.hpp"
+#include "utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {

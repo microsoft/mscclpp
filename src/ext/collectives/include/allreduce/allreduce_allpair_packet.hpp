@@ -3,13 +3,13 @@
 
 #include <mscclpp/algorithm.hpp>
 
-#include "algorithms/allreduce/common.hpp"
+#include "allreduce/common.hpp"
 
 namespace mscclpp {
 namespace algorithm {
-class AllreducePacket : public AlgorithmBuilder {
+class AllreduceAllpairPacket : public AlgorithmBuilder {
  public:
-  AllreducePacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
+  AllreduceAllpairPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
       : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<Algorithm> build() override;
 
@@ -26,11 +26,13 @@ class AllreducePacket : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
-  const int maxBlockNum_ = 56;
+  const int maxBlockNum_ = 28;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
   std::shared_ptr<LL8Packet> flags_;
+  std::shared_ptr<uint32_t> flags7_;
+  std::shared_ptr<uint32_t> flags28_;
 };
 }  // namespace algorithm
 }  // namespace mscclpp

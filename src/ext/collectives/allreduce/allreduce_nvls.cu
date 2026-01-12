@@ -3,9 +3,9 @@
 
 #include <mscclpp/core.hpp>
 
-#include "algorithms/allreduce/allreduce_nvls.hpp"
-#include "algorithms/allreduce/common.hpp"
-#include "algorithms/utils.hpp"
+#include "allreduce/allreduce_nvls.hpp"
+#include "allreduce/common.hpp"
+#include "utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {

@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "algorithms/allreduce/allreduce_nvls_packet.hpp"
-#include "algorithms/allreduce/common.hpp"
-#include "algorithms/utils.hpp"
+#include "allreduce/allreduce_nvls_packet.hpp"
+#include "allreduce/common.hpp"
+#include "utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {

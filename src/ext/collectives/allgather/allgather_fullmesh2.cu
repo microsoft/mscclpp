@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "algorithms/allgather/allgather_fullmesh2.hpp"
-#include "algorithms/utils.hpp"
+#include "allgather/allgather_fullmesh2.hpp"
+#include "utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
