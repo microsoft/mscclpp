@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef ALGORITHM_UTILS_HPP
-#define ALGORITHM_UTILS_HPP
+#ifndef EXT_COLLECTIVE_UTILS_HPP
+#define EXT_COLLECTIVE_UTILS_HPP
 
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
@@ -21,7 +21,7 @@
 namespace mscclpp {
 
 class AlgorithmBuilder;
-namespace algorithm {
+namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
 constexpr int NUM_SEMAPHORES = 64;
 
@@ -61,6 +61,6 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp
-#endif  // ALGORITHM_UTILS_HPP
+#endif  // EXT_COLLECTIVE_UTILS_HPP

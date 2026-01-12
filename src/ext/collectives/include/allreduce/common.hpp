@@ -16,7 +16,7 @@
 
 namespace mscclpp {
 
-namespace algorithm {
+namespace collective {
 constexpr ReduceOp SUM = ReduceOp::SUM;
 constexpr ReduceOp MIN = ReduceOp::MIN;
 
@@ -547,7 +547,7 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
   }
   return nullptr;
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_ALLREDUCE_COMMON_HPP_

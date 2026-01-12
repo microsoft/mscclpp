@@ -4,7 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 class AllgatherFullmesh2 : public AlgorithmBuilder {
  public:
@@ -27,5 +27,5 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
   AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType);
 };
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

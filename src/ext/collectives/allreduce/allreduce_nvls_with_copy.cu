@@ -5,11 +5,11 @@
 
 #include "allreduce/allreduce_nvls_with_copy.hpp"
 #include "allreduce/common.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
@@ -202,5 +202,5 @@ std::shared_ptr<Algorithm> AllreduceNvlsWithCopy::build() {
         return self->generateAllreduceContextKey(input, output, inputSize, dtype);
       });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

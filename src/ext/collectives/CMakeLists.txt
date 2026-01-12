@@ -14,6 +14,7 @@ target_include_directories(mscclpp_collectives PRIVATE
     include
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
+    ${PROJECT_SOURCE_DIR}/src/ext/include
 )
 
 target_link_libraries(mscclpp_collectives PUBLIC mscclpp)

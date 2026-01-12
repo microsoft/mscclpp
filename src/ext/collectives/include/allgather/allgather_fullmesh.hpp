@@ -4,7 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 class AllgatherFullmesh : public AlgorithmBuilder {
  public:
@@ -27,5 +27,5 @@ class AllgatherFullmesh : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
 };
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

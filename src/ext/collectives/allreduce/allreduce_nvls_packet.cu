@@ -3,11 +3,11 @@
 
 #include "allreduce/allreduce_nvls_packet.hpp"
 #include "allreduce/common.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 __device__ uint32_t deviceFlag = 1;
 template <ReduceOp OpType, typename T, bool flagPerBlock = false>
@@ -179,5 +179,5 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->generateAllreduceContextKey(input, output, inputSize, dtype); });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

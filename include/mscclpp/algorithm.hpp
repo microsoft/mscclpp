@@ -407,13 +407,6 @@ class AlgorithmCollectionBuilder {
   /// @param builder The algorithm builder to add.
   void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
 
-  /// Build the default algorithms with a scratch buffer.
-  /// @param scratchBuffer Address of the scratch buffer for algorithm use.
-  /// @param scratchBufferSize Size of the scratch buffer in bytes.
-  /// @param rank The rank of the current process.
-  /// @return An AlgorithmCollection containing the default algorithms.
-  AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
-
   /// Set a custom algorithm selection function.
   /// @param selector The algorithm selection function.
   void setAlgorithmSelector(AlgoSelectFunc selector);
@@ -435,8 +428,8 @@ class AlgorithmCollectionBuilder {
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
   static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
-  AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
-  AlgorithmCollection buildDefaultDslAlgorithms(int rank);
+  // AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
+  // AlgorithmCollection buildDefaultDslAlgorithms(int rank);
 };
 
 }  // namespace mscclpp

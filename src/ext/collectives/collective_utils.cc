@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "utils.hpp"
+#include "collective_utils.hpp"
 
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
@@ -10,7 +10,7 @@
 #include <mscclpp/switch_channel.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
                                                            mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
@@ -151,6 +151,6 @@ std::shared_ptr<mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>> setupBaseMemo
   return ptr;
 }
 
-}  // namespace algorithm
+}  // namespace collective
 
 }  // namespace mscclpp

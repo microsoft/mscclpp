@@ -5,11 +5,11 @@
 
 #include "allreduce/allreduce_packet.hpp"
 #include "allreduce/common.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 __device__ uint32_t deviceFlag = 1;
 
@@ -297,5 +297,5 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
       });
 }
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

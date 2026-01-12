@@ -7,7 +7,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
@@ -33,6 +33,6 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<uint32_t> flags4_;
   std::shared_ptr<uint32_t> flags8_;
 };
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp
 #endif

@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 
 #include "allgather/allgather_fullmesh.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
@@ -193,5 +193,5 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
         return self->generateAllgatherContextKey(input, output, inputSize, dtype);
       });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

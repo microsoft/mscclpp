@@ -4,7 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
  public:
@@ -33,5 +33,5 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   std::unordered_map<const void*, std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>
       memoryChannelsMap_;
 };
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

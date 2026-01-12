@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 
 #include "allgather/allgather_fullmesh2.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
@@ -226,5 +226,5 @@ std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
              mscclpp::DataType dtype) { return self->generateAllgatherContextKey(input, output, inputSize, dtype); });
 }
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

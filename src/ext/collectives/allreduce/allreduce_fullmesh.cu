@@ -3,11 +3,11 @@
 
 #include "allreduce/allreduce_fullmesh.hpp"
 #include "allreduce/common.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(512, 1)
@@ -261,5 +261,5 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
         return self->generateAllreduceContextKey(input, output, inputSize, dtype);
       });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

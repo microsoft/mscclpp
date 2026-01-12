@@ -5,11 +5,11 @@
 
 #include "allreduce/allreduce_nvls_with_copy2.hpp"
 #include "allreduce/common.hpp"
-#include "utils.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 __device__ DeviceSemaphore deviceSemaphore[NUM_SEMAPHORES];
 
@@ -240,5 +240,5 @@ std::shared_ptr<Algorithm> AllreduceNvlsWithCopy2::build() {
       });
 }
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

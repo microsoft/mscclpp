@@ -4,7 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 class AllreduceNvls : public AlgorithmBuilder {
  public:
@@ -28,5 +28,5 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::vector<Connection> conns_;
 };
 
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

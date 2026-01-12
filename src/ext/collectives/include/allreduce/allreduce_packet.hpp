@@ -6,7 +6,7 @@
 #include "allreduce/common.hpp"
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 class AllreducePacket : public AlgorithmBuilder {
  public:
   AllreducePacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
@@ -32,5 +32,5 @@ class AllreducePacket : public AlgorithmBuilder {
   std::vector<RegisteredMemory> registeredMemories_;
   std::shared_ptr<LL8Packet> flags_;
 };
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp
