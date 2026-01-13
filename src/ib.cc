@@ -86,7 +86,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
     mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd,
                                      IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                                          IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
-    close(fd);
+    ::close(fd);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }

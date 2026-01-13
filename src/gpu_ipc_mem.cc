@@ -137,8 +137,8 @@ static inline cudaError_t cudaIpcCloseMemHandleWrapper(void* addr, [[maybe_unuse
 void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
   if (handle) {
     if (handle->typeFlags & GpuIpcMemHandle::Type::PosixFd) {
-      ::close(handle->posixFd.fd);
       UnixSocketServer::instance().unregisterFd(handle->posixFd.fd);
+      ::close(handle->posixFd.fd);
     }
     delete handle;
   }
@@ -147,6 +147,7 @@ void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
 UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
   handle->typeFlags = GpuIpcMemHandle::Type::None;
+  handle->posixFd.fd = -1;
 
   CUdeviceptr basePtr;
   size_t sz;
@@ -230,6 +231,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   handle->baseSize = baseSize;
   handle->offsetFromBase = 0;
   handle->typeFlags = GpuIpcMemHandle::Type::None;
+  handle->posixFd.fd = -1;
 
   // POSIX FD handle
   int fileDesc;

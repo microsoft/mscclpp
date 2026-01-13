@@ -98,7 +98,7 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootPid_), rootFd_);
   MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-  close(mcRootFileDescFd);
+  ::close(mcRootFileDescFd);
 
   INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
 }
@@ -107,8 +107,7 @@ NvlsConnection::Impl::~Impl() {
   // we don't need to free multicast handle object according to NCCL.
   if (mcFileDesc_ >= 0) {
     UnixSocketServer::instance().unregisterFd(rootFd_);
-    close(mcFileDesc_);
-    mcFileDesc_ = -1;
+    ::close(mcFileDesc_);
   }
 }
 
