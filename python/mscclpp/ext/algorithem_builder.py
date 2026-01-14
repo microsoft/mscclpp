@@ -12,6 +12,7 @@ from mscclpp._mscclpp import (
     AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
 )
 
+
 class AlgorithmBuilder:
     def __init__(self, algorithm_builder: _AlgorithmBuilder):
         self._algorithm_builder = algorithm_builder

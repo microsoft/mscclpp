@@ -91,7 +91,6 @@ __all__ = [
     "version",
     "get_include",
     "get_lib",
-
     # Python API
     "Algorithm",
     "AlgorithmCollection",

@@ -35,6 +35,7 @@ logging.basicConfig(level=logging.INFO)
 
 __all__ = ["DslCompiler", "NativeCodeCompiler"]
 
+
 def _stable_json_bytes(obj: Any) -> bytes:
     return json.dumps(
         obj,

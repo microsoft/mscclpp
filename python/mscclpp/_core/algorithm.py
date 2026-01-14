@@ -20,6 +20,7 @@ from mscclpp._mscclpp import (
 
 __all__ = ["Algorithm"]
 
+
 class Algorithm:
     """A wrapper for collective communication algorithms.
 
@@ -192,4 +193,3 @@ class Algorithm:
             nthreads_per_block,
             extras if extras is not None else {},
         )
-

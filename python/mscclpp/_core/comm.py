@@ -26,6 +26,7 @@ from .utils import is_torch_tensor
 
 __all__ = ["CommGroup"]
 
+
 class CommGroup:
     def __init__(
         self, mpi_comm: mpi4py.MPI.Comm = None, interfaceIpPortTrio: str = "", rank: int = None, size: int = None

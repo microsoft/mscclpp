@@ -154,7 +154,6 @@ class KernelBuilder:
             self._tempdir.cleanup()
 
 
-
 def pack(*args):
     res = b""
     for arg in list(args):
