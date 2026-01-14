@@ -10,6 +10,7 @@
 #include <memory>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/ext/collectives/algorithm_builder.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 
@@ -193,7 +194,7 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
 
   // register algorithm
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
-  auto algoCollectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+  auto algoCollectionBuilder = mscclpp::collective::AlgorithmCollectionBuilder::getInstance();
   algoCollectionBuilder->addAlgorithmBuilder(allgatherAlgoBuilder);
   algoCollectionBuilder->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&

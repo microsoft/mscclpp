@@ -74,7 +74,7 @@ def init_communicator():
         raise ValueError(f"Cannot find network interface for IP {master_addr}")
 
     interface_trio = f"{interface}:{master_addr}:{master_port}"
-    comm_group = mscclpp_comm.CommGroup(
+    comm_group = mscclpp.CommGroup(
         interfaceIpPortTrio=interface_trio,
         rank=rank,
         size=world_size
@@ -110,7 +110,7 @@ def load_algorithms(scratch_buffer: torch.Tensor, rank: int):
 
 ```python
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp.CommGroup):
         self.comm = comm
 
         # Allocate scratch buffer (required by some algorithms)
@@ -261,7 +261,7 @@ DSL algorithms require an `Executor`:
 
 ```python
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup, algorithm):
+    def __init__(self, comm: mscclpp.CommGroup, algorithm):
         self.comm = comm
         self.executor = mscclpp.Executor(comm.communicator)  # Required for DSL
         self.algorithm = algorithm
@@ -389,7 +389,7 @@ algorithm = mscclpp.Algorithm.create_from_native_capsule(capsule)
 
 ```python
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp.CommGroup):
         self.comm = comm
 
         # Compile and load native algorithm

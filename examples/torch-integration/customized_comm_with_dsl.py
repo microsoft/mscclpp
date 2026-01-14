@@ -122,7 +122,7 @@ def dtype_to_mscclpp_dtype(dtype: torch.dtype) -> mscclpp.DataType:
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup, algorithms=[]):
+    def __init__(self, comm: mscclpp.CommGroup, algorithms=[]):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
@@ -165,7 +165,7 @@ def init_dist() -> CustomizedComm:
     nranks_per_node = int(torch.cuda.device_count())
     algorithms = setup_plan(rank, world, nranks_per_node)
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
-    mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
+    mscclpp_group = mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
     return CustomizedComm(mscclpp_group, algorithms)
 
 

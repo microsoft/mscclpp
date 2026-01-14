@@ -18,7 +18,7 @@ from mscclpp._mscclpp import (
     ReduceOp,
 )
 
-__all__ = ["Algorithm"]
+__all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
 
 
 class Algorithm:
@@ -193,3 +193,37 @@ class Algorithm:
             nthreads_per_block,
             extras if extras is not None else {},
         )
+
+class AlgorithmBuilder:
+    def __init__(self, algorithm_builder: _AlgorithmBuilder):
+        self._algorithm_builder = algorithm_builder
+
+    def build(self) -> Algorithm:
+        return Algorithm.create_from_native_handle(self._algorithm_builder.build())
+
+
+class AlgorithmCollection:
+    def __init__(self, native_collection: _AlgorithmCollection):
+        self._native_collection = native_collection
+        self._algorithms = [Algorithm.create_from_native_handle(algo) for algo in self._native_collection.to_list()]
+
+    def __iter__(self):
+        """Iterate over all algorithms in the collection."""
+        return iter(self._algorithms)
+
+    def __len__(self):
+        """Return the number of algorithms in the collection."""
+        return len(self._algorithms)
+
+    def __getitem__(self, index: int) -> Algorithm:
+        """Get an algorithm by index."""
+        return self._algorithms[index]
+
+    def get_by_collective(self, collective: str):
+        """Get all algorithms for a specific collective operation."""
+        return [algo for algo in self._algorithms if algo.collective == collective]
+
+    def register_algorithm(self, collective: str, algo_name: str, algorithm: Algorithm):
+        """Register an algorithm for a collective operation."""
+        self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
+        self._algorithms.append(algorithm)
