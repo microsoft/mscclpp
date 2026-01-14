@@ -27,7 +27,6 @@ void AlgorithmCollectionBuilder::addAlgorithmBuilder(std::shared_ptr<AlgorithmBu
   this->algoBuilders_.push_back(builder);
 }
 
-
 void AlgorithmCollectionBuilder::setAlgorithmSelector(AlgoSelectFunc selector) { algoSelector_ = selector; }
 
 void AlgorithmCollectionBuilder::setFallbackAlgorithmSelector(AlgoSelectFunc selector) {
@@ -56,7 +55,7 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t
 }
 
 AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
-                                                                          size_t scratchBufferSize) {
+                                                                             size_t scratchBufferSize) {
   AlgorithmCollection collection;
   auto allreduceAllpairPkt = std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);

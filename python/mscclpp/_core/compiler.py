@@ -21,18 +21,19 @@ from blake3 import blake3
 import cupy as cp
 
 from mscclpp._version import __version__
-from mscclpp._algorithm import Algorithm
+from .algorithm import Algorithm
 from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.utils import get_device_arch
 
-from ._mscclpp import (
+from mscclpp._mscclpp import (
     ExecutionPlan,
 )
 
 
 logging.basicConfig(level=logging.INFO)
 
+__all__ = ["DslCompiler", "NativeCodeCompiler"]
 
 def _stable_json_bytes(obj: Any) -> bytes:
     return json.dumps(

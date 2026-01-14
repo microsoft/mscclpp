@@ -5,19 +5,16 @@ from __future__ import annotations
 from typing import Type
 
 import cupy as cp
-from ._mscclpp import (
+from mscclpp._mscclpp import (
     Communicator,
     Connection,
     connect_nvls_collective,
     EndpointConfig,
     Semaphore,
-    Host2DeviceSemaphore,
-    Host2HostSemaphore,
     ProxyService,
     RegisteredMemory,
     PortChannel,
     MemoryChannel,
-    MemoryDevice2DeviceSemaphore,
     TcpBootstrap,
     Transport,
     TransportFlags,
@@ -25,8 +22,9 @@ from ._mscclpp import (
 import mpi4py
 import numpy as np
 
-from mscclpp.utils import is_torch_tensor
+from .utils import is_torch_tensor
 
+__all__ = ["CommGroup"]
 
 class CommGroup:
     def __init__(

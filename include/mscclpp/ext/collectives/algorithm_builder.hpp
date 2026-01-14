@@ -58,7 +58,7 @@ class AlgorithmCollectionBuilder {
   static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
 };
 
-}  // namespace collective  
+}  // namespace collective
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_EXT_COLLECTIVES_ALGORITHM_BUILDER_HPP_
