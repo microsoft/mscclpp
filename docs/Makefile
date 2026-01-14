@@ -5,6 +5,7 @@
 # from the environment for the first two.
 SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
+SPHINXMULTIVERSION ?= sphinx-multiversion
 SOURCEDIR     = .
 BUILDDIR      = _build
 
@@ -16,6 +17,8 @@ help:
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
+# Also builds multi-version documentation after the regular build.
 %: Makefile
 	@cd .. && python3 -m setuptools_scm --force-write-version-files
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@$(SPHINXMULTIVERSION) "$(SOURCEDIR)" "$(BUILDDIR)/$@" $(SPHINXOPTS) $(O)
