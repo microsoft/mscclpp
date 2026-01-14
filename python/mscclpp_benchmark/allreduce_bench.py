@@ -13,8 +13,7 @@ from mscclpp_op import (
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
-from mscclpp import ProxyService, is_nvls_supported, CommGroup
-from mscclpp.utils import GpuBuffer
+from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress

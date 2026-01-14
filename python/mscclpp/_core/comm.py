@@ -22,7 +22,7 @@ from mscclpp._mscclpp import (
 import mpi4py
 import numpy as np
 
-from .utils import is_torch_tensor
+from mscclpp.utils import is_torch_tensor
 
 __all__ = ["CommGroup"]
 
