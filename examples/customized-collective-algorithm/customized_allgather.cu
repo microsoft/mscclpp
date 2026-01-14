@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/nccl.h>
+#include <mscclpp/ext/nccl/nccl.h>
 #include <sys/wait.h>
 
 #include <filesystem>

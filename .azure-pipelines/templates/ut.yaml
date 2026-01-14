@@ -71,7 +71,7 @@ steps:
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
         cd /root/mscclpp;                                             \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-        ./build/test/unit_tests"'
+        ./build/bin/unit_tests"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -93,9 +93,9 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                        \
         cd /root/mscclpp;                                             \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests;  \
+        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests;  \
+        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
