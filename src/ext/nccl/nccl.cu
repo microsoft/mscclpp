@@ -20,7 +20,7 @@
 
 #include "datatype_conversion.hpp"
 #include "debug.h"
-#include "mscclpp/nccl.h"
+#include <mscclpp/ext/nccl/nccl.h>
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 

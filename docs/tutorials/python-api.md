@@ -15,7 +15,7 @@ from mscclpp import (
     Transport,
 )
 from mscclpp.utils import GpuBuffer
-import mscclpp.comm as mscclpp_comm
+
 
 def create_connection(group: mscclpp.CommGroup, transport: str):
     remote_nghrs = list(range(group.nranks))

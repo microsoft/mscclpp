@@ -4,7 +4,7 @@
 #ifndef MSCCLPP_DATATYPE_CONVERSION_HPP_
 #define MSCCLPP_DATATYPE_CONVERSION_HPP_
 
-#include <mscclpp/nccl.h>
+#include <mscclpp/ext/nccl/nccl.h>
 
 #include <cstddef>
 #include <mscclpp/gpu_data_types.hpp>

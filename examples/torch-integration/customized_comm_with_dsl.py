@@ -5,8 +5,8 @@
 
 import os
 import torch
-import mscclpp.comm as mscclpp_comm
 import mscclpp
+import mscclpp.language
 from mscclpp.language.collectives import AllReduce
 from mscclpp.language.channel import SwitchChannel, MemoryChannel, BufferType, SyncType
 from mscclpp.language.program import CollectiveProgram
@@ -15,7 +15,7 @@ import netifaces as ni
 import ipaddress
 
 
-def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
+def allreduce_nvls(spec: mscclpp.language.AlgoSpec) -> CollectiveProgram:
     gpu_size = spec.world_size
     with CollectiveProgram(
         spec.name,
@@ -75,7 +75,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
 
 
 def setup_plan(rank: int, world_size: int, nranks_per_node: int):
-    spec = mscclpp.AlgoSpec(
+    spec = mscclpp.language.AlgoSpec(
         name="allreduce_nvls",
         collective=AllReduce(world_size, 1, True),
         nranks_per_node=nranks_per_node,

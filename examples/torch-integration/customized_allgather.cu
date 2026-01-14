@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <Python.h>
-#include <mscclpp/nccl.h>
+#include <mscclpp/ext/nccl/nccl.h>
 #include <pybind11/pybind11.h>
 
 #include <mscclpp/algorithm.hpp>

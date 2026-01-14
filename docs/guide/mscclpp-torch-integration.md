@@ -42,7 +42,6 @@ All approaches require initializing an MSCCL++ communicator. Here's a reusable s
 ```python
 import os
 import torch
-import mscclpp.comm as mscclpp_comm
 import netifaces as ni
 import ipaddress
 

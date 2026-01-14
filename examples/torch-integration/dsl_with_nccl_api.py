@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
+# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
 
 import os
 from typing import Any, Dict
