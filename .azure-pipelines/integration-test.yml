@@ -33,7 +33,7 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   pool:
     name: msccl-ci
@@ -52,7 +52,7 @@ jobs:
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   pool:
     name: msccl-ci-h100
