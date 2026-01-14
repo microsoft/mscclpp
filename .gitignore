@@ -1,8 +1,6 @@
 .vscode/
-.hypothesis/
 build/
-dist/
 __pycache__
 .*.swp
-.idea/
 *.so
+.pytest_cache/
