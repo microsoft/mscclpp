@@ -368,8 +368,8 @@ std::shared_ptr<void> GpuIpcMem::map() {
 }
 
 std::shared_ptr<void> GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] size_t mcOffset,
-                                               [[maybe_unused]] CUdeviceptr bufferAddr,
-                                               [[maybe_unused]] size_t bufferSize) {
+                                              [[maybe_unused]] CUdeviceptr bufferAddr,
+                                              [[maybe_unused]] size_t bufferSize) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (type_ != GpuIpcMemHandle::Type::PosixFd && type_ != GpuIpcMemHandle::Type::Fabric) {
     THROW(GPU, Error, ErrorCode::InvalidUsage,
