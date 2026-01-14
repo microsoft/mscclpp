@@ -42,7 +42,7 @@ struct RegisteredMemory::Impl {
   std::shared_ptr<void> peerMemHandle;
 
   UniqueGpuIpcMemHandle localGpuIpcMemHandle;
-  std::unique_ptr<GpuIpcMem> remoteGpuIpcMem;
+  std::shared_ptr<void> remoteMemMap;
 
   // Only used for IB transport
   std::unordered_map<Transport, std::unique_ptr<const IbMr>> ibMrMap;

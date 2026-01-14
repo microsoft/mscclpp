@@ -259,16 +259,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
 }
 
 GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
-    : handle_(handle),
-      allocHandle_(0),
-      multicastBuffer_(nullptr),
-      isMulticast_(false),
-      multicastBindedAddr_(0),
-      type_(GpuIpcMemHandle::Type::None),
-      basePtr_(nullptr),
-      baseSize_(0),
-      dataPtr_(nullptr),
-      dataSize_(0) {
+    : handle_(handle), allocHandle_(0), multicastAddedDeviceId_(-1), type_(GpuIpcMemHandle::Type::None) {
   if (handle_.typeFlags == GpuIpcMemHandle::Type::None) {
     THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMemHandle type is None, cannot create GpuIpcMem");
   }
@@ -288,16 +279,7 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     ::close(fileDesc);
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
-    cudaError_t err = cudaIpcOpenMemHandleWrapper(&basePtr_, handle_.runtimeIpc.handle);
-    if (err == cudaSuccess) {
-      baseSize_ = handle_.baseSize;
-      dataPtr_ = static_cast<void*>(static_cast<char*>(basePtr_) + handle_.offsetFromBase);
-      dataSize_ = handle_.baseSize - handle_.offsetFromBase;
-      type_ = GpuIpcMemHandle::Type::RuntimeIpc;
-      return;
-    } else {
-      (void)cudaGetLastError();
-    }
+    type_ = GpuIpcMemHandle::Type::RuntimeIpc;
   }
   if (type_ == GpuIpcMemHandle::Type::None) {
     THROW(GPU, Error, ErrorCode::Aborted, "Failed to open GpuIpcMemHandle (type: ", handle_.typeFlags, ")");
@@ -305,44 +287,9 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
 }
 
 GpuIpcMem::~GpuIpcMem() {
-  if (type_ == GpuIpcMemHandle::Type::RuntimeIpc) {
-    cudaError_t err = cudaIpcCloseMemHandleWrapper(basePtr_, handle_.runtimeIpc.handle);
-    if (err != cudaSuccess) {
-      WARN(GPU, "Failed to close CUDA IPC handle at pointer ", basePtr_, ": ", cudaGetErrorString(err));
-      (void)cudaGetLastError();
-    }
-  } else if (type_ == GpuIpcMemHandle::Type::PosixFd || type_ == GpuIpcMemHandle::Type::Fabric) {
+  if (type_ == GpuIpcMemHandle::Type::PosixFd || type_ == GpuIpcMemHandle::Type::Fabric) {
     CUresult res;
     const char* errStr;
-    if (basePtr_) {
-      res = cuMemUnmap((CUdeviceptr)basePtr_, baseSize_);
-      if (res != CUDA_SUCCESS) {
-        (void)cuGetErrorString(res, &errStr);
-        WARN(GPU, "Failed to unmap CUDA memory at pointer ", basePtr_, ": ", errStr);
-      }
-      res = cuMemAddressFree((CUdeviceptr)basePtr_, baseSize_);
-      if (res != CUDA_SUCCESS) {
-        (void)cuGetErrorString(res, &errStr);
-        WARN(GPU, "Failed to free CUDA memory at pointer ", basePtr_, ": ", errStr);
-      }
-    }
-#if (CUDA_NVLS_API_AVAILABLE)
-    if (isMulticast_ && multicastBindedAddr_) {
-      int deviceId;
-      res = cuPointerGetAttribute(&deviceId, CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL, multicastBindedAddr_);
-      if (res != CUDA_SUCCESS) {
-        (void)cuGetErrorString(res, &errStr);
-        WARN(GPU, "Failed to get device ordinal for pointer ", (void*)multicastBindedAddr_, ": ", errStr);
-        deviceId = -1;
-      } else if (deviceId < 0) {
-        WARN(GPU, "Invalid device ordinal ", deviceId, " for pointer ", (void*)multicastBindedAddr_);
-      }
-      CUdevice device;
-      if (cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
-        (void)cuMulticastUnbind(allocHandle_, device, 0, baseSize_);
-      }
-    }
-#endif  // (CUDA_NVLS_API_AVAILABLE)
     res = cuMemRelease(allocHandle_);
     if (res != CUDA_SUCCESS) {
       (void)cuGetErrorString(res, &errStr);
@@ -351,12 +298,24 @@ GpuIpcMem::~GpuIpcMem() {
   }
 }
 
-void* GpuIpcMem::map() {
+std::shared_ptr<void> GpuIpcMem::map() {
   if (type_ == GpuIpcMemHandle::Type::None) {
     THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMemHandle type is None, cannot map memory");
-  } else if (dataPtr_ != nullptr) {
-    // Already mapped
-    return dataPtr_;
+  }
+
+  if (type_ == GpuIpcMemHandle::Type::RuntimeIpc) {
+    // RuntimeIpc: Open handle and return shared_ptr with cleanup in deleter
+    void* basePtr = nullptr;
+    MSCCLPP_CUDATHROW(cudaIpcOpenMemHandleWrapper(&basePtr, handle_.runtimeIpc.handle));
+    void* dataPtr = static_cast<void*>(static_cast<char*>(basePtr) + handle_.offsetFromBase);
+    cudaIpcMemHandle_t ipcHandle = handle_.runtimeIpc.handle;
+    return std::shared_ptr<void>(dataPtr, [self = shared_from_this(), basePtr, ipcHandle](void*) {
+      cudaError_t err = cudaIpcCloseMemHandleWrapper(basePtr, ipcHandle);
+      if (err != cudaSuccess) {
+        WARN(GPU, "Failed to close CUDA IPC handle at pointer ", basePtr, ": ", cudaGetErrorString(err));
+        (void)cudaGetLastError();
+      }
+    });
   }
 
   size_t pageSize = getpagesize();
@@ -384,15 +343,33 @@ void* GpuIpcMem::map() {
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   MSCCLPP_CUTHROW(cuMemSetAccess(base, handle_.baseSize, &accessDesc, 1));
 
-  basePtr_ = (void*)base;
-  baseSize_ = handle_.baseSize;
-  dataPtr_ = static_cast<void*>(static_cast<char*>(basePtr_) + handle_.offsetFromBase);
-  dataSize_ = handle_.baseSize - handle_.offsetFromBase;
-  return dataPtr_;
+  void* basePtr = (void*)base;
+  size_t baseSize = handle_.baseSize;
+  void* dataPtr = static_cast<void*>(static_cast<char*>(basePtr) + handle_.offsetFromBase);
+
+  // Return shared_ptr with deleter that unmaps and frees memory
+  return std::shared_ptr<void>(dataPtr, [self = shared_from_this(), basePtr, baseSize](void*) {
+    CUresult res;
+    const char* errStr;
+
+    res = cuMemUnmap((CUdeviceptr)basePtr, baseSize);
+    if (res != CUDA_SUCCESS) {
+      (void)cuGetErrorString(res, &errStr);
+      WARN(GPU, "Failed to unmap CUDA memory at pointer ", basePtr, ": ", errStr);
+    }
+
+    res = cuMemAddressFree((CUdeviceptr)basePtr, baseSize);
+    if (res != CUDA_SUCCESS) {
+      (void)cuGetErrorString(res, &errStr);
+      WARN(GPU, "Failed to free CUDA memory at pointer ", basePtr, ": ", errStr);
+    }
+    // self release will trigger ~GpuIpcMem() which releases allocHandle_
+  });
 }
 
-void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] const CUdeviceptr bufferAddr,
-                              [[maybe_unused]] size_t bufferSize) {
+std::shared_ptr<void> GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] size_t mcOffset,
+                                               [[maybe_unused]] CUdeviceptr bufferAddr,
+                                               [[maybe_unused]] size_t bufferSize) {
 #if (CUDA_NVLS_API_AVAILABLE)
   if (type_ != GpuIpcMemHandle::Type::PosixFd && type_ != GpuIpcMemHandle::Type::Fabric) {
     THROW(GPU, Error, ErrorCode::InvalidUsage,
@@ -400,7 +377,13 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
   }
   int deviceId;
   MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
-  MSCCLPP_CUTHROW(cuMulticastAddDevice(allocHandle_, deviceId));
+  if (multicastAddedDeviceId_ == -1) {
+    MSCCLPP_CUTHROW(cuMulticastAddDevice(allocHandle_, deviceId));
+    multicastAddedDeviceId_ = deviceId;
+  } else if (multicastAddedDeviceId_ != deviceId) {
+    THROW(GPU, Error, ErrorCode::InvalidUsage, "Multicast device ID mismatch: expected ", multicastAddedDeviceId_,
+          ", but got ", deviceId);
+  }
 
   size_t minMcGran;
   CUmulticastObjectProp prop = {};
@@ -410,34 +393,26 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
 
   MSCCLPP_CUTHROW(cuMulticastGetGranularity(&minMcGran, &prop, CU_MULTICAST_GRANULARITY_MINIMUM));
 
-  CUdeviceptr bufferPtr;
-  if (bufferAddr != 0) {
-    if (!isCuMemMapAllocated((void*)bufferAddr)) {
-      THROW(GPU, Error, ErrorCode::InvalidUsage,
-            "This NVLS connection tried to bind a buffer that was not allocated with cuMemMap");
-    }
-    if ((uintptr_t)bufferAddr % minMcGran != 0) {
-      THROW(GPU, Error, ErrorCode::InvalidUsage,
-            "This NVLS connection tried to bind a buffer that is not aligned to the minimum granularity", minMcGran);
-    }
-    if (bufferSize == 0) {
-      THROW(GPU, Error, ErrorCode::InvalidUsage, "NVLS buffer size should be larger than zero.");
-    }
-    if (bufferSize % minMcGran != 0) {
-      THROW(GPU, Error, ErrorCode::InvalidUsage,
-            "Tried to bind a multicast buffer that is not aligned to the minimum granularity ", minMcGran,
-            ", buffer size: ", bufferSize);
-    }
-    bufferPtr = bufferAddr;
-  } else {
-    multicastBuffer_ = GpuBuffer<uint8_t>(handle_.baseSize).memory();
-    bufferPtr = (CUdeviceptr)(multicastBuffer_.get());
-    bufferSize = handle_.baseSize;
+  if (!isCuMemMapAllocated((void*)bufferAddr)) {
+    THROW(GPU, Error, ErrorCode::InvalidUsage,
+          "This NVLS connection tried to bind a buffer that was not allocated with cuMemMap");
+  }
+  if ((uintptr_t)bufferAddr % minMcGran != 0) {
+    THROW(GPU, Error, ErrorCode::InvalidUsage,
+          "This NVLS connection tried to bind a buffer that is not aligned to the minimum granularity ", minMcGran);
+  }
+  if (bufferSize == 0) {
+    THROW(GPU, Error, ErrorCode::InvalidUsage, "NVLS buffer size should be larger than zero.");
+  }
+  if (bufferSize % minMcGran != 0) {
+    THROW(GPU, Error, ErrorCode::InvalidUsage,
+          "Tried to bind a multicast buffer that is not aligned to the minimum granularity ", minMcGran,
+          ", buffer size: ", bufferSize);
   }
 
-  // will block until all devices call cuMulticastAddDevice()
-  MSCCLPP_CUTHROW(cuMulticastBindAddr(allocHandle_, 0, bufferPtr, bufferSize, 0));
-  multicastBindedAddr_ = bufferPtr;
+  // Bind the buffer at the specified offset in the multicast handle
+  // This will block until all devices call cuMulticastAddDevice()
+  MSCCLPP_CUTHROW(cuMulticastBindAddr(allocHandle_, mcOffset, bufferAddr, bufferSize, 0));
 
   CUdeviceptr mcPtr;
   MSCCLPP_CUTHROW(cuMemAddressReserve(&mcPtr, bufferSize, minMcGran, 0U, 0));
@@ -449,23 +424,35 @@ void* GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [[maybe_unused]] 
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
   MSCCLPP_CUTHROW(cuMemSetAccess(mcPtr, bufferSize, &accessDesc, 1));
 
-  basePtr_ = (void*)mcPtr;
-  baseSize_ = handle_.baseSize;
-  dataPtr_ = basePtr_;
-  dataSize_ = bufferSize;
-  isMulticast_ = true;
-  return dataPtr_;
+  // Return shared_ptr with custom deleter that unmaps and unbinds
+  CUmemGenericAllocationHandle allocHandle = allocHandle_;
+  return std::shared_ptr<void>(
+      reinterpret_cast<void*>(mcPtr), [self = shared_from_this(), mcOffset, bufferSize, allocHandle](void* ptr) {
+        CUresult res;
+        const char* errStr;
+
+        res = cuMemUnmap((CUdeviceptr)ptr, bufferSize);
+        if (res != CUDA_SUCCESS) {
+          (void)cuGetErrorString(res, &errStr);
+          WARN(GPU, "Failed to unmap CUDA memory at pointer ", (void*)ptr, ": ", errStr);
+        }
+
+        res = cuMemAddressFree((CUdeviceptr)ptr, bufferSize);
+        if (res != CUDA_SUCCESS) {
+          (void)cuGetErrorString(res, &errStr);
+          WARN(GPU, "Failed to free CUDA memory at pointer ", (void*)ptr, ": ", errStr);
+        }
+
+        int deviceId;
+        CUdevice device;
+        if (cudaGetDevice(&deviceId) == cudaSuccess && cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
+          (void)cuMulticastUnbind(allocHandle, device, mcOffset, bufferSize);
+        }
+      });
 #else   // !(CUDA_NVLS_API_AVAILABLE)
   THROW(GPU, Error, ErrorCode::InvalidUsage,
         "NVLS is not supported on this device (requires CUDA version >= 12.3 and Linux kernel version >= 5.6.0)");
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
-}
-
-void* GpuIpcMem::data() const {
-  if (!dataPtr_) {
-    THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMem data pointer is null. Call map() first.");
-  }
-  return dataPtr_;
 }
 
 }  // namespace mscclpp

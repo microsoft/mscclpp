@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <algorithm>
+#include <list>
 #include <mscclpp/core.hpp>
 #include <mscclpp/switch_channel.hpp>
 #include <mscclpp/utils.hpp>
@@ -27,19 +28,26 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   Impl& operator=(const Impl&) = delete;
 
   std::vector<char> serialize();
-  std::shared_ptr<char> bindMemory(CUdeviceptr devicePtr, size_t devBuffSize);
+  std::shared_ptr<void> bindMemory(CUdeviceptr devicePtr, size_t devBuffSize);
 
  private:
   friend class NvlsConnection;
 
+  size_t allocateRange(size_t size);
+  void freeRange(size_t offset, size_t size) noexcept;
+
   // Store the GpuIpcMemHandle for the multicast (only on root)
   UniqueGpuIpcMemHandle localGpuIpcMemHandle_;
   // The GpuIpcMem for multicast operations (both root and non-root)
-  std::unique_ptr<GpuIpcMem> gpuIpcMem_;
+  std::shared_ptr<GpuIpcMem> gpuIpcMem_;
 
   size_t minMcGran_;
   bool isRoot_;
   int numDevices_;
+
+  // Track allocated and free ranges within the multicast buffer
+  std::list<std::pair<size_t, size_t>> allocatedRanges_;
+  std::list<std::pair<size_t, size_t>> freeRanges_;
 };
 
 NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : isRoot_(true), numDevices_(numDevices) {
@@ -50,7 +58,7 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : isRoot_(true), n
   }
 
   // Create GpuIpcMem from the handle to get access to the allocation handle
-  gpuIpcMem_ = std::make_unique<GpuIpcMem>(*localGpuIpcMemHandle_);
+  gpuIpcMem_ = std::make_shared<GpuIpcMem>(*localGpuIpcMemHandle_);
 
   // Compute minimum granularity for user buffer alignment
   CUmulticastObjectProp mcProp = {};
@@ -70,6 +78,9 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : isRoot_(true), n
     minMcGran_ = minMcGranPosixFd;
   }
 
+  // Initialize free ranges with the entire buffer
+  freeRanges_.emplace_back(0, localGpuIpcMemHandle_->baseSize);
+
   INFO(CONN, "NVLS handle created on root with buffer size ", localGpuIpcMemHandle_->baseSize, ", minGranularity ",
        minMcGran_);
 }
@@ -82,9 +93,12 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) : isRoot_(false) {
   it = detail::deserialize(it, numDevices_);
 
   // Create GpuIpcMem from the handle to import the multicast
-  gpuIpcMem_ = std::make_unique<GpuIpcMem>(handle);
+  gpuIpcMem_ = std::make_shared<GpuIpcMem>(handle);
 
-  INFO(CONN, "NVLS handle is imported from root");
+  // Initialize free ranges with the entire buffer
+  freeRanges_.emplace_back(0, handle.baseSize);
+
+  INFO(CONN, "NVLS handle is imported from root with buffer size ", handle.baseSize);
 }
 
 std::vector<char> NvlsConnection::Impl::serialize() {
@@ -98,20 +112,81 @@ std::vector<char> NvlsConnection::Impl::serialize() {
   return result;
 }
 
-std::shared_ptr<char> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, size_t devBuffSize) {
+size_t NvlsConnection::Impl::allocateRange(size_t size) {
+  if (freeRanges_.empty()) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "This NVLS connection mapped more than it was supposed to");
+  }
+  auto it = std::find_if(freeRanges_.begin(), freeRanges_.end(),
+                         [size](const std::pair<size_t, size_t>& range) { return range.second >= size; });
+  if (it != freeRanges_.end()) {
+    size_t offset = it->first;
+    size_t rangeSize = it->second;
+    if (rangeSize == size) {
+      freeRanges_.erase(it);
+    } else {
+      it->first += size;
+      it->second -= size;
+    }
+    allocatedRanges_.emplace_back(offset, size);
+    INFO(CONN, "NVLS connection allocated ", size, " bytes at offset ", offset);
+    return offset;
+  }
+  THROW(CONN, Error, ErrorCode::InvalidUsage, "This NVLS connection cannot map the requested devBuffSize");
+}
+
+void NvlsConnection::Impl::freeRange(size_t offset, size_t size) noexcept {
+  auto it = std::find_if(
+      allocatedRanges_.begin(), allocatedRanges_.end(),
+      [offset, size](const std::pair<size_t, size_t>& range) { return range.first == offset && range.second == size; });
+  if (it == allocatedRanges_.end()) {
+    WARN(CONN, "NVLS connection tried to free a range that was not allocated");
+    return;
+  }
+  allocatedRanges_.erase(it);
+  it = std::find_if(freeRanges_.begin(), freeRanges_.end(), [offset, size](const std::pair<size_t, size_t>& range) {
+    return range.first + range.second >= offset;
+  });
+  if (it == freeRanges_.end()) {
+    freeRanges_.emplace_back(offset, size);
+    return;
+  }
+  if (it->first + it->second == offset) {
+    // merge with the previous free range if possible
+    it->second += size;
+    // merge with the next free range if possible
+    auto nextItr = std::next(it);
+    if (nextItr != freeRanges_.end() && it->first + it->second == nextItr->first) {
+      it->second += nextItr->second;
+      freeRanges_.erase(nextItr);
+    }
+    return;
+  } else if (it->first == offset + size) {
+    // merge with the next free range if possible
+    it->first -= size;
+    it->second += size;
+    return;
+  } else {
+    freeRanges_.emplace(it, offset, size);
+    return;
+  }
+}
+
+std::shared_ptr<void> NvlsConnection::Impl::bindMemory(CUdeviceptr devicePtr, size_t devBuffSize) {
   // Align buffer size to minimum granularity
   devBuffSize = ((devBuffSize + minMcGran_ - 1) / minMcGran_) * minMcGran_;
 
-  // Use mapMulticast which handles:
-  // - Adding device to multicast
-  // - Binding the buffer to multicast (cuMulticastBindAddr blocks until all devices call cuMulticastAddDevice)
-  // - Creating and mapping the multicast pointer
-  void* mcPtr = gpuIpcMem_->mapMulticast(numDevices_, devicePtr, devBuffSize);
-  INFO(CONN, "NVLS connection bound memory ", (void*)devicePtr, " to ", mcPtr, ", size ", devBuffSize);
+  // Allocate a range in the multicast buffer
+  size_t offset = allocateRange(devBuffSize);
 
-  // Return shared_ptr that keeps Impl alive
-  return std::shared_ptr<char>(static_cast<char*>(mcPtr), [self = shared_from_this()](char*) {
-    // No-op deleter - cleanup happens in ~GpuIpcMem via ~Impl
+  // mapMulticast returns a shared_ptr that handles cleanup when released
+  std::shared_ptr<void> mcPtr = gpuIpcMem_->mapMulticast(numDevices_, offset, devicePtr, devBuffSize);
+  INFO(CONN, "NVLS connection bound memory ", (void*)devicePtr, " to ", mcPtr.get(), " at offset ", offset, ", size ",
+       devBuffSize);
+
+  // Wrap mcPtr with an additional deleter that frees the range
+  return std::shared_ptr<void>(mcPtr.get(), [self = shared_from_this(), mcPtr, offset, devBuffSize](void*) {
+    // mcPtr destructor will handle unmap/unbind; we just need to free the range
+    self->freeRange(offset, devBuffSize);
   });
 }
 
@@ -126,9 +201,9 @@ class NvlsConnection::Impl {
   Impl& operator=(const Impl&) = delete;
 
   std::vector<char> serialize() { throw notSupportedError; }
-  size_t allocateBuffer(size_t) { throw notSupportedError; }
-  void freeBuffer(size_t, size_t) { throw notSupportedError; }
-  std::shared_ptr<char> bindMemory(CUdeviceptr, size_t) { throw notSupportedError; }
+  size_t allocateRange(size_t) { throw notSupportedError; }
+  void freeRange(size_t, size_t) { throw notSupportedError; }
+  std::shared_ptr<void> bindMemory(CUdeviceptr, size_t) { throw notSupportedError; }
 
  private:
   Error notSupportedError =

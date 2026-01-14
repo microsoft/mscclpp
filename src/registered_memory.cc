@@ -159,8 +159,10 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     }
   } else if (transports.has(Transport::CudaIpc)) {
     auto entry = getTransportInfo(Transport::CudaIpc);
-    this->remoteGpuIpcMem = std::make_unique<GpuIpcMem>(entry.gpuIpcMemHandle);
-    this->data = this->remoteGpuIpcMem->map();
+    auto gpuIpcMem = std::make_shared<GpuIpcMem>(entry.gpuIpcMemHandle);
+    // Create a memory map for the remote GPU memory. The memory map will keep the GpuIpcMem instance alive.
+    this->remoteMemMap = gpuIpcMem->map();
+    this->data = this->remoteMemMap.get();
   }
   if (this->data != nullptr) {
     INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);

@@ -14,12 +14,12 @@ class NvlsConnection;
 struct SwitchChannel {
  private:
   void* devicePtr_;
-  std::shared_ptr<char> mcPtr_;
+  std::shared_ptr<void> mcPtr_;
   size_t bufferSize_;
 
  public:
   using DeviceHandle = SwitchChannelDeviceHandle;
-  SwitchChannel(void* devicePtr, std::shared_ptr<char> mcPtr, size_t bufferSize)
+  SwitchChannel(void* devicePtr, std::shared_ptr<void> mcPtr, size_t bufferSize)
       : devicePtr_(devicePtr), mcPtr_(mcPtr), bufferSize_(bufferSize) {}
   DeviceHandle deviceHandle() const;
   void* getDevicePtr();
