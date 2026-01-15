@@ -32,5 +32,4 @@ class AllgatherFullmesh : public AlgorithmBuilder {
 };
 }  // namespace collective
 }  // namespace mscclpp
-
 #endif  // MSCCLPP_EXT_ALLGATHER_FULLMESH_HPP_

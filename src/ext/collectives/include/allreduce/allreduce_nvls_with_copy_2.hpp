@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#ifndef MSCCLPP_EXT_ALLREDUCE_NVLS_WITH_COPY_2_HPP_
+#define MSCCLPP_EXT_ALLREDUCE_NVLS_WITH_COPY_2_HPP_
+
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
@@ -32,3 +35,5 @@ class AllreduceNvlsWithCopy2 : public AlgorithmBuilder {
 };
 }  // namespace collective
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EXT_ALLREDUCE_NVLS_WITH_COPY_2_HPP_
