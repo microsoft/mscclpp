@@ -71,7 +71,15 @@ void register_core(nb::module_& m) {
       .def("recv", static_cast<void (Bootstrap::*)(std::vector<char>&, int, int)>(&Bootstrap::recv), nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"));
 
-  nb::class_<UniqueId>(m, "UniqueId");
+  nb::class_<UniqueId>(m, "UniqueId")
+      .def(nb::init<>())
+      .def("__setstate__",
+           [](UniqueId& self, nb::bytes b) {
+             if (nb::len(b) != UniqueIdBytes) throw std::runtime_error("Invalid UniqueId byte size");
+             std::memcpy(self.data(), b.c_str(), UniqueIdBytes);
+           })
+      .def("__getstate__",
+           [](const UniqueId& self) { return nb::bytes(reinterpret_cast<const char*>(self.data()), UniqueIdBytes); });
 
   nb::class_<TcpBootstrap, Bootstrap>(m, "TcpBootstrap")
       .def(nb::init<int, int>(), "Do not use this constructor. Use create instead.")
