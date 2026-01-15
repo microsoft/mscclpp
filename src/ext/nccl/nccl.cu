@@ -15,12 +15,12 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 #include <dlfcn.h>
+#include <mscclpp/ext/nccl/nccl.h>
 
 #include <mscclpp/algorithm.hpp>
 
 #include "datatype_conversion.hpp"
 #include "debug.h"
-#include <mscclpp/ext/nccl/nccl.h>
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 

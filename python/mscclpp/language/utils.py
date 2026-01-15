@@ -8,6 +8,7 @@ from mscclpp.language.collectives import Collective
 
 __all__ = ["AlgoSpec", "ReplicationPolicy"]
 
+
 class ReplicationPolicy(Enum):
     interleaved = "interleaved"
     none = "none"

@@ -194,6 +194,7 @@ class Algorithm:
             extras if extras is not None else {},
         )
 
+
 class AlgorithmBuilder:
     def __init__(self, algorithm_builder: _AlgorithmBuilder):
         self._algorithm_builder = algorithm_builder
