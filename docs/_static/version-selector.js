@@ -112,17 +112,10 @@
         });
         
         select.addEventListener('change', function() {
-            console.log('[Version Selector] Change event triggered');
-            console.log('[Version Selector] Selected value:', this.value);
-            console.log('[Version Selector] Current location:', window.location.href);
             if (this.value) {
                 const baseUrl = this.value;
                 const currentHash = window.location.hash; // Get current hash at selection time
                 const targetUrl = baseUrl + currentHash; // Append current hash to target URL
-
-                console.log('[Version Selector] Current hash:', currentHash);
-                console.log('[Version Selector] Target URL with hash:', targetUrl);
-                console.log('[Version Selector] Checking if page exists:', baseUrl);
 
                 // Check if the target page exists using a fetch with abort
                 const controller = new AbortController();
@@ -134,10 +127,8 @@
                 })
                     .then(function(response) {
                         clearTimeout(timeoutId);
-                        console.log('[Version Selector] Response status:', response.status);
                         if (response.ok) {
                             // Page exists, navigate to it with hash
-                            console.log('[Version Selector] Page exists, navigating to:', targetUrl);
                             window.location.href = targetUrl;
                         } else {
                             // Page doesn't exist, fall back to version root index.html
@@ -152,15 +143,12 @@
                                 // It's a root path (main/dev)
                                 fallbackUrl = '/index.html';
                             }
-                            console.log('[Version Selector] Page not found (status: ' + response.status + '), falling back to:', fallbackUrl);
                             window.location.href = fallbackUrl;
                         }
                     })
                     .catch(function(error) {
                         clearTimeout(timeoutId);
                         // On error (including timeout), try to navigate anyway
-                        console.log('[Version Selector] Error checking page:', error.name, error.message);
-                        console.log('[Version Selector] Navigating to target anyway:', targetUrl);
                         window.location.href = targetUrl;
                     });
             }
