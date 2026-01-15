@@ -5,6 +5,8 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
+- name: gpuArch
+  type: string
 
 steps:
 - task: Bash@3
@@ -14,7 +16,7 @@ steps:
     targetType: 'inline'
     script: |
       mkdir build && cd build
-      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
