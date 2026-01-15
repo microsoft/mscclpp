@@ -78,7 +78,7 @@ mscclpp::GpuBuffer buffer(bufferBytes);
 mscclpp::RegisteredMemory localRegMem = comm.registerMemory(buffer.data(), buffer.bytes(), transport);
 ```
 
-Here, we first allocate GPU device memory using `mscclpp::GpuBuffer` and then register its memory region with the `registerMemory()` method of the `Communicator`. If you are using the `Context` interface as shown in the [Basic Concepts](./01-basic-concepts.md) tutorial, you can use `context.registerMemory()` instead. The `transport` parameter specifies the transport types that this memory region can be accessed with. In this example, we use only `mscclpp::Transport::CudaIpc`, which allows the memory to be accessed by other processes using CUDA/HIP IPC. The `CudaIpc` transport type is typically used for intra-node communication, but with certain hardware configurations, it can also be used for inter-node communication (such as [NVL72](https://www.nvidia.com/en-us/data-center/gb300-nvl72) on NVIDIA Grace Blackwell platforms). We will introduce other transport types in later tutorials.
+Here, we first allocate GPU device memory using `mscclpp::GpuBuffer` and then register its memory region with the `registerMemory()` method of the `Communicator`. If you are using the `Context` interface as shown in the [Basic Concepts](./01-basic-concepts.md) tutorial, you can use `context.registerMemory()` instead. The `transport` parameter specifies the transport types that this memory region can be accessed with. In this example, we use only `mscclpp::Transport::CudaIpc`, which allows the memory to be accessed by other processes using CUDA/HIP IPC. The `CudaIpc` transport type is typically used for intra-node communication, but with certain hardware configurations, it can also be used for inter-node communication (will be explained in a later section: {ref}`mc-cross-node`). We will introduce other transport types in later tutorials.
 
 **GpuBuffer** is NOT required for creating a `RegisteredMemory`; you can register any pre-allocated GPU memory region with `registerMemory()`. However, it is the user's responsibility to ensure that the memory region is suitable for their communication operations. Depending on the hardware platform, some communication methods may require specific memory allocation to ensure data consistency and correctness. `GpuBuffer` is a convenient way to allocate GPU memory that is compatible with the communication methods that MSCCL++ supports. It provides a simple interface for allocating GPU memory and automatically handles memory deallocation when it goes out of scope.
 
@@ -250,6 +250,37 @@ columns 2
 ```
 
 Since the flags take 50% of the packet size, the goodput of communication using packets is only 50% compared to transferring raw data. However, this doesn't matter because packets are designed for small data transfers. Packets transfer small data efficiently because the integrity of the user data is guaranteed by only waiting for the correct flags (done by `unpackPackets()`); explicit memory synchronization (signal and wait) is not needed.
+
+(mc-cross-node)=
+## Cross-node Execution
+
+For **inter-node** communication between GPUs on different nodes, using `PortChannel` (will be explained in the following tutorial) is usually a more accessible option that leverages more widely-used networking interfaces. However, `MemoryChannel` can still be used as long as the underlying hardware allows memory mapping between the two GPUs, such as [Multi-Node NVLink (MNNVL)](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/overview.html) on NVIDIA Grace Blackwell platforms.
+
+We can use the same example code to test inter-node `MemoryChannel`. Before proceeding, please make sure that your environment is configured correctly for inter-node memory mapping. For example, [verify your MNNVL environment](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/verifying.html).
+
+Run the program on two nodes with command line arguments:
+
+```
+./bidir_memory_channel [<ip_port> <rank> <gpu_id>]
+```
+
+For example, assume we use `192.168.0.1:50000` as the bootstrap IP address and port, and both nodes use GPU 0 on their local.
+
+On Node 0 (Rank 0):
+```bash
+$ ./bidir_memory_channel 192.168.0.1:50000 0 0
+```
+
+On Node 1 (Rank 1):
+```bash
+$ ./bidir_memory_channel 192.168.0.1:50000 1 0
+```
+
+You should see output indicating successful data transfer.
+
+```{tip}
+If your bootstrap IP address is not on the default network interface of your node, you can specify the network interface by passing `interface_name:ip:port` as the first argument (such as `eth1:192.168.0.1:50000`).
+```
 
 ## Summary and Next Steps
 
