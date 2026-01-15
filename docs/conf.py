@@ -43,11 +43,11 @@ extensions = [
     "sphinx_multiversion",
 ]
 
-smv_tag_whitelist = r'^v\d+\.\d+\.\d+$'
-smv_branch_whitelist = r'^main$'
+smv_tag_whitelist = r"^v\d+\.\d+\.\d+$"
+smv_branch_whitelist = r"^main$"
 smv_remote_whitelist = None
-smv_released_pattern = r'^tags/.*$'
-smv_outputdir_format = '{ref.name}'
+smv_released_pattern = r"^tags/.*$"
+smv_outputdir_format = "{ref.name}"
 smv_prefer_remote_refs = False
 
 autosummary_generate = True
@@ -86,6 +86,7 @@ html_js_files = [
     "version-selector.js",
 ]
 
+
 # Custom setup function to copy version-selector.js to root build directory
 def setup(app):
     import shutil
@@ -100,5 +101,4 @@ def setup(app):
             if source.exists():
                 shutil.copy2(source, dest_root / "version-selector.js")
 
-    app.connect('build-finished', copy_version_selector)
-
+    app.connect("build-finished", copy_version_selector)
