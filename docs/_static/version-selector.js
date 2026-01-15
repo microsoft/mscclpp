@@ -99,11 +99,8 @@
                 // For versioned releases
                 url = '/' + version.path + '/' + relativePath;
             }
-            
-            console.log('[Version Selector] Option: ' + version.name + ', relativePath=' + relativePath + ', absoluteURL=' + url);
 
             option.value = url;
-            console.log('[Version Selector] After setting option.value, option.value=' + option.value);
             option.textContent = version.name;
             if (isSelected) {
                 option.selected = true;
