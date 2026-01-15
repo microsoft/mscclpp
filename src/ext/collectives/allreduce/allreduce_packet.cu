@@ -175,7 +175,8 @@ struct PacketAdapter {
   }
 };
 
-inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerNode, int worldSize) {
+inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerNode, int worldSize,
+                                                          DataType dtype) {
   int nBlocks = (nRanksPerNode - 1) * 4;
   int nThreadsPerBlock = 1024;
   if (inputSize >= 32768) {
@@ -183,7 +184,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
     nThreadsPerBlock = (inputSize <= 153600) ? 512 : 1024;
   }
 #if defined(__HIP_PLATFORM_AMD__)
-  if constexpr (std::is_same_v<T, __half>) {
+  if (dtype == DataType::FLOAT16) {
     // Half-specific tuning for 32KB-256KB range
     if (inputSize < (64 << 10)) {
       nThreadsPerBlock = 64;
@@ -194,7 +195,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
 
 #if defined(__FP8_TYPES_EXIST__)
   // FP8-specific tuning for 32KB-256KB range
-  if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+  if (dtype == DataType::FP8_E4M3 || dtype == DataType::FP8_E5M2) {
     if (inputSize < (64 << 10)) {
       nThreadsPerBlock = 64;
     } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
@@ -223,7 +224,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmC
                                                 const std::unordered_map<std::string, uintptr_t>&) {
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode, dtype);
   }
 
   size_t sendBytes;
