@@ -1,5 +1,5 @@
 #include <filesystem>
-#include <mscclpp/ext/collectives/algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 
 #include "allgather/allgather_fullmesh.hpp"
 #include "allgather/allgather_fullmesh2.hpp"

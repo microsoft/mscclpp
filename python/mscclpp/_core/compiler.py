@@ -216,7 +216,6 @@ class NativeCodeCompiler:
             self._default_options += ["--linker-options", f"-rpath,{self._lib_home}/lib"]
         else:
             # Format for HIP: --offload-arch=gfx90a
-            # TODO: need to verify
             arch_flag = f"--offload-arch={self._device_arch}"
             self._default_options.append(arch_flag)
             self._default_options += ["-fPIC"]

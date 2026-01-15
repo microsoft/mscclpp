@@ -113,13 +113,13 @@ void UnixSocketServer::start() {
 
   if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
     int err = errno;
-    close(fd);
+    ::close(fd);
     throw SysError("bind() failed for unix socket, sock path: " + socketPath, err);
   }
 
   if (listen(fd, SOMAXCONN) < 0) {
     int err = errno;
-    close(fd);
+    ::close(fd);
     unlink(socketPath.c_str());
     throw SysError("listen() failed for unix socket, sock path: " + socketPath, err);
   }
@@ -145,7 +145,7 @@ void UnixSocketServer::stop() {
     INFO(MSCCLPP_INIT, "Stopping unix socket server");
     mainThread_.join();
   }
-  close(listenUnixSockFd_);
+  ::close(listenUnixSockFd_);
   listenUnixSockFd_ = -1;
   if (!listenUnixSockPath_.empty()) {
     unlink(listenUnixSockPath_.c_str());
@@ -175,7 +175,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
     if (index == 0 || index >= pollFds.size()) {
       return;
     }
-    close(pollFds[index].fd);
+    ::close(pollFds[index].fd);
     pollFds.erase(pollFds.begin() + static_cast<std::ptrdiff_t>(index));
   };
 
@@ -246,7 +246,7 @@ void UnixSocketServer::mainLoop(int listenUnixSockFd) {
   }
 
   for (size_t i = 1; i < pollFds.size(); ++i) {
-    close(pollFds[i].fd);
+    ::close(pollFds[i].fd);
   }
 }
 
@@ -262,7 +262,7 @@ UnixSocketClient& UnixSocketClient::instance() {
 void UnixSocketClient::reset() {
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& pair : cachedFds_) {
-    close(pair.second);
+    ::close(pair.second);
   }
   cachedFds_.clear();
 }
@@ -295,14 +295,14 @@ int UnixSocketClient::requestFd(const std::string& socketPath, uint32_t fdId) {
 
   INFO(MSCCLPP_P2P, "Connecting to unix socket server at %s", socketPath.c_str());
   if (connect(connectedFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-    close(connectedFd);
+    ::close(connectedFd);
     throw SysError("connect() failed for unix socket to " + socketPath, errno);
   }
   {
     std::lock_guard<std::mutex> lock(mutex_);
     auto [it, inserted] = cachedFds_.emplace(socketPath, connectedFd);
     if (!inserted) {
-      close(it->second);
+      ::close(it->second);
       it->second = connectedFd;
     }
   }

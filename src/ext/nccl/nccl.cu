@@ -7,7 +7,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
-#include <mscclpp/ext/collectives/algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 #include <mscclpp/utils.hpp>
 #include <unordered_map>
 #include <vector>

@@ -1,5 +1,7 @@
-add_subdirectory(collectives)
+if(MSCCLPP_BUILD_EXT_COLLECTIVES)
+    add_subdirectory(collectives)
+endif()
 
-if(MSCCLPP_BUILD_APPS_NCCL)
+if(MSCCLPP_BUILD_EXT_NCCL)
     add_subdirectory(nccl)
 endif()

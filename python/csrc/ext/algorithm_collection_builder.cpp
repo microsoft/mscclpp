@@ -8,13 +8,13 @@
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/algorithm.hpp>
-#include <mscclpp/ext/collectives/algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 
 namespace nb = nanobind;
 using namespace mscclpp;
 using namespace mscclpp::collective;
 
-void register_collective(nb::module_& m) {
+void register_algorithm_collection_builder(nb::module_& m) {
   nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
       .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))

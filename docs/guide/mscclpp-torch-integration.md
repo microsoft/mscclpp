@@ -238,7 +238,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
 ```python
 def setup_algorithm(rank: int, world_size: int, nranks_per_node: int):
     """Compile the DSL algorithm for this rank."""
-    spec = mscclpp.AlgoSpec(
+    spec = mscclpp.language.AlgoSpec(
         name="allreduce_nvls",
         collective=AllReduce(world_size, 1, True),
         nranks_per_node=nranks_per_node,

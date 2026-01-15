@@ -28,7 +28,7 @@ extern void register_gpu_utils(nb::module_& m);
 extern void register_algorithm(nb::module_& m);
 
 // ext
-extern void register_collective(nb::module_& m);
+extern void register_algorithm_collection_builder(nb::module_& m);
 
 template <typename T>
 void def_shared_future(nb::handle& m, const std::string& typestr) {
@@ -297,5 +297,5 @@ NB_MODULE(_mscclpp, m) {
   register_algorithm(m);
 
   // ext
-  register_collective(m);
+  register_algorithm_collection_builder(m);
 }

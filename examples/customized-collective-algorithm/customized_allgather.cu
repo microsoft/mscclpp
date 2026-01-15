@@ -10,7 +10,7 @@
 #include <memory>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
-#include <mscclpp/ext/collectives/algorithm_builder.hpp>
+#include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 

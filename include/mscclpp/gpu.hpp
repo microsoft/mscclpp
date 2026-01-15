@@ -4,9 +4,9 @@
 #ifndef MSCCLPP_GPU_HPP_
 #define MSCCLPP_GPU_HPP_
 
-#if defined(__HIP_PLATFORM_AMD__)
+#include <mscclpp/device.hpp>
 
-#include <hip/hip_runtime.h>
+#if defined(MSCCLPP_DEVICE_HIP)
 
 using cudaError_t = hipError_t;
 using cudaEvent_t = hipEvent_t;
@@ -62,6 +62,7 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define CUDA_ERROR_DEINITIALIZED hipErrorDeinitialized
 #define CUDA_ERROR_CONTEXT_IS_DESTROYED hipErrorContextIsDestroyed
 #define CUDA_ERROR_LAUNCH_FAILED hipErrorLaunchFailure
+#define CUDA_ERROR_NOT_SUPPORTED hipErrorNotSupported
 #define CUDA_ERROR_INVALID_VALUE hipErrorInvalidValue
 
 #define cudaEventCreate(...) hipEventCreate(__VA_ARGS__)
@@ -122,29 +123,29 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define cuMemGetAllocationGranularity(...) hipMemGetAllocationGranularity(__VA_ARGS__)
 #define cuPointerGetAttribute(...) hipPointerGetAttribute(__VA_ARGS__)
 
-#else
+#else  // !defined(MSCCLPP_DEVICE_HIP)
 
 #include <cuda.h>
 #include <cuda_runtime.h>
 
-#endif
+#endif  // !defined(MSCCLPP_DEVICE_HIP)
 
 // NVLS
-#if !defined(__HIP_PLATFORM_AMD__)
+#if !defined(MSCCLPP_DEVICE_HIP)
 #include <linux/version.h>
 #if CUDART_VERSION < 12030
 #define CU_MEM_HANDLE_TYPE_FABRIC ((CUmemAllocationHandleType)0x8ULL)
 #endif
 // We need CUDA 12.3 above and kernel 5.6.0 above for NVLS API
 #define CUDA_NVLS_API_AVAILABLE ((CUDART_VERSION >= 12030) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 6, 0)))
-#else  // defined(__HIP_PLATFORM_AMD__)
+#else  // defined(MSCCLPP_DEVICE_HIP)
 #define CUDA_NVLS_API_AVAILABLE 0
 // NVLS is not supported on AMD platform, just to avoid compilation error
-#define CU_MEM_HANDLE_TYPE_FABRIC (0x8ULL)
-#endif  // !defined(__HIP_PLATFORM_AMD__)
+#define CU_MEM_HANDLE_TYPE_FABRIC ((hipMemAllocationHandleType)0x8ULL)
+#endif  // defined(MSCCLPP_DEVICE_HIP)
 
 // GPU sync threads
-#if defined(__HIP_PLATFORM_AMD__)
+#if defined(MSCCLPP_DEVICE_HIP)
 #define __syncshm() asm volatile("s_waitcnt lgkmcnt(0) \n s_barrier");
 #else
 #define __syncshm() __syncthreads();
