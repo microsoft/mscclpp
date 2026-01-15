@@ -254,7 +254,7 @@ Since the flags take 50% of the packet size, the goodput of communication using 
 (mc-cross-node)=
 ## Cross-node Execution
 
-For **inter-node** communication between GPUs on different nodes, using `PortChannel` (will be explained in the following tutorial) is usually a more accessible option that leverages more widely-used networking interfaces. However, `MemoryChannel` can still be used as long as the underlying hardware allows memory mapping between the two GPUs, such as [Multi-Node NVLink (MNNVL)](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/overview.html) on NVIDIA Grace Blackwell platforms.
+For **inter-node** communication, using `PortChannel` (will be explained in the following tutorial) is usually a more accessible option that leverages more widely-used networking interfaces. However, `MemoryChannel` can still be used as long as the underlying hardware allows memory mapping between the two GPUs, such as [Multi-Node NVLink (MNNVL)](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/overview.html) on NVIDIA Grace Blackwell platforms.
 
 We can use the same example code to test inter-node `MemoryChannel`. Before proceeding, please make sure that your environment is configured correctly for inter-node memory mapping. For example, [verify your MNNVL environment](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/verifying.html).
 
@@ -264,7 +264,7 @@ Run the program on two nodes with command line arguments:
 ./bidir_memory_channel [<ip_port> <rank> <gpu_id>]
 ```
 
-For example, assume we use `192.168.0.1:50000` as the bootstrap IP address and port, and both nodes use GPU 0 on their local.
+For example, assume we use `192.168.0.1:50000` as the bootstrap IP address and port, and both nodes use GPU 0 locally.
 
 On Node 0 (Rank 0):
 ```bash
