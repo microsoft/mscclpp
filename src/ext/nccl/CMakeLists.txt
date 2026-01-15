@@ -35,7 +35,7 @@ elseif(MSCCLPP_USE_ROCM)
     endforeach()
 endif()
 if(MSCCLPP_NPKIT_FLAGS)
-    target_compile_definitions(mscclpp_nccl_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
+    target_compile_definitions(mscclpp_nccl PRIVATE ${MSCCLPP_NPKIT_FLAGS})
 endif()
 
 install(TARGETS mscclpp_nccl
