@@ -77,10 +77,10 @@ steps:
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                         \
         set -e;                                                   \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl;       \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;  \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;  \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl"'
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl;       \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;  \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;  \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -103,7 +103,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                    \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                         \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl"'
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -126,13 +126,13 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                     \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                         \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl;                 \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;            \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;            \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl;            \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl;            \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl;  \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl"'
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl;                 \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;            \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;            \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl;            \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl;            \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl;  \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -154,8 +154,8 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                    \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
         cd /root/mscclpp;                                         \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl"'
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
+        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -225,7 +225,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                    \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
         cd /root/mscclpp;                                         \
-        ./build/test/perf/fifo_test"'
+        ./build/bin/perf/fifo_test"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

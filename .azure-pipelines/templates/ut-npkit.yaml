@@ -88,7 +88,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH; \
         export MSCCLPP_NPKIT_DUMP_DIR=./npkit_dump;    \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter=\"ExecutorTest.TwoNodesAllreduce\"; \
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --gtest_filter=\"ExecutorTest.TwoNodesAllreduce\"; \
         python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output; \
         grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
         grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json;  \

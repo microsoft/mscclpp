@@ -176,7 +176,7 @@ struct PacketAdapter {
 };
 
 inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerNode, int worldSize,
-                                                          DataType dtype) {
+                                                          [[maybe_unused]] DataType dtype) {
   int nBlocks = (nRanksPerNode - 1) * 4;
   int nThreadsPerBlock = 1024;
   if (inputSize >= 32768) {
