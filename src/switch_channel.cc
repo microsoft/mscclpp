@@ -58,7 +58,7 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : isRoot_(true), n
   }
 
   // Create GpuIpcMem from the handle to get access to the allocation handle
-  gpuIpcMem_ = std::make_shared<GpuIpcMem>(*localGpuIpcMemHandle_);
+  gpuIpcMem_ = GpuIpcMem::create(*localGpuIpcMemHandle_);
 
   // Compute minimum granularity for user buffer alignment
   CUmulticastObjectProp mcProp = {};
@@ -93,7 +93,7 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) : isRoot_(false) {
   it = detail::deserialize(it, numDevices_);
 
   // Create GpuIpcMem from the handle to import the multicast
-  gpuIpcMem_ = std::make_shared<GpuIpcMem>(handle);
+  gpuIpcMem_ = GpuIpcMem::create(handle);
 
   // Initialize free ranges with the entire buffer
   freeRanges_.emplace_back(0, handle.baseSize);

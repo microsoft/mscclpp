@@ -258,6 +258,10 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
 }
 
+std::shared_ptr<GpuIpcMem> GpuIpcMem::create(const GpuIpcMemHandle& handle) {
+  return std::shared_ptr<GpuIpcMem>(new GpuIpcMem(handle));
+}
+
 GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     : handle_(handle), allocHandle_(0), multicastAddedDeviceId_(-1), type_(GpuIpcMemHandle::Type::None) {
   if (handle_.typeFlags == GpuIpcMemHandle::Type::None) {

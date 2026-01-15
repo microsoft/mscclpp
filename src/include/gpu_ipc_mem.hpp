@@ -79,7 +79,10 @@ static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 /// GpuIpcMem instance for that memory region.
 class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
  public:
-  GpuIpcMem(const GpuIpcMemHandle &handle);
+  /// Create a GpuIpcMem instance from a GpuIpcMemHandle.
+  /// @param handle The handle to import.
+  /// @return A shared_ptr to the created GpuIpcMem instance.
+  static std::shared_ptr<GpuIpcMem> create(const GpuIpcMemHandle &handle);
 
   ~GpuIpcMem();
 
@@ -99,6 +102,8 @@ class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
   std::shared_ptr<void> mapMulticast(int numDevices, size_t mcOffset, CUdeviceptr bufferAddr, size_t bufferSize);
 
  private:
+  GpuIpcMem(const GpuIpcMemHandle &handle);
+
   GpuIpcMemHandle handle_;
   CUmemGenericAllocationHandle allocHandle_;
   int multicastAddedDeviceId_;
