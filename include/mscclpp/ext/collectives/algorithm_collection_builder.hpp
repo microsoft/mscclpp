@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #ifndef MSCCLPP_EXT_COLLECTIVES_ALGORITHM_COLLECTION_BUILDER_HPP_
 #define MSCCLPP_EXT_COLLECTIVES_ALGORITHM_COLLECTION_BUILDER_HPP_
 

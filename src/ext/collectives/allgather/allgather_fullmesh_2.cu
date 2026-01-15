@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "allgather/allgather_fullmesh2.hpp"
+#include "allgather/allgather_fullmesh_2.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
 
@@ -154,9 +154,9 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<Algorit
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     WARN("AllgatherFullmesh2 failed with error %d", err);
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherFullmesh2::initAllgatherContext(

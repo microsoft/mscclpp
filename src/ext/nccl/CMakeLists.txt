@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cu *.cc *.cpp)
 file(GLOB_RECURSE AUDIT_SHIM CONFIGURE_DEPENDS audit-shim/*)

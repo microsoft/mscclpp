@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef EXT_COLLECTIVE_UTILS_HPP
-#define EXT_COLLECTIVE_UTILS_HPP
+#ifndef MSCCLPP_EXT_COLLECTIVE_UTILS_HPP_
+#define MSCCLPP_EXT_COLLECTIVE_UTILS_HPP_
 
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
@@ -63,4 +63,4 @@ std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHan
 
 }  // namespace collective
 }  // namespace mscclpp
-#endif  // EXT_COLLECTIVE_UTILS_HPP
+#endif  // MSCCLPP_EXT_COLLECTIVE_UTILS_HPP_

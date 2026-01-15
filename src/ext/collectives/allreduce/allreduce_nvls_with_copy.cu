@@ -148,7 +148,7 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<Algo
   AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -160,9 +160,9 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<Algo
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 AlgorithmCtxKey AllreduceNvlsWithCopy::generateAllreduceContextKey(const void*, void*, size_t, DataType) {

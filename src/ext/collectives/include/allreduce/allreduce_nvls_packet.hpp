@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_ALLREDUCE_NVLS_PACKET_HPP_
 #define MSCCLPP_ALLREDUCE_NVLS_PACKET_HPP_

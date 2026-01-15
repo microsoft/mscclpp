@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_ALGORITHM_HPP_
 #define MSCCLPP_ALGORITHM_HPP_
@@ -18,26 +18,26 @@ namespace mscclpp {
 constexpr char ALGORITHM_NATIVE_CAPSULE_NAME[] = "mscclpp::AlgorithmPtr";
 
 enum class CollectiveBufferMode {
-  ANY = 0,
-  IN_PLACE,
-  OUT_OF_PLACE,
+  Any = 0,
+  InPlace,
+  OutOfPlace,
 };
 
 enum class AlgorithmType {
-  NATIVE = 0,
+  Native = 0,
   DSL,
 };
 
 enum class CommResult {
-  commSuccess = 0,
-  commUnhandledCudaError = 1,
-  commSystemError = 2,
-  commInternalError = 3,
-  commInvalidArgument = 4,
-  commInvalidUsage = 5,
-  commRemoteError = 6,
-  commInProgress = 7,
-  commNumResults = 8
+  CommSuccess = 0,
+  CommUnhandledCudaError = 1,
+  CommSystemError = 2,
+  CommInternalError = 3,
+  CommInvalidArgument = 4,
+  CommInvalidUsage = 5,
+  CommRemoteError = 6,
+  CommInProgress = 7,
+  CommNumResults = 8
 };
 
 enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };
@@ -77,7 +77,7 @@ class Algorithm {
   virtual const CollectiveBufferMode& bufferMode() const = 0;
 
   /// Get the type of this algorithm.
-  /// @return AlgorithmType::NATIVE or AlgorithmType::DSL.
+  /// @return AlgorithmType::Native or AlgorithmType::DSL.
   virtual AlgorithmType type() const = 0;
 
   /// Get the execution constraints for this algorithm.
@@ -244,7 +244,7 @@ class NativeAlgorithm : public Algorithm {
   /// @param constraint Execution constraints (worldSize, nRanksPerNode).
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
-                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
+                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::Any,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
@@ -256,7 +256,7 @@ class NativeAlgorithm : public Algorithm {
   const std::pair<size_t, size_t>& messageRange() const override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
-  AlgorithmType type() const override { return AlgorithmType::NATIVE; }
+  AlgorithmType type() const override { return AlgorithmType::Native; }
   Constraint constraint() const override;
   void reset() override;
 

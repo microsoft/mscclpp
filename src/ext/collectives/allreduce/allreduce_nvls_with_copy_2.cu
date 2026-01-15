@@ -3,7 +3,7 @@
 
 #include <mscclpp/algorithm.hpp>
 
-#include "allreduce/allreduce_nvls_with_copy2.hpp"
+#include "allreduce/allreduce_nvls_with_copy_2.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
@@ -185,7 +185,7 @@ CommResult AllreduceNvlsWithCopy2::allreduceKernelFunc(const std::shared_ptr<Alg
   AllreduceFunc allreduce = dispatch<NvlsWithCopy2Adapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -197,9 +197,9 @@ CommResult AllreduceNvlsWithCopy2::allreduceKernelFunc(const std::shared_ptr<Alg
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 AlgorithmCtxKey AllreduceNvlsWithCopy2::generateAllreduceContextKey(const void*, void*, size_t, DataType) {

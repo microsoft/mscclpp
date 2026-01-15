@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
@@ -9,16 +9,16 @@
 namespace mscclpp {
 
 CollectiveBufferMode CollectiveRequest::bufferMode() const {
-  if (inputBuffer == outputBuffer) return CollectiveBufferMode::IN_PLACE;
+  if (inputBuffer == outputBuffer) return CollectiveBufferMode::InPlace;
   if (collective == "allgather") {
     size_t rankOffset = rank * messageSize;
     const char* expectedInput = static_cast<const char*>(outputBuffer) + rankOffset;
     if (static_cast<const void*>(expectedInput) == inputBuffer) {
-      return CollectiveBufferMode::IN_PLACE;
+      return CollectiveBufferMode::InPlace;
     }
-    return CollectiveBufferMode::OUT_OF_PLACE;
+    return CollectiveBufferMode::OutOfPlace;
   }
-  return CollectiveBufferMode::OUT_OF_PLACE;
+  return CollectiveBufferMode::OutOfPlace;
 }
 
 NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
@@ -147,7 +147,7 @@ const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { re
 const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
   // TODO: need to fix
   static CollectiveBufferMode mode =
-      plan_.isInPlace() ? CollectiveBufferMode::IN_PLACE : CollectiveBufferMode::OUT_OF_PLACE;
+      plan_.isInPlace() ? CollectiveBufferMode::InPlace : CollectiveBufferMode::OutOfPlace;
   return mode;
 }
 
@@ -188,9 +188,9 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
       break;
     default:
       WARN(ALGO, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
-      return CommResult::commInvalidArgument;
+      return CommResult::CommInvalidArgument;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }

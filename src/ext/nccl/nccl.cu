@@ -217,7 +217,7 @@ static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, cons
   bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
   bool collectiveMatch = algo->collective() == request.collective;
   bool bufferModeMatch =
-      algo->bufferMode() == mscclpp::CollectiveBufferMode::ANY || request.bufferMode() == algo->bufferMode();
+      algo->bufferMode() == mscclpp::CollectiveBufferMode::Any || request.bufferMode() == algo->bufferMode();
   size_t effectiveSize =
       (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
   bool minSizeMatch = effectiveSize >= algo->messageRange().first;

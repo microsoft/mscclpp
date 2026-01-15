@@ -1,14 +1,17 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 #include <filesystem>
 #include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 
 #include "allgather/allgather_fullmesh.hpp"
-#include "allgather/allgather_fullmesh2.hpp"
+#include "allgather/allgather_fullmesh_2.hpp"
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/allreduce_fullmesh.hpp"
 #include "allreduce/allreduce_nvls.hpp"
 #include "allreduce/allreduce_nvls_packet.hpp"
 #include "allreduce/allreduce_nvls_with_copy.hpp"
-#include "allreduce/allreduce_nvls_with_copy2.hpp"
+#include "allreduce/allreduce_nvls_with_copy_2.hpp"
 #include "allreduce/allreduce_packet.hpp"
 #include "logger.hpp"
 
