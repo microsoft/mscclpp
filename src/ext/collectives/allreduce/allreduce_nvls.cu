@@ -94,7 +94,7 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::Alg
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
@@ -117,9 +117,9 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::Alg
                 inputSize, stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvls failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* input, void* output, size_t,

@@ -138,12 +138,12 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclp
   }
   if (blockAndThreadNum.first > maxBlockNum_) {
     WARN("Block number %d exceeds the maximum limit %d", blockAndThreadNum.first, maxBlockNum_);
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   void* flags = this->flags_.get();
   if (blockAndThreadNum.first == 4) {
@@ -157,9 +157,9 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclp
                 0, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {

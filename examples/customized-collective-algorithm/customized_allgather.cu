@@ -133,9 +133,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
     allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputSize);
     if (cudaGetLastError() == cudaSuccess) {
-      return mscclpp::CommResult::commSuccess;
+      return mscclpp::CommResult::CommSuccess;
     }
-    return mscclpp::CommResult::commInternalError;
+    return mscclpp::CommResult::CommInternalError;
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,

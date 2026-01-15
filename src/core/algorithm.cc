@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
@@ -188,9 +188,9 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
       break;
     default:
       WARN(ALGO, "Unsupported data type: ", static_cast<int>(dtype), " in DslAlgorithm");
-      return CommResult::commInvalidArgument;
+      return CommResult::CommInvalidArgument;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }

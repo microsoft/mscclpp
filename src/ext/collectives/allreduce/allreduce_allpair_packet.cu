@@ -146,7 +146,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
   AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
@@ -154,9 +154,9 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
                 stream, flags, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 std::shared_ptr<AlgorithmCtx> AllreduceAllpairPacket::initAllreduceContext(std::shared_ptr<Communicator> comm,

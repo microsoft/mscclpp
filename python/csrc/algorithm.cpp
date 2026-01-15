@@ -24,15 +24,15 @@ void register_algorithm(nb::module_& m) {
   nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::NATIVE).value("DSL", AlgorithmType::DSL);
 
   nb::enum_<CommResult>(m, "CommResult")
-      .value("COMM_SUCCESS", CommResult::commSuccess)
-      .value("COMM_UNHANDLED_CUDA_ERROR", CommResult::commUnhandledCudaError)
-      .value("COMM_SYSTEM_ERROR", CommResult::commSystemError)
-      .value("COMM_INTERNAL_ERROR", CommResult::commInternalError)
-      .value("COMM_INVALID_ARGUMENT", CommResult::commInvalidArgument)
-      .value("COMM_INVALID_USAGE", CommResult::commInvalidUsage)
-      .value("COMM_REMOTE_ERROR", CommResult::commRemoteError)
-      .value("COMM_IN_PROGRESS", CommResult::commInProgress)
-      .value("COMM_NUM_RESULTS", CommResult::commNumResults);
+      .value("COMM_SUCCESS", CommResult::CommSuccess)
+      .value("COMM_UNHANDLED_CUDA_ERROR", CommResult::CommUnhandledCudaError)
+      .value("COMM_SYSTEM_ERROR", CommResult::CommSystemError)
+      .value("COMM_INTERNAL_ERROR", CommResult::CommInternalError)
+      .value("COMM_INVALID_ARGUMENT", CommResult::CommInvalidArgument)
+      .value("COMM_INVALID_USAGE", CommResult::CommInvalidUsage)
+      .value("COMM_REMOTE_ERROR", CommResult::CommRemoteError)
+      .value("COMM_IN_PROGRESS", CommResult::CommInProgress)
+      .value("COMM_NUM_RESULTS", CommResult::CommNumResults);
 
   nb::enum_<ReduceOp>(m, "ReduceOp")
       .value("SUM", ReduceOp::SUM)

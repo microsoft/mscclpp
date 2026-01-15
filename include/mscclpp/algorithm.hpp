@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_ALGORITHM_HPP_
 #define MSCCLPP_ALGORITHM_HPP_
@@ -29,15 +29,15 @@ enum class AlgorithmType {
 };
 
 enum class CommResult {
-  commSuccess = 0,
-  commUnhandledCudaError = 1,
-  commSystemError = 2,
-  commInternalError = 3,
-  commInvalidArgument = 4,
-  commInvalidUsage = 5,
-  commRemoteError = 6,
-  commInProgress = 7,
-  commNumResults = 8
+  CommSuccess = 0,
+  CommUnhandledCudaError = 1,
+  CommSystemError = 2,
+  CommInternalError = 3,
+  CommInvalidArgument = 4,
+  CommInvalidUsage = 5,
+  CommRemoteError = 6,
+  CommInProgress = 7,
+  CommNumResults = 8
 };
 
 enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };

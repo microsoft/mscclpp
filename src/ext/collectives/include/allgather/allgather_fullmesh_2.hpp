@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#ifndef MSCCLPP_EXT_ALLGATHER_FULLMESH_2_HPP_
+#define MSCCLPP_EXT_ALLGATHER_FULLMESH_2_HPP_
+
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
@@ -29,3 +32,5 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
 
 }  // namespace collective
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EXT_ALLGATHER_FULLMESH_2_HPP_

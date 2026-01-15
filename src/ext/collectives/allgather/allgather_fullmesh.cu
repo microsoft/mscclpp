@@ -117,7 +117,7 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<Algorith
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first > 56) {
     WARN("AllgatherFullmesh: number of blocks exceeds maximum supported blocks, which is 56");
-    return mscclpp::CommResult::commInvalidArgument;
+    return mscclpp::CommResult::CommInvalidArgument;
   }
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
     numBlocksAndThreads = {56, 1024};
@@ -134,9 +134,9 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<Algorith
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
     WARN("AllgatherFullmesh failed with error %d", err);
-    return mscclpp::CommResult::commInternalError;
+    return mscclpp::CommResult::CommInternalError;
   }
-  return mscclpp::CommResult::commSuccess;
+  return mscclpp::CommResult::CommSuccess;
 }
 
 std::shared_ptr<AlgorithmCtx> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm,
