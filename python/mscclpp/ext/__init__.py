@@ -1,6 +1,6 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-from .algorithm_builder import *
+from .algorithm_collection_builder import *
 
-__all__ = algorithm_builder.__all__
+__all__ = algorithm_collection_builder.__all__
