@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT license.
+
 // Version selector for sphinx-multiversion documentation
 (function() {
     'use strict';
@@ -21,6 +24,7 @@
     function detectCurrentVersion() {
         const path = window.location.pathname;
         // Check for version tags first
+        // Match version tags in the format v0.0.0 within the URL path
         const match = path.match(/\/(v\d+\.\d+\.\d+)\//);
         if (match) {
             return match[1];
@@ -47,7 +51,6 @@
     
     function createVersionSelector() {
         const currentVersion = detectCurrentVersion();
-        const basePath = getBasePath();
         const searchDiv = document.querySelector('.wy-side-nav-search');
         
         if (!searchDiv) return;

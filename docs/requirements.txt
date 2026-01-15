@@ -4,5 +4,5 @@ myst_parser==4.0.1
 sphinx_rtd_theme
 sphinxcontrib-mermaid
 sphinx-autodoc-typehints
-sphinx-multiversion
+sphinx-multiversion==0.2.4
 setuptools_scm
