@@ -31,10 +31,11 @@
         }
         // If at root (no version in path), it's main
         return 'main';
-    }    function getBasePath() {
+    }
+
+    function getBasePath() {
         const path = window.location.pathname;
         // Find how many levels deep we are from the version directory
-        const match = path.match(/\/(v\d+\.\d+\.\d+|)\/(.*)/);
         if (match) {
             const depth = match[2].split('/').filter(p => p && p !== 'index.html').length;
             return '../'.repeat(depth + 1);
