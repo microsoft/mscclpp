@@ -53,7 +53,7 @@ class NvlsConnection::Impl : public std::enable_shared_from_this<NvlsConnection:
   std::list<std::pair<size_t, size_t>> freeRanges_;
 };
 
-NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
+NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) : rootFd_(-1), mcFileDesc_(-1) {
   minMcGran_ = 0;
   mcGran_ = 0;
   mcProp_ = {};
@@ -67,7 +67,6 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
   INFO(MSCCLPP_COLL, "NVLS multicast properties: size=%ld, numDevices=%d, handleTypes=%lld", mcProp_.size,
        mcProp_.numDevices, mcProp_.handleTypes);
   MSCCLPP_CUTHROW(cuMulticastCreate(&mcHandle_, &mcProp_));
-  mcFileDesc_ = 0;
   MSCCLPP_CUTHROW(
       cuMemExportToShareableHandle(&mcFileDesc_, mcHandle_, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0 /*flags*/));
   freeRanges_.emplace_back(0, bufferSize_);
@@ -80,7 +79,7 @@ NvlsConnection::Impl::Impl(size_t bufferSize, int numDevices) {
        mcProp_.size, minMcGran_, mcGran_, bufferSize, bufferSize_);
 }
 
-NvlsConnection::Impl::Impl(const std::vector<char>& data) {
+NvlsConnection::Impl::Impl(const std::vector<char>& data) : rootFd_(-1), mcFileDesc_(-1) {
   auto it = data.begin();
   std::copy_n(it, sizeof(this->mcHandle_), reinterpret_cast<char*>(&this->mcHandle_));
   it += sizeof(this->mcHandle_);
@@ -98,7 +97,7 @@ NvlsConnection::Impl::Impl(const std::vector<char>& data) {
   int mcRootFileDescFd = socketClient_.requestFd(UnixSocketServer::generateSocketPath(this->rootPid_), rootFd_);
   MSCCLPP_CUTHROW(cuMemImportFromShareableHandle(&mcHandle_, reinterpret_cast<void*>(mcRootFileDescFd),
                                                  CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR));
-  close(mcRootFileDescFd);
+  ::close(mcRootFileDescFd);
 
   INFO(MSCCLPP_COLL, "NVLS handle was imported from root");
 }
@@ -107,8 +106,7 @@ NvlsConnection::Impl::~Impl() {
   // we don't need to free multicast handle object according to NCCL.
   if (mcFileDesc_ >= 0) {
     UnixSocketServer::instance().unregisterFd(rootFd_);
-    close(mcFileDesc_);
-    mcFileDesc_ = -1;
+    ::close(mcFileDesc_);
   }
 }
 

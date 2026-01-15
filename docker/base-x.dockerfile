@@ -24,18 +24,19 @@ RUN apt-get update && \
         python3-pip \
         python3-setuptools \
         python3-wheel \
+        python3-venv \
         sudo \
         wget
 
 # Install OFED
-ARG OFED_VERSION=5.2-2.2.3.0
+ARG OFED_VERSION=24.10-3.2.5.0
 RUN cd /tmp && \
-    ARCH=$(uname -m) && \
+    OS_ARCH=$(uname -m) && \
     OS_VERSION=$(lsb_release -rs) && \
     OS_VERSION=ubuntu${OS_VERSION} && \
-    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}.tgz && \
-    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}.tgz && \
-    MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${ARCH}/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
+    wget -q https://content.mellanox.com/ofed/MLNX_OFED-${OFED_VERSION}/MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${OS_ARCH}.tgz && \
+    tar xzf MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${OS_ARCH}.tgz && \
+    MLNX_OFED_LINUX-${OFED_VERSION}-${OS_VERSION}-${OS_ARCH}/mlnxofedinstall --user-space-only --without-fw-update --without-ucx-cuda --force --all && \
     rm -rf /tmp/MLNX_OFED_LINUX-${OFED_VERSION}*
 
 # Install OpenMPI (should be done after the OFED installation) & clean apt cache
