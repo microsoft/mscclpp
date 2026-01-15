@@ -76,7 +76,7 @@ void register_core(nb::module_& m) {
       .def("__setstate__",
            [](UniqueId& self, nb::bytes b) {
              if (nb::len(b) != UniqueIdBytes) throw std::runtime_error("Invalid UniqueId byte size");
-             std::memcpy(self.data(), b.c_str(), UniqueIdBytes);
+             ::memcpy(self.data(), b.c_str(), UniqueIdBytes);
            })
       .def("__getstate__",
            [](const UniqueId& self) { return nb::bytes(reinterpret_cast<const char*>(self.data()), UniqueIdBytes); });
