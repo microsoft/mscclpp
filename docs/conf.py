@@ -87,15 +87,35 @@ html_js_files = [
 ]
 
 
-# Custom setup function to copy version-selector.js to root build directory
 def setup(app):
+    """Set up custom Sphinx build hooks for sphinx-multiversion support.
+
+    This function registers a build-finished event handler that copies the
+    version-selector.js file to a shared location accessible by all versioned
+    documentation builds.
+
+    Args:
+        app: The Sphinx application instance.
+    """
     import shutil
     from pathlib import Path
 
     def copy_version_selector(app, exception):
+        """Copy version-selector.js to the root build directory after a successful build.
+
+        When using sphinx-multiversion, each version's documentation is built into
+        its own subdirectory (e.g., _build/html/v0.8.0/). The
+        version selector JavaScript needs to be available at the root _static
+        directory (_build/html/_static/) so it can be shared across all versions
+        and properly navigate between different documentation versions.
+
+        Args:
+            app: The Sphinx application instance.
+            exception: Exception raised during build, or None if build succeeded.
+        """
         if exception is None:  # Only copy if build succeeded
             source = Path(app.srcdir) / "_static" / "version-selector.js"
-            # Copy to root build directory
+            # Copy to root build directory for sphinx-multiversion compatibility
             dest_root = Path(app.outdir).parent / "_static"
             dest_root.mkdir(parents=True, exist_ok=True)
             if source.exists():
