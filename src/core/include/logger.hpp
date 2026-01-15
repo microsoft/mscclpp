@@ -73,6 +73,7 @@ constexpr std::string_view logSubsysToString(LogSubsys subsys) {
     case LogSubsys::COUNT:
       // COUNT is only for counting the number of LogSubsys types and should not be used for logging
       // Fall through to default
+      [[fallthrough]];
     default:
       return "UNKNOWN";
   }
