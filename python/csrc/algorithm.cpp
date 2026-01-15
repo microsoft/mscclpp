@@ -17,11 +17,11 @@ using namespace mscclpp;
 
 void register_algorithm(nb::module_& m) {
   nb::enum_<CollectiveBufferMode>(m, "CollectiveBufferMode")
-      .value("ANY", CollectiveBufferMode::ANY)
-      .value("IN_PLACE", CollectiveBufferMode::IN_PLACE)
-      .value("OUT_OF_PLACE", CollectiveBufferMode::OUT_OF_PLACE);
+      .value("ANY", CollectiveBufferMode::Any)
+      .value("IN_PLACE", CollectiveBufferMode::InPlace)
+      .value("OUT_OF_PLACE", CollectiveBufferMode::OutOfPlace);
 
-  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::NATIVE).value("DSL", AlgorithmType::DSL);
+  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::Native).value("DSL", AlgorithmType::DSL);
 
   nb::enum_<CommResult>(m, "CommResult")
       .value("COMM_SUCCESS", CommResult::CommSuccess)
