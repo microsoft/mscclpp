@@ -83,6 +83,7 @@ mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
 html_js_files = [
+    "versions.js",  # Auto-generated from git tags - must load before version-selector.js
     "version-selector.js",
 ]
 
@@ -91,8 +92,8 @@ def setup(app):
     """Set up custom Sphinx build hooks for sphinx-multiversion support.
 
     This function registers a build-finished event handler that copies the
-    version-selector.js file to a shared location accessible by all versioned
-    documentation builds.
+    version selector JavaScript files to a shared location accessible by all
+    versioned documentation builds.
 
     Args:
         app: The Sphinx application instance.
@@ -100,25 +101,28 @@ def setup(app):
     import shutil
     from pathlib import Path
 
-    def copy_version_selector(app, exception):
-        """Copy version-selector.js to the root build directory after a successful build.
+    def copy_version_files(app, exception):
+        """Copy version JS files to the root build directory after a successful build.
 
         When using sphinx-multiversion, each version's documentation is built into
-        its own subdirectory (e.g., _build/html/v0.8.0/). The
-        version selector JavaScript needs to be available at the root _static
-        directory (_build/html/_static/) so it can be shared across all versions
-        and properly navigate between different documentation versions.
+        its own subdirectory (e.g., _build/html/v0.8.0/). The version selector
+        JavaScript files need to be available at the root _static directory
+        (_build/html/_static/) so they can be shared across all versions and
+        properly navigate between different documentation versions.
 
         Args:
             app: The Sphinx application instance.
             exception: Exception raised during build, or None if build succeeded.
         """
         if exception is None:  # Only copy if build succeeded
-            source = Path(app.srcdir) / "_static" / "version-selector.js"
-            # Copy to root build directory for sphinx-multiversion compatibility
+            source_static = Path(app.srcdir) / "_static"
             dest_root = Path(app.outdir).parent / "_static"
             dest_root.mkdir(parents=True, exist_ok=True)
-            if source.exists():
-                shutil.copy2(source, dest_root / "version-selector.js")
 
-    app.connect("build-finished", copy_version_selector)
+            # Copy both versions.js and version-selector.js
+            for filename in ["versions.js", "version-selector.js"]:
+                source = source_static / filename
+                if source.exists():
+                    shutil.copy2(source, dest_root / filename)
+
+    app.connect("build-finished", copy_version_files)

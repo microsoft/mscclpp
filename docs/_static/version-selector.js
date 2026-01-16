@@ -1,24 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-// Version selector for sphinx-multiversion documentation
+/**
+ * Version selector for sphinx-multiversion documentation.
+ *
+ * The DEFINED_VERSIONS array is auto-generated from git tags by generate_versions.py
+ * which runs automatically during 'make html'. This ensures the version list stays
+ * in sync with sphinx-multiversion without manual updates.
+ *
+ * The versions.js file (loaded before this script) defines DEFINED_VERSIONS.
+ */
 (function() {
     'use strict';
-    
-    // Configuration: list all available versions
-    // This should be updated when new versions are released
-    const versions = [
-        { name: 'main (dev)', path: '', version: 'main' },
-        { name: 'v0.8.0 (latest)', path: 'v0.8.0', version: 'v0.8.0' },
-        { name: 'v0.7.0', path: 'v0.7.0', version: 'v0.7.0' },
-        { name: 'v0.6.0', path: 'v0.6.0', version: 'v0.6.0' },
-        { name: 'v0.5.2', path: 'v0.5.2', version: 'v0.5.2' },
-        { name: 'v0.5.1', path: 'v0.5.1', version: 'v0.5.1' },
-        { name: 'v0.5.0', path: 'v0.5.0', version: 'v0.5.0' },
-        { name: 'v0.4.3', path: 'v0.4.3', version: 'v0.4.3' },
-        { name: 'v0.4.2', path: 'v0.4.2', version: 'v0.4.2' },
-        { name: 'v0.4.1', path: 'v0.4.1', version: 'v0.4.1' },
-        { name: 'v0.4.0', path: 'v0.4.0', version: 'v0.4.0' }
+
+    // DEFINED_VERSIONS is defined in versions.js (auto-generated from git tags)
+    // Fallback to main only if versions.js failed to load
+    const versions = (typeof DEFINED_VERSIONS !== 'undefined') ? DEFINED_VERSIONS : [
+        { name: 'main (dev)', path: '', version: 'main' }
     ];
     
     function detectCurrentVersion() {
