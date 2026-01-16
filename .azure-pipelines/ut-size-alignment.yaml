@@ -1,0 +1,42 @@
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
+
+jobs:
+- job: BenchmarkTestH100
+  displayName: Benchmark Test H100
+  pool:
+    name: msccl-ci-h100
+  container:
+    image: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  steps:
+  - template: templates/ut-size-alignment.yaml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
+      sshKeySecureFile: mscclpp.pem
+      pytorchImage:     mcr.microsoft.com/mirror/nvcr/nvidia/pytorch:25.03-py3

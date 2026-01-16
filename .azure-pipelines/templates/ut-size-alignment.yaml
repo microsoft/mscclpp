@@ -1,0 +1,151 @@
+# .azure-pipelines/templates/ut-size-alignment.yaml
+# ----------------------------------------
+# A step-template that runs unit tests to track the input size alignment using PyTorch and MSCCLPP.
+#
+# Parameters:
+#   subscription     – Azure subscription to use for VMSS start/stop
+#   vmssName         – Name of the VMSS to use
+#   sshKeySecureFile – the secureFile name for your SSH key
+#   pytorchImage     – PyTorch Docker image to use for unit tests
+
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: sshKeySecureFile
+  type: string
+- name: pytorchImage
+  type: string
+  default: "mcr.microsoft.com/mirror/nvcr/nvidia/pytorch:25.03-py3"
+
+steps:
+- task: Bash@3
+  name: Build
+  displayName: Build MSCCLPP
+  inputs:
+    targetType: inline
+    script: |
+      mkdir build && cd build
+      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+      make -j
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: InstallPackages
+  displayName: Install Packages
+  inputs:
+    targetType: inline
+    script: |
+      sudo apt-get update -y
+      sudo apt-get install pssh -y
+      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+- task: DownloadSecureFile@1
+  name: SshKeyFile
+  displayName: Download key file
+  inputs:
+    secureFile: ${{ parameters.sshKeySecureFile }}
+
+- task: AzureCLI@2
+  name: StartVMSS
+  displayName: Start VMSS
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss start --name ${{ parameters.vmssName }} --resource-group mscclpp
+
+- task: Bash@3
+  name: DeployBenchmarkEnv
+  displayName: Deploy Benchmark Environment
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      ROOT_DIR=$(System.DefaultWorkingDirectory)
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      
+      # Get the host IP
+      HOST_IP=$(head -1 ${HOSTFILE} | awk '{print $1}')
+      
+      # Pull the PyTorch image on the remote machine
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo docker pull ${{ parameters.pytorchImage }}"
+      
+      # Stop any existing container
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo docker rm -f mscclpp-benchmark || true"
+      
+      # Copy MSCCLPP build to the remote machine
+      scp -i ${KeyFilePath} -o ${SSH_OPTION} -r ${ROOT_DIR}/build ${HOST_IP}:/tmp/mscclpp-build
+      scp -i ${KeyFilePath} -o ${SSH_OPTION} -r ${ROOT_DIR}/test ${HOST_IP}:/tmp/mscclpp-test
+      
+      # Start the PyTorch container with MSCCLPP mounted
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo docker run -d --name mscclpp-benchmark \
+        --gpus all \
+        --ipc=host \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
+        -v /tmp/mscclpp-build:/root/mscclpp/build \
+        -v /tmp/mscclpp-test:/root/mscclpp/test \
+        ${{ parameters.pytorchImage }} \
+        sleep infinity"
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: AllReduceBenchmarkMultipleSizes
+  displayName: Run AllReduce Benchmark Test (Multiple Sizes to test the alignment)
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      HOST_IP=$(head -1 ${HOSTFILE} | awk '{print $1}')
+      
+      : > azureuser@${HOST_IP}
+      tail -f azureuser@${HOST_IP} &
+      CHILD_PID=$!
+      
+      # Run with different element counts
+      for nelem in 10556576  10556587 10556592 10556608 1048576 9999999 12345678; do
+        echo "Running AllReduce benchmark with nelem=${nelem}"
+        ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo docker exec -t mscclpp-benchmark bash -c \" \
+          set -e; \
+          cd /root/mscclpp; \
+          LD_PRELOAD=/root/mscclpp/build/apps/nccl/libmscclpp_nccl.so torchrun --nproc_per_node=8 test/torch/correctness_test.py --collective allreduce --nelem ${nelem} --dtype float\""
+      done
+      
+      kill $CHILD_PID || true
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: Cleanup
+  displayName: Cleanup Benchmark Container
+  condition: always()
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      HOST_IP=$(head -1 ${HOSTFILE} | awk '{print $1}')
+      
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo docker rm -f mscclpp-benchmark || true"
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST_IP} "sudo rm -rf /tmp/mscclpp-build /tmp/mscclpp-test || true"
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: AzureCLI@2
+  name: StopVMSS
+  displayName: Deallocate VMSS
+  condition: always()
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp
