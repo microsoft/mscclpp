@@ -13,6 +13,8 @@
 #include "allreduce/allreduce_nvls_with_copy.hpp"
 #include "allreduce/allreduce_nvls_with_copy_2.hpp"
 #include "allreduce/allreduce_packet.hpp"
+#include "allreduce/allreduce_rsag.hpp"
+#include "allreduce/allreduce_rsag_pipeline.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -76,6 +78,11 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   collection.registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
   auto allreduceFullmesh = std::make_shared<AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
+  auto allreduceRsag = std::make_shared<AllreduceRsAg>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceRsag->collective(), allreduceRsag->name(), allreduceRsag);
+  auto allreduceRsagPipeline = std::make_shared<AllreduceRsAgPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceRsagPipeline->collective(), allreduceRsagPipeline->name(),
+                               allreduceRsagPipeline);
 
   auto allgatherFullmesh = std::make_shared<AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);

@@ -4,7 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
-namespace algorithm {
+namespace collective {
 
 class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
  public:
@@ -34,5 +34,5 @@ class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> baseMemoryChannelHandles_;
   std::shared_ptr<void*> remoteMemorieHandles_;
 };
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

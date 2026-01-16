@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "algorithms/allreduce/allreduce_rsag.hpp"
-#include "algorithms/allreduce/common.hpp"
-#include "algorithms/utils.hpp"
+#include "allreduce/allreduce_rsag.hpp"
+#include "allreduce/common.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
-
+namespace collective {
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAg(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
@@ -152,11 +151,11 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   if (inputSize > this->scratchBufferSize_) {
     WARN("Input size %zu exceeds scratch buffer size %zu", inputSize, this->scratchBufferSize_);
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error =
@@ -165,9 +164,9 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx
                 ctx->workSize, inputSize, stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 AlgorithmCtxKey AllreduceRsAg::generateAllreduceContextKey(const void*, void*, size_t, DataType) {
@@ -204,5 +203,5 @@ std::shared_ptr<Algorithm> AllreduceRsAg::build() {
         return self->generateAllreduceContextKey(input, output, inputSize, dtype);
       });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp

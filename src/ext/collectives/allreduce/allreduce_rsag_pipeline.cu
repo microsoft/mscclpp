@@ -1,14 +1,13 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "algorithms/allreduce/allreduce_rsag_pipeline.hpp"
-#include "algorithms/allreduce/common.hpp"
-#include "algorithms/utils.hpp"
+#include "allreduce/allreduce_rsag_pipeline.hpp"
+#include "allreduce/common.hpp"
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
-namespace algorithm {
-
+namespace collective {
 constexpr int MAX_NBLOCKS_FOR_PUT = 32;
 constexpr int MAX_NBLOCKS_FOR_RECV = 32;
 constexpr int MAX_NBLOCKS_FOR_REDUCE = 64;
@@ -249,7 +248,7 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<Algo
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));
-    return CommResult::commInvalidArgument;
+    return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
@@ -258,9 +257,9 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<Algo
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
-    return CommResult::commUnhandledCudaError;
+    return CommResult::CommUnhandledCudaError;
   }
-  return CommResult::commSuccess;
+  return CommResult::CommSuccess;
 }
 
 AlgorithmCtxKey AllreduceRsAgPipeline::generateAllreduceContextKey(const void*, void*, size_t, DataType) {
@@ -297,5 +296,5 @@ std::shared_ptr<Algorithm> AllreduceRsAgPipeline::build() {
         return self->generateAllreduceContextKey(input, output, inputSize, dtype);
       });
 }
-}  // namespace algorithm
+}  // namespace collective
 }  // namespace mscclpp
