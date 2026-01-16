@@ -10,14 +10,29 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace mscclpp {
 namespace test {
+
+// Forward declarations
+class Communicator;
+class Connection;
+
+// Test context structure containing MPI and MSCCLPP objects
+struct TestContext {
+  int rank;
+  int size;
+  int local_rank;
+  std::shared_ptr<mscclpp::Communicator> communicator;
+  std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
+};
 
 // Test result structure
 struct TestResult {
@@ -33,10 +48,23 @@ struct TestResult {
 // Simple utility functions for testing
 namespace utils {
 
+// Test function variant type
+using TestFunction = std::variant<std::function<void(int, int, int)>,      // Legacy API
+                                  std::function<void(const TestContext&)>  // New API
+                                  >;
+
 // Test execution utilities
 int runMultipleTests(
     int argc, char* argv[],
     const std::vector<std::tuple<std::string, std::string, std::function<void(int, int, int)>>>& tests);
+
+int runMultipleTests(
+    int argc, char* argv[],
+    const std::vector<std::tuple<std::string, std::string, std::function<void(const TestContext&)>>>& tests);
+
+// Unified test execution API
+int runMultipleTests(int argc, char* argv[],
+                     const std::vector<std::tuple<std::string, std::string, TestFunction>>& tests);
 
 // MPI management
 void initializeMPI(int argc, char* argv[]);
