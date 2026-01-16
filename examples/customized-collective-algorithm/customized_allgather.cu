@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <mscclpp/nccl.h>
+#include <mscclpp/ext/nccl/nccl.h>
 #include <sys/wait.h>
 
 #include <filesystem>
@@ -10,6 +10,7 @@
 #include <memory>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/ext/collectives/algorithm_collection_builder.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <unordered_map>
 
@@ -132,9 +133,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
     allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputSize);
     if (cudaGetLastError() == cudaSuccess) {
-      return mscclpp::CommResult::commSuccess;
+      return mscclpp::CommResult::CommSuccess;
     }
-    return mscclpp::CommResult::commInternalError;
+    return mscclpp::CommResult::CommInternalError;
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
@@ -193,7 +194,7 @@ void worker(int rank, int worldSize, ncclUniqueId id) {
 
   // register algorithm
   auto allgatherAlgoBuilder = std::make_shared<AllgatherAlgoBuilder>();
-  auto algoCollectionBuilder = mscclpp::AlgorithmCollectionBuilder::getInstance();
+  auto algoCollectionBuilder = mscclpp::collective::AlgorithmCollectionBuilder::getInstance();
   algoCollectionBuilder->addAlgorithmBuilder(allgatherAlgoBuilder);
   algoCollectionBuilder->setAlgorithmSelector(
       [](const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&

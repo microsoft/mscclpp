@@ -309,7 +309,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
     // rank=0: 0, 1, 0, 1, ...
     // rank=1: 1, 0, 1, 0, ...
     if ((rank ^ (i & 1)) == 0) {
-      if (CheckCorrectness) {
+      if constexpr (CheckCorrectness) {
         // If each thread writes 8 bytes at once, we don't need a barrier before copyToPackets().
         for (int j = threadId; j < nPkt; j += numThreads) {
           buffPtr[2 * j] = putOffset + i + 2 * j;
@@ -330,7 +330,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
       }
     } else {
       mscclpp::copyFromPackets(buff, getPktBuf, nElem * sizeof(int), threadId, numThreads, flag);
-      if (CheckCorrectness) {
+      if constexpr (CheckCorrectness) {
         // If each thread reads 8 bytes at once, we don't need a barrier after copyFromPackets().
         // __syncthreads();
         for (int j = threadId; j < nPkt; j += numThreads) {

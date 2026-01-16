@@ -5,6 +5,8 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
+- name: gpuArch
+  type: string
 
 
 steps:
@@ -61,7 +63,7 @@ steps:
         set -e;                                                       \
         cd /root/mscclpp;                                             \
         mkdir -p build && cd build;                                   \
-        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_NPKIT_FLAGS=\"-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT\" ..; \
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_NPKIT_FLAGS=\"-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT\" ..; \
         make -j"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
@@ -85,8 +87,8 @@ steps:
         rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
         export PATH=/usr/local/mpi/bin:\$PATH; \
         export MSCCLPP_NPKIT_DUMP_DIR=./npkit_dump;    \
-        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests --gtest_filter=\"ExecutorTest.TwoNodesAllreduce\"; \
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --gtest_filter=\"ExecutorTest.TwoNodesAllreduce\"; \
         python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output; \
         grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;    \
         grep -q NPKIT_EVENT_EXECUTOR_SIGNAL_ENTRY ./npkit_output/npkit_event_trace.json;  \
@@ -114,7 +116,7 @@ steps:
         rm -rf ./npkit_dump && mkdir ./npkit_dump && rm -rf ./npkit_output && mkdir ./npkit_output; \
         export PATH=/usr/local/mpi/bin:\$PATH; \
         export MSCCLPP_NPKIT_DUMP_DIR=./npkit_dump;    \
-        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x -k 'test_executor[allreduce.json'; \
         python3 ./tools/npkit/npkit_trace_generator.py --npkit_dump_dir=./npkit_dump --npkit_event_header_path=./include/mscclpp/npkit/npkit_event.hpp --output_dir=./npkit_output; \
         grep -q NPKIT_EVENT_EXECUTOR_INIT_ENTRY ./npkit_output/npkit_event_trace.json;    \

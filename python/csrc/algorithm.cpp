@@ -17,22 +17,22 @@ using namespace mscclpp;
 
 void register_algorithm(nb::module_& m) {
   nb::enum_<CollectiveBufferMode>(m, "CollectiveBufferMode")
-      .value("ANY", CollectiveBufferMode::ANY)
-      .value("IN_PLACE", CollectiveBufferMode::IN_PLACE)
-      .value("OUT_OF_PLACE", CollectiveBufferMode::OUT_OF_PLACE);
+      .value("ANY", CollectiveBufferMode::Any)
+      .value("IN_PLACE", CollectiveBufferMode::InPlace)
+      .value("OUT_OF_PLACE", CollectiveBufferMode::OutOfPlace);
 
-  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::NATIVE).value("DSL", AlgorithmType::DSL);
+  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::Native).value("DSL", AlgorithmType::DSL);
 
   nb::enum_<CommResult>(m, "CommResult")
-      .value("COMM_SUCCESS", CommResult::commSuccess)
-      .value("COMM_UNHANDLED_CUDA_ERROR", CommResult::commUnhandledCudaError)
-      .value("COMM_SYSTEM_ERROR", CommResult::commSystemError)
-      .value("COMM_INTERNAL_ERROR", CommResult::commInternalError)
-      .value("COMM_INVALID_ARGUMENT", CommResult::commInvalidArgument)
-      .value("COMM_INVALID_USAGE", CommResult::commInvalidUsage)
-      .value("COMM_REMOTE_ERROR", CommResult::commRemoteError)
-      .value("COMM_IN_PROGRESS", CommResult::commInProgress)
-      .value("COMM_NUM_RESULTS", CommResult::commNumResults);
+      .value("COMM_SUCCESS", CommResult::CommSuccess)
+      .value("COMM_UNHANDLED_CUDA_ERROR", CommResult::CommUnhandledCudaError)
+      .value("COMM_SYSTEM_ERROR", CommResult::CommSystemError)
+      .value("COMM_INTERNAL_ERROR", CommResult::CommInternalError)
+      .value("COMM_INVALID_ARGUMENT", CommResult::CommInvalidArgument)
+      .value("COMM_INVALID_USAGE", CommResult::CommInvalidUsage)
+      .value("COMM_REMOTE_ERROR", CommResult::CommRemoteError)
+      .value("COMM_IN_PROGRESS", CommResult::CommInProgress)
+      .value("COMM_NUM_RESULTS", CommResult::CommNumResults);
 
   nb::enum_<ReduceOp>(m, "ReduceOp")
       .value("SUM", ReduceOp::SUM)
@@ -90,23 +90,6 @@ void register_algorithm(nb::module_& m) {
            nb::arg("id"), nb::arg("plan"), nb::arg("tags") = std::unordered_map<std::string, uint64_t>(),
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
-
-  nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
-      .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
-      .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))
-      .def(
-          "add_dsl_algorithm_builder",
-          [](AlgorithmCollectionBuilder& self, std::shared_ptr<DslAlgorithm> algorithm) {
-            self.addAlgorithmBuilder(algorithm);
-          },
-          nb::arg("algorithm"))
-      .def("set_algorithm_selector", &AlgorithmCollectionBuilder::setAlgorithmSelector, nb::arg("selector"))
-      .def("set_fallback_algorithm_selector", &AlgorithmCollectionBuilder::setFallbackAlgorithmSelector,
-           nb::arg("selector"))
-      .def("build", &AlgorithmCollectionBuilder::build)
-      .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms, nb::arg("scratch_buffer"),
-           nb::arg("scratch_buffer_size"), nb::arg("rank"))
-      .def_static("reset", &AlgorithmCollectionBuilder::reset);
 
   nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),

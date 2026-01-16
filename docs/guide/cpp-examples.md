@@ -19,7 +19,7 @@ $ make -j allgather_test_perf allreduce_test_perf
 For example, the following command runs the `allreduce5` algorithm with 8 GPUs starting from 3MB to 48MB messages, by doubling the message size in between. You can try different algorithms by changing the `-k 5` option to another value (e.g., `-k 3` runs `allreduce3`). Check all algorithms from the code: [allreduce_test.cu](https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allreduce_test.cu) and [allgather_test.cu](https://github.com/microsoft/mscclpp/blob/main/test/mscclpp-test/allgather_test.cu).
 
 ```bash
-$ mpirun --bind-to numa -np 8 ./test/mscclpp-test/allreduce_test_perf -b 3m -e 48m -G 100 -n 100 -w 20 -f 2 -k 5
+$ mpirun --bind-to numa -np 8 ./bin/allreduce_test_perf -b 3m -e 48m -G 100 -n 100 -w 20 -f 2 -k 5
 ```
 
 *NOTE: a few algorithms set a condition on the total data size, such as to be a multiple of 3. If the condition is unmet, the command will throw a regarding error.*
@@ -27,7 +27,7 @@ $ mpirun --bind-to numa -np 8 ./test/mscclpp-test/allreduce_test_perf -b 3m -e 4
 Check the help message for more details.
 
 ```bash
-$ ./test/mscclpp-test/allreduce_test_perf --help
+$ ./bin/allreduce_test_perf --help
 USAGE: allreduce_test_perf
         [-b,--minbytes <min size in bytes>]
         [-e,--maxbytes <max size in bytes>]

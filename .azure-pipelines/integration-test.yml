@@ -33,7 +33,7 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   pool:
     name: msccl-ci
@@ -46,13 +46,14 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '80'
 
 - job: IntegrationTestH100
   displayName: Integration test H100
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   pool:
     name: msccl-ci-h100
@@ -66,3 +67,4 @@ jobs:
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
       perfBaselineFile: test/deploy/perf_ndmv5.jsonl
+      gpuArch:          '90'

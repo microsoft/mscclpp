@@ -5,15 +5,15 @@
 
 import os
 import torch
-import mscclpp.comm as mscclpp_comm
 import mscclpp.utils as mscclpp_utils
 import mscclpp
+import mscclpp.ext
 import netifaces as ni
 import ipaddress
 
 
 def load_algorithms(scratch_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
-    collection_builder = mscclpp.AlgorithmCollectionBuilder()
+    collection_builder = mscclpp.ext.AlgorithmCollectionBuilder()
     return collection_builder.build_default_algorithms(
         scratch_buffer=scratch_buffer.data_ptr(), scratch_buffer_size=scratch_buffer.nbytes, rank=rank
     )
@@ -42,7 +42,7 @@ def to_mscclpp_reduce_op(op: torch.distributed.ReduceOp) -> mscclpp.ReduceOp:
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp.CommGroup):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
@@ -100,7 +100,7 @@ def init_dist() -> CustomizedComm:
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
-    mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
+    mscclpp_group = mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
     return CustomizedComm(mscclpp_group)
 
 

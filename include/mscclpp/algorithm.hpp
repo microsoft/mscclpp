@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_ALGORITHM_HPP_
 #define MSCCLPP_ALGORITHM_HPP_
@@ -9,6 +9,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <mscclpp/utils.hpp>
 #include <vector>
 
 namespace mscclpp {
@@ -17,26 +18,26 @@ namespace mscclpp {
 constexpr char ALGORITHM_NATIVE_CAPSULE_NAME[] = "mscclpp::AlgorithmPtr";
 
 enum class CollectiveBufferMode {
-  ANY = 0,
-  IN_PLACE,
-  OUT_OF_PLACE,
+  Any = 0,
+  InPlace,
+  OutOfPlace,
 };
 
 enum class AlgorithmType {
-  NATIVE = 0,
+  Native = 0,
   DSL,
 };
 
 enum class CommResult {
-  commSuccess = 0,
-  commUnhandledCudaError = 1,
-  commSystemError = 2,
-  commInternalError = 3,
-  commInvalidArgument = 4,
-  commInvalidUsage = 5,
-  commRemoteError = 6,
-  commInProgress = 7,
-  commNumResults = 8
+  CommSuccess = 0,
+  CommUnhandledCudaError = 1,
+  CommSystemError = 2,
+  CommInternalError = 3,
+  CommInvalidArgument = 4,
+  CommInvalidUsage = 5,
+  CommRemoteError = 6,
+  CommInProgress = 7,
+  CommNumResults = 8
 };
 
 enum ReduceOp { SUM = 0, MIN = 3, NOP = 255 };
@@ -76,7 +77,7 @@ class Algorithm {
   virtual const CollectiveBufferMode& bufferMode() const = 0;
 
   /// Get the type of this algorithm.
-  /// @return AlgorithmType::NATIVE or AlgorithmType::DSL.
+  /// @return AlgorithmType::Native or AlgorithmType::DSL.
   virtual AlgorithmType type() const = 0;
 
   /// Get the execution constraints for this algorithm.
@@ -166,22 +167,15 @@ struct AlgorithmCtxKey {
 
 namespace std {
 
-// Refer https://www.boost.org/doc/libs/1_86_0/libs/container_hash/doc/html/hash.html#combine
-template <typename T>
-inline void hash_combine(std::size_t& seed, const T& value) {
-  std::hash<T> hasher;
-  seed ^= hasher(value) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
 template <>
 struct hash<mscclpp::AlgorithmCtxKey> {
   std::size_t operator()(const mscclpp::AlgorithmCtxKey& key) const {
     std::size_t seed = 42;
-    hash_combine(seed, key.baseSendBuff);
-    hash_combine(seed, key.baseRecvBuff);
-    hash_combine(seed, key.baseSendSize);
-    hash_combine(seed, key.baseRecvSize);
-    hash_combine(seed, key.tag);
+    mscclpp::detail::hashCombine(seed, key.baseSendBuff);
+    mscclpp::detail::hashCombine(seed, key.baseRecvBuff);
+    mscclpp::detail::hashCombine(seed, key.baseSendSize);
+    mscclpp::detail::hashCombine(seed, key.baseRecvSize);
+    mscclpp::detail::hashCombine(seed, key.tag);
     return seed;
   }
 };
@@ -250,7 +244,7 @@ class NativeAlgorithm : public Algorithm {
   /// @param constraint Execution constraints (worldSize, nRanksPerNode).
   NativeAlgorithm(std::string name, std::string collective, InitFunc initFunc, KernelFunc kernelFunc,
                   ContextInitFunc contextInitFunc, ContextKeyGenFunc contextKeyGenFunc, size_t minMessageSize = 0,
-                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::ANY,
+                  size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::Any,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
@@ -262,7 +256,7 @@ class NativeAlgorithm : public Algorithm {
   const std::pair<size_t, size_t>& messageRange() const override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
-  AlgorithmType type() const override { return AlgorithmType::NATIVE; }
+  AlgorithmType type() const override { return AlgorithmType::Native; }
   Constraint constraint() const override;
   void reset() override;
 
@@ -381,68 +375,12 @@ class AlgorithmCollection {
   /// @param other The other AlgorithmCollection to merge in.
   void extend(const AlgorithmCollection& other);
 
+  void setSelectors(AlgoSelectFunc algoSelector, AlgoSelectFunc fallbackAlgoSelector);
+
  private:
   std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<Algorithm>>> algoMapByCollective_;
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
-
-  friend class AlgorithmCollectionBuilder;
-};
-
-/// Builder for creating AlgorithmCollection instances.
-///
-/// AlgorithmCollectionBuilder provides a singleton interface for registering
-/// algorithm builders and configuring algorithm selection functions. It can
-/// build both default algorithms and custom algorithms registered by users.
-///
-/// Typical usage:
-///   1. Get the singleton instance with getInstance()
-///   2. Add algorithm builders with addAlgorithmBuilder()
-///   3. Optionally set custom selectors with setAlgorithmSelector()
-///   4. Build the collection with build() or buildDefaultAlgorithms()
-class AlgorithmCollectionBuilder {
- public:
-  /// Get the singleton instance of the builder.
-  /// @return A shared pointer to the singleton instance.
-  static std::shared_ptr<AlgorithmCollectionBuilder> getInstance();
-
-  /// Reset the singleton instance.
-  static void reset();
-
-  /// Add a new algorithm builder.
-  /// @param builder The algorithm builder to add.
-  void addAlgorithmBuilder(std::shared_ptr<AlgorithmBuilder> builder);
-
-  /// Build the default algorithms with a scratch buffer.
-  /// @param scratchBuffer Address of the scratch buffer for algorithm use.
-  /// @param scratchBufferSize Size of the scratch buffer in bytes.
-  /// @param rank The rank of the current process.
-  /// @return An AlgorithmCollection containing the default algorithms.
-  AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
-
-  /// Set a custom algorithm selection function.
-  /// @param selector The algorithm selection function.
-  void setAlgorithmSelector(AlgoSelectFunc selector);
-
-  /// Set a fallback algorithm selection function.
-  /// @param selector The fallback algorithm selection function.
-  /// @note The fallback selector is used if the primary selector returns nullptr.
-  ///       MSCCL++ assigns a predefined selector as the fallback by default.
-  void setFallbackAlgorithmSelector(AlgoSelectFunc selector);
-
-  /// Build the AlgorithmCollection instance.
-  /// @return The built AlgorithmCollection containing all registered algorithms.
-  AlgorithmCollection build();
-
- private:
-  AlgorithmCollectionBuilder() = default;
-  std::vector<std::shared_ptr<AlgorithmBuilder>> algoBuilders_;
-  AlgoSelectFunc algoSelector_ = nullptr;
-  AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
-
-  static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;
-  AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
-  AlgorithmCollection buildDefaultDslAlgorithms(int rank);
 };
 
 }  // namespace mscclpp

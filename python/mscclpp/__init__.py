@@ -9,14 +9,10 @@ import warnings
 
 
 from functools import wraps
-from mscclpp._version import __version__, __commit_id__
-from mscclpp._algorithm import Algorithm, AlgorithmCollectionBuilder, AlgorithmCollection
-from mscclpp.language.utils import AlgoSpec
-from mscclpp._compiler import DslCompiler, NativeCodeCompiler
+from ._version import __version__, __commit_id__
 
 if os.environ.get("MSCCLPP_HOME", None) is None:
     os.environ["MSCCLPP_HOME"] = os.path.abspath(os.path.dirname(__file__))
-
 
 # Parse the version
 version = {
@@ -24,6 +20,7 @@ version = {
     "git_commit": __commit_id__,
 }
 
+from ._core import *
 
 from ._mscclpp import (
     Device,
@@ -64,6 +61,7 @@ __all__ = [
     "Connection",
     "connect_nvls_collective",
     "EndpointConfig",
+    "ErrorCode",
     "Fifo",
     "Semaphore",
     "Host2DeviceSemaphore",
@@ -82,6 +80,7 @@ __all__ = [
     "ExecutionPlan",
     "PacketType",
     "RawGpuBuffer",
+    "ReduceOp",
     "env",
     "version",
     "is_nvls_supported",
@@ -94,10 +93,9 @@ __all__ = [
     "get_lib",
     # Python API
     "Algorithm",
-    "AlgorithmCollectionBuilder",
     "AlgorithmCollection",
-    "AlgoSpec",
-    "ReduceOp",
+    "CommGroup",
+    "GpuBuffer",
 ]
 
 

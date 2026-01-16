@@ -132,20 +132,20 @@ For more details on how to use the Dev Container, see the [Dev Containers tutori
 
 ```bash
 $ make -j unit_tests
-$ ./test/unit_tests
+$ ./bin/unit_tests
 ```
 
 For thorough testing of MSCCL++ features, we need to use `mp_unit_tests` that require at least two GPUs on the system. `mp_unit_tests` also requires MPI to be installed on the system. For example, the following commands compile and run `mp_unit_tests` with two processes (two GPUs). The number of GPUs can be changed by changing the number of processes.
 
 ```bash
 $ make -j mp_unit_tests
-$ mpirun -np 2 ./test/mp_unit_tests
+$ mpirun -np 2 ./bin/mp_unit_tests
 ```
 
 To run `mp_unit_tests` with more than two nodes, you need to specify the `-ip_port` argument that is accessible from all nodes. For example:
 
 ```bash
-$ mpirun -np 16 -npernode 8 -hostfile hostfile ./test/mp_unit_tests -ip_port 10.0.0.5:50000
+$ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0.0.5:50000
 ```
 
 ## Performance Benchmark
@@ -166,12 +166,13 @@ $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 We implement [NCCL](https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/api.html) APIs using MSCCL++. How to use:
 
 1. [Build MSCCL++ from source](#install-from-source).
-2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/apps/nccl/` directory.
+2. Replace your `libnccl.so` library with `libmscclpp_nccl.so`, which is compiled under `./build/lib/` directory.
 
 For example, you can run [nccl-tests](https://github.com/NVIDIA/nccl-tests) using `libmscclpp_nccl.so` as follows, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
 
 ```bash
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+export LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH;
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib/libmscclpp_nccl.so ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
 ```
 
 If MSCCL++ is built on AMD platforms, `libmscclpp_nccl.so` would replace the [RCCL](https://github.com/ROCm/rccl) library (i.e., `librccl.so`).
@@ -188,12 +189,14 @@ By default, if the parameter `MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION` is not spec
 
 Example 1, Allreduce will fallback to NCCL ncclAllReduce since allreduce is in the fallback list.
 ```bash
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce,allgather" ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+export LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH;
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce,allgather" ./build/all_reduce_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
 ```
 
 Example 2, ReduceScatter will still use msccl++ implementation since reducescatter is not in the fallbacklist.
 ```bash
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/apps/nccl/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" -x MSCCLPP_EXECUTION_PLAN_DIR=/$PATH_TO_EXECUTION_PLANS/execution-files ./build/reduce_scatter_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+export LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH;
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" -x MSCCLPP_EXECUTION_PLAN_DIR=/$PATH_TO_EXECUTION_PLANS/execution-files ./build/reduce_scatter_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
 ```
 
 On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with the fallback features.

@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <Python.h>
-#include <mscclpp/nccl.h>
+#include <mscclpp/ext/nccl/nccl.h>
 #include <pybind11/pybind11.h>
 
 #include <mscclpp/algorithm.hpp>
@@ -101,9 +101,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
     allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputBytes);
     if (cudaGetLastError() == cudaSuccess) {
-      return mscclpp::CommResult::commSuccess;
+      return mscclpp::CommResult::CommSuccess;
     }
-    return mscclpp::CommResult::commInternalError;
+    return mscclpp::CommResult::CommInternalError;
   }
 
   std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,

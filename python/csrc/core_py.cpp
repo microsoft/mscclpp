@@ -3,12 +3,12 @@
 
 #include <nanobind/nanobind.h>
 #include <nanobind/operators.h>
-#include <nanobind/stl/array.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
 #include <mscclpp/core.hpp>
+#include <sstream>
 
 namespace nb = nanobind;
 using namespace mscclpp;
@@ -26,6 +26,9 @@ extern void register_executor(nb::module_& m);
 extern void register_npkit(nb::module_& m);
 extern void register_gpu_utils(nb::module_& m);
 extern void register_algorithm(nb::module_& m);
+
+// ext
+extern void register_algorithm_collection_builder(nb::module_& m);
 
 template <typename T>
 void def_shared_future(nb::handle& m, const std::string& typestr) {
@@ -67,6 +70,16 @@ void register_core(nb::module_& m) {
            nb::arg("data"), nb::arg("peer"), nb::arg("tag"))
       .def("recv", static_cast<void (Bootstrap::*)(std::vector<char>&, int, int)>(&Bootstrap::recv), nb::arg("data"),
            nb::arg("peer"), nb::arg("tag"));
+
+  nb::class_<UniqueId>(m, "UniqueId")
+      .def(nb::init<>())
+      .def("__setstate__",
+           [](UniqueId& self, nb::bytes b) {
+             if (nb::len(b) != UniqueIdBytes) throw std::runtime_error("Invalid UniqueId byte size");
+             ::memcpy(self.data(), b.c_str(), UniqueIdBytes);
+           })
+      .def("__getstate__",
+           [](const UniqueId& self) { return nb::bytes(reinterpret_cast<const char*>(self.data()), UniqueIdBytes); });
 
   nb::class_<TcpBootstrap, Bootstrap>(m, "TcpBootstrap")
       .def(nb::init<int, int>(), "Do not use this constructor. Use create instead.")
@@ -128,7 +141,11 @@ void register_core(nb::module_& m) {
       .def(nb::init<DeviceType, int>(), nb::arg("type"), nb::arg("id") = -1)
       .def_rw("type", &Device::type)
       .def_rw("id", &Device::id)
-      .def("__str__", [](const Device& self) { return std::to_string(self); });
+      .def("__str__", [](const Device& self) {
+        std::stringstream ss;
+        ss << self;
+        return ss.str();
+      });
 
   nb::class_<EndpointConfig::Ib>(m, "EndpointConfigIb")
       .def(nb::init<>())
@@ -286,4 +303,7 @@ NB_MODULE(_mscclpp, m) {
   register_npkit(m);
   register_gpu_utils(m);
   register_algorithm(m);
+
+  // ext
+  register_algorithm_collection_builder(m);
 }

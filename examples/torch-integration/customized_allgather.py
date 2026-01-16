@@ -5,7 +5,7 @@
 # For AMD: MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> GPU_MAX_HW_QUEUES=7 torchrun --nnodes=1 --nproc_per_node=8 customized_allgather.py
 
 import mscclpp
-import mscclpp.comm as mscclpp_comm
+
 import mscclpp.utils as mscclpp_utils
 import torch
 import os
@@ -29,7 +29,7 @@ def interfaces_for_ip_netifaces(ip: str):
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp_comm.CommGroup):
+    def __init__(self, comm: mscclpp.CommGroup):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
@@ -68,7 +68,7 @@ def main():
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
-    mscclpp_group = mscclpp_comm.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
+    mscclpp_group = mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world_size)
     local_tensor_size = 1 << 20
     out_tensor = torch.randn(local_tensor_size * world_size, device="cuda", dtype=torch.float32)
     tensor = out_tensor[rank * local_tensor_size : (rank + 1) * local_tensor_size]
