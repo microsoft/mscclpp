@@ -60,3 +60,13 @@ add_subdirectory(mscclpp-test)
 
 # Performance tests
 add_subdirectory(perf)
+
+# Indirect connection tests
+add_executable(indirect_connection_test indirect_connection_test.cc)
+message (STATUS "Using CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
+
+target_include_directories(indirect_connection_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include/mscclpp/src/include
+)
+target_link_libraries(indirect_connection_test ${TEST_LIBS_COMMON} ${TEST_LIBS_GTEST})
+target_include_directories(indirect_connection_test ${TEST_INC_COMMON} ${TEST_INC_INTERNAL})
