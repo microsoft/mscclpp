@@ -211,6 +211,10 @@ static ncclResult_t executeWithPlan(std::shared_ptr<mscclpp::Executor> executor,
       executor->execute(rank, (int*)sendbuff, (int*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT32, *plan,
                         stream);
       break;
+    case ncclUint8:
+      executor->execute(rank, (uint8_t*)sendbuff, (uint8_t*)recvbuff, sendBytes, recvBytes, mscclpp::DataType::UINT8,
+                        *plan, stream);
+      break;
     default:
       WARN("datatype is invalid");
       return ncclInvalidArgument;
