@@ -80,6 +80,18 @@ struct SwitchChannelDeviceHandle {
           : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
           : "l"(ptr)
           : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8x4>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.e5m2x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8x8>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e5m2x4 {%0,%1}, [%2];" 
+	  : "=r"(val.words[0]), "=r"(val.words[1])
+	  : "l"(ptr) 
+	  : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8x16>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e5m2x4 {%0,%1,%2,%3}, [%4];"
+	  : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+	  : "l"(ptr)
+	  : "memory");
     } else {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
