@@ -77,33 +77,37 @@ static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 /// GpuIpcMem represents a GPU memory region that has been imported using a GpuIpcMemHandle.
 /// If a RegisteredMemory instance represents an imported GPU memory, it will manage a unique
 /// GpuIpcMem instance for that memory region.
-class GpuIpcMem {
+class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
  public:
-  GpuIpcMem(const GpuIpcMemHandle &handle);
+  /// Create a GpuIpcMem instance from a GpuIpcMemHandle.
+  /// @param handle The handle to import.
+  /// @return A shared_ptr to the created GpuIpcMem instance.
+  static std::shared_ptr<GpuIpcMem> create(const GpuIpcMemHandle &handle);
 
   ~GpuIpcMem();
 
-  void *map();
+  /// Map the imported GPU memory for access. Subsequent calls to map() will simply create a new mapping
+  /// to the same memory, which is not a desired usage pattern.
+  /// @return A shared_ptr to the mapped memory. When all references are released,
+  ///         the memory is automatically unmapped.
+  std::shared_ptr<void> map();
 
-  void *mapMulticast(int numDevices, const CUdeviceptr bufferAddr = 0, size_t bufferSize = 0);
-
-  void *multicastBuffer() const { return isMulticast_ ? multicastBuffer_.get() : nullptr; }
-
-  void *data() const;
-
-  size_t size() const { return dataSize_; }
+  /// Map multicast memory at the given offset.
+  /// @param numDevices Number of devices participating in multicast.
+  /// @param mcOffset Offset in the multicast buffer.
+  /// @param bufferAddr Device pointer to bind.
+  /// @param bufferSize Size of the buffer to bind.
+  /// @return A shared_ptr to the mapped multicast memory. When all references are released,
+  ///         the memory is automatically unmapped and unbound.
+  std::shared_ptr<void> mapMulticast(int numDevices, size_t mcOffset, CUdeviceptr bufferAddr, size_t bufferSize);
 
  private:
+  GpuIpcMem(const GpuIpcMemHandle &handle);
+
   GpuIpcMemHandle handle_;
   CUmemGenericAllocationHandle allocHandle_;
-  std::shared_ptr<uint8_t> multicastBuffer_;
-  bool isMulticast_;
-  CUdeviceptr multicastBindedAddr_;
+  int multicastAddedDeviceId_;
   uint8_t type_;
-  void *basePtr_;
-  size_t baseSize_;
-  void *dataPtr_;
-  size_t dataSize_;
 };
 
 }  // namespace mscclpp

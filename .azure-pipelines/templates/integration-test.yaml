@@ -8,7 +8,8 @@ parameters:
 - name: perfBaselineFile
   type: string
   default: 'test/deploy/perf_ndmv4.jsonl'
-
+- name: gpuArch
+  type: string
 
 steps:
 - task: Bash@3
@@ -18,7 +19,7 @@ steps:
     targetType: inline
     script: |
       mkdir build && cd build
-      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
+      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -201,7 +202,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                     \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
         python3 -m pip install .;                                     \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
+        mpirun --allow-run-as-root -tag-output -x LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
