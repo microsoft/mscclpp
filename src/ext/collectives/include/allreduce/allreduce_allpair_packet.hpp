@@ -10,7 +10,7 @@ namespace collective {
 class AllreduceAllpairPacket : public AlgorithmBuilder {
  public:
   AllreduceAllpairPacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize) {};
+      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<Algorithm> build() override;
 
  private:

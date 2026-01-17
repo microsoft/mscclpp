@@ -173,9 +173,9 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   localScratchMemory_ = std::move(localMemory);
 }
 
-CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
-                                                  void* output, size_t inputSize, DataType dtype, ReduceOp op,
-                                                  cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
+                                                  size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
+                                                  int nBlocks, int nThreadsPerBlock,
                                                   const std::unordered_map<std::string, uintptr_t>&) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
@@ -224,7 +224,7 @@ AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void
 }
 
 std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                                      void* output, size_t, DataType) {
+                                                              void* output, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();

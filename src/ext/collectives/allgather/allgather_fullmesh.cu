@@ -108,8 +108,8 @@ void AllgatherFullmesh::initialize(std::shared_ptr<mscclpp::Communicator> comm) 
   this->conns_ = setupConnections(comm);
 }
 
-CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
-                                                  void* output, size_t inputSize, cudaStream_t stream, int nBlocks,
+CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
+                                                  size_t inputSize, cudaStream_t stream, int nBlocks,
                                                   int nThreadsPerBlock,
                                                   const std::unordered_map<std::string, uintptr_t>&) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
@@ -140,9 +140,8 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
   return mscclpp::CommResult::CommSuccess;
 }
 
-std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm,
-                                                                      const void* input, void*, size_t inputSize,
-                                                                      DataType) {
+std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm, const void* input,
+                                                              void*, size_t inputSize, DataType) {
   constexpr int nChannelsPerConnection = 56;
 
   auto ctx = std::make_shared<AlgorithmCtx>();

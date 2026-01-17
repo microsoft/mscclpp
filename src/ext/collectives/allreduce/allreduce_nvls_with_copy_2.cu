@@ -207,8 +207,8 @@ AlgorithmCtxKey AllreduceNvlsWithCopy2::generateAllreduceContextKey(const void*,
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-std::shared_ptr<void> AllreduceNvlsWithCopy2::initAllreduceContext(std::shared_ptr<Communicator> comm,
-                                                                           const void*, void*, size_t, DataType) {
+std::shared_ptr<void> AllreduceNvlsWithCopy2::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+                                                                   void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
