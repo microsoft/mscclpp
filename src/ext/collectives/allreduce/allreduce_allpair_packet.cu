@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include "allreduce/allreduce_allpair_packet.hpp"
+#include <collective_utils.hpp>
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
@@ -122,14 +123,15 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
   gpuMemcpy<uint32_t>(flags28_.get(), flags.data(), 28, cudaMemcpyHostToDevice);
 }
 
-CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
+CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input,
                                                        void* output, size_t inputSize, [[maybe_unused]] DataType dtype,
                                                        ReduceOp op, cudaStream_t stream, int nBlocks,
                                                        int nThreadsPerBlock,
                                                        const std::unordered_map<std::string, uintptr_t>&) {
+  auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
   }
   void* flags = this->flags_.get();
   if (blockAndThreadNum.first == 7) {
@@ -148,10 +150,10 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
-  cudaError_t error =
-      allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
-                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, flags, this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error = allreduce(input, this->scratchBuffer_, output, algoCtx->memoryChannelDeviceHandles.get(), nullptr,
+                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, algoCtx->rank,
+                                algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, flags,
+                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -159,7 +161,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<Alg
   return CommResult::CommSuccess;
 }
 
-std::shared_ptr<AlgorithmCtx> AllreduceAllpairPacket::initAllreduceContext(std::shared_ptr<Communicator> comm,
+std::shared_ptr<void> AllreduceAllpairPacket::initAllreduceContext(std::shared_ptr<Communicator> comm,
                                                                            const void* input, void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   const int nChannelsPerConnection = maxBlockNum_;
@@ -195,7 +197,7 @@ std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_allpair_packet", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,

@@ -327,7 +327,7 @@ public:
                 self->initialize(comm);
             },
             // Kernel execution function
-            [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx,
+            [self](const std::shared_ptr<void> ctx,
                    const void* input, void* output,
                    size_t inputSize, size_t outputSize,
                    mscclpp::DataType dtype, mscclpp::ReduceOp op,
@@ -351,8 +351,8 @@ public:
 
 private:
     void initialize(std::shared_ptr<mscclpp::Communicator> comm) { /* ... */ }
-    mscclpp::CommResult kernelFunc(/* ... */) { /* ... */ }
-    std::shared_ptr<mscclpp::AlgorithmCtx> initContext(/* ... */) { /* ... */ }
+    mscclpp::CommResult kernelFunc(const std::shared_ptr<void> ctx, /* ... */) { /* ... */ }
+    std::shared_ptr<void> initContext(/* ... */) { /* ... */ }
     mscclpp::AlgorithmCtxKey generateContextKey(/* ... */) { /* ... */ }
 };
 

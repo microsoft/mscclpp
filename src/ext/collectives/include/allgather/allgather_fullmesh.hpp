@@ -19,12 +19,12 @@ class AllgatherFullmesh : public AlgorithmBuilder {
   std::vector<mscclpp::Connection> conns_;
 
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
-  CommResult allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+  CommResult allgatherKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
+                                 cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                  const std::unordered_map<std::string, uintptr_t>& extras);
 
-  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, mscclpp::DataType);
+  std::shared_ptr<void> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output,
+                                             size_t, mscclpp::DataType);
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   void* scratchBuffer_;

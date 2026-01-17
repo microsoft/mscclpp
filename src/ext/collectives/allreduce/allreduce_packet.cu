@@ -218,10 +218,11 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
   flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
 }
 
-CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                void* output, size_t inputSize, [[maybe_unused]] DataType dtype,
-                                                ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
+                                                size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
+                                                cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                 const std::unordered_map<std::string, uintptr_t>&) {
+  auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode, dtype);
@@ -249,8 +250,8 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<AlgorithmC
   return CommResult::CommSuccess;
 }
 
-std::shared_ptr<AlgorithmCtx> AllreducePacket::initAllreduceContext(std::shared_ptr<Communicator> comm,
-                                                                    const void* input, void*, size_t, DataType) {
+std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Communicator> comm, const void* input,
+                                                            void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
@@ -284,7 +285,7 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
   auto self = std::make_shared<AllreducePacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,

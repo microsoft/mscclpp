@@ -21,12 +21,12 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
   const int nChannelsPerConnection_ = 35;
 
   void initialize(std::shared_ptr<Communicator> comm);
-  CommResult allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+  CommResult allgatherKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
+                                 cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                  const std::unordered_map<std::string, uintptr_t>& extras);
 
-  std::shared_ptr<AlgorithmCtx> initAllgatherContext(std::shared_ptr<Communicator> comm, const void*, void* output,
-                                                     size_t, DataType);
+  std::shared_ptr<void> initAllgatherContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
+                                             DataType);
   AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType);
 };
 
