@@ -29,8 +29,7 @@ void register_nvls(nb::module_& m) {
       });
 
   nb::class_<NvlsConnection>(m, "NvlsConnection")
-      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("device_ptr"), nb::arg("size"))
-      .def("get_multicast_min_granularity", &NvlsConnection::getMultiCastMinGranularity);
+      .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("device_ptr"), nb::arg("size"));
 
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("all_ranks"),
         nb::arg("buffer_size"));

@@ -28,7 +28,7 @@ generate-versions:
 # Use this for production builds or to test version switching
 multiversion: generate-versions
 	@cd .. && python3 -m setuptools_scm --force-write-version-files
-	@$(SPHINXMULTIVERSION) "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
+	@export LC_ALL=C.UTF-8; $(SPHINXMULTIVERSION) "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
 
 # Clean build directory
 clean:
@@ -39,4 +39,4 @@ clean:
 # This builds single-version only (fast for development).
 %: Makefile generate-versions
 	@cd .. && python3 -m setuptools_scm --force-write-version-files
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@export LC_ALL=C.UTF-8; $(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
