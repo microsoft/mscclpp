@@ -45,6 +45,15 @@ __global__ void __launch_bounds__(1024)
   }
 }
 
+struct Context {
+  int rank;
+  int workSize;
+  int nRanksPerNode;
+
+  std::vector<mscclpp::RegisteredMemory> registeredMemories;
+  std::shared_ptr<mscclpp::DeviceHandle<mscclpp::PortChannel>> portChannelDeviceHandles;
+};
+
 class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
  public:
   AllgatherAlgoBuilder() = default;
@@ -58,9 +67,9 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     auto self = std::make_shared<AllgatherAlgoBuilder>();
     std::shared_ptr<mscclpp::Algorithm> allgatherAlgo = std::make_shared<mscclpp::NativeAlgorithm>(
         "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
-        [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
-               size_t outputSize, mscclpp::DataType dtype, [[maybe_unused]] mscclpp::ReduceOp op, cudaStream_t stream,
-               int nBlocks, int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+        [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize, size_t outputSize,
+               mscclpp::DataType dtype, [[maybe_unused]] mscclpp::ReduceOp op, cudaStream_t stream, int nBlocks,
+               int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
           return self->allgatherKernelFunc(ctx, input, output, inputSize, dtype, stream);
         },
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
@@ -92,24 +101,24 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
     proxyService_->startProxy(true);
   }
 
-  mscclpp::CommResult allgatherKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                          void* output, size_t inputBytes, [[maybe_unused]] mscclpp::DataType dtype,
+  mscclpp::CommResult allgatherKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
+                                          size_t inputBytes, [[maybe_unused]] mscclpp::DataType dtype,
                                           cudaStream_t stream) {
-    int rank = ctx->rank;
-    int worldSize = ctx->workSize;
+    auto algoCtx = std::static_pointer_cast<Context>(ctx);
+    int rank = algoCtx->rank;
+    int worldSize = algoCtx->workSize;
 
     int nThreadsPerBlock = (worldSize - 1) * WARP_SIZE;
-    allgather<<<1, nThreadsPerBlock, 0, stream>>>(ctx->portChannelDeviceHandles.get(), rank, inputBytes);
+    allgather<<<1, nThreadsPerBlock, 0, stream>>>(algoCtx->portChannelDeviceHandles.get(), rank, inputBytes);
     if (cudaGetLastError() == cudaSuccess) {
       return mscclpp::CommResult::CommSuccess;
     }
     return mscclpp::CommResult::CommInternalError;
   }
 
-  std::shared_ptr<mscclpp::AlgorithmCtx> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm,
-                                                              const void* input, void* output, size_t inputBytes,
-                                                              mscclpp::DataType dtype) {
-    auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+  std::shared_ptr<void> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void* input,
+                                             void* output, size_t inputBytes, mscclpp::DataType dtype) {
+    auto ctx = std::make_shared<Context>();
     ctx->rank = comm->bootstrap()->getRank();
     ctx->workSize = comm->bootstrap()->getNranks();
     ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();

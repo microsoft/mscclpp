@@ -4,11 +4,15 @@
 #ifndef MSCCLPP_EXT_COLLECTIVE_UTILS_HPP_
 #define MSCCLPP_EXT_COLLECTIVE_UTILS_HPP_
 
+#include <memory>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
+#include <mscclpp/semaphore.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <unordered_map>
 #include <vector>
 
 #if defined(__HIP_PLATFORM_AMD__)
@@ -20,7 +24,6 @@
 
 namespace mscclpp {
 
-class AlgorithmBuilder;
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
 constexpr int NUM_SEMAPHORES = 64;
@@ -60,6 +63,30 @@ std::vector<BaseMemoryChannel> setupBaseMemoryChannels(
 
 std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHandles(
     const std::vector<BaseMemoryChannel>& baseMemoryChannels);
+
+/// Context holding resources for algorithm execution.
+///
+/// This struct contains all the channels, semaphores, and memory handles
+/// needed for executing a native algorithm. It is created once per unique
+/// buffer configuration and cached for reuse.
+class AlgorithmCtx {
+ public:
+  int rank;
+  int workSize;
+  int nRanksPerNode;
+
+  std::vector<RegisteredMemory> registeredMemories;
+  std::vector<MemoryChannel> memoryChannels;
+  std::vector<SwitchChannel> switchChannels;
+  std::vector<PortChannel> portChannels;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
+  std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
+  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
+  std::unordered_map<std::string, std::shared_ptr<void>> extras;
+};
 
 }  // namespace collective
 }  // namespace mscclpp

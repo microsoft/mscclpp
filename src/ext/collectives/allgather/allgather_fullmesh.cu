@@ -108,10 +108,11 @@ void AllgatherFullmesh::initialize(std::shared_ptr<mscclpp::Communicator> comm) 
   this->conns_ = setupConnections(comm);
 }
 
-CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
+CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                   void* output, size_t inputSize, cudaStream_t stream, int nBlocks,
                                                   int nThreadsPerBlock,
                                                   const std::unordered_map<std::string, uintptr_t>&) {
+  auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   int rank = ctx->rank;
   const size_t nElem = inputSize / sizeof(int);
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
@@ -139,7 +140,7 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<Algorith
   return mscclpp::CommResult::CommSuccess;
 }
 
-std::shared_ptr<AlgorithmCtx> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm,
+std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Communicator> comm,
                                                                       const void* input, void*, size_t inputSize,
                                                                       DataType) {
   constexpr int nChannelsPerConnection = 56;
@@ -180,7 +181,7 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
   return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allgather_fullmesh", "allgather",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, [[maybe_unused]] ReduceOp op,
              cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
              const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {

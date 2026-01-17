@@ -16,13 +16,12 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
 
  private:
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
-  CommResult allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output,
-                                 size_t inputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream,
-                                 int nBlocks, int nThreadsPerBlock,
-                                 const std::unordered_map<std::string, uintptr_t>& extras);
+  CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
+                                 mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
+                                 int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras);
 
-  std::shared_ptr<mscclpp::AlgorithmCtx> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
-                                                              void* output, size_t, mscclpp::DataType);
+  std::shared_ptr<void> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output,
+                                             size_t, mscclpp::DataType);
   mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
 
   void* scratchBuffer_;

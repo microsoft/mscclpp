@@ -118,10 +118,11 @@ void AllgatherFullmesh2::initialize(std::shared_ptr<Communicator> comm) {
   this->memorySemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
 }
 
-CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
+CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                    void* output, size_t inputSize, cudaStream_t stream, int nBlocks,
                                                    int nThreadsPerBlock,
                                                    const std::unordered_map<std::string, uintptr_t>&) {
+  auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   const size_t nElem = inputSize / sizeof(int);
   int rank = ctx->rank;
@@ -159,9 +160,9 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<Algorit
   return CommResult::CommSuccess;
 }
 
-std::shared_ptr<mscclpp::AlgorithmCtx> AllgatherFullmesh2::initAllgatherContext(
-    std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output, size_t inputSize, mscclpp::DataType) {
-  auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*,
+                                                               void* output, size_t inputSize, mscclpp::DataType) {
+  auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
@@ -213,7 +214,7 @@ std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
   return std::make_shared<NativeAlgorithm>(
       "default_allgather_fullmesh2", "allgather",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] mscclpp::DataType dtype, [[maybe_unused]] ReduceOp op,
              cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
              const std::unordered_map<std::string, uintptr_t>& extras) -> mscclpp::CommResult {

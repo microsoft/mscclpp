@@ -120,31 +120,6 @@ class AlgorithmBuilder {
   virtual std::shared_ptr<Algorithm> build() = 0;
 };
 
-/// Context holding resources for algorithm execution.
-///
-/// This struct contains all the channels, semaphores, and memory handles
-/// needed for executing a native algorithm. It is created once per unique
-/// buffer configuration and cached for reuse.
-/// @note This struct may be changed in future releases.
-class AlgorithmCtx {
- public:
-  int rank;
-  int workSize;
-  int nRanksPerNode;
-
-  std::vector<RegisteredMemory> registeredMemories;
-  std::vector<MemoryChannel> memoryChannels;
-  std::vector<SwitchChannel> switchChannels;
-  std::vector<PortChannel> portChannels;
-  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
-  std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
-  std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
-  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
-  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
-  std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
-  std::unordered_map<std::string, std::shared_ptr<void>> extras;
-};
-
 /// Key for identifying cached AlgorithmCtx instances.
 ///
 /// The context key uniquely identifies a buffer configuration, allowing
@@ -206,8 +181,8 @@ class NativeAlgorithm : public Algorithm {
   /// @param extras Additional algorithm-specific parameters.
   /// @return The result of the operation.
   using KernelFunc =
-      std::function<CommResult(const std::shared_ptr<AlgorithmCtx>, const void*, void*, size_t, size_t, DataType,
-                               ReduceOp, cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
+      std::function<CommResult(const std::shared_ptr<void>, const void*, void*, size_t, size_t, DataType, ReduceOp,
+                               cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
 
   /// Function type for creating algorithm contexts.
   /// @param comm The communicator.
@@ -217,8 +192,8 @@ class NativeAlgorithm : public Algorithm {
   /// @param outputSize Size of the output buffer.
   /// @param dtype Data type of the elements.
   /// @return A shared pointer to the created context.
-  using ContextInitFunc = std::function<std::shared_ptr<AlgorithmCtx>(std::shared_ptr<Communicator>, const void*, void*,
-                                                                      size_t, size_t, DataType)>;
+  using ContextInitFunc =
+      std::function<std::shared_ptr<void>(std::shared_ptr<Communicator>, const void*, void*, size_t, size_t, DataType)>;
 
   /// Function type for generating context keys.
   /// @param input Pointer to the input buffer.
@@ -272,7 +247,7 @@ class NativeAlgorithm : public Algorithm {
   CollectiveBufferMode bufferMode_;
   std::unordered_map<std::string, uint64_t> tags_;
   Constraint constraint_;
-  std::unordered_map<AlgorithmCtxKey, std::shared_ptr<AlgorithmCtx>> contexts_;
+  std::unordered_map<AlgorithmCtxKey, std::shared_ptr<void>> contexts_;
 
   bool initialized_ = false;
 };

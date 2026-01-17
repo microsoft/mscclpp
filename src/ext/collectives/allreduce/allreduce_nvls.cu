@@ -87,10 +87,11 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
 }
 
-CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
-                                              void* output, size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
+CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
+                                              size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
                                               cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                               const std::unordered_map<std::string, uintptr_t>&) {
+  auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
@@ -131,10 +132,9 @@ mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* 
   return mscclpp::AlgorithmCtxKey{(void*)sendBasePtr, (void*)recvBasePtr, sendBytes, recvBytes, 0};
 }
 
-std::shared_ptr<mscclpp::AlgorithmCtx> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm,
-                                                                           const void* input, void* output, size_t,
-                                                                           mscclpp::DataType) {
-  auto ctx = std::make_shared<mscclpp::AlgorithmCtx>();
+std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm,
+                                                          const void* input, void* output, size_t, mscclpp::DataType) {
+  auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
@@ -164,7 +164,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvls::build() {
   return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allreduce_nvls", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,

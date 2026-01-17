@@ -119,7 +119,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH                          \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                              \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

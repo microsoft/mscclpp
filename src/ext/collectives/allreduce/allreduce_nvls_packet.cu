@@ -112,8 +112,8 @@ AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, vo
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-std::shared_ptr<AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                                        void*, size_t, DataType) {
+std::shared_ptr<void> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void*,
+                                                                size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -128,10 +128,11 @@ std::shared_ptr<AlgorithmCtx> AllreduceNvlsPacket::initAllreduceContext(std::sha
   return ctx;
 }
 
-CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input,
+CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                     void* output, size_t inputSize, mscclpp::DataType dtype,
                                                     ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                     const std::unordered_map<std::string, uintptr_t>&) {
+  auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize);
@@ -167,7 +168,7 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
   return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allreduce_nvls_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
