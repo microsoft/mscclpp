@@ -240,10 +240,11 @@ void AllreduceRsAgPipeline::initialize(std::shared_ptr<Communicator> comm) {
             cudaMemcpyHostToDevice);
 }
 
-CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<AlgorithmCtx> ctx, const void* input,
-                                                      void* output, size_t inputSize, DataType dtype, ReduceOp op,
+CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
+                                                      size_t inputSize, DataType dtype, ReduceOp op,
                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                       const std::unordered_map<std::string, uintptr_t>&) {
+  auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   AllreduceFunc allreduce = dispatch<AllreduceRsAgPipelineAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
@@ -253,7 +254,7 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<Algo
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0,
+                                algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0,
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
@@ -266,8 +267,8 @@ AlgorithmCtxKey AllreduceRsAgPipeline::generateAllreduceContextKey(const void*, 
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-std::shared_ptr<AlgorithmCtx> AllreduceRsAgPipeline::initAllreduceContext(std::shared_ptr<Communicator> comm,
-                                                                          const void*, void*, size_t, DataType) {
+std::shared_ptr<void> AllreduceRsAgPipeline::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+                                                                  void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -283,7 +284,7 @@ std::shared_ptr<Algorithm> AllreduceRsAgPipeline::build() {
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_rsag_pipeline", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
-      [self](const std::shared_ptr<mscclpp::AlgorithmCtx> ctx, const void* input, void* output, size_t inputSize,
+      [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
              int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
