@@ -8,7 +8,6 @@ from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore
 from mscclpp import CommGroup, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
 
-
 IB_TRANSPORTS = [
     Transport.IB0,
     Transport.IB1,
