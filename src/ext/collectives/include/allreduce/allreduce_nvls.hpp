@@ -26,6 +26,7 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;
+  int computeCapabilityMajor_{0};
 };
 
 }  // namespace collective

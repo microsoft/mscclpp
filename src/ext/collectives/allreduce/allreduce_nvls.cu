@@ -23,9 +23,18 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
-  size_t sizePerBlock = sizePerRank / nBlocks;
+  const size_t minAlign = 16;
+  // Align sizePerBlock to 16 bytes to ensure aligned vector access in handleMultiLoadReduceStore
+  size_t sizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
+  sizePerBlock = (sizePerBlock + minAlign - 1) / minAlign * minAlign;
+
   size_t rankOffset = sizePerRank * rank;
   size_t blockOffset = sizePerBlock * bid + rankOffset;
+  size_t curBlockSize = 0;
+  if (sizePerBlock * bid < sizePerRank) {
+    curBlockSize = min(sizePerBlock, sizePerRank - sizePerBlock * bid);
+  }
+
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOutPtr = multicastOut + bid;
 
@@ -44,8 +53,10 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
-  handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
-                             threadIdx.x, blockDim.x);
+  if (curBlockSize > 0) {
+    handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, curBlockSize,
+                               threadIdx.x, blockDim.x);
+  }
   __syncthreads();
   if (threadIdx.x < nPeers) {
     channels[threadIdx.x].relaxedSignal();
@@ -77,7 +88,12 @@ struct NvlsAdapter {
 };
 
 void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
-  nSwitchChannels_ = 8;
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  cudaDeviceProp deviceProp;
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
+  computeCapabilityMajor_ = deviceProp.major;
+  nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
@@ -110,7 +126,11 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {ctx->nRanksPerNode, 1024};
+    numBlocksAndThreads = {min(ctx->nRanksPerNode, nSwitchChannels_), 1024};
+    // For GB200 devices, useing more blocks to improve the performanes when nRanksPerNode <= 8
+    if (computeCapabilityMajor_ == 10 && ctx->nRanksPerNode <= 8) {
+      numBlocksAndThreads.first = min(32, nSwitchChannels_);
+    }
   }
   cudaError_t error =
       allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
