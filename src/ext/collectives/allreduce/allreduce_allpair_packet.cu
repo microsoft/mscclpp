@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "allreduce/allreduce_allpair_packet.hpp"
 #include <collective_utils.hpp>
+
+#include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
@@ -123,10 +124,9 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
   gpuMemcpy<uint32_t>(flags28_.get(), flags.data(), 28, cudaMemcpyHostToDevice);
 }
 
-CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input,
-                                                       void* output, size_t inputSize, [[maybe_unused]] DataType dtype,
-                                                       ReduceOp op, cudaStream_t stream, int nBlocks,
-                                                       int nThreadsPerBlock,
+CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
+                                                       size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
+                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                                        const std::unordered_map<std::string, uintptr_t>&) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
@@ -162,7 +162,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
 }
 
 std::shared_ptr<void> AllreduceAllpairPacket::initAllreduceContext(std::shared_ptr<Communicator> comm,
-                                                                           const void* input, void*, size_t, DataType) {
+                                                                   const void* input, void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
