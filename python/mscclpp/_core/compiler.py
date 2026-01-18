@@ -30,7 +30,6 @@ from mscclpp._mscclpp import (
     ExecutionPlan,
 )
 
-
 logging.basicConfig(level=logging.INFO)
 
 __all__ = ["DslCompiler", "NativeCodeCompiler"]
