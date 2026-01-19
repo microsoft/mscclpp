@@ -175,6 +175,19 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
 #endif
 #endif  // __FP8_TYPES_EXIST__
 
+// Helper to add 4 uint8_t values packed in a 32-bit integer
+MSCCLPP_DEVICE_INLINE int add_packed_uint8x4(int a, int b) {
+  uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
+  uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
+  int result;
+  uint8_t* r_bytes = reinterpret_cast<uint8_t*>(&result);
+  r_bytes[0] = a_bytes[0] + b_bytes[0];
+  r_bytes[1] = a_bytes[1] + b_bytes[1];
+  r_bytes[2] = a_bytes[2] + b_bytes[2];
+  r_bytes[3] = a_bytes[3] + b_bytes[3];
+  return result;
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE int4 add_vectors_helper(int4 a, int4 b) {
   int4 ret;
@@ -198,6 +211,16 @@ MSCCLPP_DEVICE_INLINE int4 add_vectors<__half>(int4 a, int4 b) {
 template <>
 MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
   return add_vectors_helper<__bfloat162>(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE int4 add_vectors<uint8_t>(int4 a, int4 b) {
+  int4 ret;
+  ret.w = add_packed_uint8x4(a.w, b.w);
+  ret.x = add_packed_uint8x4(a.x, b.x);
+  ret.y = add_packed_uint8x4(a.y, b.y);
+  ret.z = add_packed_uint8x4(a.z, b.z);
+  return ret;
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -255,6 +278,14 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<uint8_t>(uint2 a, uint2 b) {
+  uint2 ret;
+  ret.x = add_packed_uint8x4(a.x, b.x);
+  ret.y = add_packed_uint8x4(a.y, b.y);
+  return ret;
+}
+
 #if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
@@ -303,6 +334,11 @@ MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a,
   return add_vectors_helper<__bfloat162>(a, b);
 }
 
+template <>
+MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<uint8_t>(int a, int b) {
+  return add_packed_uint8x4(a, b);
+}
+
 #if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
@@ -341,6 +377,12 @@ MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
 template <>
 MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
   return add_vectors_helper<__bfloat162>(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t add_vectors<uint8_t>(uint32_t a, uint32_t b) {
+  int result = add_packed_uint8x4(static_cast<int>(a), static_cast<int>(b));
+  return static_cast<uint32_t>(result);
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -1052,7 +1094,9 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   }
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
-    handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+    if constexpr (!std::is_same_v<T, uint8_t>) {
+      handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+    }
   }
 #endif
   else if (opType == OperationType::PIPELINE) {

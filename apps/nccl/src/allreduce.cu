@@ -98,7 +98,7 @@ struct NvlsAdapter {
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2> || std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
     } else
 #endif
@@ -122,7 +122,7 @@ struct NvlsWithCopyAdapter {
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2> || std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
     } else
 #endif
