@@ -196,20 +196,41 @@ Memory safeAlloc(Alloc alloc, size_t nelems, Args&&... args) {
 /// @tparam T Type of each element in the allocated memory.
 template <class T = void>
 struct GpuDeleter {
-  void operator()(void* ptr) { gpuFree(ptr); }
+  void operator()(void* ptr) {
+    try {
+      gpuFree(ptr);
+    } catch (const std::exception& e) {
+      // Suppress cleanup errors during program termination
+      // This is a known issue when CUDA context is destroyed before memory cleanup
+    }
+  }
 };
 
 /// A deleter that calls gpuFreeHost for use with std::unique_ptr or std::shared_ptr.
 /// @tparam T Type of each element in the allocated memory.
 template <class T = void>
 struct GpuHostDeleter {
-  void operator()(void* ptr) { gpuFreeHost(ptr); }
+  void operator()(void* ptr) {
+    try {
+      gpuFreeHost(ptr);
+    } catch (const std::exception& e) {
+      // Suppress cleanup errors during program termination
+      // This is a known issue when CUDA context is destroyed before memory cleanup
+    }
+  }
 };
 
 #if (CUDA_NVLS_API_AVAILABLE)
 template <class T = void>
 struct GpuPhysicalDeleter {
-  void operator()(void* ptr) { gpuFreePhysical(ptr); }
+  void operator()(void* ptr) {
+    try {
+      gpuFreePhysical(ptr);
+    } catch (const std::exception& e) {
+      // Suppress cleanup errors during program termination
+      // This is a known issue when CUDA context is destroyed before memory cleanup
+    }
+  }
 };
 #endif  // CUDA_NVLS_API_AVAILABLE
 

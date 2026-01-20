@@ -613,13 +613,22 @@ std::pair<size_t, uint32_t> ExecutionPlan::Impl::getSizeAndChunks(size_t inputSi
   if (this->inputChunks == 0 && this->outputChunks == 0) {
     throw mscclpp::Error("Output or Input chunks must be greater than 0", mscclpp::ErrorCode::ExecutorError);
   } else if (this->inputChunks != 0 && this->outputChunks != 0) {
-    if (inputSize / this->inputChunks != outputSize / this->outputChunks)
-      throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
-                               std::to_string(this->inputChunks) + " outputSize " + std::to_string(outputSize) +
-                               " outputChunks " + std::to_string(this->outputChunks),
-                           mscclpp::ErrorCode::ExecutorError);
-    else
-      sizePerRank = std::make_pair(inputSize, this->inputChunks);
+    // For AllToAllV operations, skip size consistency check as ranks can have different input/output sizes
+    if (this->collective == "alltoallv") {
+      // For AllToAllV, use the maximum of input and output sizes to ensure sufficient buffer allocation
+      size_t maxSize = std::max(inputSize, outputSize);
+      uint32_t maxChunks = std::max(this->inputChunks, this->outputChunks);
+      sizePerRank = std::make_pair(maxSize, maxChunks);
+    } else {
+      // For other collectives, enforce size consistency
+      if (inputSize / this->inputChunks != outputSize / this->outputChunks)
+        throw mscclpp::Error("Size per chunks inconsistent: inputSize " + std::to_string(inputSize) + " inputChunks " +
+                                 std::to_string(this->inputChunks) + " outputSize " + std::to_string(outputSize) +
+                                 " outputChunks " + std::to_string(this->outputChunks),
+                             mscclpp::ErrorCode::ExecutorError);
+      else
+        sizePerRank = std::make_pair(inputSize, this->inputChunks);
+    }
   } else if (this->inputChunks != 0) {
     sizePerRank = std::make_pair(inputSize, this->inputChunks);
   } else if (this->outputChunks != 0) {
