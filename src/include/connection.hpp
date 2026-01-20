@@ -4,11 +4,17 @@
 #ifndef MSCCLPP_CONNECTION_HPP_
 #define MSCCLPP_CONNECTION_HPP_
 
+#include <atomic>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mutex>
+#include <thread>
+#include <utility>
+#include <vector>
 
 #include "communicator.hpp"
 #include "context.hpp"
+#include "endpoint.hpp"
 #include "ib.hpp"
 #include "registered_memory.hpp"
 #include "socket.h"
@@ -81,8 +87,28 @@ class IBConnection : public BaseConnection {
   RegisteredMemory dummyAtomicSourceMem_;
   mscclpp::TransportInfo dstTransportInfo_;
 
+  // For write-with-imm signal mode
+  bool useWriteImmSignal_;
+  std::thread recvThread_;
+  std::atomic<bool> stopRecvThread_;
+  int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
+
+  // CPU send buffer for write-with-imm (send buffer is local to connection)
+  std::unique_ptr<WriteImmData[]> writeImmSendBuf_;
+  RegisteredMemory writeImmSendBufMem_;
+  mscclpp::TransportInfo writeImmSendBufInfo_;
+  int writeImmSendBufIdx_;  // Index to next available send buffer slot
+  cudaStream_t writeImmStream_;
+
+  // Pointers to endpoint's recv buffer (owned by Endpoint::Impl)
+  WriteImmData* writeImmRecvBuf_;
+  IbMrInfo remoteWriteImmRecvBufMrInfo_;  // Remote peer's recv buffer MR info (from remote endpoint)
+
+  void recvThreadFunc();
+
  public:
   IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
+  ~IBConnection();
 
   Transport transport() const override;
 

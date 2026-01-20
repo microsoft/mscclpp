@@ -7,6 +7,10 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
+#include <arpa/inet.h>
+
+#include <atomic>
+#include <cstring>
 #include <mscclpp/env.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
@@ -180,19 +184,141 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 
 // IBConnection
 
+void IBConnection::recvThreadFunc() {
+  // Set the CUDA device context for this thread
+  if (localGpuDeviceId_ >= 0) {
+    cudaError_t err = cudaSetDevice(localGpuDeviceId_);
+    if (err != cudaSuccess) {
+      WARN(NET, "IBConnection recvThreadFunc: cudaSetDevice(", localGpuDeviceId_,
+           ") failed: ", cudaGetErrorString(err));
+      return;
+    }
+  }
+
+  while (!stopRecvThread_.load(std::memory_order_relaxed)) {
+    auto qp = qp_.lock();
+    if (!qp) break;
+
+    int wcNum = qp->pollRecvCq();
+    if (wcNum < 0) {
+      WARN(NET, "IBConnection recvThreadFunc: pollRecvCq failed");
+      break;
+    }
+
+    for (int i = 0; i < wcNum; ++i) {
+      int status = qp->getRecvWcStatus(i);
+      if (status != static_cast<int>(WsStatus::Success)) {
+        WARN(NET, "IBConnection recvThreadFunc: recv work completion failed: ", qp->getRecvWcStatusString(i));
+        // Post another recv to replace the failed one
+        qp->stageRecv(/*wrId=*/0);
+        qp->postRecv();
+        continue;
+      }
+
+      // The sender wrote (dstGpuAddr, newValue) to our writeImmRecvBuf_
+      // The imm_data contains the buffer slot index in the lower 16 bits
+      // Note: getRecvWcImmData already converts from network byte order via ntohl
+      unsigned int immData = qp->getRecvWcImmData(i);
+      int slot = immData & 0xFFFF;
+
+      if (slot < 0 || slot >= kWriteImmBufSize) {
+        WARN(NET, "IBConnection recvThreadFunc: invalid slot index ", slot);
+        qp->stageRecv(/*wrId=*/0);
+        qp->postRecv();
+        continue;
+      }
+
+      // Memory barrier to ensure we see the RDMA write data
+      std::atomic_thread_fence(std::memory_order_acquire);
+
+      WriteImmData& data = writeImmRecvBuf_[slot];
+      if (data.dstGpuAddr != 0) {
+        uint64_t* dstPtr = reinterpret_cast<uint64_t*>(data.dstGpuAddr);
+
+        // Use cudaMemcpyAsync with our dedicated stream to avoid blocking on the default stream
+        MSCCLPP_CUDATHROW(
+            cudaMemcpyAsync(dstPtr, &data.newValue, sizeof(uint64_t), cudaMemcpyHostToDevice, writeImmStream_));
+        // Synchronize our stream to ensure the copy is complete before the GPU kernel reads it
+        MSCCLPP_CUDATHROW(cudaStreamSynchronize(writeImmStream_));
+
+        INFO(CONN, "IBConnection recvThreadFunc: updated GPU ptr ", dstPtr, " to ", data.newValue, " (slot=", slot,
+             ", immData=", immData, ")");
+
+        // Clear the slot for reuse
+        data.dstGpuAddr = 0;
+        data.newValue = 0;
+      }
+
+      // Post another recv for future messages
+      qp->stageRecv(/*wrId=*/0);
+      qp->postRecv();
+    }
+  }
+}
+
 IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                            const Endpoint& remoteEndpoint)
     : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      dummyAtomicSource_(std::make_unique<uint64_t>(0)) {
+      dummyAtomicSource_(std::make_unique<uint64_t>(0)),
+      useWriteImmSignal_(env()->ibvMode == "host-no-atomic"),
+      stopRecvThread_(false),
+      localGpuDeviceId_(localEndpoint.device().id),
+      writeImmSendBufIdx_(0),
+      writeImmStream_(nullptr),
+      writeImmRecvBuf_(nullptr) {
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
   dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
   validateTransport(dummyAtomicSourceMem_, transport_);
   dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
-  INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created");
+
+  // Initialize remoteWriteImmRecvBufMrInfo_ from remote endpoint (already exchanged via endpoint serialization)
+  remoteWriteImmRecvBufMrInfo_ = getImpl(remoteEndpoint).writeImmRecvBufMrInfo_;
+
+  if (useWriteImmSignal_) {
+    // Allocate CPU send buffer for write-with-imm (local to connection)
+    writeImmSendBuf_ = std::make_unique<WriteImmData[]>(kWriteImmBufSize);
+    std::memset(writeImmSendBuf_.get(), 0, sizeof(WriteImmData) * kWriteImmBufSize);
+
+    // Register the send buffer as a memory region
+    writeImmSendBufMem_ =
+        context->registerMemory(writeImmSendBuf_.get(), sizeof(WriteImmData) * kWriteImmBufSize, transport_);
+    validateTransport(writeImmSendBufMem_, transport_);
+    writeImmSendBufInfo_ = getImpl(writeImmSendBufMem_).getTransportInfo(transport_);
+
+    // Get pointer to local endpoint's recv buffer (owned by Endpoint::Impl)
+    writeImmRecvBuf_ = getImpl(localEndpoint).writeImmRecvBuf_.get();
+
+    // Create a CUDA stream for async memory copies
+    MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&writeImmStream_, cudaStreamNonBlocking));
+
+    // Pre-post some receive requests for incoming write-with-imm
+    auto qp = qp_.lock();
+    for (int i = 0; i < kWriteImmBufSize; ++i) {
+      qp->stageRecv(/*wrId=*/0);
+    }
+    qp->postRecv();
+    // Start the background thread to poll recv CQ
+    recvThread_ = std::thread([this]() { this->recvThreadFunc(); });
+    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with write-with-imm signaling");
+  } else {
+    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created");
+  }
+}
+
+IBConnection::~IBConnection() {
+  if (useWriteImmSignal_) {
+    stopRecvThread_.store(true, std::memory_order_relaxed);
+    if (recvThread_.joinable()) {
+      recvThread_.join();
+    }
+    if (writeImmStream_ != nullptr) {
+      cudaStreamDestroy(writeImmStream_);
+    }
+  }
 }
 
 Transport IBConnection::transport() const { return transport_; }
@@ -220,8 +346,8 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   auto dstMrInfo = dstTransportInfo.ibMrInfo;
   auto srcMr = srcTransportInfo.ibMr;
 
-  qp_.lock()->stageSend(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset, /*dstOffset=*/dstOffset,
-                        /*signaled=*/true);
+  qp_.lock()->stageSendWrite(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset,
+                             /*dstOffset=*/dstOffset, /*signaled=*/true);
 
   qp_.lock()->postSend();
   INFO(CONN, "IBConnection write: from ", (uint8_t*)srcMr->getBuff() + srcOffset, " to ",
@@ -248,12 +374,47 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   uint64_t oldValue = *src;
   *src = newValue;
 
-  qp_.lock()->stageAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
-                             /*signaled=*/true);
+  if (useWriteImmSignal_) {
+    // Use RDMA write-with-imm instead of atomic operation
+    // Write (dstGpuAddr, newValue) to the local send buffer, then send it to the remote's recv buffer
+    // The remote's recvThreadFunc will read from the recv buffer and use cudaMemcpy to update the GPU
 
-  qp_.lock()->postSend();
-  INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
-       " -> ", newValue);
+    // Get the destination GPU address from the RegisteredMemory
+    uint64_t dstGpuAddr = reinterpret_cast<uint64_t>(dst.originalDataPtr()) + dstOffset;
+
+    // Fill the send buffer with the data
+    int bufIdx = writeImmSendBufIdx_;
+    writeImmSendBufIdx_ = (writeImmSendBufIdx_ + 1) % kWriteImmBufSize;
+
+    writeImmSendBuf_[bufIdx].dstGpuAddr = dstGpuAddr;
+    writeImmSendBuf_[bufIdx].newValue = newValue;
+
+    // Use the remote's recv buffer MR info (already exchanged via endpoint serialization)
+    // We write to the same slot index on the remote's recv buffer
+    IbMrInfo remoteRecvMrInfo;
+    remoteRecvMrInfo.addr = remoteWriteImmRecvBufMrInfo_.addr + bufIdx * sizeof(WriteImmData);
+    remoteRecvMrInfo.rkey = remoteWriteImmRecvBufMrInfo_.rkey;
+
+    // Encode buffer slot index in the immediate data (lower 16 bits)
+    // Note: InfiniBand handles byte order conversion internally
+    unsigned int immData = static_cast<unsigned int>(bufIdx) & 0xFFFF;
+
+    // Stage the write-with-imm: send our local send buffer to remote's recv buffer
+    // Source: writeImmSendBuf_[bufIdx], Destination: remote's writeImmRecvBuf_[bufIdx]
+    qp_.lock()->stageSendWriteWithImm(writeImmSendBufInfo_.ibMr, remoteRecvMrInfo,
+                                      /*size=*/sizeof(WriteImmData), /*wrId=*/0,
+                                      /*srcOffset=*/bufIdx * sizeof(WriteImmData), /*dstOffset=*/0,
+                                      /*signaled=*/true, /*immData=*/immData);
+    qp_.lock()->postSend();
+    INFO(CONN, "IBConnection write-with-imm: dstGpuAddr=", (void*)dstGpuAddr, ", value ", oldValue, " -> ", newValue,
+         ", slot=", bufIdx);
+  } else {
+    qp_.lock()->stageSendAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
+                                   /*signaled=*/true);
+    qp_.lock()->postSend();
+    INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
+         " -> ", newValue);
+  }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_UPDATE_AND_SYNC_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
@@ -266,21 +427,21 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #endif
 
   Timer timer;
-  while (qp_.lock()->getNumCqItems()) {
-    int wcNum = qp_.lock()->pollCq();
+  while (qp_.lock()->getNumSendCqItems()) {
+    int wcNum = qp_.lock()->pollSendCq();
     if (wcNum < 0) {
-      THROW(NET, IbError, errno, "pollCq failed");
+      THROW(NET, IbError, errno, "pollSendCq failed");
     } else if (timeoutUsec >= 0) {
       auto elapsed = timer.elapsed();
       if (elapsed > timeoutUsec) {
-        THROW(CONN, Error, ErrorCode::Timeout, "pollCq timed out: waited for ", elapsed / 1e6, " seconds. Expected ",
-              qp_.lock()->getNumCqItems(), " signals");
+        THROW(CONN, Error, ErrorCode::Timeout, "pollSendCq timed out: waited for ", elapsed / 1e6,
+              " seconds. Expected ", qp_.lock()->getNumSendCqItems(), " signals");
       }
     }
     for (int i = 0; i < wcNum; ++i) {
-      int status = qp_.lock()->getWcStatus(i);
+      int status = qp_.lock()->getSendWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
-        THROW(NET, Error, ErrorCode::SystemError, "an IB work item failed: ", qp_.lock()->getWcStatusString(i));
+        THROW(NET, Error, ErrorCode::SystemError, "an IB work item failed: ", qp_.lock()->getSendWcStatusString(i));
       }
     }
   }

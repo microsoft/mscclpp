@@ -71,12 +71,12 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void registerBufferAndConnect(void* buf, size_t size);
 
-  void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
+  void stageSendWrite(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
 
-  void stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
+  void stageSendAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
 
-  void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
-                        unsigned int immData);
+  void stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
+                             unsigned int immData);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
