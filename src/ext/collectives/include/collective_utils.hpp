@@ -85,6 +85,7 @@ class AlgorithmCtx {
   std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
+  std::shared_ptr<void*> remoteMemoryHandles;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 

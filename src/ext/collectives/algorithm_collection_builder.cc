@@ -15,6 +15,7 @@
 #include "allreduce/allreduce_packet.hpp"
 #include "allreduce/allreduce_rsag.hpp"
 #include "allreduce/allreduce_rsag_pipeline.hpp"
+#include "allreduce/allreduce_rsag_zero_copy.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -83,6 +84,9 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   auto allreduceRsagPipeline = std::make_shared<AllreduceRsAgPipeline>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceRsagPipeline->collective(), allreduceRsagPipeline->name(),
                                allreduceRsagPipeline);
+  auto allreduceRsagZeroCopy = std::make_shared<AllreduceRsAgZeroCopy>()->build();
+  collection.registerAlgorithm(allreduceRsagZeroCopy->collective(), allreduceRsagZeroCopy->name(),
+                               allreduceRsagZeroCopy);
 
   auto allgatherFullmesh = std::make_shared<AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
