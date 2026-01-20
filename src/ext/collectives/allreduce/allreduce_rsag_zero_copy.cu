@@ -8,21 +8,25 @@
 
 namespace mscclpp {
 namespace collective {
-template <int NPeers, ReduceOp OpType, typename T>
+
+__device__ mscclpp::DeviceSyncer globalSyncer;
+
+template <int NRanksPerNode, ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
-                          int nRanksPerNode, int worldSize, size_t nelems) {
+                          int worldSize, size_t nelems) {
   int blockId = blockIdx.x;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
+  constexpr int NPeers = NRanksPerNode - 1;           
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
-  const uint32_t outputRemoteBufferOffset = nRanksPerNode - 1;
-  uint32_t alignedNelems = ((nelems + nRanksPerNode - 1) / nRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
-                           nelemsPerInt4 * nRanksPerNode;
-  uint32_t nelemsPerRank = alignedNelems / nRanksPerNode;
+  const uint32_t outputRemoteBufferOffset = NRanksPerNode - 1;
+  uint32_t alignedNelems = ((nelems + NRanksPerNode - 1) / NRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
+                           nelemsPerInt4 * NRanksPerNode;
+  uint32_t nelemsPerRank = alignedNelems / NRanksPerNode;
   uint32_t nInt4PerRank = nelemsPerRank / nelemsPerInt4;
   uint32_t nInt4Total = (nelems + nelemsPerInt4 - 1) / nelemsPerInt4;
 
@@ -37,6 +41,7 @@ __global__ void __launch_bounds__(1024, 1)
     nInt4PerBlock += remainderForBlock;
   }
   if (nInt4PerBlock == 0) return;
+
   if (threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].relaxedSignal();
     memoryChannelsLocal[threadIdx.x].relaxedWait();
@@ -49,7 +54,7 @@ __global__ void __launch_bounds__(1024, 1)
     int4 tmp = buff4[offset];
     #pragma unroll
     for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % NRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
     }
@@ -58,14 +63,14 @@ __global__ void __launch_bounds__(1024, 1)
     }
     #pragma unroll
     for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % NRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[outputRemoteBufferOffset + peerIdx], offset, tmp);
     }
     resultBuff4[offset] = tmp;
   }
-  __syncthreads();
-  if (threadIdx.x < NPeers) {
+  globalSyncer.sync(gridDim.x);
+  if (blockIdx.x == 0 && threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].signal();
     memoryChannelsLocal[threadIdx.x].wait();
   }
@@ -82,10 +87,15 @@ struct AllreduceRsAgZeroCopyAdapter {
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
       nThreadsPerBlock = 1024;
       nBlocks = 64;
+      if (inputSize >= (1 << 26)) {
+        nBlocks = 128;
+      }
     }
-    allreduceRsAgZeroCopy<3, OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-        (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
-        nRanksPerNode, worldSize, nelems);
+    if (nRanksPerNode == 4) {
+      allreduceRsAgZeroCopy<4, OpType, T>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
+                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
+    }
     return cudaGetLastError();
   }
 };
@@ -128,7 +138,7 @@ AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* i
 }
 
 std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_ptr<Communicator> comm, const void* input,
-                                                                  void* output, size_t size, DataType dtype) {
+                                                                  void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
