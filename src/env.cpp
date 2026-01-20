@@ -54,6 +54,7 @@ Env::Env()
       logFile(readEnv<std::string>("MSCCLPP_LOG_FILE", "")),
       hcaDevices(readEnv<std::string>("MSCCLPP_HCA_DEVICES", "")),
       ibvSo(readEnv<std::string>("MSCCLPP_IBV_SO", "")),
+      ibvMode(readEnv<std::string>("MSCCLPP_IBV_MODE", "host")),
       hostid(readEnv<std::string>("MSCCLPP_HOSTID", "")),
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
       socketIfname(readEnv<std::string>("MSCCLPP_SOCKET_IFNAME", "")),
@@ -81,6 +82,7 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_LOG_FILE", globalEnv->logFile);
     logEnv("MSCCLPP_HCA_DEVICES", globalEnv->hcaDevices);
     logEnv("MSCCLPP_IBV_SO", globalEnv->ibvSo);
+    logEnv("MSCCLPP_IBV_MODE", globalEnv->ibvMode);
     logEnv("MSCCLPP_HOSTID", globalEnv->hostid);
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
     logEnv("MSCCLPP_SOCKET_IFNAME", globalEnv->socketIfname);

@@ -394,9 +394,9 @@ struct EndpointConfig {
     int port;
     /// GID index.
     int gidIndex;
-    /// Maximum size of the completion queue.
+    /// Maximum size of the send completion queue.
     int maxCqSize;
-    /// Maximum number of completion queue polls per operation.
+    /// Maximum number of send completion queue polls per operation.
     int maxCqPollNum;
     /// Maximum number of outstanding send work requests.
     int maxSendWr;
@@ -407,8 +407,8 @@ struct EndpointConfig {
     /// @param deviceIndex Device index.
     /// @param port Port number.
     /// @param gidIndex GID index.
-    /// @param maxCqSize Maximum completion queue size.
-    /// @param maxCqPollNum Maximum completion queue poll count.
+    /// @param maxCqSize Maximum send completion queue size.
+    /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
     /// @param maxWrPerSend Maximum work requests per send operation.
     Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,

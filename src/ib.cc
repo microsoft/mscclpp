@@ -3,6 +3,7 @@
 
 #include "ib.hpp"
 
+#include <arpa/inet.h>
 #include <malloc.h>
 #include <unistd.h>
 
@@ -129,30 +130,46 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
-IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
-           int maxRecvWr, int maxWrPerSend)
+IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
+           int maxSendWr, int maxRecvWr, int maxWrPerSend)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
       qp_(nullptr),
-      cq_(nullptr),
-      wcs_(),
-      wrs_(),
-      sges_(),
-      wrn_(0),
-      numSignaledPostedItems_(0),
-      numSignaledStagedItems_(0),
-      maxCqPollNum_(maxCqPollNum),
-      maxWrPerSend_(maxWrPerSend) {
-  cq_ = IBVerbs::ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
-  if (cq_ == nullptr) {
+      sendCq_(nullptr),
+      recvCq_(nullptr),
+      sendWcs_(),
+      recvWcs_(),
+      sendWrs_(),
+      sendSges_(),
+      recvWrs_(),
+      recvSges_(),
+      numStagedSend_(0),
+      numStagedRecv_(0),
+      numPostedSignaledSend_(0),
+      numStagedSignaledSend_(0),
+      maxSendCqPollNum_(maxSendCqPollNum),
+      maxSendWr_(maxSendWr),
+      maxWrPerSend_(maxWrPerSend),
+      maxRecvWr_(maxRecvWr) {
+  sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
+  if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
+  }
+
+  // Only create recv CQ if maxRecvWr > 0
+  if (maxRecvWr > 0) {
+    recvCq_ = IBVerbs::ibv_create_cq(ctx, maxRecvWr, nullptr, nullptr, 0);
+    if (recvCq_ == nullptr) {
+      THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
+    }
   }
 
   struct ibv_qp_init_attr qpInitAttr = {};
   qpInitAttr.sq_sig_all = 0;
-  qpInitAttr.send_cq = cq_;
-  qpInitAttr.recv_cq = cq_;
+  qpInitAttr.send_cq = sendCq_;
+  // Use separate recv CQ if created, otherwise use the send CQ
+  qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
   qpInitAttr.qp_type = IBV_QPT_RC;
   qpInitAttr.cap.max_send_wr = maxSendWr;
   qpInitAttr.cap.max_recv_wr = maxRecvWr;
@@ -173,9 +190,9 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSiz
   info_.linkLayer = portAttr.link_layer;
   info_.qpn = qp->qp_num;
   info_.mtu = portAttr.active_mtu;
-  info_.is_grh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
+  info_.isGrh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
 
-  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.is_grh) {
+  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.isGrh) {
     if (gidIndex_ >= portAttr.gid_tbl_len) {
       THROW(NET, Error, ErrorCode::InvalidUsage, "invalid GID index ", gidIndex_, " for port ", portNum_,
             " (max index is ", portAttr.gid_tbl_len - 1, ")");
@@ -199,14 +216,22 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSiz
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
   }
   qp_ = qp;
-  wrs_ = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend_);
-  sges_ = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend_);
-  wcs_ = std::make_shared<std::vector<ibv_wc>>(maxCqPollNum_);
+  sendWrs_ = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend_);
+  sendSges_ = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend_);
+  sendWcs_ = std::make_shared<std::vector<ibv_wc>>(maxSendCqPollNum_);
+  recvWcs_ = std::make_shared<std::vector<ibv_wc>>(maxRecvWr_);
+  if (maxRecvWr_ > 0) {
+    recvWrs_ = std::make_shared<std::vector<ibv_recv_wr>>(maxRecvWr_);
+    recvSges_ = std::make_shared<std::vector<ibv_sge>>(maxRecvWr_);
+  }
 }
 
 IbQp::~IbQp() {
   IBVerbs::ibv_destroy_qp(qp_);
-  IBVerbs::ibv_destroy_cq(cq_);
+  IBVerbs::ibv_destroy_cq(sendCq_);
+  if (recvCq_ != nullptr) {
+    IBVerbs::ibv_destroy_cq(recvCq_);
+  }
 }
 
 void IbQp::rtr(const IbQpInfo& info) {
@@ -217,7 +242,7 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.rq_psn = 0;
   qp_attr.max_dest_rd_atomic = 1;
   qp_attr.min_rnr_timer = 0x12;
-  if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.is_grh) {
+  if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.isGrh) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info.spn;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info.iid;
@@ -256,25 +281,25 @@ void IbQp::rts() {
   }
 }
 
-IbQp::WrInfo IbQp::getNewWrInfo() {
-  if (wrn_ >= maxWrPerSend_) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "too many outstanding work requests. limit is ", maxWrPerSend_);
+IbQp::SendWrInfo IbQp::getNewSendWrInfo() {
+  if (numStagedSend_ >= maxWrPerSend_) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "too many staged work requests. limit is ", maxWrPerSend_);
   }
-  ibv_send_wr* wr_ = &wrs_->data()[wrn_];
-  ibv_sge* sge_ = &sges_->data()[wrn_];
+  ibv_send_wr* wr_ = &sendWrs_->data()[numStagedSend_];
+  ibv_sge* sge_ = &sendSges_->data()[numStagedSend_];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->next = nullptr;
-  if (wrn_ > 0) {
-    (*wrs_)[wrn_ - 1].next = wr_;
+  if (numStagedSend_ > 0) {
+    (*sendWrs_)[numStagedSend_ - 1].next = wr_;
   }
-  wrn_++;
-  return IbQp::WrInfo{wr_, sge_};
+  numStagedSend_++;
+  return IbQp::SendWrInfo{wr_, sge_};
 }
 
-void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                     uint64_t dstOffset, bool signaled) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendWrite(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                          uint64_t dstOffset, bool signaled) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -283,12 +308,12 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  if (signaled) numStagedSignaledSend_++;
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
-                          bool signaled) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
+                              bool signaled) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -298,55 +323,109 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
   wrInfo.sge->addr = (uint64_t)(mr->getBuff());
   wrInfo.sge->length = sizeof(uint64_t);  // atomic op is always on uint64_t
   wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  if (signaled) numStagedSignaledSend_++;
 }
 
-void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                            uint64_t dstOffset, bool signaled, unsigned int immData) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendWriteWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                                 uint64_t dstOffset, bool signaled, unsigned int immData) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.rdma.rkey = info.rkey;
-  wrInfo.wr->imm_data = immData;
+  wrInfo.wr->imm_data = htonl(immData);
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  if (signaled) numStagedSignaledSend_++;
 }
 
 void IbQp::postSend() {
-  if (wrn_ == 0) {
+  if (numStagedSend_ == 0) {
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int err = IBVerbs::ibv_post_send(qp_, wrs_->data(), &bad_wr);
+  int err = IBVerbs::ibv_post_send(qp_, sendWrs_->data(), &bad_wr);
   if (err != 0) {
     THROW(NET, IbError, err, "ibv_post_send failed (errno ", err, ")");
   }
-  wrn_ = 0;
-  numSignaledPostedItems_ += numSignaledStagedItems_;
-  numSignaledStagedItems_ = 0;
-  if (numSignaledPostedItems_ + 4 > cq_->cqe) {
-    WARN(NET, "IB: CQ is almost full ( ", numSignaledPostedItems_, " / ", cq_->cqe,
+  numStagedSend_ = 0;
+  numPostedSignaledSend_ += numStagedSignaledSend_;
+  numStagedSignaledSend_ = 0;
+  if (numPostedSignaledSend_ + 4 > sendCq_->cqe) {
+    WARN(NET, "IB: CQ is almost full ( ", numPostedSignaledSend_, " / ", sendCq_->cqe,
          " ). The connection needs to be flushed to prevent timeout errors.");
   }
 }
 
-int IbQp::pollCq() {
-  int wcNum = IBVerbs::ibv_poll_cq(cq_, maxCqPollNum_, wcs_->data());
+IbQp::RecvWrInfo IbQp::getNewRecvWrInfo() {
+  if (numStagedRecv_ >= maxRecvWr_) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "too many outstanding recv work requests. limit is ", maxRecvWr_);
+  }
+  ibv_recv_wr* wr = &recvWrs_->data()[numStagedRecv_];
+  ibv_sge* sge = &recvSges_->data()[numStagedRecv_];
+  wr->next = nullptr;
+  if (numStagedRecv_ > 0) {
+    (*recvWrs_)[numStagedRecv_ - 1].next = wr;
+  }
+  numStagedRecv_++;
+  return IbQp::RecvWrInfo{wr, sge};
+}
+
+void IbQp::stageRecv(uint64_t wrId) {
+  auto wrInfo = this->getNewRecvWrInfo();
+  // For RDMA write-with-imm, data goes to remote_addr specified by sender.
+  // We only need the recv WR to get the completion notification with imm_data.
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->sg_list = nullptr;
+  wrInfo.wr->num_sge = 0;
+}
+
+void IbQp::stageRecv(const IbMr* mr, uint64_t wrId, uint32_t size, uint64_t offset) {
+  auto wrInfo = this->getNewRecvWrInfo();
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.sge->addr = reinterpret_cast<uint64_t>(mr->getBuff()) + offset;
+  wrInfo.sge->length = size;
+  wrInfo.sge->lkey = mr->getLkey();
+  wrInfo.wr->sg_list = wrInfo.sge;
+  wrInfo.wr->num_sge = 1;
+}
+
+void IbQp::postRecv() {
+  if (numStagedRecv_ == 0) return;
+  struct ibv_recv_wr* bad_wr;
+  int err = IBVerbs::ibv_post_recv(qp_, recvWrs_->data(), &bad_wr);
+  if (err != 0) {
+    THROW(NET, IbError, err, "ibv_post_recv failed (errno ", err, ")");
+  }
+  numStagedRecv_ = 0;
+}
+
+int IbQp::pollSendCq() {
+  int wcNum = IBVerbs::ibv_poll_cq(sendCq_, maxSendCqPollNum_, sendWcs_->data());
   if (wcNum > 0) {
-    numSignaledPostedItems_ -= wcNum;
+    numPostedSignaledSend_ -= wcNum;
   }
   return wcNum;
 }
 
-int IbQp::getWcStatus(int idx) const { return (*wcs_)[idx].status; }
+int IbQp::pollRecvCq() {
+  int wcNum = IBVerbs::ibv_poll_cq(recvCq_, maxRecvWr_, recvWcs_->data());
+  return wcNum;
+}
 
-std::string IbQp::getWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*wcs_)[idx].status); }
+int IbQp::getSendWcStatus(int idx) const { return (*sendWcs_)[idx].status; }
 
-int IbQp::getNumCqItems() const { return numSignaledPostedItems_; }
+std::string IbQp::getSendWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*sendWcs_)[idx].status); }
+
+int IbQp::getNumSendCqItems() const { return numPostedSignaledSend_; }
+
+int IbQp::getRecvWcStatus(int idx) const { return (*recvWcs_)[idx].status; }
+
+std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*recvWcs_)[idx].status); }
+
+unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
 
 IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr) {
   int num;
@@ -419,7 +498,7 @@ int IbCtx::getAnyUsablePort(int gidIndex) const {
   return -1;
 }
 
-std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
+std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
                                       int maxRecvWr, int maxWrPerSend) {
   if (port == -1) {
     port = this->getAnyUsablePort(gidIndex);
@@ -430,7 +509,7 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxCqSize, int
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
   return std::shared_ptr<IbQp>(
-      new IbQp(ctx_, pd_, port, gidIndex, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+      new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {

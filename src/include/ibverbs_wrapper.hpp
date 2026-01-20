@@ -102,6 +102,10 @@ struct IBVerbs {
     return qp->context->ops.post_send(qp, wr, bad_wr);
   }
 
+  static inline int ibv_post_recv(struct ibv_qp *qp, struct ibv_recv_wr *wr, struct ibv_recv_wr **bad_wr) {
+    return qp->context->ops.post_recv(qp, wr, bad_wr);
+  }
+
   static inline int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc) {
     return cq->context->ops.poll_cq(cq, num_entries, wc);
   }

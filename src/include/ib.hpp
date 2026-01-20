@@ -17,6 +17,7 @@ struct ibv_qp;
 struct ibv_cq;
 struct ibv_wc;
 struct ibv_send_wr;
+struct ibv_recv_wr;
 struct ibv_sge;
 
 namespace mscclpp {
@@ -28,11 +29,11 @@ struct IbMrInfo {
 
 class IbMr {
  public:
-  virtual ~IbMr();
+  ~IbMr();
 
-  virtual IbMrInfo getInfo() const;
-  virtual const void* getBuff() const;
-  virtual uint32_t getLkey() const;
+  IbMrInfo getInfo() const;
+  const void* getBuff() const;
+  uint32_t getLkey() const;
 
  private:
   IbMr(ibv_pd* pd, void* buff, std::size_t size);
@@ -52,7 +53,7 @@ struct IbQpInfo {
   uint64_t spn;
   int mtu;
   uint64_t iid;
-  bool is_grh;
+  bool isGrh;
 };
 
 enum class WsStatus {
@@ -61,38 +62,48 @@ enum class WsStatus {
 
 class IbQp {
  public:
-  virtual ~IbQp();
+  ~IbQp();
 
-  virtual void rtr([[maybe_unused]] const IbQpInfo& info);
-  virtual void rts();
-  virtual void stageSend([[maybe_unused]] const IbMr* mr, [[maybe_unused]] const IbMrInfo& info,
-                         [[maybe_unused]] uint32_t size, [[maybe_unused]] uint64_t wrId,
-                         [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t dstOffset,
-                         [[maybe_unused]] bool signaled);
-  virtual void stageAtomicAdd([[maybe_unused]] const IbMr* mr, [[maybe_unused]] const IbMrInfo& info,
-                              [[maybe_unused]] uint64_t wrId, [[maybe_unused]] uint64_t dstOffset,
-                              [[maybe_unused]] uint64_t addVal, [[maybe_unused]] bool signaled);
-  virtual void stageSendWithImm([[maybe_unused]] const IbMr* mr, [[maybe_unused]] const IbMrInfo& info,
-                                [[maybe_unused]] uint32_t size, [[maybe_unused]] uint64_t wrId,
-                                [[maybe_unused]] uint64_t srcOffset, [[maybe_unused]] uint64_t dstOffset,
-                                [[maybe_unused]] bool signaled, [[maybe_unused]] unsigned int immData);
-  virtual void postSend();
-  virtual int pollCq();
+  void rtr(const IbQpInfo& info);
+  void rts();
+  void stageSendWrite(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                      uint64_t dstOffset, bool signaled);
+  void stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
+                          bool signaled);
+  void stageSendWriteWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                             uint64_t dstOffset, bool signaled, unsigned int immData);
+  void postSend();
+
+  void stageRecv(uint64_t wrId);
+  void stageRecv(const IbMr* mr, uint64_t wrId, uint32_t size, uint64_t offset = 0);
+  void postRecv();
+
+  int pollSendCq();
+  int pollRecvCq();
 
   IbQpInfo& getInfo() { return info_; }
-  virtual int getWcStatus([[maybe_unused]] int idx) const;
-  virtual std::string getWcStatusString([[maybe_unused]] int idx) const;
-  virtual int getNumCqItems() const;
+  int getSendWcStatus(int idx) const;
+  std::string getSendWcStatusString(int idx) const;
+  int getNumSendCqItems() const;
+  int getRecvWcStatus(int idx) const;
+  std::string getRecvWcStatusString(int idx) const;
+  unsigned int getRecvWcImmData(int idx) const;
 
  private:
-  struct WrInfo {
+  struct SendWrInfo {
     ibv_send_wr* wr;
     ibv_sge* sge;
   };
 
-  IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
+  struct RecvWrInfo {
+    ibv_recv_wr* wr;
+    ibv_sge* sge;
+  };
+
+  IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
        int maxRecvWr, int maxWrPerSend);
-  WrInfo getNewWrInfo();
+  SendWrInfo getNewSendWrInfo();
+  RecvWrInfo getNewRecvWrInfo();
 
   int portNum_;
   int gidIndex_;
@@ -100,16 +111,23 @@ class IbQp {
   IbQpInfo info_;
 
   ibv_qp* qp_;
-  ibv_cq* cq_;
-  std::shared_ptr<std::vector<ibv_wc>> wcs_;
-  std::shared_ptr<std::vector<ibv_send_wr>> wrs_;
-  std::shared_ptr<std::vector<ibv_sge>> sges_;
-  int wrn_;
-  int numSignaledPostedItems_;
-  int numSignaledStagedItems_;
+  ibv_cq* sendCq_;
+  ibv_cq* recvCq_;
+  std::shared_ptr<std::vector<ibv_wc>> sendWcs_;
+  std::shared_ptr<std::vector<ibv_wc>> recvWcs_;
+  std::shared_ptr<std::vector<ibv_send_wr>> sendWrs_;
+  std::shared_ptr<std::vector<ibv_sge>> sendSges_;
+  std::shared_ptr<std::vector<ibv_recv_wr>> recvWrs_;
+  std::shared_ptr<std::vector<ibv_sge>> recvSges_;
+  int numStagedSend_;
+  int numStagedRecv_;
+  int numPostedSignaledSend_;
+  int numStagedSignaledSend_;
 
-  const int maxCqPollNum_;
+  const int maxSendCqPollNum_;
+  const int maxSendWr_;
   const int maxWrPerSend_;
+  const int maxRecvWr_;
 
   friend class IbCtx;
 };
@@ -120,8 +138,8 @@ class IbCtx {
   IbCtx(const std::string& devName);
   ~IbCtx();
 
-  std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr, int maxRecvWr,
-                                 int maxWrPerSend);
+  std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
+                                 int maxRecvWr, int maxWrPerSend);
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}

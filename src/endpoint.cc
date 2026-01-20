@@ -4,9 +4,12 @@
 #include "endpoint.hpp"
 
 #include <algorithm>
+#include <cstring>
+#include <mscclpp/env.hpp>
 
 #include "api.h"
 #include "context.hpp"
+#include "registered_memory.hpp"
 #include "serialization.hpp"
 #include "socket.h"
 #include "utils_internal.hpp"
@@ -23,10 +26,26 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     if (config_.maxWriteQueueSize <= 0) {
       config_.maxWriteQueueSize = config_.ib.maxCqSize;
     }
+
+    // If write-with-imm signaling is enabled, we need recv WRs for the recv CQ
+    useWriteImmSignal_ = (env()->ibvMode == "host-no-atomic");
+    int maxRecvWr = useWriteImmSignal_ ? kWriteImmBufSize : 0;
+
     ibQp_ = contextImpl.getIbContext(config_.transport)
-                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                           config_.ib.maxSendWr, 0, config_.ib.maxWrPerSend);
+          ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
+                 config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend);
     ibQpInfo_ = ibQp_->getInfo();
+
+    // If write-with-imm signaling is enabled, allocate and register the receive buffer
+    if (useWriteImmSignal_) {
+      writeImmRecvBuf_ = std::make_unique<WriteImmData[]>(kWriteImmBufSize);
+      std::memset(writeImmRecvBuf_.get(), 0, sizeof(WriteImmData) * kWriteImmBufSize);
+
+      // Register the CPU buffer as a memory region directly via IbCtx
+      writeImmRecvBufIbMr_ = contextImpl.getIbContext(config_.transport)
+                                 ->registerMr(writeImmRecvBuf_.get(), sizeof(WriteImmData) * kWriteImmBufSize);
+      writeImmRecvBufMrInfo_ = writeImmRecvBufIbMr_->getInfo();
+    }
   } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
     abortFlag_ = 0;
@@ -48,6 +67,10 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
+    it = detail::deserialize(it, useWriteImmSignal_);
+    if (useWriteImmSignal_) {
+      it = detail::deserialize(it, writeImmRecvBufMrInfo_);
+    }
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
   }
@@ -77,6 +100,10 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->pidHash_);
   if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
+    detail::serialize(data, pimpl_->useWriteImmSignal_);
+    if (pimpl_->useWriteImmSignal_) {
+      detail::serialize(data, pimpl_->writeImmRecvBufMrInfo_);
+    }
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }
