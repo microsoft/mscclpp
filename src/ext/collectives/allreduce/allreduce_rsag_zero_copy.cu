@@ -134,7 +134,9 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
 }
 
 AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer, size_t size, DataType) {
-  return AlgorithmCtxKey{(void*)inputBuffer, outputBuffer, size, size, 0};
+  // For non-synmmetric algorithms, we use both input and output buffer pointers in the key.
+  static int tag = 0;
+  return AlgorithmCtxKey{(void*)inputBuffer, outputBuffer, size, size, tag++};
 }
 
 std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_ptr<Communicator> comm, const void* input,
