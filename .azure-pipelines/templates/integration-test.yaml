@@ -225,7 +225,9 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                    \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
         cd /root/mscclpp;                                         \
-        ./build/test/perf/fifo_test"'
+        ./build/test/perf/fifo_test";                             \
+        echo \"mpirun --allow-run-as-root -np 8 ./build/test/perf/fifo_test_multi_gpu\"; \
+        mpirun --allow-run-as-root -np 8 ./build/test/perf/fifo_test_multi_gpu"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
