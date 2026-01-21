@@ -44,8 +44,8 @@ class Kernel:
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
     CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
 
-    def __init__(self, ptx: bytes, kernel_name: str):
-        self._module = cp.cuda.driver.moduleLoadData(ptx)
+    def __init__(self, cubin: bytes, kernel_name: str):
+        self._module = cp.cuda.driver.moduleLoadData(cubin)
         self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
 
     def launch_kernel(
@@ -95,8 +95,8 @@ class KernelBuilder:
         self.macros = None
         if file_dir:
             self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx")
-        self._kernel = Kernel(ptx, kernel_name)
+        cubin = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.cubin")
+        self._kernel = Kernel(cubin, kernel_name)
         self.kernel_map[kernel_key] = self._kernel
 
     def _compile_cuda(self, source_file, output_file, std_version="c++17"):
@@ -110,13 +110,13 @@ class KernelBuilder:
             command = [
                 nvcc,
                 f"-std={std_version}",
-                "-ptx",
+                "-cubin",
                 "-Xcompiler",
                 "-Wall,-Wextra",
                 f"-I{include_dir}",
                 f"{source_file}",
                 f"--gpu-architecture=compute_{compute_capability}",
-                f"--gpu-code=sm_{compute_capability},compute_{compute_capability}",
+                f"--gpu-code=sm_{compute_capability}",
                 "-o",
                 f"{self._tempdir.name}/{output_file}",
             ]
