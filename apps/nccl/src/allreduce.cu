@@ -97,8 +97,13 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2> || std::is_same_v<T, uint8_t>) {
+    // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
+#if defined(__FP8_TYPES_EXIST__)
+    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#else
+    if constexpr (std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
     } else
 #endif
@@ -121,8 +126,13 @@ struct NvlsWithCopyAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t scratchBufferSize,
                           int rank, int nRanksPerNode, int, size_t nelems, cudaStream_t stream, uint32_t*, uint32_t*,
                           uint32_t*, uint32_t) {
-#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2> || std::is_same_v<T, uint8_t>) {
+    // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
+#if defined(__FP8_TYPES_EXIST__)
+    if constexpr (std::is_same_v<T, uint8_t> || std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#else
+    if constexpr (std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
     } else
 #endif
@@ -183,7 +193,7 @@ struct AllreduceNvlsPacketAdapter {
   }
 };
 
-template <template <Op, typename> class Adapter>
+template <template <Op, typename> class Adapter, bool SupportUint8 = true>
 AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
   Op reduceOp = getReduceOp(op);
 
@@ -205,7 +215,11 @@ AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<SUM, int>::call;
     } else if (dtype == mscclpp::DataType::UINT8) {
-      return Adapter<SUM, uint8_t>::call;
+      if constexpr (SupportUint8) {
+        return Adapter<SUM, uint8_t>::call;
+      } else {
+        return nullptr;
+      }
     } else {
       return nullptr;
     }
@@ -227,7 +241,11 @@ AllreduceFunc dispatch(ncclRedOp_t op, mscclpp::DataType dtype) {
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<MIN, int>::call;
     } else if (dtype == mscclpp::DataType::UINT8) {
-      return Adapter<MIN, uint8_t>::call;
+      if constexpr (SupportUint8) {
+        return Adapter<MIN, uint8_t>::call;
+      } else {
+        return nullptr;
+      }
     } else {
       return nullptr;
     }
@@ -374,7 +392,7 @@ ncclResult_t AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<mscclpp::A
                                                 void* output, size_t count, mscclpp::DataType dtype,
                                                 cudaStream_t stream,
                                                 std::unordered_map<std::string, std::shared_ptr<void>>&) {
-  AllreduceFunc allreduce = dispatch<NvlsAdapter>(ncclSum, dtype);
+  AllreduceFunc allreduce = dispatch<NvlsAdapter, false>(ncclSum, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return ncclInvalidArgument;
@@ -475,7 +493,7 @@ ncclResult_t AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<ms
                                                         const void* input, void* output, size_t count,
                                                         mscclpp::DataType dtype, cudaStream_t stream,
                                                         std::unordered_map<std::string, std::shared_ptr<void>>&) {
-  AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(ncclSum, dtype);
+  AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter, false>(ncclSum, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return ncclInvalidArgument;
