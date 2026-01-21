@@ -202,7 +202,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH;                     \
         export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
         python3 -m pip install .;                                     \
-        mpirun --allow-run-as-root -tag-output -x LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
