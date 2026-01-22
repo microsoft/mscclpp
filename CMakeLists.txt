@@ -98,6 +98,42 @@ else()
         message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
     endif()
 endif()
+
+#Function to choose between default and "a" variant.
+function(mscclpp_choose_arch_variant out_arch base_arch a_arch)
+  # base_arch like "90"  a_arch like "90a"
+  set(PROBE_SRC "${CMAKE_SOURCE_DIR}/cmake/arch_probe.cu")
+
+  # Unique object name per arch to avoid collisions
+  set(PROBE_OBJ "${CMAKE_BINARY_DIR}/CMakeFiles/arch_probe_sm${a_arch}.o")
+
+  # Force explicit codegen so -arch=native can't override.
+  # Example for 90a: compute_90a/sm_90a
+  set(GENCODE_A "--generate-code=arch=compute_${a_arch},code=[compute_${a_arch},sm_${a_arch}]")
+
+  execute_process(
+    COMMAND "${CMAKE_CUDA_COMPILER}"
+      -c "${PROBE_SRC}"
+      -o "${PROBE_OBJ}"
+      "${GENCODE_A}"
+      -O3 -DNDEBUG
+      -Xcompiler=-fPIC
+    RESULT_VARIABLE PROBE_RC
+    OUTPUT_QUIET
+    ERROR_VARIABLE PROBE_STDERR
+  )
+
+  if(PROBE_RC EQUAL 0)
+    message(STATUS "Arch probe OK for sm_${a_arch} -> selecting ${a_arch}")
+    set(${out_arch} "${a_arch}" PARENT_SCOPE)
+  else()
+    message(STATUS "Arch probe FAILED for sm_${a_arch} -> selecting ${base_arch}")
+    # Uncomment if you want details:
+    # message(STATUS "Probe stderr:\n${PROBE_STDERR}")
+    set(${out_arch} "${base_arch}" PARENT_SCOPE)
+  endif()
+endfunction()
+
 if(MSCCLPP_GPU_ARCHS)
     string(STRIP "${MSCCLPP_GPU_ARCHS}" MSCCLPP_GPU_ARCHS)
     string(REPLACE " " ";" MSCCLPP_GPU_ARCHS "${MSCCLPP_GPU_ARCHS}")
@@ -111,13 +147,16 @@ elseif(MSCCLPP_USE_CUDA)
     endif()
     set(MSCCLPP_GPU_ARCHS 80)
     if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.0")
-        list(APPEND MSCCLPP_GPU_ARCHS 90)
+	mscclpp_choose_arch_variant(MSCCLPP_SM100_VARIANT "90" "90a")
+	list(APPEND MSCCLPP_GPU_ARCHS ${MSCCLPP_SM90_VARIANT})
     endif()
     if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
-        list(APPEND MSCCLPP_GPU_ARCHS 100)
+	mscclpp_choose_arch_variant(MSCCLPP_SM100_VARIANT "100" "100a")
+	list(APPEND MSCCLPP_GPU_ARCHS ${MSCCLPP_SM100_VARIANT})
     endif()
     if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.9")
-        list(APPEND MSCCLPP_GPU_ARCHS 120)
+        mscclpp_choose_arch_variant(MSCCLPP_SM100_VARIANT "120" "120a")
+	list(APPEND MSCCLPP_GPU_ARCHS ${MSCCLPP_SM120_VARIANT})
     endif()
 elseif(MSCCLPP_USE_ROCM)
     set(MSCCLPP_GPU_ARCHS gfx90a gfx941 gfx942)
