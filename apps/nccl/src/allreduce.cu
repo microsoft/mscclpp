@@ -97,13 +97,20 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t nelems,
                           cudaStream_t stream, uint32_t*, uint32_t*, uint32_t*, uint32_t) {
-    using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
-    int nBlocks = nRanksPerNode;
-    int nThreadsPerBlock = 1024;
-    allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
+#if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
+    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      return cudaErrorNotSupported;
+    } else
+#endif
+    {
+      using ChannelType = mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>;
+      int nBlocks = nRanksPerNode;
+      int nThreadsPerBlock = 1024;
+      allreduce9<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
                                                               nvlsOutChannels, channelInOffset, channelOutOffset,
                                                               nelems * sizeof(T), rank, nRanksPerNode);
-    return cudaGetLastError();
+      return cudaGetLastError();
+    }
   }
 };
 
