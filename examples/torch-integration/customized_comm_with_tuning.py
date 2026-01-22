@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm_with_default_algo.py
+# MSCCLPP_MASTER_ADDR=<master_ip> MSCCLPP_MASTER_PORT=<port> torchrun --nnodes=1 --nproc_per_node=8  customized_comm_with_tuning.py
 
 import os
 import torch
@@ -67,7 +67,7 @@ class CustomizedComm:
         self._tune(n_warmup=5, n_graph_launches=10, n_ops_per_graph=100)
 
     def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
-        sizes = [1 << i for i in range(10, 27)]
+        sizes = [1 << i for i in range(10, 28)]
         # Pre-fill with defaults for barrier
         self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
 
@@ -79,7 +79,7 @@ class CustomizedComm:
             algos = []
             if size <= 4 * 1024 * 1024:
                 algos.append(self._algorithm_nvls_packet)
-                # algos.append(self._algorithm_packet)
+                algos.append(self._algorithm_packet)
             if size >= 512 * 1024:
                 algos.append(self._algorithm_nvls_nonzero_copy)
 
@@ -194,7 +194,7 @@ class CustomizedComm:
 
     def benchmark(self, n_warmup=10, n_graph_launches=10, n_iter_per_graph=100):
         low = 5 * 1024
-        high = 40 * 1024 * 1024
+        high = 80 * 1024 * 1024
         sizes = []
         curr = low
         while curr <= high:
@@ -202,7 +202,7 @@ class CustomizedComm:
             curr *= 2
 
         if self.rank == 0:
-            print(f"{'Size (Bytes)':<20} {'Time (us)':<20} {'BusBW (GB/s)':<20}")
+            print(f"{'Size (Bytes)':<20} {'Time (us)':<20} {'AlgoBW (GB/s)':<20}")
 
         dtype = torch.float16
         capture_stream = torch.cuda.Stream()
@@ -240,10 +240,8 @@ class CustomizedComm:
             time_us = avg_time_ms * 1000
 
             alg_bw = size / (avg_time_ms * 1e-3) if avg_time_ms > 0 else 0
-            bus_bw = alg_bw * (2 * (self.world_size - 1) / self.world_size)
-
             if self.rank == 0:
-                 print(f"{size:<20} {time_us:<20.2f} {bus_bw / 1e9:<20.2f}")
+                 print(f"{size:<20} {time_us:<20.2f} {alg_bw / 1e9:<20.2f}")
 
     def destroy(self):
         self._algorithm_nvls_nonzero_copy = None
