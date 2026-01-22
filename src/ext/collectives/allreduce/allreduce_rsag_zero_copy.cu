@@ -14,14 +14,14 @@ __device__ mscclpp::DeviceSyncer globalSyncer;
 template <int NRanksPerNode, ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
-                          int worldSize, size_t nelems) {
+                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int worldSize,
+                          size_t nelems) {
   int blockId = blockIdx.x;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
-  constexpr int NPeers = NRanksPerNode - 1;           
+  constexpr int NPeers = NRanksPerNode - 1;
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
   const uint32_t outputRemoteBufferOffset = NRanksPerNode - 1;
   uint32_t alignedNelems = ((nelems + NRanksPerNode - 1) / NRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
@@ -52,7 +52,7 @@ __global__ void __launch_bounds__(1024, 1)
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset >= nInt4Total) continue;
     int4 tmp = buff4[offset];
-    #pragma unroll
+#pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
@@ -61,7 +61,7 @@ __global__ void __launch_bounds__(1024, 1)
     for (int i = 0; i < NPeers; i++) {
       tmp = cal_vectors<T, OpType>(data[i], tmp);
     }
-    #pragma unroll
+#pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
@@ -122,10 +122,10 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
-  cudaError_t error = allreduce(input, nullptr, output, this->baseMemoryChannelHandles_.get(),
-                                algoCtx->remoteMemoryHandles.get(), nullptr, nullptr,
-                                0, 0, 0, algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
-                                nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+  cudaError_t error =
+      allreduce(input, nullptr, output, this->baseMemoryChannelHandles_.get(), algoCtx->remoteMemoryHandles.get(),
+                nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
+                nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -133,7 +133,8 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer, size_t size, DataType) {
+AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer,
+                                                                   size_t size, DataType) {
   // For non-synmmetric algorithms, we use both input and output buffer pointers in the key.
   static int tag = 0;
   return AlgorithmCtxKey{(void*)inputBuffer, outputBuffer, size, size, tag++};
