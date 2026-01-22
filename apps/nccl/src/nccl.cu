@@ -223,7 +223,7 @@ NCCL_API ncclResult_t ncclGetVersion(int* version) {
     WARN("version is nullptr");
     return ncclInvalidArgument;
   }
-  *version = 27700; //MSCCLPP_VERSION;
+  *version = MSCCLPP_VERSION;
   return ncclSuccess;
 }
 
