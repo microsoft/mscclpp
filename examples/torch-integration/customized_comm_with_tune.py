@@ -100,35 +100,51 @@ class CustomizedComm:
                             self._run_algo(algo, tune_tensor, size, nb, nt)
                         self.barrier()
 
+                        capture_stream = torch.cuda.Stream()
+                        capture_stream.wait_stream(torch.cuda.current_stream())
+                        
                         g = torch.cuda.CUDAGraph()
-                        with torch.cuda.graph(g):
+                        # Warmup on capture stream
+                        with torch.cuda.stream(capture_stream):
+                             self._run_algo(algo, tune_tensor, size, nb, nt)
+                        capture_stream.synchronize()
+
+                        with torch.cuda.graph(g, stream=capture_stream):
                             for _ in range(n_ops_per_graph):
                                 self._run_algo(algo, tune_tensor, size, nb, nt)
 
                         start_event = torch.cuda.Event(enable_timing=True)
                         end_event = torch.cuda.Event(enable_timing=True)
-
-                        start_event.record()
-                        for _ in range(n_graph_launches):
-                            g.replay()
-                        end_event.record()
+                        start_event.record(capture_stream)
+                        with torch.cuda.stream(capture_stream):
+                            for _ in range(n_graph_launches):
+                                g.replay()
+                        end_event.record(capture_stream)
                         end_event.synchronize()
 
                         elapsed = start_event.elapsed_time(end_event)
-                        if elapsed < best_time:
-                            best_time = elapsed
+                        
+                        # Synchronize timing results across all ranks to ensure consistent algorithm selection
+                        # replicate n times such due to algo limitations
+                        time_tensor = torch.full((self.world_size,), elapsed, dtype=torch.float64, device="cuda").to(dtype=torch.float32)
+                        torch.cuda.current_stream().wait_stream(capture_stream)
+                        self.all_reduce(time_tensor, op=torch.distributed.ReduceOp.SUM)
+                        avg_time = time_tensor[self.rank].item() / self.world_size
+
+                        if avg_time < best_time:
+                            best_time = avg_time
                             best_config = (algo, nb, nt)
 
             if best_config:
                 self.best_configs[size] = best_config
                 if self.rank == 0:
-                    avg_time_ms = best_time / (n_graph_launches * n_ops_per_graph)
-                    time_us = avg_time_ms * 1000
-                    alg_bw = size / (avg_time_ms * 1e-3)
-                    bus_bw = alg_bw * (2 * (self.world_size - 1) / self.world_size)
                     print(
-                        f"Size {size}: Best Algo {best_config[0].name} nblocks {best_config[1]} nthreads {best_config[2]} Time {time_us:.2f} us BusBW {bus_bw / 1e9:.2f} GB/s"
+                        f"Size {size}: Best Algo {best_config[0].name} nblocks {best_config[1]} nthreads {best_config[2]} Time {(best_time/(n_graph_launches * n_ops_per_graph))*1000:.2f} us"
                     )
+        # reset the algorithms after tuning
+        torch.cuda.synchronize()
+        for algo in algos:
+            algo.reset()
 
     def _run_algo(self, algo, tensor, size, nblocks, nthreads):
         return algo.execute(
@@ -165,7 +181,7 @@ class CustomizedComm:
             output_size=tensor.nbytes,
             dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
             op=to_mscclpp_reduce_op(op),
-            stream=stream.cuda_stream if stream is not None else 0,
+            stream=stream.cuda_stream if stream is not None else torch.cuda.current_stream().cuda_stream,
             nblocks=nblocks,
             nthreads_per_block=nthreads,
         )
@@ -193,25 +209,29 @@ class CustomizedComm:
 
         for size in sizes:
             tensor = torch.rand(size // 2, dtype=dtype, device="cuda")
-
-            # Warmup
-            for _ in range(n_warmup):
-                self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
-            self.barrier()
-
+            capture_stream.wait_stream(torch.cuda.current_stream())
             # Capture Graph
             g = torch.cuda.CUDAGraph()
             with torch.cuda.graph(g, stream=capture_stream):
                 for _ in range(n_iter_per_graph):
-                    self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, stream=capture_stream)
+                    self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM)
+
+            # warmup: Execute the graph once to prime the driver
+            with torch.cuda.stream(capture_stream):
+                for _ in range(n_warmup):
+                    g.replay()
+                self.barrier()
+            capture_stream.synchronize()
 
             # Benchmark
             start_event = torch.cuda.Event(enable_timing=True)
             end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
-            for _ in range(n_graph_launches):
-                g.replay()
-            end_event.record()
+
+            start_event.record(capture_stream)
+            with torch.cuda.stream(capture_stream):
+                for _ in range(n_graph_launches):
+                    g.replay()
+            end_event.record(capture_stream)
             end_event.synchronize()
 
             # Get elapsed time in milliseconds
@@ -249,9 +269,7 @@ def main():
     local = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
     comm = init_dist()
-    comm.barrier()
-    # Run benchmark
-    comm.benchmark(n_warmup=50, n_graph_launches=10, n_iter_per_graph=100)
+    comm.benchmark(n_warmup=5, n_graph_launches=10, n_iter_per_graph=100)
     comm.barrier()
     torch.cuda.synchronize()
     comm.destroy()

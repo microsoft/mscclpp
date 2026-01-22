@@ -75,7 +75,8 @@ void register_algorithm(nb::module_& m) {
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
               nb::arg("dtype"), nb::arg("op") = ReduceOp::NOP, nb::arg("stream") = 0, nb::arg("executor") = nullptr,
               nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0,
-              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>())
+            .def("reset", &Algorithm::reset);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
       .def(nb::init<>())
