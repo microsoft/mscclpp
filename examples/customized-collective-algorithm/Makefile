@@ -16,7 +16,7 @@ SRC = customized_allgather.cu
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp -lnccl
+	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp_collectives -lmscclpp -lnccl
 
 clean:
 	rm -f $(TARGET)

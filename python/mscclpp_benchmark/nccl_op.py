@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import cupy.cuda.nccl as nccl
 from mpi4py import MPI
 import cupy as cp

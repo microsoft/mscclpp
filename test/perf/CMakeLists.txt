@@ -36,6 +36,8 @@ function(add_perf_test_executable name sources)
     
     # Set C++ standard
     target_compile_features(${name} PRIVATE cxx_std_17)
+
+    set_target_properties(${name} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin/perf")
 endfunction()
 
 # Add FIFO test  
