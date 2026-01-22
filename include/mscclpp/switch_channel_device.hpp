@@ -80,7 +80,6 @@ struct SwitchChannelDeviceHandle {
           : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
           : "l"(ptr)
           : "memory");
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1000
     } else if constexpr (std::is_same_v<VectorType, fp8_e4m3x4>) {
       asm("multimem.ld_reduce.relaxed.sys.global.add.e4m3x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
     } else if constexpr (std::is_same_v<VectorType, fp8_e4m3x8>) {
@@ -105,7 +104,6 @@ struct SwitchChannelDeviceHandle {
           : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
           : "l"(ptr)
           : "memory");
-#endif
     } else {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
@@ -114,7 +112,6 @@ struct SwitchChannelDeviceHandle {
 
   template <typename VectorType, typename T>
   MSCCLPP_DEVICE_INLINE static void multimemStore(const VectorType& val, T* ptr) {
-//	   WARN("multimemStore: hereeee\n");
     if constexpr (std::is_same_v<VectorType, i32x1>) {
       asm volatile("multimem.st.relaxed.sys.global.s32 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
     } else if constexpr (std::is_same_v<VectorType, u32x1>) {
@@ -151,7 +148,6 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.bf16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1000
     } else if constexpr (std::is_same_v<VectorType, fp8_e4m3x4>) { 
       asm volatile("multimem.st.relaxed.sys.global.e4m3x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
     } else if constexpr (std::is_same_v<VectorType, fp8_e4m3x8>) {
@@ -172,7 +168,6 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.e5m2x4 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-#endif
     } else {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
