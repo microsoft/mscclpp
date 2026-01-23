@@ -43,7 +43,15 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx_autodoc_typehints",
+    "sphinx_multiversion",
 ]
+
+smv_tag_whitelist = r"^v\d+\.\d+\.\d+$"
+smv_branch_whitelist = r"^main$"
+smv_remote_whitelist = None
+smv_released_pattern = r"^tags/.*$"
+smv_outputdir_format = "{ref.name}"
+smv_prefer_remote_refs = False
 
 autosummary_generate = True
 autodoc_default_options = {
@@ -77,3 +85,47 @@ mermaid_init_js = "mermaid.initialize({startOnLoad:true});"
 
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
+html_js_files = [
+    "versions.js",  # Auto-generated from git tags - must load before version-selector.js
+    "version-selector.js",
+]
+
+
+def setup(app):
+    """Set up custom Sphinx build hooks for sphinx-multiversion support.
+
+    This function registers a build-finished event handler that copies the
+    version selector JavaScript files to a shared location accessible by all
+    versioned documentation builds.
+
+    Args:
+        app: The Sphinx application instance.
+    """
+    import shutil
+    from pathlib import Path
+
+    def copy_version_files(app, exception):
+        """Copy version JS files to the root build directory after a successful build.
+
+        When using sphinx-multiversion, each version's documentation is built into
+        its own subdirectory (e.g., _build/html/v0.8.0/). The version selector
+        JavaScript files need to be available at the root _static directory
+        (_build/html/_static/) so they can be shared across all versions and
+        properly navigate between different documentation versions.
+
+        Args:
+            app: The Sphinx application instance.
+            exception: Exception raised during build, or None if build succeeded.
+        """
+        if exception is None:  # Only copy if build succeeded
+            source_static = Path(app.srcdir) / "_static"
+            dest_root = Path(app.outdir).parent / "_static"
+            dest_root.mkdir(parents=True, exist_ok=True)
+
+            # Copy both versions.js and version-selector.js
+            for filename in ["versions.js", "version-selector.js"]:
+                source = source_static / filename
+                if source.exists():
+                    shutil.copy2(source, dest_root / filename)
+
+    app.connect("build-finished", copy_version_files)
