@@ -57,7 +57,7 @@ default_algo_configs = [
 
 
 def create_default_plans():
-    plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp_default")
+    plan_dir = os.environ.get("MSCCLPP_CACHE_DIR", Path.home() / ".cache/mscclpp/default")
     plan_path = Path(plan_dir)
     if plan_path.exists():
         shutil.rmtree(plan_path)

@@ -26,9 +26,7 @@ from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.utils import get_device_arch
 
-from mscclpp._mscclpp import (
-    ExecutionPlan,
-)
+from mscclpp._mscclpp import CppExecutionPlan
 
 logging.basicConfig(level=logging.INFO)
 
@@ -51,7 +49,7 @@ class DslCompiler:
     into execution plans that can be run on GPUs. The compiled plans are cached
     to disk for reuse.
 
-    The cache location can be configured via the `MSCCLPP_EXECUTION_PLAN_DIR`
+    The cache location can be configured via the `MSCCLPP_CACHE_DIR`
     environment variable (defaults to `~/.cache/mscclpp`).
 
     Example:
@@ -138,7 +136,7 @@ class DslCompiler:
             )
         ).hexdigest()
 
-        plan_dir = os.environ.get("MSCCLPP_EXECUTION_PLAN_DIR", Path.home() / ".cache/mscclpp")
+        plan_dir = os.environ.get("MSCCLPP_CACHE_DIR", Path.home() / ".cache/mscclpp")
         os.makedirs(plan_dir, exist_ok=True)
         filename = f"{plan_id}.json"
         plan_path = os.path.join(plan_dir, filename)
@@ -157,7 +155,7 @@ class DslCompiler:
                     os.remove(tmp_path)
             except Exception:
                 Path(plan_path).unlink(missing_ok=True)
-        execution_plan = ExecutionPlan(plan_path, rank)
+        execution_plan = CppExecutionPlan(plan_path, rank)
         return Algorithm(
             id=plan_id,
             execution_plan=execution_plan,
@@ -179,8 +177,8 @@ class NativeCodeCompiler:
     based on the runtime environment. Compiled modules are cached to avoid
     recompilation.
 
-    The cache location can be configured via the `MSCCLPP_NATIVE_CACHE_DIR`
-    environment variable (defaults to `~/.cache/mscclpp/native`).
+    The cache location can be configured via the `MSCCLPP_CACHE_DIR`
+    environment variable (defaults to `~/.cache/mscclpp`).
 
     Attributes:
         _is_hip: True if running on AMD/ROCm, False for NVIDIA/CUDA.
@@ -226,7 +224,7 @@ class NativeCodeCompiler:
             "-L" + os.path.join(self._lib_home, "lib"),
             "-lmscclpp",
         ]
-        cache_root = os.environ.get("MSCCLPP_NATIVE_CACHE_DIR", Path.home() / ".cache/mscclpp/native")
+        cache_root = os.environ.get("MSCCLPP_CACHE_DIR", Path.home() / ".cache/mscclpp" / "native")
         self._cache_dir = Path(cache_root)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -283,7 +281,7 @@ class NativeCodeCompiler:
         Note:
             - The source file should include pybind11 bindings to expose functions.
             - MSCCLPP headers are automatically included in the compilation.
-            - The module is cached in `MSCCLPP_NATIVE_CACHE_DIR` (default: ~/.cache/mscclpp/native).
+            - The module is cached in `MSCCLPP_CACHE_DIR` (default: ~/.cache/mscclpp/native).
             - File locking is used to prevent race conditions during parallel compilation.
 
         Example:

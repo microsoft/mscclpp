@@ -105,9 +105,9 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int ra
     return oss.str();
   };
 
-  std::string planDir = env()->executionPlanDir;
+  std::string planDir = env()->cacheDir + "/default";
   if (!std::filesystem::exists(planDir)) {
-    INFO(ALGO, "Plan directory does not exist: ", planDir);
+    INFO(ALGO, "Default plan directory does not exist: ", planDir);
     return collection;
   }
   for (const auto& config : defaultAlgoConfigs) {
