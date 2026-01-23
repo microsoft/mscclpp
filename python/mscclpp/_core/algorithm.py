@@ -193,7 +193,7 @@ class Algorithm:
             nthreads_per_block,
             extras if extras is not None else {},
         )
-    
+
     def reset(self):
         """Reset the internal state of the algorithm, if applicable."""
         self._algorithm.reset()

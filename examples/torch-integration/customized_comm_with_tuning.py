@@ -102,11 +102,11 @@ class CustomizedComm:
 
                         capture_stream = torch.cuda.Stream()
                         capture_stream.wait_stream(torch.cuda.current_stream())
-                        
+
                         g = torch.cuda.CUDAGraph()
                         # Warmup on capture stream
                         with torch.cuda.stream(capture_stream):
-                             self._run_algo(algo, tune_tensor, size, nb, nt)
+                            self._run_algo(algo, tune_tensor, size, nb, nt)
                         capture_stream.synchronize()
 
                         with torch.cuda.graph(g, stream=capture_stream):
@@ -123,10 +123,12 @@ class CustomizedComm:
                         end_event.synchronize()
 
                         elapsed = start_event.elapsed_time(end_event)
-                        
+
                         # Synchronize timing results across all ranks to ensure consistent algorithm selection
                         # replicate n times such due to algo limitations
-                        time_tensor = torch.full((self.world_size,), elapsed, dtype=torch.float64, device="cuda").to(dtype=torch.float32)
+                        time_tensor = torch.full((self.world_size,), elapsed, dtype=torch.float64, device="cuda").to(
+                            dtype=torch.float32
+                        )
                         torch.cuda.current_stream().wait_stream(capture_stream)
                         self.all_reduce(time_tensor, op=torch.distributed.ReduceOp.SUM)
                         avg_time = time_tensor[self.rank].item() / self.world_size
@@ -241,7 +243,7 @@ class CustomizedComm:
 
             alg_bw = size / (avg_time_ms * 1e-3) if avg_time_ms > 0 else 0
             if self.rank == 0:
-                 print(f"{size:<20} {time_us:<20.2f} {alg_bw / 1e9:<20.2f}")
+                print(f"{size:<20} {time_us:<20.2f} {alg_bw / 1e9:<20.2f}")
 
     def destroy(self):
         self._algorithm_nvls_nonzero_copy = None
