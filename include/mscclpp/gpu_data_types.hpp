@@ -131,9 +131,11 @@ using bf16x8 = VectorType<__bfloat16, 8>;
 using fp8_e4m3x2 = VectorType<__fp8_e4m3, 2>;
 using fp8_e4m3x4 = VectorType<__fp8_e4m3, 4>;
 using fp8_e4m3x8 = VectorType<__fp8_e4m3, 8>;
+using fp8_e4m3x16 = VectorType<__fp8_e4m3, 16>;
 using fp8_e5m2x2 = VectorType<__fp8_e5m2, 2>;
 using fp8_e5m2x4 = VectorType<__fp8_e5m2, 4>;
 using fp8_e5m2x8 = VectorType<__fp8_e5m2, 8>;
+using fp8_e5m2x16 = VectorType<__fp8_e5m2, 16>;
 #endif
 
 }  // namespace mscclpp
