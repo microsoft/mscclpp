@@ -21,7 +21,9 @@ void register_algorithm(nb::module_& m) {
       .value("IN_PLACE", CollectiveBufferMode::InPlace)
       .value("OUT_OF_PLACE", CollectiveBufferMode::OutOfPlace);
 
-  nb::enum_<AlgorithmType>(m, "CppAlgorithmType").value("NATIVE", AlgorithmType::Native).value("DSL", AlgorithmType::DSL);
+  nb::enum_<AlgorithmType>(m, "CppAlgorithmType")
+      .value("NATIVE", AlgorithmType::Native)
+      .value("DSL", AlgorithmType::DSL);
 
   nb::enum_<CommResult>(m, "CppCommResult")
       .value("COMM_SUCCESS", CommResult::CommSuccess)

@@ -9,7 +9,7 @@
 namespace nb = nanobind;
 using namespace mscclpp;
 
-#define REGISTER_EXCEPTION_TRANSLATOR(name_, py_name_)                                                                 \
+#define REGISTER_EXCEPTION_TRANSLATOR(name_)                                                                         \
   nb::register_exception_translator(                                                                                 \
       [](const std::exception_ptr &p, void *payload) {                                                               \
         try {                                                                                                        \
@@ -19,7 +19,7 @@ using namespace mscclpp;
                           PyTuple_Pack(2, PyLong_FromLong(long(e.getErrorCode())), PyUnicode_FromString(e.what()))); \
         }                                                                                                            \
       },                                                                                                             \
-      m.attr(py_name_).ptr());
+      m.attr(#name_).ptr());
 
 void register_error(nb::module_ &m) {
   nb::enum_<ErrorCode>(m, "CppErrorCode")
@@ -31,21 +31,21 @@ void register_error(nb::module_ &m) {
       .value("Aborted", ErrorCode::Aborted)
       .value("ExecutorError", ErrorCode::ExecutorError);
 
-  nb::exception<BaseError>(m, "CppBaseError");
-  REGISTER_EXCEPTION_TRANSLATOR(BaseError, "CppBaseError");
+  nb::exception<BaseError>(m, "BaseError");
+  REGISTER_EXCEPTION_TRANSLATOR(BaseError);
 
-  nb::exception<Error>(m, "CppError", m.attr("CppBaseError").ptr());
-  REGISTER_EXCEPTION_TRANSLATOR(Error, "CppError");
+  nb::exception<Error>(m, "Error", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(Error);
 
-  nb::exception<SysError>(m, "CppSysError", m.attr("CppBaseError").ptr());
-  REGISTER_EXCEPTION_TRANSLATOR(SysError, "CppSysError");
+  nb::exception<SysError>(m, "SysError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(SysError);
 
-  nb::exception<CudaError>(m, "CppCudaError", m.attr("CppBaseError").ptr());
-  REGISTER_EXCEPTION_TRANSLATOR(CudaError, "CppCudaError");
+  nb::exception<CudaError>(m, "CudaError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(CudaError);
 
-  nb::exception<CuError>(m, "CppCuError", m.attr("CppBaseError").ptr());
-  REGISTER_EXCEPTION_TRANSLATOR(CuError, "CppCuError");
+  nb::exception<CuError>(m, "CuError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(CuError);
 
-  nb::exception<IbError>(m, "CppIbError", m.attr("CppBaseError").ptr());
-  REGISTER_EXCEPTION_TRANSLATOR(IbError, "CppIbError");
+  nb::exception<IbError>(m, "IbError", m.attr("BaseError").ptr());
+  REGISTER_EXCEPTION_TRANSLATOR(IbError);
 }
