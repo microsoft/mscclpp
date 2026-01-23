@@ -94,7 +94,7 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
-        sudo mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN -x LD_PRELOAD="$(pwd)/build/apps/nccl/libmscclpp_nccl.so" \
+        sudo mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN -x LD_PRELOAD="$(pwd)/build/lib/libmscclpp_nccl.so" \
           -x ALLREDUCE_SMALL_MSG_BOUNDARY=32K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 100
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -106,7 +106,7 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
-        sudo mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$(pwd)/build/apps/nccl/libmscclpp_nccl.so -x NCCL_DEBUG=WARN \
+        sudo mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$(pwd)/build/lib/libmscclpp_nccl.so -x NCCL_DEBUG=WARN \
           -x ALLREDUCEPKT_IP_JSON_FILE=./msccl-users/execution-files/allreduce_mi300_packet.json \
           -x ALLREDUCE_IP_JSON_FILE=./msccl-users/execution-files/allreduce_mi300_sm_mscclpp.json \
           -x ALLREDUCE_SMALL_MSG_BOUNDARY=32K -x ALLREDUCE_LARGE_MSG_BOUNDARY=1M ./rccl-tests/build/all_reduce_perf \
