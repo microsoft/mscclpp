@@ -41,9 +41,9 @@ cd ..
 For testing after successful build:
 ```bash
 # To run all tests
-mpirun -np 2 ./build/test/mp_unit_tests
+mpirun -np 2 ./build/bin/mp_unit_tests
 # To run tests excluding IB-related ones (when IB is not available)
-mpirun -np 2 ./build/test/mp_unit_tests --gtest_filter=-*Ib*
+mpirun -np 2 ./build/bin/mp_unit_tests --gtest_filter=-*Ib*
 ```
 
 For building a Python package:

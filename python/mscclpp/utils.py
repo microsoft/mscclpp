@@ -6,11 +6,12 @@ import os
 import struct
 import subprocess
 import tempfile
-from typing import Any, Type, Union, Tuple
+from typing import Any, Type, Union
 
 import cupy as cp
 import numpy as np
-from ._mscclpp import RawGpuBuffer
+
+from mscclpp._mscclpp import DataType
 
 try:
     import torch
@@ -22,13 +23,29 @@ except ImportError:
     torchTensor = Type[Any]
 
 
+__all__ = [
+    "Kernel",
+    "KernelBuilder",
+    "pack",
+    "get_device_arch",
+    "torch_dtype_to_mscclpp_dtype",
+]
+
+
+def get_device_arch() -> str:
+    if cp.cuda.runtime.is_hip:
+        return cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8")
+    else:
+        return f"sm_{cp.cuda.Device().compute_capability}"
+
+
 class Kernel:
     CU_LAUNCH_PARAM_BUFFER_POINTER = 0x01
     CU_LAUNCH_PARAM_BUFFER_SIZE = 0x02
     CU_LAUNCH_PARAM_END = 0x00 if not cp.cuda.runtime.is_hip else 0x03
 
-    def __init__(self, ptx: bytes, kernel_name: str):
-        self._module = cp.cuda.driver.moduleLoadData(ptx)
+    def __init__(self, cubin: bytes, kernel_name: str):
+        self._module = cp.cuda.driver.moduleLoadData(cubin)
         self._kernel = cp.cuda.driver.moduleGetFunction(self._module, kernel_name)
 
     def launch_kernel(
@@ -78,35 +95,34 @@ class KernelBuilder:
         self.macros = None
         if file_dir:
             self.macros = ["-D{}={}".format(macro, value) for macro, value in macro_dict.items()]
-        ptx = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.ptx")
-        self._kernel = Kernel(ptx, kernel_name)
+        cubin = self._compile_cuda(os.path.join(self._current_file_dir, file), f"{kernel_name}.cubin")
+        self._kernel = Kernel(cubin, kernel_name)
         self.kernel_map[kernel_key] = self._kernel
 
     def _compile_cuda(self, source_file, output_file, std_version="c++17"):
         mscclpp_home = os.environ.get("MSCCLPP_HOME", "/usr/local/mscclpp")
         include_dir = os.path.join(mscclpp_home, "include")
         if not cp.cuda.runtime.is_hip:
-            compute_capability = cp.cuda.Device().compute_capability
+            arch = get_device_arch()
+            compute_capability = arch.replace("sm_", "")
             cuda_home = os.environ.get("CUDA_HOME")
             nvcc = os.path.join(cuda_home, "bin/nvcc") if cuda_home else "nvcc"
             command = [
                 nvcc,
                 f"-std={std_version}",
-                "-ptx",
+                "-cubin",
                 "-Xcompiler",
                 "-Wall,-Wextra",
                 f"-I{include_dir}",
                 f"{source_file}",
                 f"--gpu-architecture=compute_{compute_capability}",
-                f"--gpu-code=sm_{compute_capability},compute_{compute_capability}",
+                f"--gpu-code=sm_{compute_capability}",
                 "-o",
                 f"{self._tempdir.name}/{output_file}",
             ]
         else:
             # the gcn arch name is like "gfx942:sramecc+:xnack-"
-            gcn_arch = (
-                cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)["gcnArchName"].decode("utf-8").split(":")[0]
-            )
+            gcn_arch = get_device_arch()
             rocm_home = os.environ.get("ROCM_HOME")
             hipcc = os.path.join(rocm_home, "bin/hipcc") if rocm_home else "hipcc"
             command = [
@@ -138,25 +154,6 @@ class KernelBuilder:
             self._tempdir.cleanup()
 
 
-class GpuBuffer(cp.ndarray):
-    def __new__(
-        cls, shape: Union[int, Tuple[int]], dtype: cp.dtype = float, strides: Tuple[int] = None, order: str = "C"
-    ):
-        # Check if `shape` is valid
-        if isinstance(shape, int):
-            shape = (shape,)
-        try:
-            shape = tuple(shape)
-        except TypeError:
-            raise ValueError("Shape must be a tuple-like or an integer.")
-        if any(s <= 0 for s in shape):
-            raise ValueError("Shape must be positive.")
-        # Create the buffer
-        buffer = RawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize)
-        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.data(), buffer.bytes(), buffer), 0)
-        return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
-
-
 def pack(*args):
     res = b""
     for arg in list(args):
@@ -182,3 +179,18 @@ def pack(*args):
 
 def is_torch_tensor(tensor: Any) -> bool:
     return _use_torch and isinstance(tensor, torchTensor)
+
+
+def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
+    if not _use_torch:
+        raise RuntimeError("PyTorch is not available.")
+    if dtype == torch.float16:
+        return DataType.float16
+    elif dtype == torch.float32:
+        return DataType.float32
+    elif dtype == torch.int32:
+        return DataType.int32
+    elif dtype == torch.bfloat16:
+        return DataType.bfloat16
+    else:
+        raise ValueError(f"Unknown data type: {dtype}")

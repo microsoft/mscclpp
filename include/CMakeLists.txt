@@ -7,3 +7,6 @@ target_sources(
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}
     FILES ${HEADERS}
 )
+
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/mscclpp DESTINATION include)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/mscclpp/version.hpp DESTINATION include/mscclpp)
