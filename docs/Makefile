@@ -25,10 +25,18 @@ generate-versions:
 	@python3 generate_versions.py
 
 # Build all documentation versions using sphinx-multiversion
-# Use this for production builds or to test version switching
+# NOTE: This target should only be run from the main branch to ensure
+# the root docs correctly represent "main (dev)". For local development
+# on feature branches, use "make html" instead.
+# GitHub Actions workflow runs this on main branch only.
 multiversion: generate-versions
 	@cd .. && python3 -m setuptools_scm --force-write-version-files
+	@export LC_ALL=C.UTF-8; $(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	@echo "Building versioned docs from tags..."
 	@export LC_ALL=C.UTF-8; $(SPHINXMULTIVERSION) "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
+	@mkdir -p $(BUILDDIR)/html/_static
+	@cp -f _static/versions.js $(BUILDDIR)/html/_static/ 2>/dev/null || true
+	@cp -f _static/version-selector.js $(BUILDDIR)/html/_static/ 2>/dev/null || true
 
 # Clean build directory
 clean:
