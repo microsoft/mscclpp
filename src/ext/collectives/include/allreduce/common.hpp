@@ -110,11 +110,6 @@ __forceinline__ __device__ uint8_t add_elements(uint8_t a, uint8_t b) {
   return a + b;  // Simple addition, wraps on overflow
 }
 
-template <>
-__forceinline__ __device__ uint8_t min_elements(uint8_t a, uint8_t b) {
-  return (a < b) ? a : b;
-}
-
 // Helper for processing 4 uint8_t values packed in an int
 __forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
   int ret;
@@ -160,6 +155,11 @@ __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
 template <>
 __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b) {
   return __hmin2(a, b);
+}
+
+template <>
+__forceinline__ __device__ uint8_t min_elements(uint8_t a, uint8_t b) {
+  return (a < b) ? a : b;
 }
 
 #if defined(__FP8_TYPES_EXIST__)
