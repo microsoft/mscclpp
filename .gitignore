@@ -6,5 +6,4 @@ __pycache__
 .*.swp
 .idea/
 *.so
-docs/_static/versions.js
 _codeql_detected_source_root

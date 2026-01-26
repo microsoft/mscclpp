@@ -43,8 +43,7 @@ jobs:
           cd docs
           rm -rf doxygen _build py_api
           doxygen
-          # Use multiversion target to build all versions
-          make multiversion
+          make html
           touch _build/html/.nojekyll
       - name: Upload artifacts
         uses: actions/upload-pages-artifact@v3
