@@ -21,7 +21,11 @@ from pathlib import Path
 
 
 def get_git_tags():
-    """Get all version tags from git matching vX.Y.Z pattern."""
+    """Get all version tags from git matching vX.Y.Z pattern.
+
+    Filters out versions before v0.4.0 as they don't have compatible docs structure
+    for sphinx-multiversion.
+    """
     try:
         result = subprocess.run(
             ["git", "tag", "-l", "v*.*.*"],
@@ -32,7 +36,17 @@ def get_git_tags():
         tags = result.stdout.strip().split("\n")
         # Filter to match sphinx-multiversion pattern: ^v\d+\.\d+\.\d+$
         version_pattern = re.compile(r"^v\d+\.\d+\.\d+$")
-        return [tag for tag in tags if tag and version_pattern.match(tag)]
+        valid_tags = []
+        for tag in tags:
+            if tag and version_pattern.match(tag):
+                # Filter out versions before v0.4.0 (no compatible docs structure)
+                match = re.match(r"v(\d+)\.(\d+)\.(\d+)", tag)
+                if match:
+                    major, minor, patch = int(match.group(1)), int(match.group(2)), int(match.group(3))
+                    # Include v0.4.0 and later
+                    if major > 0 or (major == 0 and minor >= 4):
+                        valid_tags.append(tag)
+        return valid_tags
     except subprocess.CalledProcessError:
         return []
 

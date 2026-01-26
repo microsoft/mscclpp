@@ -112,42 +112,40 @@
         select.addEventListener('change', function() {
             if (this.value) {
                 const baseUrl = this.value;
-                const currentHash = window.location.hash; // Get current hash at selection time
-                const targetUrl = baseUrl + currentHash; // Append current hash to target URL
+                const currentHash = window.location.hash;
+                const targetUrl = baseUrl + currentHash;
 
-                // Check if the target page exists using a fetch with abort
+                // Calculate fallback URL (version index page)
+                let fallbackUrl;
+                const versionMatch = baseUrl.match(/^\/(v\d+\.\d+\.\d+)\//);
+                if (versionMatch) {
+                    fallbackUrl = '/' + versionMatch[1] + '/index.html';
+                } else {
+                    fallbackUrl = '/index.html';
+                }
+
+                // Check if the target page exists using HEAD request
                 const controller = new AbortController();
-                const timeoutId = setTimeout(function() { controller.abort(); }, 1000);
+                const timeoutId = setTimeout(function() { controller.abort(); }, 2000);
 
                 fetch(baseUrl, {
-                    method: 'GET',
+                    method: 'HEAD',
                     signal: controller.signal
                 })
                     .then(function(response) {
                         clearTimeout(timeoutId);
                         if (response.ok) {
-                            // Page exists, navigate to it with hash
                             window.location.href = targetUrl;
                         } else {
-                            // Page doesn't exist, fall back to version root index.html
-                            // For versioned paths like /v0.8.0/... -> /v0.8.0/index.html
-                            // For root paths like /py_api/... -> /index.html
-                            let fallbackUrl;
-                            const versionMatch = baseUrl.match(/^\/(v\d+\.\d+\.\d+)\//);
-                            if (versionMatch) {
-                                // It's a versioned path
-                                fallbackUrl = '/' + versionMatch[1] + '/index.html';
-                            } else {
-                                // It's a root path (main/dev)
-                                fallbackUrl = '/index.html';
-                            }
+                            // Page doesn't exist, navigate to version index
                             window.location.href = fallbackUrl;
                         }
                     })
                     .catch(function(error) {
                         clearTimeout(timeoutId);
-                        // On error (including timeout), try to navigate anyway
-                        window.location.href = targetUrl;
+                        // On network error or timeout, try fallback first
+                        // This handles cases where the page truly doesn't exist
+                        window.location.href = fallbackUrl;
                     });
             }
         });
