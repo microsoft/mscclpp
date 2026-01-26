@@ -281,7 +281,7 @@ class NativeCodeCompiler:
         Note:
             - The source file should include pybind11 bindings to expose functions.
             - MSCCLPP headers are automatically included in the compilation.
-            - The module is cached in `MSCCLPP_CACHE_DIR` (default: ~/.cache/mscclpp/native).
+            - The module is cached in `MSCCLPP_CACHE_DIR` (default: ~/.cache/mscclpp).
             - File locking is used to prevent race conditions during parallel compilation.
 
         Example:

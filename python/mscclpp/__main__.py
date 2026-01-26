@@ -6,7 +6,7 @@ import shutil
 import argparse
 from pathlib import Path
 
-from mscclpp.language import default_algos as def_algo
+from mscclpp import default_algos as def_algo
 from mscclpp.language.collectives import *
 from mscclpp.language.utils import AlgoSpec
 
