@@ -107,6 +107,7 @@ void register_algorithm(nb::module_& m) {
       .def_prop_ro("output_buffer",
                    [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.outputBuffer); })
       .def_ro("message_size", &CollectiveRequest::messageSize)
+      .def_prop_ro("stream", [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.stream); })
       .def_prop_ro("collective", [](const CollectiveRequest& self) { return self.collective; })
       .def_ro("dtype", &CollectiveRequest::dtype)
       .def_prop_ro("hints", [](const CollectiveRequest& self) { return self.hints; })

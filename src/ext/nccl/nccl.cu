@@ -227,6 +227,44 @@ static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, cons
   return result;
 }
 
+static std::shared_ptr<mscclpp::Algorithm> allreduceSelectorForBlackwell(
+    const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
+        algoMapByCollective,
+    const mscclpp::CollectiveRequest& request, bool mscclppDisableChannelCache, bool isCuMemMapAllocated,
+    bool nvlsSupported, bool inCaptureMode) {
+  if (request.worldSize != request.nRanksPerNode) {
+    return nullptr;
+  }
+  size_t messageSize = request.messageSize;
+  const std::string& collective = request.collective;
+  bool useNvlsWithZeroCopy = nvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
+
+  if (messageSize <= (1 << 15)) {
+    return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
+  }
+  if (mscclppDisableChannelCache) {
+    if (messageSize <= (1 << 21)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_packet");
+    }
+    if (inCaptureMode) {
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag_zero_copy");
+    }
+    // Not in capture mode
+    if (messageSize <= (1 << 23)) {
+      return algoMapByCollective.at(collective).at("default_allreduce_rsag");
+    }
+    return algoMapByCollective.at(collective).at("default_allreduce_rsag_pipeline");
+  }
+  if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
+    return algoMapByCollective.at(collective).at("default_allreduce_packet");
+  }
+  if (useNvlsWithZeroCopy) {
+    return algoMapByCollective.at(collective).at("default_allreduce_nvls");
+  }
+  INFO(MSCCLPP_NCCL, "Not suitable kernel for blackwell architecture, fallback to nccl/rccl");
+  return nullptr;
+}
+
 static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
         algoMapByCollective,
@@ -254,6 +292,9 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
                              mscclpp::isCuMemMapAllocated(request.outputBuffer);
   bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
+  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+  CUDACHECK(cudaStreamIsCapturing(request.stream, &status));
+  bool inCaptureMode = (status == cudaStreamCaptureStatusActive);
   if (collective == "allgather") {
     if (messageSize <= 32 * (1 << 20)) {
       return algoMapByCollective.at(collective).at("default_allgather_fullmesh2");
@@ -270,28 +311,25 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
     bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
-    bool isFourRanksBlackwellNonZeroCopy =
-        deviceComputeCapability.first == 10 && mscclppDisableChannelCache && request.worldSize == 4;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
+#if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
       useNvls = false;
+#else
+      useNvls = true;
+#endif
     }
 #endif
+    if (deviceComputeCapability.first == 10) {
+      return allreduceSelectorForBlackwell(algoMapByCollective, request, mscclppDisableChannelCache,
+                                           isCuMemMapAllocated, useNvls, inCaptureMode);
+    }
     if (messageSize <= (1 << 15) && useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
     }
     if (messageSize <= (1 << 14)) {
       return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
-    }
-    if (isFourRanksBlackwellNonZeroCopy) {
-      if (messageSize <= (1 << 21)) {
-        return algoMapByCollective.at(collective).at("default_allreduce_packet");
-      }
-      if (messageSize <= (1 << 23)) {
-        return algoMapByCollective.at(collective).at("default_allreduce_rsag");
-      }
-      return algoMapByCollective.at(collective).at("default_allreduce_rsag_pipeline");
     }
     if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
       return algoMapByCollective.at(collective).at("default_allreduce_packet");
@@ -604,6 +642,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "broadcast",
                                         .dtype = dtype,
                                         .hints = hints};
@@ -656,6 +695,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "allreduce",
                                         .dtype = dtype,
                                         .hints = {}};
@@ -710,6 +750,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes * nRank,
+                                        .stream = stream,
                                         .collective = "reducescatter",
                                         .dtype = dtype,
                                         .hints = {}};
@@ -762,6 +803,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "allgather",
                                         .dtype = dtype,
                                         .hints = {}};
