@@ -11,6 +11,17 @@
 import sys
 import importlib.util
 from pathlib import Path
+from unittest.mock import MagicMock
+
+
+class NamedMock(MagicMock):
+    def __getattr__(self, name):
+        attr = super().__getattr__(name)
+        if isinstance(attr, MagicMock):
+            # Assigns __name__ and __qualname__ to satisfy Sphinx autodoc inspection.
+            attr.__name__ = name
+            attr.__qualname__ = name
+        return attr
 
 # Add the python package to sys.path so Sphinx can find it
 project_root = Path(__file__).parent.parent
@@ -52,7 +63,7 @@ autodoc_default_options = {
     "show-inheritance": True,
 }
 # only mock the C-extension when using the source tree
-autodoc_mock_imports = ["mscclpp._version", "mscclpp._mscclpp", "blake3", "cupy", "mpi4py", "numpy", "sortedcontainers"]
+autodoc_mock_imports = ["mscclpp._version", "blake3", "cupy", "mpi4py", "numpy", "sortedcontainers"]
 autodoc_typehints = "description"
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
@@ -60,6 +71,10 @@ intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
 }
+mock_mscclpp = NamedMock()
+# Set attributes to satisfy Sphinx autodoc inspection.
+mock_mscclpp.env.return_value.cache_dir = "_mscclpp"
+sys.modules["mscclpp._mscclpp"] = mock_mscclpp
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

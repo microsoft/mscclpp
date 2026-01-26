@@ -224,8 +224,7 @@ class NativeCodeCompiler:
             "-L" + os.path.join(self._lib_home, "lib"),
             "-lmscclpp",
         ]
-        cache_root = Path(env().cache_dir) / "native"
-        self._cache_dir = Path(cache_root)
+        self._cache_dir = Path(env().cache_dir) / "native"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_compiler(self) -> str:
