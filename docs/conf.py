@@ -23,6 +23,7 @@ class NamedMock(MagicMock):
             attr.__qualname__ = name
         return attr
 
+
 # Add the python package to sys.path so Sphinx can find it
 project_root = Path(__file__).parent.parent
 python_path = project_root / "python"
