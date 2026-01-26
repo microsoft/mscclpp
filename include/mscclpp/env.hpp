@@ -70,9 +70,9 @@ class Env {
   /// Env name: `MSCCLPP_COMM_ID`. To be deprecated; don't use this.
   const std::string commId;
 
-  /// Env name: `MSCCLPP_EXECUTION_PLAN_DIR`. The directory to find execution plans from. This should be set to
-  /// use execution plans for the NCCL API. Unset by default.
-  const std::string executionPlanDir;
+  /// Env name: `MSCCLPP_CACHE_DIR`. The directory to use for caching execution plans and other temporary files.
+  /// If unset, it defaults to `~/.cache/mscclpp`.
+  const std::string cacheDir;
 
   /// Env name: `MSCCLPP_NPKIT_DUMP_DIR`. The directory to dump NPKIT traces to. If this is set, NPKIT will be
   /// enabled and will dump traces to this directory. Unset by default.

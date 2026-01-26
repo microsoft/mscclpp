@@ -7,15 +7,17 @@ from functools import cached_property
 
 
 from mscclpp._mscclpp import (
-    Algorithm as _Algorithm,
-    DslAlgorithm as _DslAlgorithm,
-    AlgorithmType as _AlgorithmType,
-    Communicator,
-    CollectiveBufferMode,
-    DataType,
-    Executor,
-    ExecutionPlan,
-    ReduceOp,
+    CppAlgorithm,
+    CppDslAlgorithm,
+    CppAlgorithmType,
+    CppCommunicator,
+    CppCollectiveBufferMode,
+    CppDataType,
+    CppExecutor,
+    CppExecutionPlan,
+    CppReduceOp,
+    CppAlgorithmBuilder,
+    CppAlgorithmCollection,
 )
 
 __all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
@@ -45,7 +47,7 @@ class Algorithm:
         """
 
         def __init__(self, world_size: int = 0, n_ranks_per_node: int = 0):
-            self._constraint = _Algorithm.Constraint(world_size, n_ranks_per_node)
+            self._constraint = CppAlgorithm.Constraint(world_size, n_ranks_per_node)
 
         @property
         def world_size(self) -> int:
@@ -58,23 +60,23 @@ class Algorithm:
     def __init__(
         self,
         id: Optional[str] = None,
-        execution_plan: Optional[ExecutionPlan] = None,
-        native_handle: Optional[_Algorithm] = None,
+        execution_plan: Optional[CppExecutionPlan] = None,
+        native_handle: Optional[CppAlgorithm] = None,
         tags: Optional[Dict[str, int]] = None,
         constraint: Optional[Constraint] = None,
     ):
         if execution_plan is not None:
-            self._algorithm = _DslAlgorithm(
+            self._algorithm = CppDslAlgorithm(
                 id,
                 execution_plan,
                 tags=tags if tags is not None else {},
-                constraint=constraint._constraint if constraint is not None else _Algorithm.Constraint(),
+                constraint=constraint._constraint if constraint is not None else CppAlgorithm.Constraint(),
             )
         elif native_handle is not None:
             self._algorithm = native_handle
 
     @classmethod
-    def create_from_native_handle(cls, handle: _Algorithm):
+    def create_from_native_handle(cls, handle: CppAlgorithm):
         """Create an Algorithm instance from a native C++ algorithm handle.
 
         Args:
@@ -97,7 +99,7 @@ class Algorithm:
         Returns:
             A new Algorithm instance wrapping the algorithm from the capsule.
         """
-        handle = _Algorithm.from_native_capsule(obj)
+        handle = CppAlgorithm.from_native_capsule(obj)
         return cls(native_handle=handle)
 
     @cached_property
@@ -121,7 +123,7 @@ class Algorithm:
         return self._algorithm.tags
 
     @cached_property
-    def buffer_mode(self) -> CollectiveBufferMode:
+    def buffer_mode(self) -> CppCollectiveBufferMode:
         """The buffer mode supported by this algorithm (IN_PLACE, OUT_OF_PLACE, or ANY)."""
         return self._algorithm.buffer_mode
 
@@ -131,7 +133,7 @@ class Algorithm:
         Returns:
             True if this algorithm is defined using DSL/execution plan, False otherwise.
         """
-        if self._algorithm.type == _AlgorithmType.DSL:
+        if self._algorithm.type == CppAlgorithmType.DSL:
             return True
         return False
 
@@ -141,21 +143,21 @@ class Algorithm:
         Returns:
             True if this algorithm is implemented natively, False otherwise.
         """
-        if self._algorithm.type == _AlgorithmType.NATIVE:
+        if self._algorithm.type == CppAlgorithmType.NATIVE:
             return True
         return False
 
     def execute(
         self,
-        comm: Communicator,
+        comm: CppCommunicator,
         input_buffer: int,
         output_buffer: int,
         input_size: int,
         output_size: int,
-        dtype: DataType,
-        op: ReduceOp = ReduceOp.NOP,
+        dtype: CppDataType,
+        op: CppReduceOp = CppReduceOp.NOP,
         stream: int = 0,
-        executor: Optional[Executor] = None,
+        executor: Optional[CppExecutor] = None,
         nblocks=0,
         nthreads_per_block=0,
         extras: Optional[Dict[str, int]] = None,
@@ -196,7 +198,7 @@ class Algorithm:
 
 
 class AlgorithmBuilder:
-    def __init__(self, algorithm_builder: _AlgorithmBuilder):
+    def __init__(self, algorithm_builder: CppAlgorithmBuilder):
         self._algorithm_builder = algorithm_builder
 
     def build(self) -> Algorithm:
@@ -204,7 +206,7 @@ class AlgorithmBuilder:
 
 
 class AlgorithmCollection:
-    def __init__(self, native_collection: _AlgorithmCollection):
+    def __init__(self, native_collection: CppAlgorithmCollection):
         self._native_collection = native_collection
         self._algorithms = [Algorithm.create_from_native_handle(algo) for algo in self._native_collection.to_list()]
 

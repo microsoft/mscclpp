@@ -101,7 +101,7 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
 void register_gpu_utils(nb::module_& m) {
   m.def("is_nvls_supported", &isNvlsSupported);
 
-  nb::class_<GpuBuffer<char>>(m, "RawGpuBuffer")
+  nb::class_<GpuBuffer<char>>(m, "CppRawGpuBuffer")
       .def(nb::init<size_t>(), nb::arg("nelems"))
       .def("nelems", &GpuBuffer<char>::nelems)
       .def("bytes", &GpuBuffer<char>::bytes)

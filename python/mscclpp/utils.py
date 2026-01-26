@@ -11,7 +11,7 @@ from typing import Any, Type, Union
 import cupy as cp
 import numpy as np
 
-from mscclpp._mscclpp import DataType
+from mscclpp._mscclpp import CppDataType as DataType
 
 try:
     import torch

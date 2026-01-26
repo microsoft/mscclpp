@@ -15,7 +15,7 @@ using namespace mscclpp;
 using namespace mscclpp::collective;
 
 void register_algorithm_collection_builder(nb::module_& m) {
-  nb::class_<AlgorithmCollectionBuilder>(m, "AlgorithmCollectionBuilder")
+  nb::class_<AlgorithmCollectionBuilder>(m, "CppAlgorithmCollectionBuilder")
       .def_static("get_instance", &AlgorithmCollectionBuilder::getInstance)
       .def("add_algorithm_builder", &AlgorithmCollectionBuilder::addAlgorithmBuilder, nb::arg("builder"))
       .def(

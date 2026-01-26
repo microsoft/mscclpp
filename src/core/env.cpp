@@ -58,8 +58,7 @@ Env::Env()
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
       socketIfname(readEnv<std::string>("MSCCLPP_SOCKET_IFNAME", "")),
       commId(readEnv<std::string>("MSCCLPP_COMM_ID", "")),
-      executionPlanDir(readEnv<std::string>("MSCCLPP_EXECUTION_PLAN_DIR",
-                                            readEnv<std::string>("HOME", "~") + "/.cache/mscclpp_default")),
+      cacheDir(readEnv<std::string>("MSCCLPP_CACHE_DIR", readEnv<std::string>("HOME", "~") + "/.cache/mscclpp")),
       npkitDumpDir(readEnv<std::string>("MSCCLPP_NPKIT_DUMP_DIR", "")),
       cudaIpcUseDefaultStream(readEnv<bool>("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", false)),
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
@@ -85,7 +84,7 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
     logEnv("MSCCLPP_SOCKET_IFNAME", globalEnv->socketIfname);
     logEnv("MSCCLPP_COMM_ID", globalEnv->commId);
-    logEnv("MSCCLPP_EXECUTION_PLAN_DIR", globalEnv->executionPlanDir);
+    logEnv("MSCCLPP_CACHE_DIR", globalEnv->cacheDir);
     logEnv("MSCCLPP_NPKIT_DUMP_DIR", globalEnv->npkitDumpDir);
     logEnv("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", globalEnv->cudaIpcUseDefaultStream);
     logEnv("MSCCLPP_NCCL_LIB_PATH", globalEnv->ncclSharedLibPath);
