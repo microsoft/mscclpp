@@ -13,9 +13,7 @@ from mscclpp_op import (
 from nccl_op import NcclAllReduce
 from mpi4py import MPI
 import cupy.cuda.nccl as nccl
-import mscclpp.comm as mscclpp_comm
-from mscclpp import ProxyService, is_nvls_supported
-from mscclpp.utils import GpuBuffer
+from mscclpp import ProxyService, is_nvls_supported, CommGroup, GpuBuffer
 from prettytable import PrettyTable
 import netifaces as ni
 import ipaddress
@@ -160,9 +158,7 @@ def find_best_config(mscclpp_call, niter):
     return best_config, best_time
 
 
-def run_benchmark(
-    mscclpp_group: mscclpp_comm.CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int
-):
+def run_benchmark(mscclpp_group: CommGroup, nccl_op: nccl.NcclCommunicator, table: PrettyTable, niter: int, nelem: int):
     memory = GpuBuffer(nelem, dtype=data_type)
     memory_out = GpuBuffer(nelem, dtype=data_type)
     cp.cuda.runtime.deviceSynchronize()
@@ -259,9 +255,7 @@ if __name__ == "__main__":
     network_interface, my_ip = get_netinterface_info()
     root_ip = MPI.COMM_WORLD.bcast(my_ip, root=0)
     ifIpPortTrio = network_interface + ":" + root_ip + ":50000"  # some random port
-    mscclpp_group = mscclpp_comm.CommGroup(
-        interfaceIpPortTrio=ifIpPortTrio, rank=MPI.COMM_WORLD.rank, size=MPI.COMM_WORLD.size
-    )
+    mscclpp_group = CommGroup(interfaceIpPortTrio=ifIpPortTrio, rank=MPI.COMM_WORLD.rank, size=MPI.COMM_WORLD.size)
 
     # create a NcclComm
     if MPI.COMM_WORLD.rank == 0:
