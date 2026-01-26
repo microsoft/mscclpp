@@ -37,14 +37,14 @@ jobs:
 
       - name: UnitTests
         run: |
-          ./build/test/unit_tests
+          ./build/bin/unit_tests
 
       - name: MpUnitTests
         run: |
           set -e
-          mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests
-          mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests
-          mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests
+          mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests
+          mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
+          mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
 
       - name: PyTests
         run: |

@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl-torch-integration/dsl_with_nccl_api.py
+# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
 
 import os
+from typing import Any, Dict
 import torch, torch.distributed as dist
 import mscclpp
 from mscclpp.language.collectives import AllReduce
@@ -62,7 +63,7 @@ def allreduce_nvls(spec: mscclpp.AlgoSpec) -> CollectiveProgram:
     return program
 
 
-def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: int):
+def setup_plan(algo_collection_builder: mscclpp.AlgorithmCollectionBuilder, rank: int, world_size: int):
     spec = mscclpp.AlgoSpec(
         name="allreduce_nvls",
         collective=AllReduce(8, 1, True),
@@ -77,27 +78,26 @@ def setup_plan(registry: mscclpp.ExecutionPlanRegistry, rank: int, world_size: i
         tags={"nvls": 1},
     )
 
-    plan_handle = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
-    registry.register_plan(plan_handle)
+    algo = mscclpp.compile(algo=allreduce_nvls, algo_spec=spec, rank=rank)
+    algo_collection_builder.add_algorithm_builder(algo)
 
 
-def selector(plans, req):
+def selector(algorithms: Dict[str, Any], req):
     if req.collective != "allreduce":
         return None
     if req.message_size < 1 << 20:
         return None
-    nvls = [p for p in plans if "nvls" in p.tags]
-    return nvls[0] if nvls else plans[0]
+    return algorithms["allreduce"]["allreduce_nvls"]
 
 
 def init_dist():
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     local = int(os.environ["LOCAL_RANK"])
-    registry = mscclpp.ExecutionPlanRegistry()
-    setup_plan(registry, rank, world)
-    registry.set_selector(selector)
-    dist.init_process_group(backend="nccl")
+    algorithm_collection_builder = mscclpp.AlgorithmCollectionBuilder()
+    setup_plan(algorithm_collection_builder, rank, world)
+    algorithm_collection_builder.set_algorithm_selector(selector)
+    dist.init_process_group(backend="nccl", device_id=local)
     return rank, world, local
 
 
@@ -111,6 +111,7 @@ def main():
     dist.all_reduce(x, op=dist.ReduceOp.SUM)
     dist.barrier()
     dist.destroy_process_group()
+    print(f"Rank {local} allreduce completed successfully.")
 
 
 if __name__ == "__main__":

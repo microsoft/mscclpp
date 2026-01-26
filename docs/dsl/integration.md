@@ -102,7 +102,7 @@ Key file: `dsl_with_nccl_api.py`.
 #### Launch with interposition
 To run with NCCL interposition, you preload the MSCCL++ shim so it transparently intercepts NCCL calls made by PyTorch’s nccl backend.
 ```bash
-LD_PRELOAD=<MSCCLPP_REPO>/build/apps/nccl/libmscclpp_nccl.so torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
+LD_PRELOAD=<MSCCLPP_REPO>/build/lib/libmscclpp_nccl.so torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
 ```
 ## Notices:
  - When using NCCL interposition, the algorithm selection order is:
