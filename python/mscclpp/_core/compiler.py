@@ -26,7 +26,7 @@ from mscclpp.language.program import CollectiveProgram
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.utils import get_device_arch
 
-from mscclpp._mscclpp import CppExecutionPlan
+from mscclpp._mscclpp import CppExecutionPlan, env
 
 logging.basicConfig(level=logging.INFO)
 
@@ -136,7 +136,7 @@ class DslCompiler:
             )
         ).hexdigest()
 
-        plan_dir = os.environ.get("MSCCLPP_CACHE_DIR", Path.home() / ".cache/mscclpp")
+        plan_dir = Path(env().cache_dir)
         os.makedirs(plan_dir, exist_ok=True)
         filename = f"{plan_id}.json"
         plan_path = os.path.join(plan_dir, filename)
@@ -224,7 +224,7 @@ class NativeCodeCompiler:
             "-L" + os.path.join(self._lib_home, "lib"),
             "-lmscclpp",
         ]
-        cache_root = os.environ.get("MSCCLPP_CACHE_DIR", Path.home() / ".cache/mscclpp" / "native")
+        cache_root = Path(env().cache_dir) / "native"
         self._cache_dir = Path(cache_root)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
 
