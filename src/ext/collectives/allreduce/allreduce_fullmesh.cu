@@ -217,7 +217,7 @@ AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  if (env()->disableChannelCache) {
+  if (!env()->ncclSymmetricMemory) {
     return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, tag++};
   }
   return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};

@@ -92,12 +92,13 @@ class Env {
   /// debugging purposes. Currently supports `all`, `broadcast`, `allreduce`, `reducescatter`, and `allgather`.
   const std::string forceNcclFallbackOperation;
 
-  /// Env name: `MSCCLPP_DISABLE_CHANNEL_CACHE`. If set to true, it will disable the channel cache for NCCL APIs.
-  /// Currently, this should be set to true if the application may call NCCL APIs on the same local buffer with
-  /// different remote buffers, e.g., in the case of a dynamic communicator. If CUDA/HIP graphs are used, disabling
-  /// the channel cache won't affect the performance, but otherwise it may lead to performance degradation.
+  /// Env name: `MSCCLPP_NCCL_SYMMETRIC_MEMORY`. If set to true, it indicates that the application uses symmetric memory
+  /// allocation across all ranks, making it safe to cache memory handles for all NCCL algorithms. If set to false, the
+  /// system will either use non-zero-copy algorithms (when CUDA/HIP graphs are not enabled) or set up new connections
+  /// every time (when CUDA/HIP graphs are enabled). This should be set to false if the application may call NCCL APIs
+  /// on the same local buffer with different remote buffers, e.g., in the case of a dynamic communicator.
   /// Default is false.
-  const bool disableChannelCache;
+  const bool ncclSymmetricMemory;
 
   /// Env name: `MSCCLPP_FORCE_DISABLE_NVLS`. If set to true, it will disable the NVLS support in MSCCL++.
   /// Default is false.

@@ -15,7 +15,7 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
   std::shared_ptr<Algorithm> build() override;
 
  private:
-  bool disableChannelCache_;
+  bool symmetricMemory_;;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   const int nChannelsPerConnection_ = 35;
