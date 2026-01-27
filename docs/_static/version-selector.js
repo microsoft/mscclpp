@@ -34,18 +34,6 @@
         // If at root (no version in path), it's main
         return 'main';
     }
-
-    function getBasePath() {
-        const path = window.location.pathname;
-        // Find how many levels deep we are from the version directory
-        if (match) {
-            const depth = match[2].split('/').filter(p => p && p !== 'index.html').length;
-            return '../'.repeat(depth + 1);
-        }
-        // For root level (latest), calculate depth
-        const segments = path.split('/').filter(p => p && p !== 'index.html');
-        return '../'.repeat(segments.length);
-    }
     
     function createVersionSelector() {
         const currentVersion = detectCurrentVersion();
