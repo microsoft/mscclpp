@@ -194,6 +194,10 @@ class Algorithm:
             extras if extras is not None else {},
         )
 
+    def reset(self):
+        """Reset the internal state of the algorithm, if applicable."""
+        self._algorithm.reset()
+
 
 class AlgorithmBuilder:
     def __init__(self, algorithm_builder: _AlgorithmBuilder):

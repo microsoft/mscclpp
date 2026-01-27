@@ -299,6 +299,7 @@ struct CollectiveRequest {
   const void* inputBuffer;
   void* outputBuffer;
   size_t messageSize;
+  cudaStream_t stream;
   const std::string& collective;
   const DataType dtype;
   const std::unordered_map<std::string, std::vector<uint64_t>>& hints;

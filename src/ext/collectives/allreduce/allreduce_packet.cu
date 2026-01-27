@@ -160,6 +160,8 @@ struct PacketAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
+    // Optimize the number of blocks to be multiple of (worldSize - 1)
+    nBlocks = nBlocks / (worldSize - 1) * (worldSize - 1);
 #if defined(ENABLE_NPKIT)
     size_t sharedMemSize = sizeof(NpKitEvent) * NPKIT_SHM_NUM_EVENTS;
     allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, sharedMemSize, stream>>>(

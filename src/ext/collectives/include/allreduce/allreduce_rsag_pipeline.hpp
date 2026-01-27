@@ -1,15 +1,16 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT License.
+// Licensed under the MIT license.
 
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
 namespace collective {
 
-class AllreduceNvls : public AlgorithmBuilder {
+class AllreduceRsAgPipeline : public mscclpp::AlgorithmBuilder {
  public:
-  AllreduceNvls() = default;
-  std::shared_ptr<Algorithm> build() override;
+  AllreduceRsAgPipeline(uintptr_t scratchBuffer, size_t scratchBufferSize)
+      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
+  std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:
   void initialize(std::shared_ptr<Communicator> comm);
@@ -20,14 +21,18 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
   AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
-
-  const size_t nvlsBufferSize_ = (1 << 30);
-  uint32_t nSwitchChannels_;
-  std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
-  std::vector<BaseMemoryChannel> baseChannels_;
+  void* scratchBuffer_;
+  size_t scratchBufferSize_;
+  std::shared_ptr<Communicator> comm_;
+  int nChannelsPerConnection_;
   std::vector<Connection> conns_;
-  int computeCapabilityMajor_{0};
-};
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> scratchSemaphores_;
+  std::vector<RegisteredMemory> remoteScratchMemories_;
+  RegisteredMemory localScratchMemory_;
 
+  std::vector<BaseMemoryChannel> baseChannels_;
+  std::shared_ptr<DeviceHandle<BaseMemoryChannel>> baseMemoryChannelHandles_;
+  std::shared_ptr<void*> remoteMemorieHandles_;
+};
 }  // namespace collective
 }  // namespace mscclpp
