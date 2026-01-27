@@ -60,6 +60,8 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclInt32;
     case mscclpp::DataType::UINT32:
       return ncclUint32;
+    case mscclpp::DataType::UINT8:
+      return ncclUint8;
     case mscclpp::DataType::FLOAT16:
       return ncclFloat16;
     case mscclpp::DataType::FLOAT32:

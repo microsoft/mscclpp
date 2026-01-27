@@ -1096,6 +1096,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
     if constexpr (!std::is_same_v<T, uint8_t>) {
       handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+    } else {
+      assert(false && "MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
     }
   }
 #endif
@@ -1224,6 +1226,17 @@ class ExecutionKernel {
       case DataType::UINT32:
         executionKernel<uint32_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (uint32_t*)src, (uint32_t*)dst, (uint32_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::UINT8:
+        executionKernel<uint8_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (uint8_t*)src, (uint8_t*)dst, (uint8_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
             localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,

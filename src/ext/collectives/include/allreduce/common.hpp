@@ -112,6 +112,7 @@ __forceinline__ __device__ uint8_t add_elements(uint8_t a, uint8_t b) {
 
 // Helper for processing 4 uint8_t values packed in an int
 __forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__)
   int ret;
   uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
   uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
@@ -121,9 +122,13 @@ __forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
   r_bytes[2] = a_bytes[2] + b_bytes[2];
   r_bytes[3] = a_bytes[3] + b_bytes[3];
   return ret;
+#else
+  return __vadd4(a, b);
+#endif
 }
 
 __forceinline__ __device__ int cal_uint8x4_min(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__)
   int ret;
   uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
   uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
@@ -133,6 +138,9 @@ __forceinline__ __device__ int cal_uint8x4_min(int a, int b) {
   r_bytes[2] = (a_bytes[2] < b_bytes[2]) ? a_bytes[2] : b_bytes[2];
   r_bytes[3] = (a_bytes[3] < b_bytes[3]) ? a_bytes[3] : b_bytes[3];
   return ret;
+#else
+  return __vminu4(a, b);
+#endif
 }
 
 template <typename T>
