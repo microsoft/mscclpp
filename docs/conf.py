@@ -110,7 +110,6 @@ def setup(app):
         app: The Sphinx application instance.
     """
     import shutil
-    from pathlib import Path
 
     def copy_version_files(app, exception):
         """Copy version JS files to the root build directory after a successful build.
