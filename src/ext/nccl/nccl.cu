@@ -230,8 +230,8 @@ static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, cons
 static std::shared_ptr<mscclpp::Algorithm> allreduceSelectorForBlackwell(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
         algoMapByCollective,
-    const mscclpp::CollectiveRequest& request, bool ncclSymmetricMemory, bool isCuMemMapAllocated,
-    bool nvlsSupported, bool inCaptureMode) {
+    const mscclpp::CollectiveRequest& request, bool ncclSymmetricMemory, bool isCuMemMapAllocated, bool nvlsSupported,
+    bool inCaptureMode) {
   if (request.worldSize != request.nRanksPerNode) {
     return nullptr;
   }
