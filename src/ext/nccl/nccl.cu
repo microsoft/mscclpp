@@ -270,12 +270,17 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   if (collective == "allreduce") {
     bool useNvls = isNvlsSupported;
     bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
+    bool isUint8 = request.dtype == mscclpp::DataType::UINT8;
 #if !defined(__HIP_PLATFORM_AMD__)
     if (isFp8 && deviceComputeCapability.first < 10) {
       // NVLS does not support FP8 on devices with compute capability < 10
       useNvls = false;
     }
 #endif
+    // NVLS does not support uint8_t (no hardware support for byte-level reduction)
+    if (isUint8) {
+      useNvls = false;
+    }
     if (messageSize <= (1 << 15) && useNvls) {
       return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
     }

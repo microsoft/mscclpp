@@ -63,6 +63,7 @@ namespace mscclpp {
 enum class DataType {
   INT32,     // 32-bit signed integer.
   UINT32,    // 32-bit unsigned integer.
+  UINT8,     // 8-bit unsigned integer.
   FLOAT16,   // IEEE 754 half precision.
   FLOAT32,   // IEEE 754 single precision.
   BFLOAT16,  // bfloat16 precision.
@@ -108,21 +109,25 @@ union alignas(sizeof(T) * N) VectorType {
 
 using i32x1 = VectorType<int32_t, 1>;
 using u32x1 = VectorType<uint32_t, 1>;
+using u8x1 = VectorType<uint8_t, 1>;
 using f64x1 = VectorType<double, 1>;
 using f32x1 = VectorType<float, 1>;
 
 using i32x2 = VectorType<int32_t, 2>;
 using u32x2 = VectorType<uint32_t, 2>;
+using u8x2 = VectorType<uint8_t, 2>;
 using f32x2 = VectorType<float, 2>;
 using f16x2 = VectorType<__half, 2>;
 using bf16x2 = VectorType<__bfloat16, 2>;
 
 using i32x4 = VectorType<int32_t, 4>;
 using u32x4 = VectorType<uint32_t, 4>;
+using u8x4 = VectorType<uint8_t, 4>;
 using f32x4 = VectorType<float, 4>;
 using f16x4 = VectorType<__half, 4>;
 using bf16x4 = VectorType<__bfloat16, 4>;
 
+using u8x8 = VectorType<uint8_t, 8>;
 using f16x8 = VectorType<__half, 8>;
 using bf16x8 = VectorType<__bfloat16, 8>;
 

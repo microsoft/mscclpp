@@ -99,6 +99,50 @@ __forceinline__ __device__ __bfloat162 add_elements(__bfloat162 a, __bfloat162 b
   }
 }
 
+// uint8_t element operations - these work on individual uint8_t values
+template <>
+__forceinline__ __device__ uint8_t clip(uint8_t val) {
+  return val;  // No clipping needed for uint8
+}
+
+template <bool UseClip>
+__forceinline__ __device__ uint8_t add_elements(uint8_t a, uint8_t b) {
+  return a + b;  // Simple addition, wraps on overflow
+}
+
+// Helper for processing 4 uint8_t values packed in an int
+__forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  int ret;
+  uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
+  uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
+  uint8_t* r_bytes = reinterpret_cast<uint8_t*>(&ret);
+  r_bytes[0] = a_bytes[0] + b_bytes[0];
+  r_bytes[1] = a_bytes[1] + b_bytes[1];
+  r_bytes[2] = a_bytes[2] + b_bytes[2];
+  r_bytes[3] = a_bytes[3] + b_bytes[3];
+  return ret;
+#else
+  return __vadd4(a, b);
+#endif
+}
+
+__forceinline__ __device__ int cal_uint8x4_min(int a, int b) {
+#if defined(__HIP_PLATFORM_AMD__)
+  int ret;
+  uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
+  uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
+  uint8_t* r_bytes = reinterpret_cast<uint8_t*>(&ret);
+  r_bytes[0] = (a_bytes[0] < b_bytes[0]) ? a_bytes[0] : b_bytes[0];
+  r_bytes[1] = (a_bytes[1] < b_bytes[1]) ? a_bytes[1] : b_bytes[1];
+  r_bytes[2] = (a_bytes[2] < b_bytes[2]) ? a_bytes[2] : b_bytes[2];
+  r_bytes[3] = (a_bytes[3] < b_bytes[3]) ? a_bytes[3] : b_bytes[3];
+  return ret;
+#else
+  return __vminu4(a, b);
+#endif
+}
+
 template <typename T>
 __forceinline__ __device__ T min_elements(T a, T b) {
   return (a < b ? a : b);
@@ -119,6 +163,11 @@ __forceinline__ __device__ __half2 min_elements(__half2 a, __half2 b) {
 template <>
 __forceinline__ __device__ __bfloat162 min_elements(__bfloat162 a, __bfloat162 b) {
   return __hmin2(a, b);
+}
+
+template <>
+__forceinline__ __device__ uint8_t min_elements(uint8_t a, uint8_t b) {
+  return (a < b) ? a : b;
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -342,25 +391,61 @@ __forceinline__ __device__ T cal_elements(T a, T b) {
 
 template <typename T, ReduceOp OpType>
 __forceinline__ __device__ int4 cal_vectors_helper(int4 a, int4 b) {
-  int4 ret;
-  ret.w = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
-  ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  ret.z = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
-  return ret;
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    int4 ret;
+    if constexpr (OpType == SUM) {
+      ret.w = cal_uint8x4_sum(a.w, b.w);
+      ret.x = cal_uint8x4_sum(a.x, b.x);
+      ret.y = cal_uint8x4_sum(a.y, b.y);
+      ret.z = cal_uint8x4_sum(a.z, b.z);
+    } else {
+      ret.w = cal_uint8x4_min(a.w, b.w);
+      ret.x = cal_uint8x4_min(a.x, b.x);
+      ret.y = cal_uint8x4_min(a.y, b.y);
+      ret.z = cal_uint8x4_min(a.z, b.z);
+    }
+    return ret;
+  } else {
+    int4 ret;
+    ret.w = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
+    ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
+    ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+    ret.z = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
+    return ret;
+  }
 }
 
 template <typename T, ReduceOp OpType>
 __forceinline__ __device__ uint2 cal_vectors_helper(uint2 a, uint2 b) {
-  uint2 ret;
-  ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  return ret;
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    uint2 ret;
+    if constexpr (OpType == SUM) {
+      ret.x = cal_uint8x4_sum(a.x, b.x);
+      ret.y = cal_uint8x4_sum(a.y, b.y);
+    } else {
+      ret.x = cal_uint8x4_min(a.x, b.x);
+      ret.y = cal_uint8x4_min(a.y, b.y);
+    }
+    return ret;
+  } else {
+    uint2 ret;
+    ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
+    ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+    return ret;
+  }
 }
 
 template <typename T, ReduceOp OpType>
 __forceinline__ __device__ int cal_vectors_helper(int a, int b) {
-  return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    if constexpr (OpType == SUM) {
+      return cal_uint8x4_sum(a, b);
+    } else {
+      return cal_uint8x4_min(a, b);
+    }
+  } else {
+    return bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a), bit_cast<T, int>(b)));
+  }
 }
 
 #if defined(__HIP_PLATFORM_AMD__) && defined(__FP8_TYPES_EXIST__) && defined(__gfx942__)
@@ -502,7 +587,7 @@ using AllreduceFunc =
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
                               size_t, cudaStream_t, void*, uint32_t, int, int)>;
 
-template <template <ReduceOp, typename> class Adapter>
+template <template <ReduceOp, typename> class Adapter, bool SupportUint8 = true>
 AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
   if (op == SUM) {
     if (dtype == mscclpp::DataType::FLOAT16) {
@@ -521,6 +606,12 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<SUM, int>::call;
+    } else if (dtype == mscclpp::DataType::UINT8) {
+      if constexpr (SupportUint8) {
+        return Adapter<SUM, uint8_t>::call;
+      } else {
+        return nullptr;
+      }
     } else {
       return nullptr;
     }
@@ -541,6 +632,12 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<MIN, int>::call;
+    } else if (dtype == mscclpp::DataType::UINT8) {
+      if constexpr (SupportUint8) {
+        return Adapter<MIN, uint8_t>::call;
+      } else {
+        return nullptr;
+      }
     } else {
       return nullptr;
     }
