@@ -1,0 +1,24 @@
+{% extends "!layout.html" %}
+
+{%- block sidebarsearch %}
+  {{ super() }}
+  
+  {# Version selector #}
+  {% if versions %}
+  <div style="padding: 10px; border-bottom: 1px solid #404040; margin-top: 10px;">
+    <label for="version-selector" style="color: #b3b3b3; font-size: 90%;">Version:</label>
+    <select id="version-selector" style="width: 100%; margin-top: 5px; padding: 5px; background-color: #2c2c2c; color: #ffffff; border: 1px solid #404040; border-radius: 3px;" onchange="if(this.value) window.location.href = this.value;">
+      {%- for item in versions.in_development %}
+        <option value="{{ item.url }}"{% if item.name == current_version %} selected{% endif %}>
+          {{ item.name }}{% if loop.first %} (latest){% endif %}
+        </option>
+      {%- endfor %}
+      {%- for item in versions.releases %}
+        <option value="{{ item.url }}"{% if item.name == current_version %} selected{% endif %}>
+          {{ item.name }}
+        </option>
+      {%- endfor %}
+    </select>
+  </div>
+  {% endif %}
+{%- endblock %}
