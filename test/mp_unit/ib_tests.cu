@@ -42,7 +42,7 @@ void IbPeerToPeerTest::SetUp() {
   int ib_gid_index = std::stoi(gEnv->args["ib_gid_index"]);
 
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
-    qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64);
+  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64);
 
   qpInfo[gEnv->rank] = qp->getInfo();
   bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));

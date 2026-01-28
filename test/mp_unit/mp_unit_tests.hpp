@@ -131,6 +131,8 @@ class CommunicatorTest : public CommunicatorTestBase {
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
+using IbMode = mscclpp::EndpointConfig::Ib::Mode;
+
 class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
@@ -138,17 +140,19 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useIB;
     bool useEthernet;
     bool waitWithPoll;
+    IbMode ibMode;
   };
 
   void SetUp() override;
   void TearDown() override;
 
   void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
-                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
+                            IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
-  void testPacketPingPong(bool useIbOnly);
-  void testPacketPingPongPerf(bool useIbOnly);
+  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

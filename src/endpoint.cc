@@ -32,8 +32,8 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     int maxRecvWr = useWriteImmSignal_ ? kWriteImmBufSize : 0;
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
-          ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                 config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend);
+                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
+                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend);
     ibQpInfo_ = ibQp_->getInfo();
 
     // If write-with-imm signaling is enabled, allocate and register the receive buffer

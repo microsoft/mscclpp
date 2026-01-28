@@ -381,6 +381,13 @@ struct EndpointConfig {
   /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
   /// transports.
   struct Ib {
+    /// IB mode for signaling, used to select between different implementations.
+    enum class Mode {
+      Default,      // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
+      Host,         // Use the host stack with RDMA atomics.
+      HostNoAtomic  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
+    };
+
     static const int DefaultPort = -1;
     static const int DefaultGidIndex = 0;
     static const int DefaultMaxCqSize = 1024;
@@ -402,6 +409,8 @@ struct EndpointConfig {
     int maxSendWr;
     /// Maximum number of work requests per send operation.
     int maxWrPerSend;
+    /// IB mode for signaling. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
+    Mode mode;
 
     /// Constructor.
     /// @param deviceIndex Device index.
@@ -411,15 +420,18 @@ struct EndpointConfig {
     /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
     /// @param maxWrPerSend Maximum work requests per send operation.
+    /// @param mode IB mode for signaling (Default uses MSCCLPP_IBV_MODE env variable).
     Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
-       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend)
+       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend,
+       Mode mode = Mode::Default)
         : deviceIndex(deviceIndex),
           port(port),
           gidIndex(gidIndex),
           maxCqSize(maxCqSize),
           maxCqPollNum(maxCqPollNum),
           maxSendWr(maxSendWr),
-          maxWrPerSend(maxWrPerSend) {}
+          maxWrPerSend(maxWrPerSend),
+          mode(mode) {}
   };
 
   /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
