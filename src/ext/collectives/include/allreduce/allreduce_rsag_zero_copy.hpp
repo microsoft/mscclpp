@@ -19,7 +19,7 @@ class AllreduceRsAgZeroCopy : public mscclpp::AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
   std::shared_ptr<Communicator> comm_;
   int nChannelsPerConnection_;
   std::vector<Connection> conns_;

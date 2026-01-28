@@ -96,11 +96,13 @@ class Algorithm {
   /// @param executor The executor for DSL algorithms (may be nullptr for native).
   /// @param nBlocks Number of CUDA blocks (0 for auto-selection).
   /// @param nThreadsPerBlock Number of threads per block (0 for auto-selection).
+  /// @param symmetricMemory Whether to use symmetric memory optimization.
   /// @param extras Additional parameters for algorithm-specific customization.
   /// @return The result of the operation.
   virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                              size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                              std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
+                             bool symmetricMemory = false,
                              const std::unordered_map<std::string, uintptr_t>& extras = {}) = 0;
 
   /// Reset the algorithm state, clearing any cached contexts.
@@ -201,9 +203,10 @@ class NativeAlgorithm : public Algorithm {
   /// @param inputSize Size of the input buffer.
   /// @param outputSize Size of the output buffer.
   /// @param dtype Data type of the elements.
+  /// @param symmetricMemory Whether symmetric memory is enabled.
   /// @return A key uniquely identifying this buffer configuration.
   using ContextKeyGenFunc = std::function<AlgorithmCtxKey(const void* input, void* output, size_t inputSize,
-                                                          size_t outputSize, DataType dtype)>;
+                                                          size_t outputSize, DataType dtype, bool symmetricMemory)>;
 
   /// Construct a NativeAlgorithm.
   /// @param name Human-readable name of the algorithm.
@@ -225,6 +228,7 @@ class NativeAlgorithm : public Algorithm {
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
+                     bool symmetricMemory = false,
                      const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   const std::string& name() const override;
   const std::string& collective() const override;
@@ -274,6 +278,7 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
+                     bool symmetricMemory = false,
                      const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;

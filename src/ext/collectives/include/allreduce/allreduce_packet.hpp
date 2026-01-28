@@ -21,7 +21,7 @@ class AllreducePacket : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
 
   void* scratchBuffer_;
   size_t scratchBufferSize_;

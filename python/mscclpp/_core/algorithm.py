@@ -158,6 +158,7 @@ class Algorithm:
         executor: Optional[Executor] = None,
         nblocks=0,
         nthreads_per_block=0,
+        symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         """Execute the collective algorithm.
@@ -174,6 +175,7 @@ class Algorithm:
             executor: The executor for DSL algorithms (required for DSL, optional for native).
             nblocks: Number of CUDA blocks (0 for auto-selection).
             nthreads_per_block: Number of threads per block (0 for auto-selection).
+            symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
 
         Returns:
@@ -191,6 +193,7 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
+            symmetric_memory,
             extras if extras is not None else {},
         )
 

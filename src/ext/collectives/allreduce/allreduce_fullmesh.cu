@@ -212,7 +212,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType) {
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType, bool) {
   static int tag = 0;
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
@@ -258,8 +258,9 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

@@ -193,7 +193,7 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
 }
 
 mscclpp::AlgorithmCtxKey AllgatherFullmesh2::generateAllgatherContextKey(const void*, void* output, size_t,
-                                                                         mscclpp::DataType) {
+                                                                         mscclpp::DataType, bool) {
   static int tag = 0;
   if (!symmetricMemory_) {
     // always return a new key if symmetric memory is not enabled.
@@ -220,7 +220,9 @@ std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
              [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
-             mscclpp::DataType dtype) { return self->generateAllgatherContextKey(input, output, inputSize, dtype); });
+             mscclpp::DataType dtype, bool symmetricMemory) {
+        return self->generateAllgatherContextKey(input, output, inputSize, dtype, symmetricMemory);
+      });
 }
 
 }  // namespace collective

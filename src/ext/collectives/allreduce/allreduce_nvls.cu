@@ -144,7 +144,7 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
 }
 
 mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* input, void* output, size_t,
-                                                                    mscclpp::DataType) {
+                                                                    mscclpp::DataType, bool) {
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -194,7 +194,9 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvls::build() {
              [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
-             mscclpp::DataType dtype) { return self->generateAllreduceContextKey(input, output, inputSize, dtype); });
+             mscclpp::DataType dtype, bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
+      });
 }
 }  // namespace collective
 }  // namespace mscclpp

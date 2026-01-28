@@ -27,7 +27,7 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllgatherContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType, bool);
 };
 
 }  // namespace collective

@@ -170,7 +170,7 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
   return ctx;
 }
 
-AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void*, void*, size_t, DataType) {
+AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void*, void*, size_t, DataType, bool) {
   // always return same key, non-zero copy algo
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
@@ -189,8 +189,9 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllgatherContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllgatherContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

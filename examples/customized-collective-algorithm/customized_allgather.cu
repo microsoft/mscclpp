@@ -109,7 +109,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
                mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
         [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype) {
           return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
-                                                   static_cast<ncclDataType_t>(dtype));
+                                                   static_cast<ncclDataType_t>(dtype), symmetricMemory);
         });
     return allgatherAlgo;
   }
@@ -191,7 +191,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
-                                                       size_t outputSize, ncclDataType_t dtype) {
+                                                       size_t outputSize, ncclDataType_t dtype, bool) {
     return {(void*)input, output, inputSize, outputSize, 0};
   }
 };

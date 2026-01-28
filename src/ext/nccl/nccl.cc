@@ -19,6 +19,7 @@
 
 #include <mscclpp/algorithm.hpp>
 
+#include "algorithm_selector.hpp"
 #include "datatype_conversion.hpp"
 #include "debug.h"
 
@@ -212,125 +213,6 @@ static std::pair<int, int> getDeviceComputeCapability() {
   return std::make_pair(major, minor);
 }
 
-static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, const mscclpp::CollectiveRequest& request) {
-  bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
-  bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
-  bool collectiveMatch = algo->collective() == request.collective;
-  bool bufferModeMatch =
-      algo->bufferMode() == mscclpp::CollectiveBufferMode::Any || request.bufferMode() == algo->bufferMode();
-  size_t effectiveSize =
-      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
-  bool minSizeMatch = effectiveSize >= algo->messageRange().first;
-  bool maxSizeMatch = effectiveSize <= algo->messageRange().second;
-  bool result =
-      worldSizeMatch && ranksPerNodeMatch && collectiveMatch && bufferModeMatch && minSizeMatch && maxSizeMatch;
-  return result;
-}
-
-static std::shared_ptr<mscclpp::Algorithm> allreduceSelectorForBlackwell(
-    const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
-        algoMapByCollective,
-    const mscclpp::CollectiveRequest& request, bool ncclSymmetricMemory, bool isCuMemMapAllocated, bool nvlsSupported,
-    bool inCaptureMode) {
-  if (request.worldSize != request.nRanksPerNode) {
-    return nullptr;
-  }
-  const size_t messageSize = request.messageSize;
-  const std::string& collective = request.collective;
-  const auto& algoMap = algoMapByCollective.at(collective);
-
-  // Small messages always use NVLS packet algorithm
-  if (messageSize <= (1 << 15)) {  // <= 32KB
-    return algoMap.at("default_allreduce_nvls_packet");
-  }
-
-  if (!ncclSymmetricMemory) {
-    if (messageSize <= (1 << 21)) {  // <= 2MB
-      return algoMap.at("default_allreduce_packet");
-    }
-    if (inCaptureMode) {
-      // CUDA graph mode: setup new connections each time (zero-copy for graph)
-      return algoMap.at("default_allreduce_rsag_zero_copy");
-    }
-    // Non-graph mode: use non-zero-copy algorithms
-    if (messageSize <= (1 << 23)) {  // <= 8MB
-      return algoMap.at("default_allreduce_rsag");
-    }
-    return algoMap.at("default_allreduce_rsag_pipeline");
-  }
-
-  // Symmetric memory path: can use cached memory handles
-  const bool useNvlsWithZeroCopy = nvlsSupported && isCuMemMapAllocated;
-  if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {  // <= 64KB or <= 1MB
-    return algoMap.at("default_allreduce_packet");
-  }
-  if (useNvlsWithZeroCopy) {
-    return algoMap.at("default_allreduce_nvls");
-  }
-
-  INFO(MSCCLPP_NCCL, "No suitable kernel for Blackwell architecture, fallback to nccl/rccl");
-  return nullptr;
-}
-
-// Helper function to select allgather algorithm
-static std::shared_ptr<mscclpp::Algorithm> selectAllgatherAlgorithm(
-    const std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>& algoMap, size_t messageSize) {
-  // For messages up to 32MB, use fullmesh2 algorithm
-  if (messageSize <= 32 * (1 << 20)) {
-    return algoMap.at("default_allgather_fullmesh2");
-  }
-
-#if defined(__HIP_PLATFORM_AMD__)
-  // AMD platform always uses fullmesh2
-  return algoMap.at("default_allgather_fullmesh2");
-#else
-  // NVIDIA: use fullmesh for large messages if no NCCL fallback is available
-  if (!mscclppNcclDlopenSharedLib) {
-    return algoMap.at("default_allgather_fullmesh");
-  }
-  return nullptr;
-#endif
-}
-
-// Helper function to select allreduce algorithm for non-Blackwell GPUs
-static std::shared_ptr<mscclpp::Algorithm> selectAllreduceAlgorithm(
-    const std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>& algoMap, size_t messageSize,
-    bool useNvls, bool useNvlsWithZeroCopy) {
-  // Very small messages: use allpair packet algorithm
-  if (messageSize <= (1 << 14)) {  // <= 16KB
-    return algoMap.at("default_allreduce_allpair_packet");
-  }
-  // Small messages with NVLS support
-  if (messageSize <= (1 << 15) && useNvls) {  // <= 32KB
-    return algoMap.at("default_allreduce_nvls_packet");
-  }
-  // Medium messages: use packet algorithm
-  if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {  // <= 64KB or <= 1MB
-    return algoMap.at("default_allreduce_packet");
-  }
-  // Large messages with NVLS zero-copy support
-  if (useNvls && useNvlsWithZeroCopy) {
-    return algoMap.at("default_allreduce_nvls");
-  }
-  // Large messages with NVLS but without zero-copy
-  if (useNvls) {
-    if (messageSize < (1 << 24)) {  // < 16MB
-      return algoMap.at("default_allreduce_nvls_with_copy");
-    }
-    return algoMap.at("default_allreduce_nvls_with_copy2");
-  }
-#if defined(__HIP_PLATFORM_AMD__)
-  // AMD platform: use fullmesh algorithm
-  return algoMap.at("default_allreduce_fullmesh");
-#else
-  // NVIDIA without NVLS: use RSAG pipeline if no NCCL fallback
-  if (!mscclppNcclDlopenSharedLib) {
-    return algoMap.at("default_allreduce_rsag_pipeline");
-  }
-  return nullptr;
-#endif
-}
-
 static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
         algoMapByCollective,
@@ -338,65 +220,59 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   if (algoMapByCollective.find(request.collective) == algoMapByCollective.end()) {
     return nullptr;
   }
+
   for (const auto& pair : algoMapByCollective.at(request.collective)) {
     const auto& algo = pair.second;
     if (algo->type() == mscclpp::AlgorithmType::DSL) {
-      if (matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
+      if (mscclpp::nccl::matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
         return algo;
       }
     }
   }
-  // Multi-node scenarios: fallback to NCCL/RCCL
-  if (request.nRanksPerNode != request.worldSize) {
-    return nullptr;
-  }
 
-  static const bool ncclSymmetricMemory = mscclpp::env()->ncclSymmetricMemory;
+  // Prepare algorithm selector configuration
   static const bool isNvlsSupported = mscclpp::isNvlsSupported();
   static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
-
-  // Prepare request-specific information
-  const size_t messageSize = request.messageSize;
-  const std::string& collective = request.collective;
-  const auto& algoMap = algoMapByCollective.at(collective);
+  static const bool ncclSymmetricMemory = mscclpp::env()->ncclSymmetricMemory;
 
   const bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
                                    mscclpp::isCuMemMapAllocated(request.outputBuffer);
-  const bool useNvlsWithZeroCopy = isNvlsSupported && ncclSymmetricMemory && isCuMemMapAllocated;
-  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
-  CUDACHECK(cudaStreamIsCapturing(request.stream, &status));
-  const bool inCaptureMode = (status == cudaStreamCaptureStatusActive);
 
-  if (collective == "allgather") {
-    return selectAllgatherAlgorithm(algoMap, messageSize);
+  cudaStreamCaptureStatus captureStatus = cudaStreamCaptureStatusNone;
+  CUDACHECK(cudaStreamIsCapturing(request.stream, &captureStatus));
+  const bool inCaptureMode = (captureStatus == cudaStreamCaptureStatusActive);
+
+  mscclpp::nccl::AlgorithmSelectorConfig config{.symmetricMemory = ncclSymmetricMemory,
+                                                .nvlsSupported = isNvlsSupported,
+                                                .isCuMemMapAllocated = isCuMemMapAllocated,
+                                                .inCaptureMode = inCaptureMode,
+                                                .computeCapability = deviceComputeCapability,
+                                                .ncclDlopenSharedLib = mscclppNcclDlopenSharedLib};
+
+  const auto& algoMap = algoMapByCollective.at(request.collective);
+
+  // Check if this is a multi-node scenario
+  if (request.nRanksPerNode != request.worldSize) {
+    return mscclpp::nccl::selectMultiNodeAlgorithm(algoMap, request, config);
   }
 
-  if (collective == "allreduce") {
-    // Determine NVLS availability based on data type and device capability
-    bool useNvls = isNvlsSupported;
-    const bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
-#if !defined(__HIP_PLATFORM_AMD__)
-    // NVLS does not support FP8 on devices with compute capability < 10
-    if (isFp8 && deviceComputeCapability.first < 10) {
-#if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
-      useNvls = false;
-#else
-      useNvls = true;
-#endif
-    }
-#endif
+  // Single-node scenarios
+  if (request.collective == "allgather") {
+    return mscclpp::nccl::selectSingleNodeAllgather(algoMap, request, config);
+  }
 
+  if (request.collective == "allreduce") {
     // Blackwell architecture (compute capability 10.x) has special algorithm selection
     if (deviceComputeCapability.first == 10) {
-      return allreduceSelectorForBlackwell(algoMapByCollective, request, ncclSymmetricMemory, isCuMemMapAllocated,
-                                           useNvls, inCaptureMode);
+      return mscclpp::nccl::selectSingleNodeAllreduceBlackwell(algoMap, request, config);
     }
 
     // Non-Blackwell architectures
-    return selectAllreduceAlgorithm(algoMap, messageSize, useNvls, useNvlsWithZeroCopy);
+    return mscclpp::nccl::selectSingleNodeAllreduce(algoMap, request, config);
   }
 
-  INFO(MSCCLPP_NCCL, "No suitable algorithm found for collective '%s', fallback to nccl/rccl", collective.c_str());
+  INFO(MSCCLPP_NCCL, "No suitable algorithm found for collective '%s', fallback to nccl/rccl",
+       request.collective.c_str());
   return nullptr;
 }
 
@@ -681,6 +557,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
+
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -695,7 +573,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0, extras));
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
+                                                   symmetricMemory, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -734,6 +613,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -748,7 +628,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   ncclRedOpToMscclpp(reductionOperation), stream, comm->executor));
+                                                   ncclRedOpToMscclpp(reductionOperation), stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -789,6 +670,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -802,7 +684,8 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
-                                                   ncclRedOpToMscclpp(op), stream, comm->executor));
+                                                   ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -842,6 +725,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
@@ -856,7 +740,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor));
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

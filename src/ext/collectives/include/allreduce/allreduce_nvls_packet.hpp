@@ -22,7 +22,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output,
                                              size_t, mscclpp::DataType);
-  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, mscclpp::DataType, bool);
 
   void* scratchBuffer_;
   size_t scratchBufferSize_;

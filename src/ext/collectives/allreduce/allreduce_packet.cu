@@ -276,7 +276,7 @@ std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Comm
   return ctx;
 }
 
-AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void* input, void*, size_t, DataType) {
+AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void* input, void*, size_t, DataType, bool) {
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -296,8 +296,9 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 

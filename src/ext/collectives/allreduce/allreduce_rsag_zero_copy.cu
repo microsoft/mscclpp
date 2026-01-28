@@ -134,10 +134,10 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
 }
 
 AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer,
-                                                                   size_t size, DataType) {
+                                                                   size_t size, DataType, bool symmetricMemory) {
   // For non-synmmetric algorithms, we use both input and output buffer pointers in the key.
   static int tag = 0;
-  if (env()->ncclSymmetricMemory) {
+  if (symmetricMemory) {
     size_t inputBytes, outputBytes;
     CUdeviceptr inputBasePtr, outputBasePtr;
     MSCCLPP_CUTHROW(cuMemGetAddressRange(&inputBasePtr, &inputBytes, (CUdeviceptr)inputBuffer));
@@ -199,8 +199,9 @@ std::shared_ptr<Algorithm> AllreduceRsAgZeroCopy::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

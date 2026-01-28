@@ -83,7 +83,7 @@ void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator>) {
   gpuMemcpy<uint32_t>(flags_.get(), flags.data(), 16, cudaMemcpyHostToDevice);
 }
 
-AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType) {
+AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
@@ -148,7 +148,9 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
              [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
-             mscclpp::DataType dtype) { return self->generateAllreduceContextKey(input, output, inputSize, dtype); });
+             mscclpp::DataType dtype, bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
+      });
 }
 }  // namespace collective
 }  // namespace mscclpp
