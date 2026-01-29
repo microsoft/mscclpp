@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef MSCCLPP_REDUCE_KERNEL_COMMON_HPP_
-#define MSCCLPP_REDUCE_KERNEL_COMMON_HPP_
+#ifndef MSCCLPP_REDUCE_KERNEL_HPP_
+#define MSCCLPP_REDUCE_KERNEL_HPP_
 
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/gpu_data_types.hpp>
@@ -290,7 +290,6 @@ MSCCLPP_DEVICE_INLINE __bfloat162 min_elements(__bfloat162 a, __bfloat162 b) {
 }
 
 #if defined(__FP8_TYPES_EXIST__)
-// FP8 E4M3 min operation (single element)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -300,7 +299,6 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 min_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #endif
 }
 
-// FP8 E4M3 vectorized min for 2 elements
 MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
 #if defined(MSCCLPP_DEVICE_HIP)
   // HIP implementation: use union and process element-wise
@@ -318,7 +316,6 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 min_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) 
 #endif
 }
 
-// FP8 E4M3 vectorized min for 4 elements
 MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
   // Process as two __fp8x2_e4m3 using min_elements for 2 elements
   union {
@@ -334,7 +331,6 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 min_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) 
   return uresult.vec4;
 }
 
-// FP8 E5M2 min operation (single element)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -344,10 +340,8 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #endif
 }
 
-// FP8 E5M2 vectorized min for 2 elements
 MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
 #if defined(MSCCLPP_DEVICE_HIP)
-  // HIP implementation: use union and process element-wise
   union {
     __fp8_e5m2 fp8[2];
     __fp8x2_e5m2 fp8x2;
@@ -362,7 +356,6 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) 
 #endif
 }
 
-// FP8 E5M2 vectorized min for 4 elements
 MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
   // Process as two __fp8x2_e5m2 using min_elements for 2 elements
   union {
@@ -444,4 +437,4 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(DataType a, DataType b) {
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_REDUCE_KERNEL_COMMON_HPP_
+#endif  // MSCCLPP_REDUCE_KERNEL_HPP_

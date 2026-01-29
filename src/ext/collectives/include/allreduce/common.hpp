@@ -10,7 +10,7 @@
 #include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
-#include "reduce_kernel_common.hpp"
+#include "reduce_kernel.hpp"
 
 #if defined(ENABLE_NPKIT)
 #include <mscclpp/npkit/npkit.hpp>
@@ -23,15 +23,6 @@ constexpr ReduceOp SUM = ReduceOp::SUM;
 constexpr ReduceOp MIN = ReduceOp::MIN;
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
-
-// Use shared device kernel functions from reduce_kernel_common.hpp
-using mscclpp::bit_cast;
-using mscclpp::clip;
-using mscclpp::add_elements;
-using mscclpp::min_elements;
-using mscclpp::cal_elements;
-using mscclpp::cal_vector_helper;
-using mscclpp::cal_vector;
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <class T>

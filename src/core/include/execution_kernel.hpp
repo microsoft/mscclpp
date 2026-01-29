@@ -17,7 +17,7 @@
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "execution_common.hpp"
-#include "reduce_kernel_common.hpp"
+#include "reduce_kernel.hpp"
 namespace mscclpp {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
