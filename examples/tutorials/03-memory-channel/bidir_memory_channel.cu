@@ -101,7 +101,7 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
 }
 
 #if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
-int nvlink_check(int gpuId) {
+int checkNvlink(int gpuId) {
   nvmlReturn_t result = nvmlInit();
   if (result != NVML_SUCCESS) {
     log("NVML init failed: ", nvmlErrorString(result));
@@ -312,7 +312,7 @@ int main(int argc, char **argv) {
       return -1;
     }
 #if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
-    int nvlink_support = nvlink_check(gpuId);
+    int nvlink_support = checkNvlink(gpuId);
 #endif
     if (nvlink_support < 0) return -1;
     worker(rank, gpuId, ipPort);
