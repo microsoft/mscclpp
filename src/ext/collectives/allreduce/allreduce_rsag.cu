@@ -14,7 +14,7 @@ __global__ void __launch_bounds__(1024, 1)
                   DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int nRanksPerNode,
                   int worldSize, size_t nelems) {
   int blockId = blockIdx.x;
-  int nPeers = nRanksPerNode - 1;
+  uint32_t nPeers = nRanksPerNode - 1;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
@@ -63,13 +63,13 @@ __global__ void __launch_bounds__(1024, 1)
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset > lastInt4Index) continue;
     int4 tmp = scratch4[offset];
-    for (int i = 0; i < nPeers; i++) {
+    for (uint32_t i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       int4 data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
       tmp = cal_vector<T, OpType>(data, tmp);
     }
-    for (int i = 0; i < nPeers; i++) {
+    for (uint32_t i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[peerIdx], offset, tmp);

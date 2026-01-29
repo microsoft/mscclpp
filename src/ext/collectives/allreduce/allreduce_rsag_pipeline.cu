@@ -60,7 +60,7 @@ __global__ void __launch_bounds__(1024, 1)
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
                           int nRanksPerNode, int worldSize, size_t nelems, size_t scratchSize, uint32_t nblocksForPut,
                           uint32_t nblocksForReduce, uint32_t nblocksForRecv) {
-  int bid = blockIdx.x;
+  uint32_t bid = blockIdx.x;
   const uint32_t nStepsPerIter = 4;
   uint32_t nInt4 = (nelems * sizeof(T) + sizeof(int4) - 1) / sizeof(int4);
   uint32_t nInt4PerIter = nblocksForReduce * blockDim.x * nStepsPerIter;
@@ -81,8 +81,8 @@ __global__ void __launch_bounds__(1024, 1)
         semaphoreForSend[bid].acquire();
       }
       __syncthreads();
-      int threadIdInPut = bid * blockDim.x + threadIdx.x;
-      for (int peer = 0; peer < nPeers; peer++) {
+      uint32_t threadIdInPut = bid * blockDim.x + threadIdx.x;
+      for (uint32_t peer = 0; peer < nPeers; peer++) {
         int remoteRankId = (rank + peer + 1) % nRanksPerNode;
         int peerId = remoteRankId < rank ? remoteRankId : remoteRankId - 1;
         // Read chunk[remoteRankId] from local buff, write to peer's scratch[rank] (sender's slot)
@@ -135,7 +135,7 @@ __global__ void __launch_bounds__(1024, 1)
             baseSrcOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
         int4 tmp = loadPacket(buff, myChunkOffset, nelems);
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
-        for (int peer = 0; peer < nPeers; peer++) {
+        for (uint32_t peer = 0; peer < nPeers; peer++) {
           int remoteRankId = (rank + peer + 1) % nRanksPerNode;
           uint32_t peerSlotOffset =
               baseOffset + remoteRankId * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
