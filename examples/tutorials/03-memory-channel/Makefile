@@ -12,11 +12,13 @@ endif
 
 TARGET = bidir_memory_channel
 SRC = bidir_memory_channel.cu
+COMPILE_FLAG := -I$(PWD)/../../../include/ -I$(PWD)/../../../build/include -L$(PWD)/../../../build/lib/ 
+NVLINK_FLAG := -lnvidia-ml 
 
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(COMPILER) $(ARCH_FLAG) -o $@ $< -lmscclpp
+	$(COMPILER) $(ARCH_FLAG) $(COMPILE_FLAG) $(NVLINK_FLAG) -o $@ $< -lmscclpp
 
 clean:
 	rm -f $(TARGET)

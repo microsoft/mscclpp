@@ -12,6 +12,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
+#include <nvml.h>
 
 #define PORT_NUMBER "50505"
 
@@ -93,6 +94,54 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   const uint64_t pktBufOffset = 0;
   devHandle->putPackets(pktBufOffset, srcOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
+}
+
+int nvlink_check(int gpuId) {
+  nvmlReturn_t result = nvmlInit();
+  if (result != NVML_SUCCESS) {
+    log("NVML init failed: ", nvmlErrorString(result));
+    return -1;
+  }
+  nvmlDevice_t device;
+  result = nvmlDeviceGetHandleByIndex(gpuId, &device);
+  if (result != NVML_SUCCESS) {
+    log("Device handle failed: ", nvmlErrorString(result));
+    return -1;
+  }
+  
+  int total_links = 0;
+  int active_links = 0;
+  
+  for (unsigned int i = 0; i < NVML_NVLINK_MAX_LINKS; i++) {
+    nvmlEnableState_t state;
+    result = nvmlDeviceGetNvLinkState(device, i, &state);
+    
+    if (result == NVML_SUCCESS) {
+      total_links++;
+      if (state == NVML_FEATURE_ENABLED)
+	active_links++;
+    }
+    else if (result == NVML_ERROR_NOT_SUPPORTED) {
+      break;
+    }
+  }
+  
+  nvmlShutdown();
+
+  // NVLink not supported
+  if (total_links == 0) {
+    log("NVLink not supported on GPU", gpuId);
+    return -1;
+  }
+
+  // Some links down
+  if (active_links != total_links) {
+    log("Some NVLinks are down on GPU ", gpuId);
+    return -1;
+  }
+
+  log("NVLink is supported and fully operational on GPU ", gpuId); 
+  return 0;
 }
 
 void worker(int myRank, int gpuId, const std::string &ipPort) {
@@ -239,6 +288,8 @@ int main(int argc, char **argv) {
     std::string ipPort = argv[1];
     int rank = std::atoi(argv[2]);
     int gpuId = std::atoi(argv[3]);
+    int nvlink_support=nvlink_check(gpuId);
+    if (nvlink_support<0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
