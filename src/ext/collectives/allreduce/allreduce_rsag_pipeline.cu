@@ -76,7 +76,7 @@ __global__ void __launch_bounds__(1024, 1)
     if (threadIdx.x == 0) {
       semaphoreForSend[bid].set(pipelineDepth);
     }
-    for (int iter = 0; iter < nIters; iter++) {
+    for (uint32_t iter = 0; iter < nIters; iter++) {
       if (threadIdx.x == 0) {
         semaphoreForSend[bid].acquire();
       }
@@ -90,12 +90,12 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t dstOffset = (iter % pipelineDepth) * scratchIterStride + rank * nInt4PerIter;
         int4 tmp[nStepsPerIter * REDUCE_COPY_RATIO];
 #pragma unroll
-        for (int step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
+        for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = srcOffset + threadIdInPut + step * blockDim.x * nblocksForPut;
           tmp[step] = loadPacket(buff, offset, nelems);
         }
 #pragma unroll
-        for (int step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
+        for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = dstOffset + threadIdInPut + step * blockDim.x * nblocksForPut;
           mscclpp::write<int4>(((void**)remoteMemories)[peerId], offset, tmp[step]);
         }
@@ -111,7 +111,7 @@ __global__ void __launch_bounds__(1024, 1)
     // Map REDUCE blocks to PUT blocks: REDUCE blocks 0,1 handle PUT block 0's data
     uint32_t putBlockId = bidInReduce / REDUCE_COPY_RATIO;
     uint32_t subBlockId = bidInReduce % REDUCE_COPY_RATIO;
-    for (int iter = 0; iter < nIters; iter++) {
+    for (uint32_t iter = 0; iter < nIters; iter++) {
       if (threadIdx.x == 0) {
         semaphoreForReduce[bidInReduce].acquire();
       }
@@ -127,7 +127,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       __syncthreads();
 #pragma unroll nStepsPerIter
-      for (int step = 0; step < nStepsPerIter; step++) {
+      for (uint32_t step = 0; step < nStepsPerIter; step++) {
         // Map to PUT's step pattern: each REDUCE block handles nStepsPerIter steps
         // subBlockId determines which subset of the REDUCE_COPY_RATIO * nStepsPerIter steps
         uint32_t putStep = subBlockId * nStepsPerIter + step;
@@ -146,7 +146,7 @@ __global__ void __launch_bounds__(1024, 1)
         // Broadcast reduced result to all peers' scratch at SCATTER_AG_OFFSET + rank * nInt4PerIter
         uint32_t dstOffset =
             baseOffset + chunkSize + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
-        for (int i = 0; i < nPeers; i++) {
+        for (uint32_t i = 0; i < nPeers; i++) {
           int peerIdx = (rank + i + 1) % nRanksPerNode;
           int index = peerIdx < rank ? peerIdx : peerIdx - 1;
           mscclpp::write<int4>(((void**)remoteMemories)[index], dstOffset, tmp);
@@ -160,7 +160,7 @@ __global__ void __launch_bounds__(1024, 1)
   } else if (bid < nblocksForPut + nblocksForReduce + nblocksForRecv) {
     uint32_t bidInRecv = bid - nblocksForPut - nblocksForReduce;
     DeviceHandle<BaseMemoryChannel>* localMemoryChannels = memoryChannels + (nblocksForReduce + bidInRecv) * nPeers;
-    for (int iter = 0; iter < nIters; iter++) {
+    for (uint32_t iter = 0; iter < nIters; iter++) {
       if (threadIdx.x < REDUCE_COPY_RATIO) {
         semaphoreForRecv[bidInRecv * REDUCE_COPY_RATIO + threadIdx.x].acquire();
       }
@@ -174,7 +174,7 @@ __global__ void __launch_bounds__(1024, 1)
       }
       __syncthreads();
       // Copy other ranks' reduced chunks from scratch to result
-      for (int peer = 0; peer < nPeers; peer++) {
+      for (uint32_t peer = 0; peer < nPeers; peer++) {
         int remoteRankId = (rank + peer + 1) % nRanksPerNode;
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = baseOffset + chunkSize + remoteRankId * nInt4PerIter + threadIdInRecv +

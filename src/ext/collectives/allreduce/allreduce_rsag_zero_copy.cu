@@ -37,7 +37,7 @@ __global__ void __launch_bounds__(1024, 1)
   uint32_t nInt4PerBlock = nInt4PerRank / gridDim.x;
   uint32_t remainderForBlock = nInt4PerRank % gridDim.x;
   uint32_t offset4 = blockId * nInt4PerBlock;
-  if (blockId == gridDim.x - 1) {
+  if (blockId == (int)(gridDim.x - 1)) {
     nInt4PerBlock += remainderForBlock;
   }
   if (nInt4PerBlock == 0) return;
