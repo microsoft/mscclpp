@@ -109,8 +109,6 @@ int nvlink_check(int gpuId) {
     return -1;
   }
   
-  log("NVLink status for GPU :", gpuId);
-  
   int total_links = 0;
   int active_links = 0;
   
@@ -132,16 +130,17 @@ int nvlink_check(int gpuId) {
 
   // NVLink not supported
   if (total_links == 0) {
-    log("NVLink not supported");
+    log("NVLink not supported on GPU", gpuId);
     return -1;
   }
 
   // Some links down
   if (active_links != total_links) {
-    log("Some NVLinks are down");
+    log("Some NVLinks are down on GPU ", gpuId);
     return -1;
   }
-  
+
+  log("NVLink is supported and fully operational on GPU ", gpuId); 
   return 0;
 }
 
