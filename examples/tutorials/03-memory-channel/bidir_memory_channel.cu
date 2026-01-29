@@ -286,6 +286,10 @@ int main(int argc, char **argv) {
     std::string ipPort = argv[1];
     int rank = std::atoi(argv[2]);
     int gpuId = std::atoi(argv[3]);
+    if (rank < 0 || gpuId < 0) {
+      std::cerr << "Error: rank and gpu_id must be non-negative integers." << std::endl;
+      return -1;
+    }
     int nvlink_support = nvlink_check(gpuId);
     if (nvlink_support < 0) return -1;
     worker(rank, gpuId, ipPort);
