@@ -5,4 +5,5 @@ pybind11
 sphinx_rtd_theme
 sphinxcontrib-mermaid
 sphinx-autodoc-typehints
+sphinx-multiversion==0.2.4
 setuptools_scm
