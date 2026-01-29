@@ -85,7 +85,7 @@ __global__ void __launch_bounds__(512, 1)
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vectors<T, OpType>(val, data);
+        data = cal_vector<T, OpType>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
@@ -125,7 +125,7 @@ __global__ void __launch_bounds__(512, 1)
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vectors<T, OpType>(val, data);
+        data = cal_vector<T, OpType>(val, data);
       }
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {

@@ -140,7 +140,7 @@ __global__ void __launch_bounds__(1024, 1)
           uint32_t peerSlotOffset =
               baseOffset + remoteRankId * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
           int4 data = scratch4[peerSlotOffset];
-          tmp = cal_vectors<T, OpType>(data, tmp);
+          tmp = cal_vector<T, OpType>(data, tmp);
         }
         storePacket(resultBuff, myChunkOffset, tmp, nelems);
         // Broadcast reduced result to all peers' scratch at SCATTER_AG_OFFSET + rank * nInt4PerIter

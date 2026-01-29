@@ -67,7 +67,7 @@ __global__ void __launch_bounds__(1024, 1)
       int rankIdx = (rank + i + 1) % nRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       int4 data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
-      tmp = cal_vectors<T, OpType>(data, tmp);
+      tmp = cal_vector<T, OpType>(data, tmp);
     }
     for (int i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerNode;

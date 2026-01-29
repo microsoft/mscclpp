@@ -39,7 +39,7 @@ __global__ void __launch_bounds__(1024, 1)
         continue;
       }
       uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
-      data = cal_vectors<T, OpType>(data, val);
+      data = cal_vector<T, OpType>(data, val);
     }
     dst[i] = data;
   }

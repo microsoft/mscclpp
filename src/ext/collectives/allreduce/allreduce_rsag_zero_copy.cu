@@ -59,7 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
       data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
     }
     for (int i = 0; i < NPeers; i++) {
-      tmp = cal_vectors<T, OpType>(data[i], tmp);
+      tmp = cal_vector<T, OpType>(data[i], tmp);
     }
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
