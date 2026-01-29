@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <mscclpp/concurrency_device.hpp>
@@ -13,6 +14,7 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
+#include <string>
 
 #define PORT_NUMBER "50505"
 
@@ -284,10 +286,16 @@ int main(int argc, char **argv) {
     return 0;
   } else if (argc == 4) {
     std::string ipPort = argv[1];
-    int rank = std::atoi(argv[2]);
-    int gpuId = std::atoi(argv[3]);
+    int rank, gpuId;
+    try {
+      rank = std::stoi(argv[2]);
+      gpuId = std::stoi(argv[3]);
+    } catch (const std::exception &e) {
+      std::cerr << "Error: rank and gpu_id must be valid integers." << std::endl;
+      return -1;
+    }
     if (rank < 0 || gpuId < 0) {
-      std::cerr << "Error: rank and gpu_id must be non-negative integers." << std::endl;
+      std::cerr << "Error: rank and gpu_id must be non-negative." << std::endl;
       return -1;
     }
     int nvlink_support = nvlink_check(gpuId);
