@@ -110,7 +110,6 @@ MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
 }
 
 #if defined(__FP8_TYPES_EXIST__)
-// FP8 E4M3 addition using __hadd for efficiency (single element)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
@@ -132,7 +131,6 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
 #endif
 }
 
-// FP8 E4M3 vectorized addition for 2 elements
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
@@ -160,9 +158,24 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) 
 #endif
 }
 
-// FP8 E4M3 vectorized addition for 4 elements (via 2x __fp8x2_e4m3)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t a32 = *reinterpret_cast<uint32_t*>(&a);
+  uint32_t b32 = *reinterpret_cast<uint32_t*>(&b);
+  float2 v_low, v_high;
+  // E4M3 using fp8 conversion - process low word (false) and high word (true)
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v_low)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
+  uint32_t result_packed = __builtin_amdgcn_cvt_pk_fp8_f32(v_low.x, v_low.y, 0, false);
+
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v_high)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
+  result_packed = __builtin_amdgcn_cvt_pk_fp8_f32(v_high.x, v_high.y, result_packed, true);
+  return *reinterpret_cast<__fp8x4_e4m3*>(&result_packed);
+#else
   // Process as two __fp8x2_e4m3 using add_elements for 2 elements
   __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
   __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
@@ -172,9 +185,9 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) 
   result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
 
   return *reinterpret_cast<__fp8x4_e4m3*>(result);
+#endif
 }
 
-// FP8 E5M2 addition using __hadd for efficiency (single element)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
@@ -223,9 +236,24 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) 
 #endif
 }
 
-// FP8 E5M2 vectorized addition for 4 elements (via 2x __fp8x2_e5m2)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t a32 = *reinterpret_cast<uint32_t*>(&a);
+  uint32_t b32 = *reinterpret_cast<uint32_t*>(&b);
+  float2 v_low, v_high;
+  // E5M2 using bf8 conversion - process low word (false) and high word (true)
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v_low)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
+  uint32_t result_packed = __builtin_amdgcn_cvt_pk_bf8_f32(v_low.x, v_low.y, 0, false);
+
+  asm volatile("v_pk_add_f32 %0, %1, %2"
+               : "=v"(v_high)
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
+  result_packed = __builtin_amdgcn_cvt_pk_bf8_f32(v_high.x, v_high.y, result_packed, true);
+  return *reinterpret_cast<__fp8x4_e5m2*>(&result_packed);
+#else
   // Process as two __fp8x2_e5m2 using add_elements for 2 elements
   __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
   __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
@@ -235,10 +263,9 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
   result[1] = add_elements<UseClip>(a_pair[1], b_pair[1]);
 
   return *reinterpret_cast<__fp8x4_e5m2*>(result);
+#endif
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
-
-
 
 template <typename T>
 MSCCLPP_DEVICE_INLINE T min_elements(T a, T b) {
