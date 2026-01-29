@@ -4,7 +4,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <exception>
 #include <functional>
 #include <iostream>
 #include <mscclpp/concurrency_device.hpp>
@@ -119,17 +118,17 @@ int checkNvlink(int gpuId) {
     return -1;
   }
 
-  int total_links = 0;
-  int active_links = 0;
+  int totalLinks = 0;
+  int activeLinks = 0;
 
   for (unsigned int i = 0; i < NVML_NVLINK_MAX_LINKS; i++) {
     nvmlEnableState_t state;
     result = nvmlDeviceGetNvLinkState(device, i, &state);
 
     if (result == NVML_SUCCESS) {
-      total_links++;
-      if (state == NVML_FEATURE_ENABLED) active_links++;
-    } else if (result == NVML_ERROR_NOT_SUPPORTED) {
+      totalLinks++;
+      if (state == NVML_FEATURE_ENABLED) activeLinks++;
+    } else {
       break;
     }
   }
@@ -141,13 +140,13 @@ int checkNvlink(int gpuId) {
   }
 
   // NVLink not supported
-  if (total_links == 0) {
+  if (totalLinks == 0) {
     log("NVLink not supported on GPU", gpuId);
     return -1;
   }
 
   // Some links down
-  if (active_links != total_links) {
+  if (activeLinks != totalLinks) {
     log("Some NVLinks are down on GPU ", gpuId);
     return -1;
   }
@@ -165,7 +164,11 @@ int checkImex() {
   if (fgets(buf, sizeof(buf), fp)) {
     status = buf;
   }
-  pclose(fp);
+  int ret = pclose(fp);
+  if (ret == -1) {
+    log("pclose failed");
+    return -1;
+  }
 
   // remove newline
   if (!status.empty() && status.back() == '\n') status.pop_back();
@@ -325,18 +328,18 @@ int main(int argc, char **argv) {
     try {
       rank = std::stoi(argv[2]);
       gpuId = std::stoi(argv[3]);
-    } catch (const std::exception &e) {
+    } catch (const std::exception&) {
       log("Error: rank and gpu_id must be valid integers.");
       return -1;
     }
-    if (rank < 0 || gpuId < 0) {
-      log("Error: rank and gpu_id must be non-negative.");
+    if (rank < 0 || rank > 2 || gpuId < 0) {
+      log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
       return -1;
     }
 #if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
-    int nvlink_support = checkNvlink(gpuId);
-    int Imex_status = checkImex();
-    if (nvlink_support < 0 || Imex_status < 0) return -1;
+    int nvlinkSupport = checkNvlink(gpuId);
+    int imexStatus = checkImex();
+    if (nvlinkSupport < 0 || imexStatus < 0) return -1;
 #endif
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
