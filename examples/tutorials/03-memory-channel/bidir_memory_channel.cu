@@ -151,7 +151,7 @@ int checkNvlink(int gpuId) {
     return -1;
   }
 
-  log("NVLink is supported and fully operational on GPU ", gpuId);
+  log("NVLink is supported on GPU ", gpuId);
   return 0;
 }
 
@@ -328,7 +328,7 @@ int main(int argc, char **argv) {
     try {
       rank = std::stoi(argv[2]);
       gpuId = std::stoi(argv[3]);
-    } catch (const std::exception&) {
+    } catch (const std::exception &) {
       log("Error: rank and gpu_id must be valid integers.");
       return -1;
     }
