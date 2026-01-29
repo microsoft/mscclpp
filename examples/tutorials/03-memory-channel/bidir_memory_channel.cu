@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <nvml.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <exception>
 #include <functional>
 #include <iostream>
 #include <mscclpp/concurrency_device.hpp>
@@ -13,6 +13,10 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
+
+#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
+#include <nvml.h>
+#endif
 
 #define PORT_NUMBER "50505"
 
@@ -96,6 +100,7 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
+#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
 int nvlink_check(int gpuId) {
   nvmlReturn_t result = nvmlInit();
   if (result != NVML_SUCCESS) {
@@ -106,6 +111,11 @@ int nvlink_check(int gpuId) {
   result = nvmlDeviceGetHandleByIndex(gpuId, &device);
   if (result != NVML_SUCCESS) {
     log("Device handle failed: ", nvmlErrorString(result));
+    nvmlReturn_t r = nvmlShutdown();
+    if (r != NVML_SUCCESS) {
+      log("nvmlShutdown failed: ", nvmlErrorString(r));
+      return -1;
+    }
     return -1;
   }
 
@@ -124,7 +134,11 @@ int nvlink_check(int gpuId) {
     }
   }
 
-  nvmlShutdown();
+  nvmlReturn_t r = nvmlShutdown();
+  if (r != NVML_SUCCESS) {
+    log("nvmlShutdown failed: ", nvmlErrorString(r));
+    return -1;
+  }
 
   // NVLink not supported
   if (total_links == 0) {
@@ -141,6 +155,7 @@ int nvlink_check(int gpuId) {
   log("NVLink is supported and fully operational on GPU ", gpuId);
   return 0;
 }
+#endif
 
 void worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
@@ -284,15 +299,29 @@ int main(int argc, char **argv) {
     return 0;
   } else if (argc == 4) {
     std::string ipPort = argv[1];
-    int rank = std::atoi(argv[2]);
-    int gpuId = std::atoi(argv[3]);
+    int rank, gpuId;
+    try {
+      rank = std::stoi(argv[2]);
+      gpuId = std::stoi(argv[3]);
+    } catch (const std::exception &e) {
+      log("Error: rank and gpu_id must be valid integers.");
+      return -1;
+    }
+    if (rank < 0 || gpuId < 0) {
+      log("Error: rank and gpu_id must be non-negative.");
+      return -1;
+    }
+#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
     int nvlink_support = nvlink_check(gpuId);
+#endif
     if (nvlink_support < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
   } else {
-    std::cerr << "Usage: " << argv[0] << " [<ip_port> <rank> <gpu_id>]" << std::endl;
+    std::cerr << "Usage:\n"
+              << "  " << argv[0] << "                Run in intra-node mode\n"
+              << "  " << argv[0] << " <ip_port> <rank> <gpu_id>   Run in inter-node mode\n";
     return -1;
   }
 }
