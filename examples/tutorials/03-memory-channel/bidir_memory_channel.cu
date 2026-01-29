@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <nvml.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -12,7 +13,6 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
-#include <nvml.h>
 
 #define PORT_NUMBER "50505"
 
@@ -108,24 +108,22 @@ int nvlink_check(int gpuId) {
     log("Device handle failed: ", nvmlErrorString(result));
     return -1;
   }
-  
+
   int total_links = 0;
   int active_links = 0;
-  
+
   for (unsigned int i = 0; i < NVML_NVLINK_MAX_LINKS; i++) {
     nvmlEnableState_t state;
     result = nvmlDeviceGetNvLinkState(device, i, &state);
-    
+
     if (result == NVML_SUCCESS) {
       total_links++;
-      if (state == NVML_FEATURE_ENABLED)
-	active_links++;
-    }
-    else if (result == NVML_ERROR_NOT_SUPPORTED) {
+      if (state == NVML_FEATURE_ENABLED) active_links++;
+    } else if (result == NVML_ERROR_NOT_SUPPORTED) {
       break;
     }
   }
-  
+
   nvmlShutdown();
 
   // NVLink not supported
@@ -140,7 +138,7 @@ int nvlink_check(int gpuId) {
     return -1;
   }
 
-  log("NVLink is supported and fully operational on GPU ", gpuId); 
+  log("NVLink is supported and fully operational on GPU ", gpuId);
   return 0;
 }
 
@@ -288,8 +286,8 @@ int main(int argc, char **argv) {
     std::string ipPort = argv[1];
     int rank = std::atoi(argv[2]);
     int gpuId = std::atoi(argv[3]);
-    int nvlink_support=nvlink_check(gpuId);
-    if (nvlink_support<0) return -1;
+    int nvlink_support = nvlink_check(gpuId);
+    if (nvlink_support < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
