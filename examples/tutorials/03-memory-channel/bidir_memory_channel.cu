@@ -290,8 +290,8 @@ int main(int argc, char **argv) {
     try {
       rank = std::stoi(argv[2]);
       gpuId = std::stoi(argv[3]);
-    } catch (const std::exception &e) {
-      std::cerr << "Error: rank and gpu_id must be valid integers." << std::endl;
+    } catch (const std::exception &) {
+      std::cerr << "Error: rank and gpu_id must be valid integers within range." << std::endl;
       return -1;
     }
     if (rank < 0 || gpuId < 0) {
