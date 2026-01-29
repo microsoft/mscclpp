@@ -26,10 +26,26 @@ using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
 
 // HIP FP8 vector types use storage types (from hip/amd_detail/amd_hip_fp8.h):
-using __fp8x2_e4m3 = __hip_fp8x2_storage_t;  // uint16_t
-using __fp8x2_e5m2 = __hip_fp8x2_storage_t;  // uint16_t
-using __fp8x4_e4m3 = __hip_fp8x4_storage_t;  // uint32_t
-using __fp8x4_e5m2 = __hip_fp8x4_storage_t;  // uint32_t
+// We need distinct types for E4M3 and E5M2 to enable proper function overloading
+
+template <typename ScalarT, typename StorageT>
+struct fp8_vec_wrapper {
+  StorageT data;
+  MSCCLPP_HOST_DEVICE_INLINE fp8_vec_wrapper() = default;
+  MSCCLPP_HOST_DEVICE_INLINE fp8_vec_wrapper(StorageT d) : data(d) {}
+  MSCCLPP_HOST_DEVICE_INLINE operator StorageT() const { return data; }
+};
+
+template <typename ScalarT>
+using fp8x2_t = fp8_vec_wrapper<ScalarT, __hip_fp8x2_storage_t>;
+
+template <typename ScalarT>
+using fp8x4_t = fp8_vec_wrapper<ScalarT, __hip_fp8x4_storage_t>;
+
+using __fp8x2_e4m3 = fp8x2_t<__fp8_e4m3>;
+using __fp8x2_e5m2 = fp8x2_t<__fp8_e5m2>;
+using __fp8x4_e4m3 = fp8x4_t<__fp8_e4m3>;
+using __fp8x4_e5m2 = fp8x4_t<__fp8_e5m2>;
 
 #define __FP8_TYPES_EXIST__
 #endif  // HIP_VERSION_MAJOR >= 6
@@ -131,11 +147,9 @@ using bf16x8 = VectorType<__bfloat16, 8>;
 using fp8_e4m3x2 = VectorType<__fp8_e4m3, 2>;
 using fp8_e4m3x4 = VectorType<__fp8_e4m3, 4>;
 using fp8_e4m3x8 = VectorType<__fp8_e4m3, 8>;
-using fp8_e4m3x16 = VectorType<__fp8_e4m3, 16>;
 using fp8_e5m2x2 = VectorType<__fp8_e5m2, 2>;
 using fp8_e5m2x4 = VectorType<__fp8_e5m2, 4>;
 using fp8_e5m2x8 = VectorType<__fp8_e5m2, 8>;
-using fp8_e5m2x16 = VectorType<__fp8_e5m2, 16>;
 #endif
 
 }  // namespace mscclpp
