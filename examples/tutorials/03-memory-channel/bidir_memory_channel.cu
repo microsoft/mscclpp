@@ -155,6 +155,28 @@ int checkNvlink(int gpuId) {
   log("NVLink is supported and fully operational on GPU ", gpuId);
   return 0;
 }
+
+int checkImex() {
+  FILE *fp = popen("systemctl is-active nvidia-imex 2>/dev/null", "r");
+  if (!fp) return -1;
+
+  char buf[128];
+  std::string status;
+  if (fgets(buf, sizeof(buf), fp)) {
+    status = buf;
+  }
+  pclose(fp);
+
+  // remove newline
+  if (!status.empty() && status.back() == '\n') status.pop_back();
+
+  if (status != "active") {
+    log("IMEX is not active");
+    return -1;
+  }
+
+  return 0;
+}
 #endif
 
 void worker(int myRank, int gpuId, const std::string &ipPort) {
@@ -313,8 +335,9 @@ int main(int argc, char **argv) {
     }
 #if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
     int nvlink_support = checkNvlink(gpuId);
+    int Imex_status = checkImex();
+    if (nvlink_support < 0 || Imex_status < 0) return -1;
 #endif
-    if (nvlink_support < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
