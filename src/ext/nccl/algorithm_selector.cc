@@ -136,7 +136,7 @@ return algoMap.at("default_allreduce_fullmesh");
 
 std::shared_ptr<Algorithm> selectSingleNodeAllgather(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
-    const AlgorithmSelectorConfig& config) {
+    [[maybe_unused]] const AlgorithmSelectorConfig& config) {
   const size_t messageSize = request.messageSize;
 
   // For messages up to 32MB, use fullmesh2 algorithm

@@ -141,7 +141,7 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) 
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
+  return __fp8x2_e4m3(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
@@ -197,24 +197,33 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
-// CUDA: Convert to half2, add using optimized __hadd2, convert back
 #if defined(MSCCLPP_DEVICE_CUDA)
+  // CUDA: Convert to half2, add using optimized __hadd2, convert back
   __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
   return UseClip ? clip(result) : result;
 #elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  // HIP gfx942: Use BF8 assembly instructions
   float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false);
+  return __fp8x2_e5m2(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false));
 #else
-  __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
-  return UseClip ? clip(result) : result;
+  // Fallback: element-wise using single-element operations
+  union {
+    __fp8_e5m2 fp8[2];
+    __fp8x2_e5m2 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = add_elements<UseClip>(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = add_elements<UseClip>(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
 #endif
 }
 
-// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
+// FP8 E5M2 vectorized addition for 4 elements (via 2x __fp8x2_e5m2)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
   // Process as two __fp8x2_e5m2 using add_elements for 2 elements
@@ -308,13 +317,25 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 min_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
 #endif
 }
 
-#if defined(MSCCLPP_DEVICE_CUDA)
-// FP8 E5M2 vectorized min for 2 elements (CUDA only)
+// FP8 E5M2 vectorized min for 2 elements
 MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 min_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
+#if defined(MSCCLPP_DEVICE_HIP)
+  // HIP implementation: use union and process element-wise
+  union {
+    __fp8_e5m2 fp8[2];
+    __fp8x2_e5m2 fp8x2;
+  } ua, ub, result;
+  ua.fp8x2 = a;
+  ub.fp8x2 = b;
+  result.fp8[0] = min_elements(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = min_elements(ua.fp8[1], ub.fp8[1]);
+  return result.fp8x2;
+#else
   return __fp8x2_e5m2(__hmin2(__half2(a), __half2(b)));
+#endif
 }
 
-// FP8 E5M2 vectorized min for 4 elements (CUDA only)
+// FP8 E5M2 vectorized min for 4 elements
 MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
   // Process as two __fp8x2_e5m2 using min_elements for 2 elements
   union {
@@ -329,7 +350,6 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
 
   return uresult.vec4;
 }
-#endif  // defined(MSCCLPP_DEVICE_CUDA)
 #endif  // defined(__FP8_TYPES_EXIST__)
 
 
