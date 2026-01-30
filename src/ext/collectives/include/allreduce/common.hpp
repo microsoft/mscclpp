@@ -113,15 +113,13 @@ __forceinline__ __device__ uint8_t add_elements(uint8_t a, uint8_t b) {
 // Helper for processing 4 uint8_t values packed in an int
 __forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
 #if defined(__HIP_PLATFORM_AMD__)
-  int ret;
-  uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
-  uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
-  uint8_t* r_bytes = reinterpret_cast<uint8_t*>(&ret);
-  r_bytes[0] = a_bytes[0] + b_bytes[0];
-  r_bytes[1] = a_bytes[1] + b_bytes[1];
-  r_bytes[2] = a_bytes[2] + b_bytes[2];
-  r_bytes[3] = a_bytes[3] + b_bytes[3];
-  return ret;
+  // Optimized using byte permute to avoid overflow between adjacent bytes
+  constexpr uint32_t even = 0x00ff00ffu;
+  uint32_t ua = static_cast<uint32_t>(a);
+  uint32_t ub = static_cast<uint32_t>(b);
+  uint32_t x = (ua & even) + (ub & even);
+  uint32_t y = (ua & ~even) + (ub & ~even);
+  return static_cast<int>(__byte_perm(x, y, 0x7250));
 #else
   return __vadd4(a, b);
 #endif
@@ -129,15 +127,20 @@ __forceinline__ __device__ int cal_uint8x4_sum(int a, int b) {
 
 __forceinline__ __device__ int cal_uint8x4_min(int a, int b) {
 #if defined(__HIP_PLATFORM_AMD__)
-  int ret;
-  uint8_t* a_bytes = reinterpret_cast<uint8_t*>(&a);
-  uint8_t* b_bytes = reinterpret_cast<uint8_t*>(&b);
-  uint8_t* r_bytes = reinterpret_cast<uint8_t*>(&ret);
-  r_bytes[0] = (a_bytes[0] < b_bytes[0]) ? a_bytes[0] : b_bytes[0];
-  r_bytes[1] = (a_bytes[1] < b_bytes[1]) ? a_bytes[1] : b_bytes[1];
-  r_bytes[2] = (a_bytes[2] < b_bytes[2]) ? a_bytes[2] : b_bytes[2];
-  r_bytes[3] = (a_bytes[3] < b_bytes[3]) ? a_bytes[3] : b_bytes[3];
-  return ret;
+  // Optimized min for 4 packed uint8_t using 9-bit arithmetic
+  constexpr uint32_t ones = 0x01010101u;
+  constexpr uint32_t even = 0x00ff00ffu;  // even byte mask
+  uint32_t ua = static_cast<uint32_t>(a);
+  uint32_t ub = static_cast<uint32_t>(b);
+  // Use 9-bit arithmetic to compute d=a-b for each byte
+  uint32_t d0 = (ua & even) + (~ub & even) + ones;
+  uint32_t d1 = ((ua >> 8) & even) + (~(ub >> 8) & even) + ones;
+  // Move sign bit of each 9-bit delta into the least bit of origin byte
+  uint32_t s = __byte_perm(d0, d1, 0x7351) & ones;
+  // Broadcast least bit across whole byte
+  s *= 0xffu;
+  // Compose result by selecting bytes via: signbit(a-b)==1 ? a : b
+  return static_cast<int>((ua & s) | (ub & ~s));
 #else
   return __vminu4(a, b);
 #endif
