@@ -13,9 +13,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
 
-#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
 #include <nvml.h>
-#endif
 
 #define PORT_NUMBER "50505"
 
@@ -99,7 +97,6 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
-#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
 int checkNvlink(int gpuId) {
   nvmlReturn_t result = nvmlInit();
   if (result != NVML_SUCCESS) {
@@ -154,33 +151,6 @@ int checkNvlink(int gpuId) {
   log("NVLink is supported on GPU ", gpuId);
   return 0;
 }
-
-int checkImex() {
-  FILE *fp = popen("systemctl is-active nvidia-imex 2>/dev/null", "r");
-  if (!fp) return -1;
-
-  char buf[128];
-  std::string status;
-  if (fgets(buf, sizeof(buf), fp)) {
-    status = buf;
-  }
-  int ret = pclose(fp);
-  if (ret == -1) {
-    log("pclose failed");
-    return -1;
-  }
-
-  // remove newline
-  if (!status.empty() && status.back() == '\n') status.pop_back();
-
-  if (status != "active") {
-    log("IMEX is not active");
-    return -1;
-  }
-
-  return 0;
-}
-#endif
 
 void worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
@@ -336,11 +306,8 @@ int main(int argc, char **argv) {
       log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
       return -1;
     }
-#if defined(__CUDACC__) && !defined(__HIP_PLATFORM_AMD__)
     int nvlinkSupport = checkNvlink(gpuId);
-    int imexStatus = checkImex();
-    if (nvlinkSupport < 0 || imexStatus < 0) return -1;
-#endif
+    if (nvlinkSupport < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
