@@ -256,7 +256,7 @@ Since the flags take 50% of the packet size, the goodput of communication using 
 
 For **inter-node** communication, using `PortChannel` (will be explained in the following tutorial) is usually a more accessible option that leverages more widely-used networking interfaces. However, `MemoryChannel` can still be used as long as the underlying hardware allows memory mapping between the two GPUs, such as [Multi-Node NVLink (MNNVL)](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/overview.html) on NVIDIA Grace Blackwell platforms.
 
-We can use the same example code to test inter-node `MemoryChannel`. The code performs essential MNNVL readiness checks, including IMEX status and NVLink connectivity. For further verification steps and detailed environment requirements, users can consult the [NVIDIA MNNVL verification guide](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/verifying.html).
+We can use the same example code to test inter-node `MemoryChannel`. The code performs basic NVLINK support checks such as NVLink connectivity. For further verification steps and detailed environment requirements for MNNVL, users can consult the [NVIDIA MNNVL verification guide](https://docs.nvidia.com/multi-node-nvlink-systems/mnnvl-user-guide/verifying.html).
 
 Run the program on two nodes with command line arguments:
 
