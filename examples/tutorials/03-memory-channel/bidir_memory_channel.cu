@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <nvml.h>
 #include <sys/wait.h>
 #include <unistd.h>
 

@@ -1,7 +1,6 @@
 CUDA_HOME ?= /usr/local/cuda
 ROCM_HOME ?= /opt/rocm
 
-NVML_FLAG := 
 # Check if nvcc exists, otherwise use hipcc
 ifeq ($(shell which $(CUDA_HOME)/bin/nvcc 2>/dev/null),)
     COMPILER := $(ROCM_HOME)/bin/hipcc
