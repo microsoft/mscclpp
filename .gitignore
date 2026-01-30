@@ -1,9 +1,7 @@
 .vscode/
-.hypothesis/
 build/
-dist/
 __pycache__
 .*.swp
-.idea/
 *.so
+.pytest_cache/
 _codeql_detected_source_root
