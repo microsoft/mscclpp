@@ -1,0 +1,9 @@
+mpi4py
+cupy
+prettytable
+netifaces
+pytest
+numpy
+matplotlib
+sortedcontainers @ git+https://github.com/grantjenks/python-sortedcontainers.git@3ac358631f58c1347f1d6d2d92784117db0f38ed
+blake3
