@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <nvml.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -12,7 +13,6 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
-#include <nvml.h>
 
 #define PORT_NUMBER "50505"
 
@@ -96,7 +96,7 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
-int nvlink_check(int gpuId) {
+int checkNvlink(int gpuId) {
   nvmlReturn_t result = nvmlInit();
   if (result != NVML_SUCCESS) {
     log("NVML init failed: ", nvmlErrorString(result));
@@ -106,41 +106,48 @@ int nvlink_check(int gpuId) {
   result = nvmlDeviceGetHandleByIndex(gpuId, &device);
   if (result != NVML_SUCCESS) {
     log("Device handle failed: ", nvmlErrorString(result));
+    nvmlReturn_t r = nvmlShutdown();
+    if (r != NVML_SUCCESS) {
+      log("nvmlShutdown failed: ", nvmlErrorString(r));
+      return -1;
+    }
     return -1;
   }
-  
-  int total_links = 0;
-  int active_links = 0;
-  
+
+  int totalLinks = 0;
+  int activeLinks = 0;
+
   for (unsigned int i = 0; i < NVML_NVLINK_MAX_LINKS; i++) {
     nvmlEnableState_t state;
     result = nvmlDeviceGetNvLinkState(device, i, &state);
-    
+
     if (result == NVML_SUCCESS) {
-      total_links++;
-      if (state == NVML_FEATURE_ENABLED)
-	active_links++;
-    }
-    else if (result == NVML_ERROR_NOT_SUPPORTED) {
+      totalLinks++;
+      if (state == NVML_FEATURE_ENABLED) activeLinks++;
+    } else {
       break;
     }
   }
-  
-  nvmlShutdown();
+
+  nvmlReturn_t r = nvmlShutdown();
+  if (r != NVML_SUCCESS) {
+    log("nvmlShutdown failed: ", nvmlErrorString(r));
+    return -1;
+  }
 
   // NVLink not supported
-  if (total_links == 0) {
+  if (totalLinks == 0) {
     log("NVLink not supported on GPU", gpuId);
     return -1;
   }
 
   // Some links down
-  if (active_links != total_links) {
+  if (activeLinks != totalLinks) {
     log("Some NVLinks are down on GPU ", gpuId);
     return -1;
   }
 
-  log("NVLink is supported and fully operational on GPU ", gpuId); 
+  log("NVLink is supported on GPU ", gpuId);
   return 0;
 }
 
@@ -286,15 +293,27 @@ int main(int argc, char **argv) {
     return 0;
   } else if (argc == 4) {
     std::string ipPort = argv[1];
-    int rank = std::atoi(argv[2]);
-    int gpuId = std::atoi(argv[3]);
-    int nvlink_support=nvlink_check(gpuId);
-    if (nvlink_support<0) return -1;
+    int rank, gpuId;
+    try {
+      rank = std::stoi(argv[2]);
+      gpuId = std::stoi(argv[3]);
+    } catch (const std::exception &) {
+      log("Error: rank and gpu_id must be valid integers.");
+      return -1;
+    }
+    if (rank < 0 || rank > 2 || gpuId < 0) {
+      log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
+      return -1;
+    }
+    int nvlinkSupport = checkNvlink(gpuId);
+    if (nvlinkSupport < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
   } else {
-    std::cerr << "Usage: " << argv[0] << " [<ip_port> <rank> <gpu_id>]" << std::endl;
+    std::cerr << "Usage:\n"
+              << "  " << argv[0] << "                Run in intra-node mode\n"
+              << "  " << argv[0] << " <ip_port> <rank> <gpu_id>   Run in inter-node mode\n";
     return -1;
   }
 }
