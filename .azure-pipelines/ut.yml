@@ -131,6 +131,7 @@ jobs:
       vmssName:         mscclpp-mi300x-ci
       sshKeySecureFile: mscclpp.pem
       platform:         rocm
+      gpuArch:          gfx942
 
 - job: UnitTestNoIBEnv
   timeoutInMinutes: 40
