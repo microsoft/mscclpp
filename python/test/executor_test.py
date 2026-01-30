@@ -10,7 +10,7 @@ from mscclpp import (
     npkit,
     env,
 )
-import mscclpp.comm as mscclpp_comm
+from mscclpp import CommGroup, GpuBuffer
 from mscclpp.utils import KernelBuilder, GpuBuffer, pack
 import os
 import struct
@@ -180,7 +180,7 @@ def main(
     n_iters: int = 10,
     n_graph_iters: int = 10,
 ):
-    mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
+    mscclpp_group = CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir

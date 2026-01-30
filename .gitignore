@@ -6,3 +6,4 @@ __pycache__
 .*.swp
 .idea/
 *.so
+_codeql_detected_source_root

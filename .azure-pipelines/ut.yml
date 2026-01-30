@@ -48,6 +48,7 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '80'
 
 - job: UnitTestWithNpKitA100
   timeoutInMinutes: 30
@@ -69,6 +70,7 @@ jobs:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '80'
 
 - job: UnitTestH100
   timeoutInMinutes: 40
@@ -88,6 +90,7 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'
 
 - job: UnitTestWithNpKitH100
   timeoutInMinutes: 30
@@ -107,6 +110,7 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'
 
 - job: UnitTestMI300X
   timeoutInMinutes: 40
@@ -148,3 +152,4 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'
