@@ -202,7 +202,11 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #else
-  __fp8_e5m2 result = __fp8_e5m2(__fp8_e5m2(__hadd(__half(a), __half(b))));
+  // Fallback: perform addition in float and convert back to FP8, then optionally clip
+  float fa = static_cast<float>(a);
+  float fb = static_cast<float>(b);
+  float fsum = fa + fb;
+  __fp8_e5m2 result = __fp8_e5m2(fsum);
   return UseClip ? clip(result) : result;
 #endif
 }
