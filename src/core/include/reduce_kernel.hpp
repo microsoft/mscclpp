@@ -63,6 +63,7 @@ MSCCLPP_DEVICE_INLINE __bfloat162 clip(__bfloat162 val) {
 }
 
 // FP8 E4M3 clipping function
+#if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 clip(__fp8_e4m3 val) {
   // FP8 E4M3 has range [-448, 448], no infinities
@@ -80,6 +81,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 clip(__fp8_e5m2 val) {
   fval = fminf(fval, 57344.0f);
   return __fp8_e5m2(fval);
 }
+#endif
 
 template <typename T, bool UseClip = true>
 MSCCLPP_DEVICE_INLINE T add_elements(T a, T b) {
@@ -202,11 +204,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
   __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #else
-  // Fallback: perform addition in float and convert back to FP8, then optionally clip
-  float fa = static_cast<float>(a);
-  float fb = static_cast<float>(b);
-  float fsum = fa + fb;
-  __fp8_e5m2 result = __fp8_e5m2(fsum);
+  __fp8_e5m2 result = __fp8_e5m2(float(a) + float(b));
   return UseClip ? clip(result) : result;
 #endif
 }
