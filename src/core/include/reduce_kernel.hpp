@@ -398,8 +398,8 @@ MSCCLPP_DEVICE_INLINE int4 cal_vector_helper(int4 a, int4 b) {
 template <typename T, ReduceOp OpType>
 MSCCLPP_DEVICE_INLINE uint2 cal_vector_helper(uint2 a, uint2 b) {
   uint2 ret;
-  ret.x = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(cal_elements<T, OpType>(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
+  ret.x = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.x), bit_cast<T, uint32_t>(b.x)));
+  ret.y = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.y), bit_cast<T, uint32_t>(b.y)));
   return ret;
 }
 
