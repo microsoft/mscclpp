@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <nvml.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -12,8 +13,6 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 #include <sstream>
-
-#include <nvml.h>
 
 #define PORT_NUMBER "50505"
 
