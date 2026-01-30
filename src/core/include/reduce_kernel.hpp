@@ -125,7 +125,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
   __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #else
-  // Fallback for non-gfx942 HIP platforms
+  // Fallback for other devices
   __fp8_e4m3 result = __fp8_e4m3(float(a) + float(b));
   return UseClip ? clip(result) : result;
 #endif
@@ -145,7 +145,7 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) 
   __fp8x2_e4m3 result = __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
   return result;
 #else
-  // Fallback for non-gfx942 HIP: element-wise using single-element operations
+  // Fallback for other devices: element-wise using single-element operations
   union {
     __fp8_e4m3 fp8[2];
     __fp8x2_e4m3 fp8x2;
@@ -373,7 +373,7 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
 #endif  // defined(__FP8_TYPES_EXIST__)
 
 
-// Generic element-wise calculation helper - support both SUM and MIN operations
+// Generic element-wise calculation helper
 template <typename T, ReduceOp OpType>
 MSCCLPP_DEVICE_INLINE T cal_elements(T a, T b) {
   if constexpr (OpType == SUM) {
@@ -384,7 +384,7 @@ MSCCLPP_DEVICE_INLINE T cal_elements(T a, T b) {
   static_assert(OpType == SUM || OpType == MIN, "Unsupported ReduceOp");
 }
 
-// Generic vector reduction helpers - support both SUM and MIN operations
+// Generic vector reduction helpers
 template <typename T, ReduceOp OpType>
 MSCCLPP_DEVICE_INLINE int4 cal_vector_helper(int4 a, int4 b) {
   int4 ret;
