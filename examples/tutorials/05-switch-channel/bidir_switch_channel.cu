@@ -70,11 +70,6 @@ __global__ void kernelSwitchReduce() {
 // -------------------------
 int main(int argc, char** argv) {
   try {
-    if (parse_arg_int(argc, argv, "--help", -1) != -1 ||
-        parse_arg_int(argc, argv, "-h", -1) != -1) {
-      usage(argv[0]);
-      return 0;
-    }
 
      MPI_Init(&argc, &argv);
       int rank = 0, world_size = 1;
@@ -174,11 +169,11 @@ int main(int argc, char** argv) {
     }
 
     if (rank == 0) std::cout << "PASS: result=" << result << " expected=" << expected << "\n";
+    MPI_Finalize();
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "Fatal error: " << e.what() << "\n";
     return 3;
   }
-  MPI_Finalize();
 }
 
