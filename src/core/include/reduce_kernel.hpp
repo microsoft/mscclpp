@@ -81,7 +81,6 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 clip(__fp8_e5m2 val) {
   return __fp8_e5m2(fval);
 }
 
-
 template <typename T, bool UseClip = true>
 MSCCLPP_DEVICE_INLINE T add_elements(T a, T b) {
   if constexpr (UseClip) {
@@ -371,7 +370,6 @@ MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 min_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) 
   return uresult.vec4;
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
-
 
 // Generic element-wise calculation helper
 template <typename T, ReduceOp OpType>
