@@ -34,6 +34,17 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       );
 #endif
       break;
+    case DataType::UINT8:
+      executionKernel<uint8_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+          rank, (uint8_t*)src, (uint8_t*)dst, (uint8_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+          localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+          ,
+          NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+      );
+#endif
+      break;
     case DataType::FLOAT16:
       executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
