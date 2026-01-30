@@ -102,8 +102,8 @@ __global__ void __launch_bounds__(1024, 1)
       const int remoteRank = index < rank ? index : index + 1;
       mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
       uint2 val = dstPkt[idx].read(flag);
-      data.x = cal_vectors<T, OpType>(val.x, data.x);
-      data.y = cal_vectors<T, OpType>(val.y, data.y);
+      data.x = cal_vector<T, OpType>(val.x, data.x);
+      data.y = cal_vector<T, OpType>(val.y, data.y);
     }
 
     dst[idx].x = data.x;

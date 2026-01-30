@@ -58,7 +58,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
       const int remoteRank = index < rank ? index : index + 1;
       LL8Packet* dstPkt = (LL8Packet*)scratchBuff + remoteRank * nelems;
       uint32_t val = dstPkt[idx].read(flag, -1);
-      data = cal_vectors<T, OpType>(val, data);
+      data = cal_vector<T, OpType>(val, data);
     }
     dst[idx] = data;
   }
