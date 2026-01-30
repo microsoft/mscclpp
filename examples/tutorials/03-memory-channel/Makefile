@@ -9,7 +9,6 @@ ifeq ($(shell which $(CUDA_HOME)/bin/nvcc 2>/dev/null),)
 else
     COMPILER := $(CUDA_HOME)/bin/nvcc
     ARCH_FLAG := -arch=native
-    NVML_FLAG := -lnvidia-ml
 endif
 
 TARGET = bidir_memory_channel
@@ -19,7 +18,7 @@ COMPILE_FLAG := -I$(PWD)/../../../include/ -I$(PWD)/../../../build/include -L$(P
 all: $(TARGET)
 
 $(TARGET): $(SRC)
-	$(COMPILER) $(ARCH_FLAG) $(COMPILE_FLAG) $(NVML_FLAG) -o $@ $< -lmscclpp
+	$(COMPILER) $(ARCH_FLAG) $(COMPILE_FLAG) -o $@ $< -lmscclpp
 
 clean:
 	rm -f $(TARGET)

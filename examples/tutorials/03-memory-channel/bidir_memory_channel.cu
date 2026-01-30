@@ -96,61 +96,6 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
-int checkNvlink(int gpuId) {
-  nvmlReturn_t result = nvmlInit();
-  if (result != NVML_SUCCESS) {
-    log("NVML init failed: ", nvmlErrorString(result));
-    return -1;
-  }
-  nvmlDevice_t device;
-  result = nvmlDeviceGetHandleByIndex(gpuId, &device);
-  if (result != NVML_SUCCESS) {
-    log("Device handle failed: ", nvmlErrorString(result));
-    nvmlReturn_t r = nvmlShutdown();
-    if (r != NVML_SUCCESS) {
-      log("nvmlShutdown failed: ", nvmlErrorString(r));
-      return -1;
-    }
-    return -1;
-  }
-
-  int totalLinks = 0;
-  int activeLinks = 0;
-
-  for (unsigned int i = 0; i < NVML_NVLINK_MAX_LINKS; i++) {
-    nvmlEnableState_t state;
-    result = nvmlDeviceGetNvLinkState(device, i, &state);
-
-    if (result == NVML_SUCCESS) {
-      totalLinks++;
-      if (state == NVML_FEATURE_ENABLED) activeLinks++;
-    } else {
-      break;
-    }
-  }
-
-  nvmlReturn_t r = nvmlShutdown();
-  if (r != NVML_SUCCESS) {
-    log("nvmlShutdown failed: ", nvmlErrorString(r));
-    return -1;
-  }
-
-  // NVLink not supported
-  if (totalLinks == 0) {
-    log("NVLink not supported on GPU", gpuId);
-    return -1;
-  }
-
-  // Some links down
-  if (activeLinks != totalLinks) {
-    log("Some NVLinks are down on GPU ", gpuId);
-    return -1;
-  }
-
-  log("NVLink is supported on GPU ", gpuId);
-  return 0;
-}
-
 void worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int remoteRank = myRank == 0 ? 1 : 0;
@@ -305,8 +250,6 @@ int main(int argc, char **argv) {
       log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
       return -1;
     }
-    int nvlinkSupport = checkNvlink(gpuId);
-    if (nvlinkSupport < 0) return -1;
     worker(rank, gpuId, ipPort);
     log("Rank ", rank, ": Succeed!");
     return 0;
