@@ -15,6 +15,9 @@ if [ "${PLATFORM}" == "cuda" ]; then
     for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
         nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
     done
+elif [ "${PLATFORM}" == "rocm" ]; then
+    apt-get update -y
+    apt-get install -y hipblas hipsparse rocsparse rocrand hiprand rocthrust rocsolver rocfft hipfft hipcub rocprim rccl roctracer-dev
 fi
 
 make -C /root/mscclpp/tools/peer-access-test
@@ -31,7 +34,7 @@ if [ "${PLATFORM}" == "rocm" ]; then
     export HCC_AMDGPU_TARGET=gfx942
     export CUPY_INSTALL_USE_HIP=1
     export ROCM_HOME=/opt/rocm
-    pip3 install -r /root/mscclpp/python/requirements_rocm.txt
+    pip3 install -r /root/mscclpp/python/requirements_rocm6.txt
 fi
 
 cd /root/mscclpp && pip3 install .

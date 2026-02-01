@@ -69,13 +69,8 @@ docker build -t ${TAG_TMP} \
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
-    docker build -t ${TAG_BASE} \
-        -f docker/base-x-rocm.dockerfile \
-        --build-arg BASE_IMAGE=${TAG_TMP} \
-        --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
-        --build-arg TARGET=${TARGET} \
-        --build-arg GPU_ARCH="gfx942" .
-    docker rmi ${TAG_TMP}
+    docker tag ${TAG_TMP} ${TAG_BASE}
+    docker rmi --no-prune ${TAG_TMP}
 else
     echo "Building CUDA base image..."
     docker tag ${TAG_TMP} ${TAG_BASE}
