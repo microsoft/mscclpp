@@ -29,7 +29,7 @@ make -C /root/mscclpp/tools/peer-access-test clean
 
 if [[ "${CUDA_VERSION}" == *"11."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda11.txt
-else
+elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda12.txt
 fi
 
