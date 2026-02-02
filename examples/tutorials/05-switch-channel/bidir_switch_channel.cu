@@ -76,6 +76,8 @@ int main(int argc, char** argv) {
      MPI_Comm_rank(MPI_COMM_WORLD, &rank);
      MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
+     //Assuming word_size is even number and ranks evenly distributed between two nodes.
+     int local_com_size = world_size/2;
      printf("mpi initialized\n");
 
     if (!mscclpp::isNvlsSupported()) {
@@ -83,18 +85,7 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    // The original test uses only 2 ranks.
-    const int numRanksToUse = 2;
-    if (world_size < numRanksToUse) {
-      if (rank == 0) std::cerr << "Skipping: need world_size >= " << numRanksToUse << "\n";
-      return 0;
-    }
-    if (rank >= numRanksToUse) {
-      // Mirror `if (gEnv->rank >= numRanksToUse) return;`
-      return 0;
-    }
-
-    int local_rank=rank;
+    int local_rank=rank%local_com_size;
     // 3) Select device based on local_rank (common practice in multi-proc GPU runs).
     int device_count = 0;
     CUDA_THROW(cudaGetDeviceCount(&device_count));
@@ -121,8 +112,8 @@ int main(int argc, char** argv) {
      printf("bootstrap done. allocate GPU buffer\n");
     // 5) Build ranks list [0,1] and allocate GPU buffer.
     std::vector<int> ranks;
-    ranks.reserve(numRanksToUse);
-    for (int i = 0; i < numRanksToUse; i++) ranks.push_back(i);
+    ranks.reserve(world_size);
+    for (int i = 0; i < world_size; i++) ranks.push_back(i);
 
     auto buffer = mscclpp::GpuBuffer<float>(1024);
     float data = static_cast<float>(rank) + 1.0f;
@@ -160,7 +151,7 @@ int main(int argc, char** argv) {
     CUDA_THROW(cudaMemcpy(&result, buffer.data(), sizeof(result), cudaMemcpyDeviceToHost));
 
     float expected = 0.0f;
-    for (int i = 0; i < numRanksToUse; i++) expected += static_cast<float>(i) + 1.0f;
+    for (int i = 0; i < world_size; i++) expected += static_cast<float>(i) + 1.0f;
 
     if (result != expected) {
       std::cerr << "FAIL: Expected " << expected << " but got " << result
