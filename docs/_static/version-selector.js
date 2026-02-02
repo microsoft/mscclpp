@@ -31,7 +31,7 @@
         const scripts = document.getElementsByTagName('script');
         for (let i = 0; i < scripts.length; i++) {
             const src = scripts[i].src;
-            if (src && src.includes('version-selector.js')) {
+            if (src && (src.includes('/_static/version-selector.js') || src.endsWith('version-selector.js'))) {
                 try {
                     const url = new URL(src);
                     const scriptPath = url.pathname;
