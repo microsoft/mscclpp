@@ -72,7 +72,7 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
-#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+#if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
       return cudaErrorNotSupported;
     } else
