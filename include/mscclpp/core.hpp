@@ -641,6 +641,11 @@ class Connection {
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
   void flush(int64_t timeoutUsec = -1);
 
+  /// Set the local GPU address where incoming signals should write.
+  /// Must be called by the receiver before the sender calls updateAndSync.
+  /// @param addr The local GPU address for incoming writes.
+  void setLocalInboundAddr(uint64_t addr);
+
   /// Get the transport used by the local process.
   /// @return The transport used by the local process.
   Transport transport() const;

@@ -35,6 +35,12 @@ class BaseConnection {
 
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
+  /// Set the local GPU address where incoming write-with-imm signals should write.
+  /// This is called by the receiver to specify where incoming signals should be written.
+  /// Default implementation is a no-op for connections that don't need it.
+  /// @param addr The local GPU address for incoming writes.
+  virtual void setLocalInboundAddr(uint64_t /*addr*/) {}
+
   virtual Transport transport() const = 0;
 
   virtual Transport remoteTransport() const = 0;
@@ -87,28 +93,29 @@ class IBConnection : public BaseConnection {
   RegisteredMemory dummyAtomicSourceMem_;
   mscclpp::TransportInfo dstTransportInfo_;
 
-  // For write-with-imm signal mode
-  bool useWriteImmSignal_;
+  // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
+  // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
+  bool useWriteImm_;
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
   int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
+  cudaStream_t signalStream_;
 
-  // CPU send buffer for write-with-imm (send buffer is local to connection)
-  std::unique_ptr<WriteImmData[]> writeImmSendBuf_;
-  RegisteredMemory writeImmSendBufMem_;
-  mscclpp::TransportInfo writeImmSendBufInfo_;
-  int writeImmSendBufIdx_;  // Index to next available send buffer slot
-  cudaStream_t writeImmStream_;
-
-  // Pointers to endpoint's recv buffer (owned by Endpoint::Impl)
-  WriteImmData* writeImmRecvBuf_;
-  IbMrInfo remoteWriteImmRecvBufMrInfo_;  // Remote peer's recv buffer MR info (from remote endpoint)
+  // Write-with-imm design:
+  // - Sender: 0-byte RDMA write-with-imm to dst MR, newValue in imm_data (32-bit)
+  // - Receiver: uses localInboundAddr_ (set via setLocalInboundAddr) to know where to write
+  uint64_t localInboundAddr_;  // Local GPU address where incoming signals should write
 
   void recvThreadFunc();
 
  public:
   IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
   ~IBConnection();
+
+  /// Set the local GPU address where incoming write-with-imm signals should write.
+  /// Must be called before the remote sends any updateAndSync in host-no-atomic mode.
+  /// @param addr The local GPU address for incoming writes.
+  void setLocalInboundAddr(uint64_t addr) override;
 
   Transport transport() const override;
 
