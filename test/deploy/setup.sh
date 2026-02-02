@@ -27,6 +27,12 @@ for i in {1..5}; do
 done
 make -C /root/mscclpp/tools/peer-access-test clean
 
+if [[ "${CUDA_VERSION}" == *"11."* ]]; then
+    pip3 install -r /root/mscclpp/python/requirements_cuda11.txt
+else
+    pip3 install -r /root/mscclpp/python/requirements_cuda12.txt
+fi
+
 cd /root/mscclpp && pip3 install .
 pip3 install setuptools_scm
 python3 -m setuptools_scm --force-write-version-files
