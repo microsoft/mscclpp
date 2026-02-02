@@ -46,6 +46,10 @@
                     }
                 } catch (e) {
                     // URL parsing failed, continue to fallback
+                    // Log a warning to aid debugging when the primary detection method fails.
+                    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                        console.warn('version-selector: Failed to parse script URL for base path detection; falling back to location-based detection.', e);
+                    }
                 }
             }
         }
