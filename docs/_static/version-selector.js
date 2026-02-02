@@ -60,12 +60,14 @@
 
         if (segments.length >= 1) {
             const firstSegment = segments[0];
-            // If first segment is not a version tag (vX.Y.Z) and not 'main',
-            // it's the GitHub Pages project base path (e.g., 'mscclpp')
+            // If first segment is not a version tag (vX.Y.Z), not 'main', and
+            // does not look like a file name (no '.' in the segment), then it's
+            // the GitHub Pages project base path (e.g., 'mscclpp').
             // This handles both:
             //   /mscclpp/v0.8.0/index.html -> base is /mscclpp
             //   /mscclpp/index.html -> base is /mscclpp
-            if (!firstSegment.match(/^v\d+\.\d+\.\d+$/) && firstSegment !== 'main') {
+            // while avoiding treating root files like /index.html as a base path.
+            if (!firstSegment.match(/^v\d+\.\d+\.\d+$/) && firstSegment !== 'main' && !firstSegment.includes('.')) {
                 return '/' + firstSegment;
             }
         }
