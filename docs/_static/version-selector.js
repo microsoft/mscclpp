@@ -26,27 +26,53 @@
      * @returns {string} The base path (e.g., '/mscclpp' or '')
      */
     function detectBasePath() {
-        const path = window.location.pathname;
-        // Match pattern: /base-path/vX.Y.Z/... or /base-path/main/...
-        // The base path is everything before the version or main directory
-        const match = path.match(/^(\/[^\/]+)?(?=\/(v\d+\.\d+\.\d+|main)\/)/);
-        if (match && match[1]) {
-            return match[1];
-        }
-        // Check if we're at a root that's actually a project site
-        // Look for common indicators like the repository name in the path
-        const projectMatch = path.match(/^(\/[^\/]+)(?=\/)/);
-        if (projectMatch) {
-            // Verify this isn't a version path at root
-            const potentialBase = projectMatch[1];
-            if (!potentialBase.match(/^\/v\d+\.\d+\.\d+$/) && potentialBase !== '/main') {
-                // Check if the remaining path contains version info
-                const remainingPath = path.substring(potentialBase.length);
-                if (remainingPath.match(/^\/(v\d+\.\d+\.\d+|main)\//)) {
-                    return potentialBase;
+        // Most reliable method: detect from this script's own URL
+        // The script is always at {base}/_static/version-selector.js or {base}/vX.Y.Z/_static/version-selector.js
+        const scripts = document.getElementsByTagName('script');
+        for (let i = 0; i < scripts.length; i++) {
+            const src = scripts[i].src;
+            if (src && (src.includes('/_static/version-selector.js') || src.endsWith('version-selector.js'))) {
+                try {
+                    const url = new URL(src);
+                    const scriptPath = url.pathname;
+                    // Extract base path: everything before /_static/version-selector.js
+                    // But also strip version directories like /v0.8.0/ or /main/
+                    const match = scriptPath.match(/^(.*?)\/_static\/version-selector\.js$/);
+                    if (match) {
+                        let basePath = match[1] || '';
+                        // Remove version suffix if present (e.g., /mscclpp/v0.8.0 -> /mscclpp)
+                        basePath = basePath.replace(/\/(v\d+\.\d+\.\d+|main)$/, '');
+                        return basePath;
+                    }
+                } catch (e) {
+                    // URL parsing failed, continue to fallback
+                    // Log a warning to aid debugging when the primary detection method fails.
+                    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+                        console.warn('version-selector: Failed to parse script URL for base path detection; falling back to location-based detection.', src, e);
+                    }
                 }
             }
         }
+
+        // Fallback: try to detect from URL path
+        const path = window.location.pathname;
+        const segments = path.split('/').filter(s => s.length > 0);
+
+        if (segments.length >= 1) {
+            const firstSegment = segments[0];
+            // If first segment is not a version tag (vX.Y.Z), not 'main', and
+            // does not look like a file name (no '.' in the segment), then it's
+            // the GitHub Pages project base path (e.g., 'mscclpp').
+            // This handles both:
+            //   /mscclpp/v0.8.0/index.html -> base is /mscclpp
+            //   /mscclpp/index.html -> base is /mscclpp
+            // while avoiding treating root files like /index.html as a base path.
+            if (!firstSegment.match(/^v\d+\.\d+\.\d+$/) && firstSegment !== 'main' && !firstSegment.includes('.')) {
+                return '/' + firstSegment;
+            }
+        }
+
+        // No base path (root site or local development)
         return '';
     }
     
