@@ -56,7 +56,7 @@ python3 -m mscclpp --install
 
 After installation, the generated JSON execution plan can be found at:
 ```
-~/.cache/mscclpp_default/
+~/.cache/mscclpp/default/
 ```
 
 **Performance Results:**
