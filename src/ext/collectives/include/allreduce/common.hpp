@@ -70,7 +70,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
-                              size_t, cudaStream_t, void*, uint32_t, int, int)>;
+                              size_t, cudaStream_t, void*, uint32_t, uint32_t, int, int)>;
 
 template <template <ReduceOp, typename> class Adapter>
 AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {

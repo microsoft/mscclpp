@@ -52,8 +52,8 @@ class AlgorithmCollectionBuilder:
         collection = self._builder.build()
         return AlgorithmCollection(collection)
 
-    def build_default_algorithms(self, scratch_buffer: int, scratch_buffer_size: int, rank: int) -> AlgorithmCollection:
-        native_collection = self._builder.build_default_algorithms(int(scratch_buffer), scratch_buffer_size, rank)
+    def build_default_algorithms(self, scratch_buffer: int, scratch_buffer_size: int, flag_buffer: int, flag_buffer_size: int, rank: int) -> AlgorithmCollection:
+        native_collection = self._builder.build_default_algorithms(int(scratch_buffer), scratch_buffer_size, int(flag_buffer), flag_buffer_size, rank)
         return AlgorithmCollection(native_collection)
 
 

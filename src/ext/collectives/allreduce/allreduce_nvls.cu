@@ -71,7 +71,7 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t inputSize,
-                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
 #if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
       return cudaErrorNotSupported;
@@ -135,7 +135,8 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   cudaError_t error =
       allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
                 nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize,
-                inputSize, stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                inputSize, stream, nullptr, 0, 0, numBlocksAndThreads.first,
+                numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvls failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;

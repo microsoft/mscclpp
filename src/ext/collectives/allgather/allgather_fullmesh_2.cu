@@ -107,8 +107,6 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-AllgatherFullmesh2::AllgatherFullmesh2() : symmetricMemory_(mscclpp::env()->ncclSymmetricMemory) {}
-
 void AllgatherFullmesh2::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
   this->memorySemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);

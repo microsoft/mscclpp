@@ -29,6 +29,6 @@ void register_algorithm_collection_builder(nb::module_& m) {
            nb::arg("selector"))
       .def("build", &AlgorithmCollectionBuilder::build)
       .def("build_default_algorithms", &AlgorithmCollectionBuilder::buildDefaultAlgorithms, nb::arg("scratch_buffer"),
-           nb::arg("scratch_buffer_size"), nb::arg("rank"))
+           nb::arg("scratch_buffer_size"), nb::arg("flag_buffer"), nb::arg("flag_buffer_size"), nb::arg("rank"))
       .def_static("reset", &AlgorithmCollectionBuilder::reset);
 }

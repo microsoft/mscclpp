@@ -197,7 +197,7 @@ struct AllreduceRsAgPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
-                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     uint32_t nblocksForPut = MAX_NBLOCKS_FOR_PUT;
@@ -254,8 +254,9 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
-                                algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0,
-                                numBlocksAndThreads.first, numBlocksAndThreads.second);
+                                algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
+                                nullptr, 0, 0, numBlocksAndThreads.first,
+                                numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;

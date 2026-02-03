@@ -8,7 +8,7 @@ namespace collective {
 
 class AllreduceRsAgZeroCopy : public mscclpp::AlgorithmBuilder {
  public:
-  AllreduceRsAgZeroCopy() {}
+  AllreduceRsAgZeroCopy() = default;
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:

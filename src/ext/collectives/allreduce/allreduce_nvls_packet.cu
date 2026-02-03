@@ -9,15 +9,13 @@
 namespace mscclpp {
 namespace collective {
 
-[[maybe_unused]] constexpr uint32_t maxNThreadBlocks = 16;
-
-__device__ uint32_t deviceFlag = 1;
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                         [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
-                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags) {
+                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags, 
+                        [[maybe_unused]] uint32_t flagBufferSize) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
   size_t scratchBaseOffset = (flag % 2) ? scratchBufferSize / 2 : 0;
@@ -47,8 +45,8 @@ __global__ void __launch_bounds__(1024, 1)
   if (threadIdx.x == 0) {
     ((uint32_t*)flags)[blockIdx.x] = flag + 1;
   }
-  // update other flags incase using different number of blocks in next launch
-  if (blockIdx.x == 0 && (threadIdx.x > gridDim.x - 1) && (threadIdx.x < maxNThreadBlocks)) {
+  // update other flags in-case using different number of blocks in next launch
+  if (blockIdx.x == 0 && (threadIdx.x > gridDim.x - 1) && (threadIdx.x < flagBufferSize / sizeof(uint32_t))) {
     ((uint32_t*)flags)[threadIdx.x] = flag + 1;
   }
 #endif
@@ -69,10 +67,10 @@ struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int, int worldSize, size_t inputSize, cudaStream_t stream,
-                          void* flags, uint32_t, int nBlocks, int nThreadsPerBlock) {
-    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((const T*)input, (T*)scratch, (T*)output,
-                                                                             nvlsChannels, inputSize / sizeof(T),
-                                                                             scratchBufferSize, rank, worldSize, flags);
+                          void* flags, uint32_t flagBufferSize, uint32_t, int nBlocks, int nThreadsPerBlock) {
+    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (const T*)input, (T*)scratch, (T*)output, nvlsChannels, inputSize / sizeof(T), scratchBufferSize, rank,
+        worldSize, flags, flagBufferSize);
     return cudaGetLastError();
   }
 };
@@ -121,11 +119,10 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
-  void* flags = this->flags_.get();
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, nullptr, nullptr, ctx->switchChannelDeviceHandles.get(), nullptr,
-                0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, flags,
-                0, blockAndThreadNum.first, blockAndThreadNum.second);
+                0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream,
+                (void*)flagBuffer_, (uint32_t)flagBufferSize_, 0, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -134,7 +131,7 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
 }
 
 std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
-  auto self = std::make_shared<AllreduceNvlsPacket>((uintptr_t)scratchBuffer_, scratchBufferSize_);
+  auto self = std::make_shared<AllreduceNvlsPacket>((uintptr_t)scratchBuffer_, scratchBufferSize_, flagBuffer_, flagBufferSize_);
   return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allreduce_nvls_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
