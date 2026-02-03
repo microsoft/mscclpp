@@ -192,5 +192,7 @@ def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
         return DataType.int32
     elif dtype == torch.bfloat16:
         return DataType.bfloat16
+    elif dtype == torch.float8_e5m2:
+        return DataType.float8_e5m2
     else:
         raise ValueError(f"Unknown data type: {dtype}")
