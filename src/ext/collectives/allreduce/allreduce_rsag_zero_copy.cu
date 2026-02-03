@@ -95,6 +95,12 @@ struct AllreduceRsAgZeroCopyAdapter {
       allreduceRsAgZeroCopy<4, OpType, T>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
+    } else if (nRanksPerNode == 8) {
+      allreduceRsAgZeroCopy<8, OpType, T>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
+                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
+    } else {
+      assert(false && "Unsupported nranks per node for RsAgZeroCopy allreduce");
     }
     return cudaGetLastError();
   }
