@@ -16,14 +16,16 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_algorithm(nb::module_& m) {
-  nb::enum_<CollectiveBufferMode>(m, "CollectiveBufferMode")
+  nb::enum_<CollectiveBufferMode>(m, "CppCollectiveBufferMode")
       .value("ANY", CollectiveBufferMode::Any)
       .value("IN_PLACE", CollectiveBufferMode::InPlace)
       .value("OUT_OF_PLACE", CollectiveBufferMode::OutOfPlace);
 
-  nb::enum_<AlgorithmType>(m, "AlgorithmType").value("NATIVE", AlgorithmType::Native).value("DSL", AlgorithmType::DSL);
+  nb::enum_<AlgorithmType>(m, "CppAlgorithmType")
+      .value("NATIVE", AlgorithmType::Native)
+      .value("DSL", AlgorithmType::DSL);
 
-  nb::enum_<CommResult>(m, "CommResult")
+  nb::enum_<CommResult>(m, "CppCommResult")
       .value("COMM_SUCCESS", CommResult::CommSuccess)
       .value("COMM_UNHANDLED_CUDA_ERROR", CommResult::CommUnhandledCudaError)
       .value("COMM_SYSTEM_ERROR", CommResult::CommSystemError)
@@ -34,13 +36,13 @@ void register_algorithm(nb::module_& m) {
       .value("COMM_IN_PROGRESS", CommResult::CommInProgress)
       .value("COMM_NUM_RESULTS", CommResult::CommNumResults);
 
-  nb::enum_<ReduceOp>(m, "ReduceOp")
+  nb::enum_<ReduceOp>(m, "CppReduceOp")
       .value("SUM", ReduceOp::SUM)
       .value("MIN", ReduceOp::MIN)
       .value("NOP", ReduceOp::NOP);
 
   auto algorithmClass =
-      nb::class_<Algorithm>(m, "Algorithm")
+      nb::class_<Algorithm>(m, "CppAlgorithm")
           .def_static(
               "from_native_capsule",
               [](nb::capsule cap) {
@@ -84,21 +86,21 @@ void register_algorithm(nb::module_& m) {
       .def_rw("world_size", &Algorithm::Constraint::worldSize)
       .def_rw("n_ranks_per_node", &Algorithm::Constraint::nRanksPerNode);
 
-  nb::class_<AlgorithmBuilder>(m, "AlgorithmBuilder").def("build", &AlgorithmBuilder::build);
+  nb::class_<AlgorithmBuilder>(m, "CppAlgorithmBuilder").def("build", &AlgorithmBuilder::build);
 
-  nb::class_<DslAlgorithm, Algorithm>(m, "DslAlgorithm")
+  nb::class_<DslAlgorithm, Algorithm>(m, "CppDslAlgorithm")
       .def(nb::init<std::string, ExecutionPlan, std::unordered_map<std::string, uint64_t>, Algorithm::Constraint>(),
            nb::arg("id"), nb::arg("plan"), nb::arg("tags") = std::unordered_map<std::string, uint64_t>(),
            nb::arg("constraint") = Algorithm::Constraint())
       .def("build", &DslAlgorithm::build);
 
-  nb::class_<AlgorithmCollection>(m, "AlgorithmCollection")
+  nb::class_<AlgorithmCollection>(m, "CppAlgorithmCollection")
       .def("register_algorithm", &AlgorithmCollection::registerAlgorithm, nb::arg("collective"), nb::arg("algo_name"),
            nb::arg("algorithm"))
       .def("get_algorithms_by_collective", &AlgorithmCollection::getAlgorithmsByCollective, nb::arg("collective"))
       .def("to_list", &AlgorithmCollection::getAllAlgorithms);
 
-  nb::class_<CollectiveRequest>(m, "CollectiveRequest")
+  nb::class_<CollectiveRequest>(m, "CppCollectiveRequest")
       .def_ro("world_size", &CollectiveRequest::worldSize)
       .def_ro("n_ranks_per_node", &CollectiveRequest::nRanksPerNode)
       .def_ro("rank", &CollectiveRequest::rank)

@@ -22,7 +22,7 @@ using namespace mscclpp;
       m.attr(#name_).ptr());
 
 void register_error(nb::module_ &m) {
-  nb::enum_<ErrorCode>(m, "ErrorCode")
+  nb::enum_<ErrorCode>(m, "CppErrorCode")
       .value("SystemError", ErrorCode::SystemError)
       .value("InternalError", ErrorCode::InternalError)
       .value("RemoteError", ErrorCode::RemoteError)
