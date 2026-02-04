@@ -95,22 +95,22 @@ template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE f16x2 operator+(const f16x2& a, const f16x2& b) {
   __half2 result;
   if constexpr (UseClip) {
-    result = clip(__hadd2(bit_cast<__half2>(a), bit_cast<__half2>(b)));
+    result = clip(__hadd2(a, b));
   } else {
-    result = __hadd2(bit_cast<__half2>(a), bit_cast<__half2>(b));
+    result = __hadd2(a, b);
   }
-  return bit_cast<f16x2>(result);
+  return result;
 }
 
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE bf16x2 operator+(const bf16x2& a, const bf16x2& b) {
   __bfloat162 result;
   if constexpr (UseClip) {
-    result = clip(__hadd2(bit_cast<__bfloat162>(a), bit_cast<__bfloat162>(b)));
+    result = clip(__hadd2(a, b));
   } else {
-    result = __hadd2(bit_cast<__bfloat162>(a), bit_cast<__bfloat162>(b));
+    result = __hadd2(a, b);
   }
-  return bit_cast<bf16x2>(result);
+  return result;
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -136,59 +136,55 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 operator+(const __fp8_e4m3& a, const __fp8_e4m3
 }
 
 template <bool UseClip = true>
-MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 operator+(const __fp8x2_e4m3& a, const __fp8x2_e4m3& b) {
+MSCCLPP_DEVICE_INLINE f8_e4m3x2 operator+(const f8_e4m3x2& a, const f8_e4m3x2& b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
   float2 v;
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
-  return bit_cast<__fp8x2_e4m3>(
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.storage.__x, 0)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.storage.__x, 0)));
+  return bit_cast<f8_e4m3x2>(
       static_cast<__hip_fp8x2_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false)));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
-  return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
+  return __fp8x2_e4m3(__hadd2(a, b));
 #else
   // Fallback for other devices: element-wise using single-element operations
-  union {
-    __fp8_e4m3 fp8[2];
-    __fp8x2_e4m3 fp8x2;
-  } ua, ub, result;
-  ua.fp8x2 = a;
-  ub.fp8x2 = b;
-  result.fp8[0] = ua.fp8[0] + ub.fp8[0];
-  result.fp8[1] = ua.fp8[1] + ub.fp8[1];
-  return result.fp8x2;
+  f8_e4m3x2 result;
+  result.data[0] = a.data[0] + b.data[0];
+  result.data[1] = a.data[1] + b.data[1];
+  return result;
 #endif
 }
 
 template <bool UseClip = true>
-MSCCLPP_DEVICE_INLINE fp8_e4m3x4 operator+(const fp8_e4m3x4& a, const fp8_e4m3x4& b) {
+MSCCLPP_DEVICE_INLINE f8_e4m3x4 operator+(const f8_e4m3x4& a, const f8_e4m3x4& b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  uint32_t a32 = bit_cast<uint32_t>(a);
-  uint32_t b32 = bit_cast<uint32_t>(b);
   float2 v_low, v_high;
   // E4M3 using fp8 conversion - process low word (false) and high word (true)
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v_low)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, false)));
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.storage.__x, false)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.storage.__x, false)));
   uint32_t result_packed = __builtin_amdgcn_cvt_pk_fp8_f32(v_low.x, v_low.y, 0, false);
 
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v_high)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b32, true)));
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.storage.__x, true)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.storage.__x, true)));
   result_packed = __builtin_amdgcn_cvt_pk_fp8_f32(v_high.x, v_high.y, result_packed, true);
-  return bit_cast<fp8_e4m3x4>(result_packed);
+  return bit_cast<f8_e4m3x4>(result_packed);
 #else
-  // Process as two __fp8x2_e4m3 using operator+ for 2 elements
-  const __fp8x2_e4m3* a_pair = reinterpret_cast<const __fp8x2_e4m3*>(&a);
-  const __fp8x2_e4m3* b_pair = reinterpret_cast<const __fp8x2_e4m3*>(&b);
+  // Process as two f8_e4m3x2 using operator+ for 2 elements
+  const f8_e4m3x2* a_pair = reinterpret_cast<const f8_e4m3x2*>(&a);
+  const f8_e4m3x2* b_pair = reinterpret_cast<const f8_e4m3x2*>(&b);
 
-  __fp8x2_e4m3 result[2];
+  f8_e4m3x2 result[2];
   result[0] = a_pair[0] + b_pair[0];
   result[1] = a_pair[1] + b_pair[1];
 
-  return *reinterpret_cast<fp8_e4m3x4*>(result);
+  return *reinterpret_cast<f8_e4m3x4*>(result);
 #endif
 }
 
@@ -213,10 +209,10 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 operator+(const __fp8_e5m2& a, const __fp8_e5m2
 }
 
 template <bool UseClip = true>
-MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 operator+(const __fp8x2_e5m2& a, const __fp8x2_e5m2& b) {
+MSCCLPP_DEVICE_INLINE f8_e5m2x2 operator+(const f8_e5m2x2& a, const f8_e5m2x2& b) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
-  __fp8x2_e5m2 result = __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
+  f8_e5m2x2 result = bit_cast<f8_e5m2x2>(__fp8x2_e5m2(__hadd2(a, b)));
   if constexpr (UseClip) {
     result = clip(result);
   }
@@ -227,49 +223,45 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 operator+(const __fp8x2_e5m2& a, const __fp8x
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
-  return bit_cast<__fp8x2_e5m2>(
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.data[0].__x, 0)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.data[0].__x, 0)));
+  return bit_cast<f8_e5m2x2>(
       static_cast<__hip_fp8x2_storage_t>(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false)));
 #else
   // Fallback: element-wise using single-element operations
-  union {
-    __fp8_e5m2 fp8[2];
-    __fp8x2_e5m2 fp8x2;
-  } ua, ub, result;
-  ua.fp8x2 = a;
-  ub.fp8x2 = b;
-  result.fp8[0] = ua.fp8[0] + ub.fp8[0];
-  result.fp8[1] = ua.fp8[1] + ub.fp8[1];
-  return result.fp8x2;
+  f8_e5m2x2 result;
+  result.data[0] = a.data[0] + b.data[0];
+  result.data[1] = a.data[1] + b.data[1];
+  return result;
 #endif
 }
 
 template <bool UseClip = true>
-MSCCLPP_DEVICE_INLINE fp8_e5m2x4 operator+(const fp8_e5m2x4& a, const fp8_e5m2x4& b) {
+MSCCLPP_DEVICE_INLINE f8_e5m2x4 operator+(const f8_e5m2x4& a, const f8_e5m2x4& b) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  uint32_t a32 = bit_cast<uint32_t>(a);
-  uint32_t b32 = bit_cast<uint32_t>(b);
   float2 v_low, v_high;
   // E5M2 using bf8 conversion - process low word (false) and high word (true)
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v_low)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, false)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, false)));
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.storage.__x, false)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.storage.__x, false)));
   uint32_t result_packed = __builtin_amdgcn_cvt_pk_bf8_f32(v_low.x, v_low.y, 0, false);
 
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v_high)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a32, true)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b32, true)));
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.storage.__x, true)),
+                 "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.storage.__x, true)));
   result_packed = __builtin_amdgcn_cvt_pk_bf8_f32(v_high.x, v_high.y, result_packed, true);
-  return bit_cast<fp8_e5m2x4>(result_packed);
+  return bit_cast<f8_e5m2x4>(result_packed);
 #else
-  // Process as two __fp8x2_e5m2 using operator+ for 2 elements
-  const __fp8x2_e5m2* a_pair = reinterpret_cast<const __fp8x2_e5m2*>(&a);
-  const __fp8x2_e5m2* b_pair = reinterpret_cast<const __fp8x2_e5m2*>(&b);
-  __fp8x2_e5m2 result[2];
+  // Process as two f8_e5m2x2 using operator+ for 2 elements
+  const f8_e5m2x2* a_pair = reinterpret_cast<const f8_e5m2x2*>(&a);
+  const f8_e5m2x2* b_pair = reinterpret_cast<const f8_e5m2x2*>(&b);
+  f8_e5m2x2 result[2];
   result[0] = a_pair[0] + b_pair[0];
   result[1] = a_pair[1] + b_pair[1];
 
-  return *reinterpret_cast<fp8_e5m2x4*>(result);
+  return *reinterpret_cast<f8_e5m2x4*>(result);
 #endif
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
@@ -287,14 +279,14 @@ MSCCLPP_DEVICE_INLINE f16x2 min(const f16x2& a, const f16x2& b) {
   val[1] = __hmin(a[1], b[1]);
   return val;
 #else
-  __half2 ret = __hmin2(bit_cast<__half2>(a), bit_cast<__half2>(b));
-  return bit_cast<f16x2>(ret);
+  __half2 ret = __hmin2(a, b);
+  return ret;
 #endif
 }
 
 template <>
 MSCCLPP_DEVICE_INLINE bf16x2 min(const bf16x2& a, const bf16x2& b) {
-  return bit_cast<bf16x2>(__hmin2(bit_cast<__bfloat162>(a), bit_cast<__bfloat162>(b)));
+  return __hmin2(a, b);
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -307,32 +299,26 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 min(const __fp8_e4m3& a, const __fp8_e4m3& b) {
 #endif
 }
 
-MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 min(const __fp8x2_e4m3& a, const __fp8x2_e4m3& b) {
+MSCCLPP_DEVICE_INLINE f8_e4m3x2 min(const f8_e4m3x2& a, const f8_e4m3x2& b) {
   // Process element-wise using single-element operations
-  union {
-    __fp8_e4m3 fp8[2];
-    __fp8x2_e4m3 fp8x2;
-  } ua{}, ub{}, result{};
-  ua.fp8x2 = a;
-  ub.fp8x2 = b;
-  result.fp8[0] = mscclpp::min(ua.fp8[0], ub.fp8[0]);
-  result.fp8[1] = mscclpp::min(ua.fp8[1], ub.fp8[1]);
-  return result.fp8x2;
+  f8_e4m3x2 result;
+  result.data[0] = mscclpp::min(a.data[0], b.data[0]);
+  result.data[1] = mscclpp::min(a.data[1], b.data[1]);
+  return result;
 }
 
-MSCCLPP_DEVICE_INLINE fp8_e4m3x4 min(const fp8_e4m3x4& a, const fp8_e4m3x4& b) {
-  // Process as two fp8_e4m3x2 using min for 2 elements
-  union {
-    __fp8x4_e4m3 vec4;
-    __fp8x2_e4m3 vec2[2];
-  } ua, ub, uresult;
-  ua.vec4 = bit_cast<__fp8x4_e4m3>(a);
-  ub.vec4 = bit_cast<__fp8x4_e4m3>(b);
+MSCCLPP_DEVICE_INLINE f8_e4m3x4 min(const f8_e4m3x4& a, const f8_e4m3x4& b) {
+  // Process as two f8_e4m3x2 using min for 2 elements
+  const f8_e4m3x2* a_ptr = reinterpret_cast<const f8_e4m3x2*>(&a);
+  const f8_e4m3x2* b_ptr = reinterpret_cast<const f8_e4m3x2*>(&b);
 
-  uresult.vec2[0] = mscclpp::min(ua.vec2[0], ub.vec2[0]);
-  uresult.vec2[1] = mscclpp::min(ua.vec2[1], ub.vec2[1]);
+  f8_e4m3x4 result;
+  f8_e4m3x2* result_ptr = reinterpret_cast<f8_e4m3x2*>(&result);
 
-  return bit_cast<fp8_e4m3x4>(uresult.vec4);
+  result_ptr[0] = mscclpp::min(a_ptr[0], b_ptr[0]);
+  result_ptr[1] = mscclpp::min(a_ptr[1], b_ptr[1]);
+
+  return result;
 }
 
 template <>
@@ -344,32 +330,26 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 min(const __fp8_e5m2& a, const __fp8_e5m2& b) {
 #endif
 }
 
-MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 min(const __fp8x2_e5m2& a, const __fp8x2_e5m2& b) {
+MSCCLPP_DEVICE_INLINE f8_e5m2x2 min(const f8_e5m2x2& a, const f8_e5m2x2& b) {
   // Process element-wise using single-element operations
-  union {
-    __fp8_e5m2 fp8[2];
-    __fp8x2_e5m2 fp8x2;
-  } ua{}, ub{}, result{};
-  ua.fp8x2 = a;
-  ub.fp8x2 = b;
-  result.fp8[0] = mscclpp::min(ua.fp8[0], ub.fp8[0]);
-  result.fp8[1] = mscclpp::min(ua.fp8[1], ub.fp8[1]);
-  return result.fp8x2;
+  f8_e5m2x2 result;
+  result.data[0] = mscclpp::min(a.data[0], b.data[0]);
+  result.data[1] = mscclpp::min(a.data[1], b.data[1]);
+  return result;
 }
 
-MSCCLPP_DEVICE_INLINE fp8_e5m2x4 min(const fp8_e5m2x4& a, const fp8_e5m2x4& b) {
-  // Process as two fp8_e5m2x2 using min for 2 elements
-  union {
-    __fp8x4_e5m2 vec4;
-    __fp8x2_e5m2 vec2[2];
-  } ua, ub, uresult;
-  ua.vec4 = bit_cast<__fp8x4_e5m2>(a);
-  ub.vec4 = bit_cast<__fp8x4_e5m2>(b);
+MSCCLPP_DEVICE_INLINE f8_e5m2x4 min(const f8_e5m2x4& a, const f8_e5m2x4& b) {
+  // Process as two f8_e5m2x2 using min for 2 elements
+  const f8_e5m2x2* a_ptr = reinterpret_cast<const f8_e5m2x2*>(&a);
+  const f8_e5m2x2* b_ptr = reinterpret_cast<const f8_e5m2x2*>(&b);
 
-  uresult.vec2[0] = mscclpp::min(ua.vec2[0], ub.vec2[0]);
-  uresult.vec2[1] = mscclpp::min(ua.vec2[1], ub.vec2[1]);
+  f8_e5m2x4 result;
+  f8_e5m2x2* result_ptr = reinterpret_cast<f8_e5m2x2*>(&result);
 
-  return bit_cast<fp8_e5m2x4>(uresult.vec4);
+  result_ptr[0] = mscclpp::min(a_ptr[0], b_ptr[0]);
+  result_ptr[1] = mscclpp::min(a_ptr[1], b_ptr[1]);
+
+  return result;
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
 
@@ -423,8 +403,8 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) 
       std::is_same_v<T, __half>, f16x2,
       std::conditional_t<std::is_same_v<T, __bfloat16>, bf16x2,
 #if defined(__FP8_TYPES_EXIST__)
-                         std::conditional_t<std::is_same_v<T, __fp8_e4m3>, fp8_e4m3x4,
-                                            std::conditional_t<std::is_same_v<T, __fp8_e5m2>, fp8_e5m2x4,
+                         std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
+                                            std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4,
 #endif
                                                                T
 #if defined(__FP8_TYPES_EXIST__)

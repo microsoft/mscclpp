@@ -92,17 +92,29 @@ struct alignas(Bytes) Words {
 };
 
 /// Vector type.
-template <typename T, int N>
+template <typename T, int N, typename StorageT>
 union alignas(sizeof(T) * N) VectorType {
   static_assert(N > 0, "N must be greater than 0");
 
   T data[N];
   Words<sizeof(T) * N> words;
+  StorageT storage;
 
   using ElementType = T;
   constexpr static int Size = N;
 
   MSCCLPP_HOST_DEVICE_INLINE VectorType() {}
+
+  MSCCLPP_HOST_DEVICE_INLINE VectorType(const StorageT& value) : storage(value) {}
+
+  MSCCLPP_HOST_DEVICE_INLINE VectorType(const VectorType& other) { storage = other.storage; }
+
+  MSCCLPP_HOST_DEVICE_INLINE VectorType& operator=(const VectorType& other) {
+    storage = other.storage;
+    return *this;
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE operator StorageT() const { return storage; }
 
   MSCCLPP_HOST_DEVICE_INLINE operator T*() { return data; }
 
@@ -113,35 +125,63 @@ union alignas(sizeof(T) * N) VectorType {
   MSCCLPP_HOST_DEVICE_INLINE const T& operator[](int i) const { return data[i]; }
 };
 
-using i32x1 = VectorType<int32_t, 1>;
-using u32x1 = VectorType<uint32_t, 1>;
-using f64x1 = VectorType<double, 1>;
-using f32x1 = VectorType<float, 1>;
+using i32x1 = VectorType<int32_t, 1, int32_t>;
+using u32x1 = VectorType<uint32_t, 1, uint32_t>;
+using f64x1 = VectorType<double, 1, double>;
+using f32x1 = VectorType<float, 1, float>;
 
-using i32x2 = VectorType<int32_t, 2>;
-using u32x2 = VectorType<uint32_t, 2>;
-using f32x2 = VectorType<float, 2>;
-using f16x2 = VectorType<__half, 2>;
-using bf16x2 = VectorType<__bfloat16, 2>;
-
-using i32x4 = VectorType<int32_t, 4>;
-using u32x4 = VectorType<uint32_t, 4>;
-using f32x4 = VectorType<float, 4>;
-using f16x4 = VectorType<__half, 4>;
-using bf16x4 = VectorType<__bfloat16, 4>;
-
-using f16x8 = VectorType<__half, 8>;
-using bf16x8 = VectorType<__bfloat16, 8>;
+using i32x2 = VectorType<int32_t, 2, int2>;
+using u32x2 = VectorType<uint32_t, 2, uint2>;
+using f32x2 = VectorType<float, 2, float2>;
+using f16x2 = VectorType<__half, 2, __half2>;
+using bf16x2 = VectorType<__bfloat16, 2, __bfloat162>;
+using i32x4 = VectorType<int32_t, 4, int4>;
+using u32x4 = VectorType<uint32_t, 4, uint4>;
+using f32x4 = VectorType<float, 4, float4>;
+using f16x4 = VectorType<__half, 4, uint2>;
+using bf16x4 = VectorType<__bfloat16, 4, uint2>;
+using f16x8 = VectorType<__half, 8, uint4>;
+using bf16x8 = VectorType<__bfloat16, 8, uint4>;
 
 #if defined(__FP8_TYPES_EXIST__)
 
-using fp8_e4m3x4 = VectorType<__fp8_e4m3, 4>;
-using fp8_e4m3x8 = VectorType<__fp8_e4m3, 8>;
-using fp8_e4m3x16 = VectorType<__fp8_e4m3, 16>;
+#define DEFINE_FP8_VECTOR_TYPE(Type)                                                               \
+  template <int N, typename StorageT>                                                              \
+  union alignas(sizeof(Type) * N) VectorType<Type, N, StorageT> {                                  \
+    Type data[N];                                                                                  \
+    StorageT storage;                                                                              \
+    using ElementType = Type;                                                                      \
+    constexpr static int Size = N;                                                                 \
+    MSCCLPP_HOST_DEVICE_INLINE VectorType() {}                                                     \
+    MSCCLPP_HOST_DEVICE_INLINE VectorType(const StorageT& value) : storage(value) {}               \
+    MSCCLPP_HOST_DEVICE_INLINE VectorType(const VectorType& other) {                               \
+      storage = other.storage;                                                                     \
+    }                                                                                              \
+    MSCCLPP_HOST_DEVICE_INLINE VectorType& operator=(const VectorType& other) {                    \
+      storage = other.storage;                                                                     \
+      return *this;                                                                                \
+    }                                                                                              \
+    MSCCLPP_HOST_DEVICE_INLINE operator StorageT() const { return storage; }                       \
+    MSCCLPP_HOST_DEVICE_INLINE operator Type*() { return data; }                                   \
+    MSCCLPP_HOST_DEVICE_INLINE operator const Type*() const { return data; }                       \
+    MSCCLPP_HOST_DEVICE_INLINE Type& operator[](int i) { return data[i]; }                         \
+    MSCCLPP_HOST_DEVICE_INLINE const Type& operator[](int i) const { return data[i]; }             \
+  };
 
-using fp8_e5m2x4 = VectorType<__fp8_e5m2, 4>;
-using fp8_e5m2x8 = VectorType<__fp8_e5m2, 8>;
-using fp8_e5m2x16 = VectorType<__fp8_e5m2, 16>;
+DEFINE_FP8_VECTOR_TYPE(__fp8_e4m3)
+DEFINE_FP8_VECTOR_TYPE(__fp8_e5m2)
+
+#undef DEFINE_FP8_VECTOR_TYPE
+
+using f8_e4m3x2 = VectorType<__fp8_e4m3, 2, __fp8x2_e4m3>;
+using f8_e4m3x4 = VectorType<__fp8_e4m3, 4, __fp8x4_e4m3>;
+using f8_e4m3x8 = VectorType<__fp8_e4m3, 8, uint2>;
+using f8_e4m3x16 = VectorType<__fp8_e4m3, 16, uint4>;
+
+using f8_e5m2x2 = VectorType<__fp8_e5m2, 2, __fp8x2_e5m2>;
+using f8_e5m2x4 = VectorType<__fp8_e5m2, 4, __fp8x4_e5m2>;
+using f8_e5m2x8 = VectorType<__fp8_e5m2, 8, uint2>;
+using f8_e5m2x16 = VectorType<__fp8_e5m2, 16, uint4>;
 #endif
 
 }  // namespace mscclpp
