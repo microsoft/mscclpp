@@ -548,7 +548,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
   } else {
     // handle data in 16-byte unit
-    using Type16 = typename mscclpp::VectorType<T, 16 / sizeof(T)>;
+    using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
     const size_t nType16 = size / sizeof(Type16);
     const size_t srcOffset16 = srcOffset / sizeof(Type16);
     const size_t dstOffset16 = dstOffset / sizeof(Type16);
@@ -560,7 +560,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
     // handle rest of data
     constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
-    using TypeRest = typename mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+    using TypeRest = mscclpp::VectorType<T, RedBytes / sizeof(T)>;
     const size_t processed = nType16 * sizeof(Type16);
     const size_t nRest = (size - processed) / sizeof(TypeRest);
     TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);

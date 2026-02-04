@@ -148,7 +148,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3x2 operator+(const f8_e4m3x2& a, const f8_e4m3x2& b
       static_cast<__hip_fp8x2_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false)));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
-  return __fp8x2_e4m3(__hadd2(a, b));
+  return __fp8x2_e4m3(__hadd2(__half2(static_cast<__fp8x2_e4m3>(a)), __half2(static_cast<__fp8x2_e4m3>(b))));
 #else
   // Fallback for other devices: element-wise using single-element operations
   f8_e4m3x2 result;
@@ -212,7 +212,8 @@ template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE f8_e5m2x2 operator+(const f8_e5m2x2& a, const f8_e5m2x2& b) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
-  f8_e5m2x2 result = bit_cast<f8_e5m2x2>(__fp8x2_e5m2(__hadd2(a, b)));
+  f8_e5m2x2 result =
+      __fp8x2_e5m2(__hadd2(__half2(static_cast<__fp8x2_e5m2>(a)), __half2(static_cast<__fp8x2_e5m2>(b))));
   if constexpr (UseClip) {
     result = clip(result);
   }

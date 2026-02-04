@@ -78,10 +78,8 @@ enum class DataType {
 };
 
 /// Word array.
-template <int Bytes>
+template <int Bytes, bool Enabled = (Bytes >= 4 && Bytes % 4 == 0)>
 struct alignas(Bytes) Words {
-  static_assert(Bytes > 0, "Bytes must be greater than 0");
-  static_assert(Bytes % 4 == 0, "Bytes must be multiple of 4");
   uint32_t w[Bytes / 4];
 
   MSCCLPP_HOST_DEVICE_INLINE Words() {}
@@ -91,9 +89,12 @@ struct alignas(Bytes) Words {
   MSCCLPP_HOST_DEVICE_INLINE const uint32_t& operator[](int i) const { return w[i]; }
 };
 
-/// Vector type.
+template <int Bytes>
+struct alignas(Bytes) Words<Bytes, false> {};
+
+/// Vector type implementation (internal).
 template <typename T, int N, typename StorageT>
-union alignas(sizeof(T) * N) VectorType {
+union alignas(sizeof(T) * N) VectorTypeImpl {
   static_assert(N > 0, "N must be greater than 0");
 
   T data[N];
@@ -103,13 +104,13 @@ union alignas(sizeof(T) * N) VectorType {
   using ElementType = T;
   constexpr static int Size = N;
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorType() {}
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl() {}
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorType(const StorageT& value) : storage(value) {}
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const StorageT& value) : storage(value) {}
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorType(const VectorType& other) { storage = other.storage; }
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl& other) { storage = other.storage; }
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorType& operator=(const VectorType& other) {
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl& other) {
     storage = other.storage;
     return *this;
   }
@@ -125,65 +126,54 @@ union alignas(sizeof(T) * N) VectorType {
   MSCCLPP_HOST_DEVICE_INLINE const T& operator[](int i) const { return data[i]; }
 };
 
-using i32x1 = VectorType<int32_t, 1, int32_t>;
-using u32x1 = VectorType<uint32_t, 1, uint32_t>;
-using f64x1 = VectorType<double, 1, double>;
-using f32x1 = VectorType<float, 1, float>;
+// Helper template to get the appropriate vector type for a given element type and count
+template <typename T, int N>
+struct VectorTypeHelper {
+  using type = VectorTypeImpl<T, N, typename std::conditional_t<N * sizeof(T) == 4, uint32_t,
+                                typename std::conditional_t<N * sizeof(T) == 8, uint2, uint4>>>;
+};
 
-using i32x2 = VectorType<int32_t, 2, int2>;
-using u32x2 = VectorType<uint32_t, 2, uint2>;
-using f32x2 = VectorType<float, 2, float2>;
-using f16x2 = VectorType<__half, 2, __half2>;
-using bf16x2 = VectorType<__bfloat16, 2, __bfloat162>;
-using i32x4 = VectorType<int32_t, 4, int4>;
-using u32x4 = VectorType<uint32_t, 4, uint4>;
-using f32x4 = VectorType<float, 4, float4>;
-using f16x4 = VectorType<__half, 4, uint2>;
-using bf16x4 = VectorType<__bfloat16, 4, uint2>;
-using f16x8 = VectorType<__half, 8, uint4>;
-using bf16x8 = VectorType<__bfloat16, 8, uint4>;
+/// Vector type - clean user interface (automatically selects appropriate storage type)
+template <typename T, int N>
+using VectorType = typename VectorTypeHelper<T, N>::type;
+
+// Macro to define specialization AND alias in one go
+#define DEFINE_VEC(Alias, T, N, Storage) \
+  template <> struct VectorTypeHelper<T, N> { using type = VectorTypeImpl<T, N, Storage>; }; \
+  using Alias = VectorType<T, N>
+
+DEFINE_VEC(i32x1, int32_t, 1, int32_t);
+DEFINE_VEC(u32x1, uint32_t, 1, uint32_t);
+DEFINE_VEC(f32x1, float, 1, float);
+DEFINE_VEC(f64x1, double, 1, double);
+
+DEFINE_VEC(i32x2, int32_t, 2, int2);
+DEFINE_VEC(u32x2, uint32_t, 2, uint2);
+DEFINE_VEC(f32x2, float, 2, float2);
+DEFINE_VEC(f16x2, __half, 2, __half2);
+DEFINE_VEC(bf16x2, __bfloat16, 2, __bfloat162);
+
+DEFINE_VEC(i32x4, int32_t, 4, int4);
+DEFINE_VEC(u32x4, uint32_t, 4, uint4);
+DEFINE_VEC(f32x4, float, 4, float4);
+DEFINE_VEC(f16x4, __half, 4, uint2);
+DEFINE_VEC(bf16x4, __bfloat16, 4, uint2);
+
+DEFINE_VEC(f16x8, __half, 8, uint4);
+DEFINE_VEC(bf16x8, __bfloat16, 8, uint4);
 
 #if defined(__FP8_TYPES_EXIST__)
+DEFINE_VEC(f8_e4m3x2, __fp8_e4m3, 2, __fp8x2_e4m3);
+DEFINE_VEC(f8_e4m3x4, __fp8_e4m3, 4, __fp8x4_e4m3);
+DEFINE_VEC(f8_e4m3x8, __fp8_e4m3, 8, uint2);
+DEFINE_VEC(f8_e4m3x16, __fp8_e4m3, 16, uint4);
 
-#define DEFINE_FP8_VECTOR_TYPE(Type)                                                               \
-  template <int N, typename StorageT>                                                              \
-  union alignas(sizeof(Type) * N) VectorType<Type, N, StorageT> {                                  \
-    Type data[N];                                                                                  \
-    StorageT storage;                                                                              \
-    using ElementType = Type;                                                                      \
-    constexpr static int Size = N;                                                                 \
-    MSCCLPP_HOST_DEVICE_INLINE VectorType() {}                                                     \
-    MSCCLPP_HOST_DEVICE_INLINE VectorType(const StorageT& value) : storage(value) {}               \
-    MSCCLPP_HOST_DEVICE_INLINE VectorType(const VectorType& other) {                               \
-      storage = other.storage;                                                                     \
-    }                                                                                              \
-    MSCCLPP_HOST_DEVICE_INLINE VectorType& operator=(const VectorType& other) {                    \
-      storage = other.storage;                                                                     \
-      return *this;                                                                                \
-    }                                                                                              \
-    MSCCLPP_HOST_DEVICE_INLINE operator StorageT() const { return storage; }                       \
-    MSCCLPP_HOST_DEVICE_INLINE operator Type*() { return data; }                                   \
-    MSCCLPP_HOST_DEVICE_INLINE operator const Type*() const { return data; }                       \
-    MSCCLPP_HOST_DEVICE_INLINE Type& operator[](int i) { return data[i]; }                         \
-    MSCCLPP_HOST_DEVICE_INLINE const Type& operator[](int i) const { return data[i]; }             \
-  };
-
-DEFINE_FP8_VECTOR_TYPE(__fp8_e4m3)
-DEFINE_FP8_VECTOR_TYPE(__fp8_e5m2)
-
-#undef DEFINE_FP8_VECTOR_TYPE
-
-using f8_e4m3x2 = VectorType<__fp8_e4m3, 2, __fp8x2_e4m3>;
-using f8_e4m3x4 = VectorType<__fp8_e4m3, 4, __fp8x4_e4m3>;
-using f8_e4m3x8 = VectorType<__fp8_e4m3, 8, uint2>;
-using f8_e4m3x16 = VectorType<__fp8_e4m3, 16, uint4>;
-
-using f8_e5m2x2 = VectorType<__fp8_e5m2, 2, __fp8x2_e5m2>;
-using f8_e5m2x4 = VectorType<__fp8_e5m2, 4, __fp8x4_e5m2>;
-using f8_e5m2x8 = VectorType<__fp8_e5m2, 8, uint2>;
-using f8_e5m2x16 = VectorType<__fp8_e5m2, 16, uint4>;
+DEFINE_VEC(f8_e5m2x2, __fp8_e5m2, 2, __fp8x2_e5m2);
+DEFINE_VEC(f8_e5m2x4, __fp8_e5m2, 4, __fp8x4_e5m2);
+DEFINE_VEC(f8_e5m2x8, __fp8_e5m2, 8, uint2);
+DEFINE_VEC(f8_e5m2x16, __fp8_e5m2, 16, uint4);
 #endif
-
+#undef DEFINE_VEC
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_GPU_DATA_TYPES_HPP_
