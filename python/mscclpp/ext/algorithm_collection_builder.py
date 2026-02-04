@@ -6,9 +6,7 @@ from typing import Union
 from mscclpp._core.algorithm import Algorithm, AlgorithmBuilder, AlgorithmCollection
 import atexit
 
-from mscclpp._mscclpp import (
-    AlgorithmCollectionBuilder as _AlgorithmCollectionBuilder,
-)
+from mscclpp._mscclpp import CppAlgorithmCollectionBuilder
 
 __all__ = ["AlgorithmCollectionBuilder"]
 
@@ -24,12 +22,12 @@ class AlgorithmCollectionBuilder:
     @classmethod
     def reset(cls):
         if cls._instance is not None:
-            _AlgorithmCollectionBuilder.reset()
+            CppAlgorithmCollectionBuilder.reset()
             cls._instance = None
 
     def __init__(self):
         if not hasattr(self, "_initialized"):
-            self._builder = _AlgorithmCollectionBuilder.get_instance()
+            self._builder = CppAlgorithmCollectionBuilder.get_instance()
             self._initialized = True
 
     def add_algorithm_builder(self, algorithm_builder: Union[AlgorithmBuilder, Algorithm]):
