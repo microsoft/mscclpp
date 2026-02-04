@@ -16,29 +16,27 @@ using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
-// AMD FP8 support - hip_fp8.h provides __hip_fp8_e4m3_fnuz and __hip_fp8_e5m2_fnuz
-// Only available on gfx942 and newer architectures (ROCm 6.0+)
+// AMD FP8 support - Use fnuz types for HIP 6.0 or when HIP_FP8_TYPE_FNUZ is enabled and HIP_FP8_TYPE_OCP is not enabled.
+// Otherwise, use the standard AMD FP8 types.
 #if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
 #include <hip/hip_fp8.h>
 
 // Create aliases matching CUDA naming convention for cross-platform compatibility
-#if HIP_FP8_TYPE_FNUZ
+#if (HIP_VERSION_MAJOR == 6) || (HIP_VERSION_MAJOR > 6 && HIP_FP8_TYPE_FNUZ && !HIP_FP8_TYPE_OCP)
 using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
 using __fp8x2_e4m3 = __hip_fp8x2_e4m3_fnuz;
 using __fp8x2_e5m2 = __hip_fp8x2_e5m2_fnuz;
 using __fp8x4_e4m3 = __hip_fp8x4_e4m3_fnuz;
 using __fp8x4_e5m2 = __hip_fp8x4_e5m2_fnuz;
-#endif  // HIP_FP8_TYPE_FNUZ
-
-#if HIP_FP8_TYPE_OCP
+#else
 using __fp8_e4m3 = __hip_fp8_e4m3;
 using __fp8_e5m2 = __hip_fp8_e5m2;
 using __fp8x2_e4m3 = __hip_fp8x2_e4m3;
 using __fp8x2_e5m2 = __hip_fp8x2_e5m2;
 using __fp8x4_e4m3 = __hip_fp8x4_e4m3;
 using __fp8x4_e5m2 = __hip_fp8x4_e5m2;
-#endif  // HIP_FP8_TYPE_OCP
+#endif
 
 #define __FP8_TYPES_EXIST__
 #endif  // HIP_VERSION_MAJOR >= 6

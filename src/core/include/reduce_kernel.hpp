@@ -123,7 +123,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3 operator+(const __fp8_e4m3& a, const __fp8_e4m3
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false);
+  return static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // NVIDIA CUDA FP8 addition (CUDA 11.8+)
   __fp8_e4m3 result = __fp8_e4m3(__hadd(__half(a), __half(b)));
@@ -142,8 +142,9 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 operator+(const __fp8x2_e4m3& a, const __fp8x
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
+               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
+  return bit_cast<__fp8x2_e4m3>(
+      static_cast<__hip_fp8x2_storage_t>(__builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false)));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // CUDA: Convert to half2, add using optimized __hadd2, convert back
   return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
@@ -200,7 +201,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 operator+(const __fp8_e5m2& a, const __fp8_e5m2
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
                : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false);
+  return static_cast<__hip_fp8_storage_t>(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false));
 #elif defined(MSCCLPP_DEVICE_CUDA)
   // NVIDIA CUDA FP8 addition
   __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
@@ -226,8 +227,9 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 operator+(const __fp8x2_e5m2& a, const __fp8x
   uint32_t ival = 0;
   asm volatile("v_pk_add_f32 %0, %1, %2"
                : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false);
+               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
+  return bit_cast<__fp8x2_e5m2>(
+      static_cast<__hip_fp8x2_storage_t>(__builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false)));
 #else
   // Fallback: element-wise using single-element operations
   union {
@@ -313,8 +315,8 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 min(const __fp8x2_e4m3& a, const __fp8x2_e4m3
   } ua{}, ub{}, result{};
   ua.fp8x2 = a;
   ub.fp8x2 = b;
-  result.fp8[0] = min(ua.fp8[0], ub.fp8[0]);
-  result.fp8[1] = min(ua.fp8[1], ub.fp8[1]);
+  result.fp8[0] = mscclpp::min(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = mscclpp::min(ua.fp8[1], ub.fp8[1]);
   return result.fp8x2;
 }
 
@@ -327,8 +329,8 @@ MSCCLPP_DEVICE_INLINE fp8_e4m3x4 min(const fp8_e4m3x4& a, const fp8_e4m3x4& b) {
   ua.vec4 = bit_cast<__fp8x4_e4m3>(a);
   ub.vec4 = bit_cast<__fp8x4_e4m3>(b);
 
-  uresult.vec2[0] = min(ua.vec2[0], ub.vec2[0]);
-  uresult.vec2[1] = min(ua.vec2[1], ub.vec2[1]);
+  uresult.vec2[0] = mscclpp::min(ua.vec2[0], ub.vec2[0]);
+  uresult.vec2[1] = mscclpp::min(ua.vec2[1], ub.vec2[1]);
 
   return bit_cast<fp8_e4m3x4>(uresult.vec4)  ;
 }
@@ -350,8 +352,8 @@ MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 min(const __fp8x2_e5m2& a, const __fp8x2_e5m2
   } ua{}, ub{}, result{};
   ua.fp8x2 = a;
   ub.fp8x2 = b;
-  result.fp8[0] = min(ua.fp8[0], ub.fp8[0]);
-  result.fp8[1] = min(ua.fp8[1], ub.fp8[1]);
+  result.fp8[0] = mscclpp::min(ua.fp8[0], ub.fp8[0]);
+  result.fp8[1] = mscclpp::min(ua.fp8[1], ub.fp8[1]);
   return result.fp8x2;
 }
 
@@ -364,8 +366,8 @@ MSCCLPP_DEVICE_INLINE fp8_e5m2x4 min(const fp8_e5m2x4& a, const fp8_e5m2x4& b) {
   ua.vec4 = bit_cast<__fp8x4_e5m2>(a);
   ub.vec4 = bit_cast<__fp8x4_e5m2>(b);
 
-  uresult.vec2[0] = min(ua.vec2[0], ub.vec2[0]);
-  uresult.vec2[1] = min(ua.vec2[1], ub.vec2[1]);
+  uresult.vec2[0] = mscclpp::min(ua.vec2[0], ub.vec2[0]);
+  uresult.vec2[1] = mscclpp::min(ua.vec2[1], ub.vec2[1]);
 
   return bit_cast<fp8_e5m2x4>(uresult.vec4);
 }
@@ -377,7 +379,7 @@ MSCCLPP_DEVICE_INLINE T cal_elements(const T& a, const T& b) {
   if constexpr (OpType == SUM) {
     return a + b;
   } else if constexpr (OpType == MIN) {
-    return min(a, b);
+    return mscclpp::min(a, b);
   }
   static_assert(OpType == SUM || OpType == MIN, "Unsupported ReduceOp");
 }
