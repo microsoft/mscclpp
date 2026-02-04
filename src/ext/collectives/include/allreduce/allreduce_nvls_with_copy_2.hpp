@@ -12,7 +12,7 @@ namespace collective {
 class AllreduceNvlsWithCopy2 : public AlgorithmBuilder {
  public:
   AllreduceNvlsWithCopy2(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
+      : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize) {};
   std::shared_ptr<Algorithm> build() override;
 
  private:

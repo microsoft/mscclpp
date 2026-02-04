@@ -46,7 +46,7 @@ struct GpuIpcMemHandle {
     char handle[64];
   } fabric;
 
-  static void deleter(GpuIpcMemHandle *handle);
+  static void deleter(GpuIpcMemHandle* handle);
 
   // We make GpuIpcMemHandle trivially copyable for easy serialization,
   // and thus it cannot have explicit destructors.
@@ -61,7 +61,7 @@ struct GpuIpcMemHandle {
     using Base::Base;
 
     // Allow implicit conversion from Base
-    UniquePtr(Base &&other) : Base(std::move(other)) {}
+    UniquePtr(Base&& other) : Base(std::move(other)) {}
   };
 
   static UniquePtr create(const CUdeviceptr ptr);
@@ -70,7 +70,7 @@ struct GpuIpcMemHandle {
 
 using UniqueGpuIpcMemHandle = GpuIpcMemHandle::UniquePtr;
 
-std::ostream &operator<<(std::ostream &os, const GpuIpcMemHandle::TypeFlags &typeFlags);
+std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typeFlags);
 
 static_assert(std::is_trivially_copyable_v<GpuIpcMemHandle>);
 
@@ -82,7 +82,7 @@ class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
   /// Create a GpuIpcMem instance from a GpuIpcMemHandle.
   /// @param handle The handle to import.
   /// @return A shared_ptr to the created GpuIpcMem instance.
-  static std::shared_ptr<GpuIpcMem> create(const GpuIpcMemHandle &handle);
+  static std::shared_ptr<GpuIpcMem> create(const GpuIpcMemHandle& handle);
 
   ~GpuIpcMem();
 
@@ -102,7 +102,7 @@ class GpuIpcMem : public std::enable_shared_from_this<GpuIpcMem> {
   std::shared_ptr<void> mapMulticast(int numDevices, size_t mcOffset, CUdeviceptr bufferAddr, size_t bufferSize);
 
  private:
-  GpuIpcMem(const GpuIpcMemHandle &handle);
+  GpuIpcMem(const GpuIpcMemHandle& handle);
 
   GpuIpcMemHandle handle_;
   CUmemGenericAllocationHandle allocHandle_;

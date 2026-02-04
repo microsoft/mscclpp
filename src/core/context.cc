@@ -23,14 +23,14 @@ void CudaIpcStream::setStreamIfNeeded() {
   }
 }
 
-void CudaIpcStream::memcpyD2D(void *dst, const void *src, size_t nbytes) {
+void CudaIpcStream::memcpyD2D(void* dst, const void* src, size_t nbytes) {
   CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyDeviceToDevice, *stream_));
   dirty_ = true;
 }
 
-void CudaIpcStream::memcpyH2D(void *dst, const void *src, size_t nbytes) {
+void CudaIpcStream::memcpyH2D(void* dst, const void* src, size_t nbytes) {
   CudaDeviceGuard deviceGuard(deviceId_);
   setStreamIfNeeded();
   MSCCLPP_CUDATHROW(cudaMemcpyAsync(dst, src, nbytes, cudaMemcpyHostToDevice, *stream_));
@@ -48,7 +48,7 @@ void CudaIpcStream::sync() {
 
 Context::Impl::Impl() {}
 
-IbCtx *Context::Impl::getIbContext(Transport ibTransport) {
+IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
   auto it = ibContexts_.find(ibTransport);
   if (it == ibContexts_.end()) {
@@ -70,7 +70,7 @@ MSCCLPP_API_CPP Context::Context() : pimpl_(std::make_unique<Impl>()) {}
 
 MSCCLPP_API_CPP Context::~Context() = default;
 
-MSCCLPP_API_CPP RegisteredMemory Context::registerMemory(void *ptr, size_t size, TransportFlags transports) {
+MSCCLPP_API_CPP RegisteredMemory Context::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return RegisteredMemory(std::make_shared<RegisteredMemory::Impl>(ptr, size, transports, *pimpl_));
 }
 
@@ -78,7 +78,7 @@ MSCCLPP_API_CPP Endpoint Context::createEndpoint(EndpointConfig config) {
   return Endpoint(std::make_shared<Endpoint::Impl>(config, *pimpl_));
 }
 
-MSCCLPP_API_CPP Connection Context::connect(const Endpoint &localEndpoint, const Endpoint &remoteEndpoint) {
+MSCCLPP_API_CPP Connection Context::connect(const Endpoint& localEndpoint, const Endpoint& remoteEndpoint) {
   if (localEndpoint.device().type == DeviceType::GPU && localEndpoint.device().id < 0) {
     throw Error("No GPU device ID provided for local endpoint", ErrorCode::InvalidUsage);
   }

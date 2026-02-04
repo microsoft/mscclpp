@@ -16,7 +16,7 @@
 #define PORT_NUMBER "50505"
 
 template <typename... Args>
-void log(Args &&...args) {
+void log(Args&&... args) {
   std::stringstream ss;
   (ss << ... << args);
   ss << std::endl;
@@ -47,7 +47,7 @@ int wait_process(int pid) {
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
-__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -65,7 +65,7 @@ __global__ void bidirPutKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, si
   }
 }
 
-__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank) {
+__global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
     devHandle->relaxedSignal();
@@ -79,7 +79,7 @@ __global__ void bidirGetKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, si
   devHandle->get(srcOffset, dstOffset, copyBytes, /*threadId*/ tid, /*numThreads*/ blockDim.x * gridDim.x);
 }
 
-__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHandle, size_t copyBytes, int myRank,
+__global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle* devHandle, size_t copyBytes, int myRank,
                                      uint32_t flag) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   if (tid == 0) {
@@ -95,7 +95,7 @@ __global__ void bidirPutPacketKernel(mscclpp::MemoryChannelDeviceHandle *devHand
   devHandle->unpackPackets(pktBufOffset, dstOffset, copyBytes, tid, blockDim.x * gridDim.x, flag);
 }
 
-void worker(int myRank, int gpuId, const std::string &ipPort) {
+void worker(int myRank, int gpuId, const std::string& ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int remoteRank = myRank == 0 ? 1 : 0;
   const int nRanks = 2;
@@ -132,8 +132,8 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   auto memChanHandle = memChan.deviceHandle();
   auto memPktChanHandle = memPktChan.deviceHandle();
 
-  void *devHandle;
-  void *devPktHandle;
+  void* devHandle;
+  void* devPktHandle;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle, sizeof(memChanHandle)));
   MSCCLPP_CUDATHROW(cudaMalloc(&devPktHandle, sizeof(memPktChanHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle, &memChanHandle, sizeof(memChanHandle), cudaMemcpyHostToDevice));
@@ -145,18 +145,18 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   std::function<void(size_t)> kernels[3];
 
   kernels[0] = [&](size_t copyBytes) {
-    bidirPutKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
-                                            copyBytes, myRank);
+    bidirPutKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devHandle), copyBytes,
+                                            myRank);
   };
 
   kernels[1] = [&](size_t copyBytes) {
-    bidirGetKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devHandle),
-                                            copyBytes, myRank);
+    bidirGetKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devHandle), copyBytes,
+                                            myRank);
   };
 
   kernels[2] = [&](size_t copyBytes) {
     static uint32_t flag = 1;
-    bidirPutPacketKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle *>(devPktHandle),
+    bidirPutPacketKernel<<<32, 1024, 0, stream>>>(reinterpret_cast<mscclpp::MemoryChannelDeviceHandle*>(devPktHandle),
                                                   copyBytes, myRank, flag++);
   };
 
@@ -215,7 +215,7 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   bootstrap->barrier();
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   if (argc == 1) {
     int pid0 = spawn_process([]() { worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER); });
     int pid1 = spawn_process([]() { worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER); });
@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
     try {
       rank = std::stoi(argv[2]);
       gpuId = std::stoi(argv[3]);
-    } catch (const std::exception &) {
+    } catch (const std::exception&) {
       log("Error: rank and gpu_id must be valid integers.");
       return -1;
     }

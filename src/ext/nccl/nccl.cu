@@ -95,26 +95,26 @@ static inline int mscclppNcclDlopenInit() {
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
-             ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
+             ncclResult_t (*)(ncclComm_t*, int, ncclUniqueId, int));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t (*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t (*)(ncclComm_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t (*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllGather,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Broadcast,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, ReduceScatter,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Reduce,
-             ncclResult_t(*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, void*, size_t, ncclDataType_t, ncclRedOp_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Send,
-             ncclResult_t(*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+             ncclResult_t (*)(const void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, Recv,
-             ncclResult_t(*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t(*)());
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t(*)());
+             ncclResult_t (*)(void*, size_t, ncclDataType_t, int, ncclComm_t, cudaStream_t));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupStart, ncclResult_t (*)());
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GroupEnd, ncclResult_t (*)());
 
   return dlopenSuccess;
 }
