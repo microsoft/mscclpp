@@ -332,7 +332,7 @@ MSCCLPP_DEVICE_INLINE fp8_e4m3x4 min(const fp8_e4m3x4& a, const fp8_e4m3x4& b) {
   uresult.vec2[0] = mscclpp::min(ua.vec2[0], ub.vec2[0]);
   uresult.vec2[1] = mscclpp::min(ua.vec2[1], ub.vec2[1]);
 
-  return bit_cast<fp8_e4m3x4>(uresult.vec4)  ;
+  return bit_cast<fp8_e4m3x4>(uresult.vec4);
 }
 
 template <>
