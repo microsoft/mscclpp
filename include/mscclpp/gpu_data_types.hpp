@@ -129,8 +129,10 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
 // Helper template to get the appropriate vector type for a given element type and count
 template <typename T, int N>
 struct VectorTypeHelper {
-  using type = VectorTypeImpl<T, N, typename std::conditional_t<N * sizeof(T) == 4, uint32_t,
-                                typename std::conditional_t<N * sizeof(T) == 8, uint2, uint4>>>;
+  using type =
+      VectorTypeImpl<T, N,
+                     typename std::conditional_t<N * sizeof(T) == 4, uint32_t,
+                                                 typename std::conditional_t<N * sizeof(T) == 8, uint2, uint4>>>;
 };
 
 /// Vector type - clean user interface (automatically selects appropriate storage type)
@@ -138,8 +140,11 @@ template <typename T, int N>
 using VectorType = typename VectorTypeHelper<T, N>::type;
 
 // Macro to define specialization AND alias in one go
-#define DEFINE_VEC(Alias, T, N, Storage) \
-  template <> struct VectorTypeHelper<T, N> { using type = VectorTypeImpl<T, N, Storage>; }; \
+#define DEFINE_VEC(Alias, T, N, Storage)        \
+  template <>                                   \
+  struct VectorTypeHelper<T, N> {               \
+    using type = VectorTypeImpl<T, N, Storage>; \
+  };                                            \
   using Alias = VectorType<T, N>
 
 DEFINE_VEC(i32x1, int32_t, 1, int32_t);

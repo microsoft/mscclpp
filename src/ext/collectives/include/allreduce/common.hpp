@@ -43,8 +43,10 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
   MSCCLPP_ASSERT_DEVICE(size % 4 == 0, "size must be 4 bytes aligned");
   constexpr size_t nElem = calcVectorSize<T>();
   // For integer types, use 1-element vectors since multimem doesn't support vectorized integer operations
-  constexpr size_t vecSize = (std::is_same_v<T, int> || std::is_same_v<T, int32_t> || 
-                              std::is_same_v<T, unsigned int> || std::is_same_v<T, uint32_t>) ? 1 : nElem;
+  constexpr size_t vecSize = (std::is_same_v<T, int> || std::is_same_v<T, int32_t> || std::is_same_v<T, unsigned int> ||
+                              std::is_same_v<T, uint32_t>)
+                                 ? 1
+                                 : nElem;
   using vectorType = mscclpp::VectorType<T, vecSize>;
   const size_t nVec = size / sizeof(vectorType);
   const size_t srcOffset4 = srcOffset / sizeof(vectorType);
