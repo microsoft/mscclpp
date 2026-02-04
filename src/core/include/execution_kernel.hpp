@@ -238,7 +238,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
            getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
           sizeof(T);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
-      tmp = add_elements(tmp, mscclpp::read<T>(remoteMemory, srcOffset + idx));
+      tmp = tmp + mscclpp::read<T>(remoteMemory, srcOffset + idx);
     }
     static_cast<T*>(output)[idx] = tmp;
     if constexpr (SendToRemote) {
@@ -491,7 +491,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
       T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
       uint32_t buffOffset =
           (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
-      tmp = add_elements(tmp, buff[buffOffset + idx]);
+      tmp = tmp + buff[buffOffset + idx];
     }
     dst[idx] = tmp;
     if constexpr (SendToRemote) {
