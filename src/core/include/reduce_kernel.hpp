@@ -19,8 +19,7 @@ MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
   union {
     From f;
     To t;
-  } u;
-  u.f = src;
+  } u{.f = src};
   return u.t;
 }
 

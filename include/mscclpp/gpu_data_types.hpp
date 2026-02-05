@@ -17,7 +17,7 @@ using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
 // AMD FP8 support - Use fnuz types for HIP 6.0 or when HIP_FP8_TYPE_FNUZ is enabled and HIP_FP8_TYPE_OCP is not
-// enabled. Otherwise, use the standard AMD FP8 types.
+// enabled. Otherwise, use the standard FP8 types.
 #if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
 #include <hip/hip_fp8.h>
 
