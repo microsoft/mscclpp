@@ -12,12 +12,12 @@ namespace mscclpp {
 
 struct IBVerbs {
  private:
-  static void *dlsym(const std::string &symbol, bool allowReturnNull = false);
+  static void* dlsym(const std::string& symbol, bool allowReturnNull = false);
 
  public:
 #define REGISTER_IBV_FUNC_WITH_NAME(name__, func__)                                          \
   template <typename... Args>                                                                \
-  static inline auto(name__)(Args && ...args) {                                              \
+  static inline auto(name__)(Args && ... args) {                                             \
     static_assert(sizeof(&::func__) > 0, #func__ " is expected be a function, not a macro"); \
     static decltype(&::func__) impl = nullptr;                                               \
     if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym(#func__));             \
@@ -46,7 +46,7 @@ struct IBVerbs {
   REGISTER_IBV_FUNC(ibv_wc_status_str)
 
   static bool isDmabufSupported();
-  static struct ibv_mr *ibv_reg_dmabuf_mr(struct ibv_pd *, uint64_t, size_t, uint64_t, int, int);
+  static struct ibv_mr* ibv_reg_dmabuf_mr(struct ibv_pd*, uint64_t, size_t, uint64_t, int, int);
 
   ///
   /// Below is for cases where the API (may be / is) a macro. Refer to `infiniband/verbs.h`.
@@ -57,8 +57,8 @@ struct IBVerbs {
 #else  // defined(ibv_get_device_list)
 #undef ibv_get_device_list
   REGISTER_IBV_FUNC(ibv_static_providers)
-  static inline struct ibv_device **ibv_get_device_list(int *num_devices) {
-    using FuncType = struct ibv_device **(*)(int *);
+  static inline struct ibv_device** ibv_get_device_list(int* num_devices) {
+    using FuncType = struct ibv_device** (*)(int*);
     static FuncType impl = nullptr;
     if (!impl) impl = reinterpret_cast<FuncType>(IBVerbs::dlsym("ibv_get_device_list"));
     IBVerbs::ibv_static_providers(NULL, _RDMA_STATIC_PREFIX(RDMA_STATIC_PROVIDERS), NULL);
@@ -67,21 +67,21 @@ struct IBVerbs {
 #endif  // defined(ibv_get_device_list)
 
 #undef ibv_query_port
-  static inline int ibv_query_port(struct ibv_context *context, uint8_t port_num, struct ibv_port_attr *port_attr) {
+  static inline int ibv_query_port(struct ibv_context* context, uint8_t port_num, struct ibv_port_attr* port_attr) {
     static decltype(&::ibv_query_port) impl = nullptr;
     if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym("ibv_query_port"));
-    struct verbs_context *vctx = verbs_get_ctx_op(context, query_port);
+    struct verbs_context* vctx = verbs_get_ctx_op(context, query_port);
     if (!vctx) {
       int rc;
       ::memset(port_attr, 0, sizeof(*port_attr));
-      rc = impl(context, port_num, (struct _compat_ibv_port_attr *)port_attr);
+      rc = impl(context, port_num, (struct _compat_ibv_port_attr*)port_attr);
       return rc;
     }
     return vctx->query_port(context, port_num, port_attr, sizeof(*port_attr));
   }
 
 #undef ibv_reg_mr
-  static inline struct ibv_mr *ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, int access) {
+  static inline struct ibv_mr* ibv_reg_mr(struct ibv_pd* pd, void* addr, size_t length, int access) {
     static decltype(&::ibv_reg_mr) impl = nullptr;
     static decltype(&::ibv_reg_mr_iova2) impl_iova2 = nullptr;
     int is_access_const = __builtin_constant_p(((int)(access)&IBV_ACCESS_OPTIONAL_RANGE) == 0);
@@ -98,11 +98,11 @@ struct IBVerbs {
   /// Below is for cases where the API (may be / is) a static function. Refer to `infiniband/verbs.h`.
   ///
 
-  static inline int ibv_post_send(struct ibv_qp *qp, struct ibv_send_wr *wr, struct ibv_send_wr **bad_wr) {
+  static inline int ibv_post_send(struct ibv_qp* qp, struct ibv_send_wr* wr, struct ibv_send_wr** bad_wr) {
     return qp->context->ops.post_send(qp, wr, bad_wr);
   }
 
-  static inline int ibv_poll_cq(struct ibv_cq *cq, int num_entries, struct ibv_wc *wc) {
+  static inline int ibv_poll_cq(struct ibv_cq* cq, int num_entries, struct ibv_wc* wc) {
     return cq->context->ops.poll_cq(cq, num_entries, wc);
   }
 };

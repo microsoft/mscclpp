@@ -238,7 +238,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
            getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
           sizeof(T);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
-      tmp = add_elements(tmp, mscclpp::read<T>(remoteMemory, srcOffset + idx));
+      tmp = tmp + mscclpp::read<T>(remoteMemory, srcOffset + idx);
     }
     static_cast<T*>(output)[idx] = tmp;
     if constexpr (SendToRemote) {
@@ -491,7 +491,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
       T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
       uint32_t buffOffset =
           (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
-      tmp = add_elements(tmp, buff[buffOffset + idx]);
+      tmp = tmp + buff[buffOffset + idx];
     }
     dst[idx] = tmp;
     if constexpr (SendToRemote) {
@@ -548,7 +548,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
   } else {
     // handle data in 16-byte unit
-    using Type16 = typename mscclpp::VectorType<T, 16 / sizeof(T)>;
+    using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
     const size_t nType16 = size / sizeof(Type16);
     const size_t srcOffset16 = srcOffset / sizeof(Type16);
     const size_t dstOffset16 = dstOffset / sizeof(Type16);
@@ -560,7 +560,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
     // handle rest of data
     constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
-    using TypeRest = typename mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+    using TypeRest = mscclpp::VectorType<T, RedBytes / sizeof(T)>;
     const size_t processed = nType16 * sizeof(Type16);
     const size_t nRest = (size - processed) / sizeof(TypeRest);
     TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
