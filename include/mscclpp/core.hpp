@@ -29,7 +29,7 @@ std::string version();
 class Bootstrap {
  public:
   /// Constructor.
-  Bootstrap() {};
+  Bootstrap(){};
 
   /// Destructor.
   virtual ~Bootstrap() = default;

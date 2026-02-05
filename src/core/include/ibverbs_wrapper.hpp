@@ -17,7 +17,7 @@ struct IBVerbs {
  public:
 #define REGISTER_IBV_FUNC_WITH_NAME(name__, func__)                                          \
   template <typename... Args>                                                                \
-  static inline auto(name__)(Args&&... args) {                                               \
+  static inline auto(name__)(Args && ... args) {                                             \
     static_assert(sizeof(&::func__) > 0, #func__ " is expected be a function, not a macro"); \
     static decltype(&::func__) impl = nullptr;                                               \
     if (!impl) impl = reinterpret_cast<decltype(impl)>(IBVerbs::dlsym(#func__));             \
