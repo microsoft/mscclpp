@@ -24,9 +24,9 @@ class CudaIpcStream {
  public:
   CudaIpcStream(int deviceId);
 
-  void memcpyD2D(void *dst, const void *src, size_t nbytes);
+  void memcpyD2D(void* dst, const void* src, size_t nbytes);
 
-  void memcpyH2D(void *dst, const void *src, size_t nbytes);
+  void memcpyH2D(void* dst, const void* src, size_t nbytes);
 
   void sync();
 
@@ -44,7 +44,7 @@ struct Context::Impl {
 
   Impl();
 
-  IbCtx *getIbContext(Transport ibTransport);
+  IbCtx* getIbContext(Transport ibTransport);
   std::shared_ptr<uint64_t> getToken();
 };
 
