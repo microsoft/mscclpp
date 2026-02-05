@@ -251,15 +251,6 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 clip(__fp8_e5m2 val) {
 }
 #endif
 
-template <typename T, bool UseClip = true>
-MSCCLPP_DEVICE_INLINE T operator+(const T& a, const T& b) {
-  if constexpr (UseClip) {
-    return clip(a + b);
-  } else {
-    return a + b;
-  }
-}
-
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE f16x2 operator+(const f16x2& a, const f16x2& b) {
   __half2 result;
