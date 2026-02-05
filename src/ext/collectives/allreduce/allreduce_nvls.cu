@@ -126,10 +126,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {min(ctx->nRanksPerNode, nSwitchChannels_), 1024};
+    numBlocksAndThreads = {::min(ctx->nRanksPerNode, nSwitchChannels_), 1024};
     // For GB200 devices, using more blocks to improve the performances when nRanksPerNode <= 8
     if (computeCapabilityMajor_ == 10 && ctx->nRanksPerNode <= 8) {
-      numBlocksAndThreads.first = min(32, nSwitchChannels_);
+      numBlocksAndThreads.first = ::min(32, nSwitchChannels_);
     }
   }
   cudaError_t error =
