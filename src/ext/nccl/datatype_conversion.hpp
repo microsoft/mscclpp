@@ -6,6 +6,7 @@
 
 #include <mscclpp/ext/nccl/nccl.h>
 
+#include <cassert>
 #include <cstddef>
 #include <mscclpp/gpu_data_types.hpp>
 
