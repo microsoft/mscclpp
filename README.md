@@ -9,7 +9,7 @@
 |--------------------------|-------------------|
 | Unit Tests (CUDA)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
 | Integration Tests (CUDA) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398479&branchName=main) |
-| Integration Tests (ROCm) | [![Build Status](https://dev.azure.com/msazure/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test-rocm?branchName=main)](https://dev.azure.com/msazure/One/_build/latest?definitionId=399295&branchName=main) |
+| Unit Tests (ROCm) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut-rocm?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=399295&branchName=main) |
 
 A GPU-driven communication stack for scalable AI applications.
 
