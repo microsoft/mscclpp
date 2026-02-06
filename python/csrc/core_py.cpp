@@ -147,22 +147,32 @@ void register_core(nb::module_& m) {
         return ss.str();
       });
 
+  nb::enum_<EndpointConfig::Ib::Mode>(m, "CppIbMode")
+      .value("Default", EndpointConfig::Ib::Mode::Default)
+      .value("Host", EndpointConfig::Ib::Mode::Host)
+      .value("HostNoAtomic", EndpointConfig::Ib::Mode::HostNoAtomic);
+
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())
-      .def(nb::init<int, int, int, int, int, int, int>(), nb::arg("device_index") = -1,
+      .def(nb::init<int, int, int, int, int, int, int, int, EndpointConfig::Ib::Mode>(),
+           nb::arg("device_index") = -1,
            nb::arg("port") = EndpointConfig::Ib::DefaultPort,
            nb::arg("gid_index") = EndpointConfig::Ib::DefaultGidIndex,
            nb::arg("max_cq_size") = EndpointConfig::Ib::DefaultMaxCqSize,
            nb::arg("max_cq_poll_num") = EndpointConfig::Ib::DefaultMaxCqPollNum,
            nb::arg("max_send_wr") = EndpointConfig::Ib::DefaultMaxSendWr,
-           nb::arg("max_wr_per_send") = EndpointConfig::Ib::DefaultMaxWrPerSend)
+           nb::arg("max_recv_wr") = EndpointConfig::Ib::DefaultMaxRecvWr,
+           nb::arg("max_wr_per_send") = EndpointConfig::Ib::DefaultMaxWrPerSend,
+           nb::arg("mode") = EndpointConfig::Ib::Mode::Default)
       .def_rw("device_index", &EndpointConfig::Ib::deviceIndex)
       .def_rw("port", &EndpointConfig::Ib::port)
       .def_rw("gid_index", &EndpointConfig::Ib::gidIndex)
       .def_rw("max_cq_size", &EndpointConfig::Ib::maxCqSize)
       .def_rw("max_cq_poll_num", &EndpointConfig::Ib::maxCqPollNum)
       .def_rw("max_send_wr", &EndpointConfig::Ib::maxSendWr)
-      .def_rw("max_wr_per_send", &EndpointConfig::Ib::maxWrPerSend);
+      .def_rw("max_recv_wr", &EndpointConfig::Ib::maxRecvWr)
+      .def_rw("max_wr_per_send", &EndpointConfig::Ib::maxWrPerSend)
+      .def_rw("mode", &EndpointConfig::Ib::mode);
 
   nb::class_<RegisteredMemory>(m, "CppRegisteredMemory")
       .def(nb::init<>())
@@ -224,8 +234,14 @@ void register_core(nb::module_& m) {
           "ib_max_send_wr", [](EndpointConfig& self) { return self.ib.maxSendWr; },
           [](EndpointConfig& self, int v) { self.ib.maxSendWr = v; })
       .def_prop_rw(
+          "ib_max_recv_wr", [](EndpointConfig& self) { return self.ib.maxRecvWr; },
+          [](EndpointConfig& self, int v) { self.ib.maxRecvWr = v; })
+      .def_prop_rw(
           "ib_max_wr_per_send", [](EndpointConfig& self) { return self.ib.maxWrPerSend; },
           [](EndpointConfig& self, int v) { self.ib.maxWrPerSend = v; })
+      .def_prop_rw(
+          "ib_mode", [](EndpointConfig& self) { return self.ib.mode; },
+          [](EndpointConfig& self, EndpointConfig::Ib::Mode v) { self.ib.mode = v; })
       .def_rw("max_write_queue_size", &EndpointConfig::maxWriteQueueSize);
 
   nb::class_<Context>(m, "CppContext")
