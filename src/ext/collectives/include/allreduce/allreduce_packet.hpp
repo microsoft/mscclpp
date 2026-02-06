@@ -35,7 +35,6 @@ class AllreducePacket : public AlgorithmBuilder {
   size_t flagBufferSize_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
-  std::shared_ptr<LL8Packet> flags_;
 };
 }  // namespace collective
 }  // namespace mscclpp

@@ -208,7 +208,6 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
   RegisteredMemory scratchMemory = comm->registerMemory(scratchBuffer_, scratchBufferSize_, Transport::CudaIpc);
   registeredMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), scratchMemory);
   registeredMemories_.push_back(scratchMemory);
-  flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
 }
 
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,

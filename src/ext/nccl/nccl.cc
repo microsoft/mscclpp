@@ -291,10 +291,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
   commPtr->comm = mscclppComm;
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
-  commPtr->flagBuffer_ = mscclpp::detail::gpuCallocHostShared<uint32_t>(commPtr->flagCount_);
+  commPtr->flagBuffer_ = mscclpp::detail::gpuCallocShared<uint32_t>(commPtr->flagCount_);
   std::vector<uint32_t> initFlags(commPtr->flagCount_, 1);
-  mscclpp::gpuMemcpy(commPtr->flagBuffer_.get(), initFlags.data(), commPtr->flagCount_ * sizeof(uint32_t),
-                     cudaMemcpyHostToHost);
+  mscclpp::gpuMemcpy(commPtr->flagBuffer_.get(), initFlags.data(), commPtr->flagCount_, cudaMemcpyHostToDevice);
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
 
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
