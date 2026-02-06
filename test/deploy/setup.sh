@@ -15,7 +15,9 @@ if [ "${PLATFORM}" == "cuda" ]; then
     for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
         nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
     done
-fi
+elif [ "${PLATFORM}" == "rocm" ]; then
+    # Wait for ROCm to be ready
+    sleep 30
 
 make -C /root/mscclpp/tools/peer-access-test
 peer_access_success=false
