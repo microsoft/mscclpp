@@ -335,9 +335,16 @@ void IbQp::stageSendWriteWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t 
   wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.rdma.rkey = info.rkey;
   wrInfo.wr->imm_data = htonl(immData);
-  wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
-  wrInfo.sge->length = size;
-  wrInfo.sge->lkey = mr->getLkey();
+  if (mr != nullptr) {
+    wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+    wrInfo.sge->length = size;
+    wrInfo.sge->lkey = mr->getLkey();
+  } else {
+    // 0-byte write-with-imm: no source buffer needed
+    wrInfo.sge->addr = 0;
+    wrInfo.sge->length = 0;
+    wrInfo.sge->lkey = 0;
+  }
   if (signaled) numStagedSignaledSend_++;
 }
 
@@ -427,7 +434,7 @@ std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_
 
 unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
 
-IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr) {
+IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr), supportsRdmaAtomics_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
@@ -443,6 +450,12 @@ IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_
   pd_ = IBVerbs::ibv_alloc_pd(ctx_);
   if (pd_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_alloc_pd failed (errno ", errno, ")");
+  }
+
+  // Query and cache RDMA atomics capability
+  struct ibv_device_attr attr = {};
+  if (IBVerbs::ibv_query_device(ctx_, &attr) == 0) {
+    supportsRdmaAtomics_ = (attr.atomic_cap == IBV_ATOMIC_HCA || attr.atomic_cap == IBV_ATOMIC_GLOB);
   }
 }
 
@@ -515,6 +528,8 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
   return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size));
 }
+
+bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;

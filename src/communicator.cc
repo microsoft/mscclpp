@@ -4,7 +4,6 @@
 #include "communicator.hpp"
 
 #include "api.h"
-#include "debug.h"
 
 namespace mscclpp {
 

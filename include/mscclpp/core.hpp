@@ -393,6 +393,7 @@ struct EndpointConfig {
     static const int DefaultMaxCqSize = 1024;
     static const int DefaultMaxCqPollNum = 1;
     static const int DefaultMaxSendWr = 8192;
+    static const int DefaultMaxRecvWr = 16;
     static const int DefaultMaxWrPerSend = 64;
 
     /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
@@ -407,6 +408,8 @@ struct EndpointConfig {
     int maxCqPollNum;
     /// Maximum number of outstanding send work requests.
     int maxSendWr;
+    /// Maximum number of outstanding receive work requests (used in HostNoAtomic mode for write-with-immediate).
+    int maxRecvWr;
     /// Maximum number of work requests per send operation.
     int maxWrPerSend;
     /// IB mode for signaling. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
@@ -419,17 +422,19 @@ struct EndpointConfig {
     /// @param maxCqSize Maximum send completion queue size.
     /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxRecvWr Maximum outstanding receive work requests (for HostNoAtomic mode).
     /// @param maxWrPerSend Maximum work requests per send operation.
     /// @param mode IB mode for signaling (Default uses MSCCLPP_IBV_MODE env variable).
     Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
-       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend,
-       Mode mode = Mode::Default)
+       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxRecvWr = DefaultMaxRecvWr,
+       int maxWrPerSend = DefaultMaxWrPerSend, Mode mode = Mode::Default)
         : deviceIndex(deviceIndex),
           port(port),
           gidIndex(gidIndex),
           maxCqSize(maxCqSize),
           maxCqPollNum(maxCqPollNum),
           maxSendWr(maxSendWr),
+          maxRecvWr(maxRecvWr),
           maxWrPerSend(maxWrPerSend),
           mode(mode) {}
   };
@@ -641,11 +646,6 @@ class Connection {
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
   void flush(int64_t timeoutUsec = -1);
 
-  /// Set the local GPU address where incoming signals should write.
-  /// Must be called by the receiver before the sender calls updateAndSync.
-  /// @param addr The local GPU address for incoming writes.
-  void setLocalInboundAddr(uint64_t addr);
-
   /// Get the transport used by the local process.
   /// @return The transport used by the local process.
   Transport transport() const;
@@ -675,6 +675,7 @@ class Connection {
   friend class SemaphoreStub;
   friend class Semaphore;
   friend class ProxyService;
+  friend class BaseConnection;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.

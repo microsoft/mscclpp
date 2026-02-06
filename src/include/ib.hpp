@@ -141,6 +141,7 @@ class IbCtx {
   std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
                                  int maxRecvWr, int maxWrPerSend);
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
+  bool supportsRdmaAtomics() const;
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -149,6 +150,7 @@ class IbCtx {
   std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
     return nullptr;
   }
+  bool supportsRdmaAtomics() const { return false; }
 #endif
 
   const std::string& getDevName() const { return devName_; };
@@ -160,6 +162,7 @@ class IbCtx {
   const std::string devName_;
   ibv_context* ctx_;
   ibv_pd* pd_;
+  bool supportsRdmaAtomics_;
 };
 
 }  // namespace mscclpp

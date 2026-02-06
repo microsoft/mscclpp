@@ -9,6 +9,8 @@
 
 #include "api.h"
 #include "context.hpp"
+#include "ib.hpp"
+#include "logger.hpp"
 #include "registered_memory.hpp"
 #include "serialization.hpp"
 #include "socket.h"
@@ -27,9 +29,26 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
       config_.maxWriteQueueSize = config_.ib.maxCqSize;
     }
 
-    // If write-with-imm mode is enabled (HostNoAtomic), we need recv WRs for the recv CQ
-    bool useWriteImm = (env()->ibvMode == "host-no-atomic");
-    int maxRecvWr = useWriteImm ? 16 : 0;
+    // Determine if we should use no-atomics mode
+    ibNoAtomic_ = false;
+    if (config_.ib.mode == EndpointConfig::Ib::Mode::HostNoAtomic) {
+      ibNoAtomic_ = true;
+    } else if (config_.ib.mode == EndpointConfig::Ib::Mode::Default) {
+      // Use environment variable when mode is Default
+      ibNoAtomic_ = (env()->ibvMode == "host-no-atomic");
+    }
+
+    // If mode is Host (or Default resolved to host), check if atomics are supported
+    if (!ibNoAtomic_) {
+      IbCtx* ibCtx = contextImpl.getIbContext(config_.transport);
+      if (!ibCtx->supportsRdmaAtomics()) {
+        WARN(NET, "IB device ", ibCtx->getDevName(),
+             " does not support RDMA atomics. Falling back to write-with-immediate mode (HostNoAtomic).");
+        ibNoAtomic_ = true;
+      }
+    }
+
+    int maxRecvWr = ibNoAtomic_ ? config_.ib.maxRecvWr : 0;
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
                 ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,

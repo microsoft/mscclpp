@@ -11,7 +11,7 @@
 
 #include <atomic>
 #include <cstring>
-#include <mscclpp/env.hpp>
+#include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
@@ -19,6 +19,7 @@
 #include "api.h"
 #include "context.hpp"
 #include "endpoint.hpp"
+#include "gpu_utils_internal.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -68,8 +69,6 @@ MSCCLPP_API_CPP void Connection::updateAndSync(RegisteredMemory dst, uint64_t ds
 }
 
 MSCCLPP_API_CPP void Connection::flush(int64_t timeoutUsec) { impl_->flush(timeoutUsec); }
-
-MSCCLPP_API_CPP void Connection::setLocalInboundAddr(uint64_t addr) { impl_->setLocalInboundAddr(addr); }
 
 MSCCLPP_API_CPP Transport Connection::transport() const { return impl_->transport(); }
 
@@ -195,6 +194,11 @@ void IBConnection::recvThreadFunc() {
            ") failed: ", cudaGetErrorString(err));
       return;
     }
+    // Bind this thread to the NUMA node of the local GPU for optimal memory access
+    int deviceNumaNode = getDeviceNumaNode(localGpuDeviceId_);
+    if (deviceNumaNode >= 0) {
+      numaBind(deviceNumaNode);
+    }
   }
 
   // Host-side buffer to receive newValue from imm_data (need 64-bit for cudaMemcpy)
@@ -225,22 +229,17 @@ void IBConnection::recvThreadFunc() {
       unsigned int immData = qp->getRecvWcImmData(i);
       newValueHost = static_cast<uint64_t>(immData);
 
-      // Memory barrier to ensure we see the RDMA write data
-      std::atomic_thread_fence(std::memory_order_acquire);
-
-      // Read dstGpuAddr from the local stored address (set by setLocalInboundAddr)
-      uint64_t dstGpuAddr = localInboundAddr_;
+      // Read dstGpuAddr from the local stored address (set by setRemoteUpdateDstAddr)
+      uint64_t dstGpuAddr = remoteUpdateDstAddr_;
       if (dstGpuAddr != 0) {
         uint64_t* dstPtr = reinterpret_cast<uint64_t*>(dstGpuAddr);
 
         // Use cudaMemcpyAsync with our dedicated stream to avoid blocking on the default stream
         MSCCLPP_CUDATHROW(
             cudaMemcpyAsync(dstPtr, &newValueHost, sizeof(uint64_t), cudaMemcpyHostToDevice, signalStream_));
-        // Synchronize our stream to ensure the copy is complete before the GPU kernel reads it
-        MSCCLPP_CUDATHROW(cudaStreamSynchronize(signalStream_));
 
-        INFO(CONN, "IBConnection recvThreadFunc: updated GPU ptr ", dstPtr, " to ", newValueHost,
-             " (immData=", immData, ")");
+        INFO(CONN, "IBConnection recvThreadFunc: updated GPU ptr ", dstPtr, " to ", newValueHost, " (immData=", immData,
+             ")");
       }
 
       // Post another recv for future messages
@@ -256,11 +255,11 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)),
-      useWriteImm_(env()->ibvMode == "host-no-atomic"),
+      ibNoAtomic_(getImpl(localEndpoint).ibNoAtomic_),
       stopRecvThread_(false),
       localGpuDeviceId_(localEndpoint.device().id),
       signalStream_(nullptr),
-      localInboundAddr_(0) {
+      remoteUpdateDstAddr_(0) {
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
@@ -268,32 +267,36 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
   validateTransport(dummyAtomicSourceMem_, transport_);
   dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
 
-  if (useWriteImm_) {
+  if (ibNoAtomic_) {
     // Create a CUDA stream for async memory copies
     MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&signalStream_, cudaStreamNonBlocking));
 
-    // Pre-post some receive requests for incoming write-with-imm (use 16 outstanding)
+    // Pre-post receive requests for incoming write-with-imm
     auto qp = qp_.lock();
-    for (int i = 0; i < 16; ++i) {
+    int maxRecvWr = localEndpoint.config().ib.maxRecvWr;
+    for (int i = 0; i < maxRecvWr; ++i) {
       qp->stageRecv(/*wrId=*/0);
     }
     qp->postRecv();
     // Start the background thread to poll recv CQ
     recvThread_ = std::thread([this]() { this->recvThreadFunc(); });
-    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with write-with-imm mode");
+    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with no-atomic mode");
   } else {
-    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created");
+    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with atomic mode");
   }
 }
 
 IBConnection::~IBConnection() {
-  if (useWriteImm_) {
+  if (ibNoAtomic_) {
     stopRecvThread_.store(true, std::memory_order_relaxed);
     if (recvThread_.joinable()) {
       recvThread_.join();
     }
     if (signalStream_ != nullptr) {
-      cudaStreamDestroy(signalStream_);
+      // Synchronize stream to ensure all async copies are complete before destruction
+      // Ignore errors during teardown (CUDA context may already be destroyed)
+      MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaStreamSynchronize(signalStream_));
+      MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaStreamDestroy(signalStream_));
     }
   }
 }
@@ -302,9 +305,9 @@ Transport IBConnection::transport() const { return transport_; }
 
 Transport IBConnection::remoteTransport() const { return remoteTransport_; }
 
-void IBConnection::setLocalInboundAddr(uint64_t addr) {
-  localInboundAddr_ = addr;
-  INFO(CONN, "IBConnection setLocalInboundAddr: ", (void*)addr);
+void IBConnection::setRemoteUpdateDstAddr(uint64_t addr) {
+  remoteUpdateDstAddr_ = addr;
+  INFO(CONN, "IBConnection setRemoteUpdateDstAddr: ", (void*)addr);
 }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
@@ -356,10 +359,10 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   uint64_t oldValue = *src;
   *src = newValue;
 
-  if (useWriteImm_) {
+  if (ibNoAtomic_) {
     // Use RDMA write-with-imm instead of atomic operation
     // Send only newValue in imm_data (0-byte write)
-    // The remote's recvThreadFunc will use its stored localInboundAddr_ to write
+    // The remote's recvThreadFunc will use its stored remoteUpdateDstAddr_ to write
 
     // Put newValue in imm_data (truncated to 32-bit; semaphore counters should fit)
     unsigned int immData = static_cast<unsigned int>(newValue);
