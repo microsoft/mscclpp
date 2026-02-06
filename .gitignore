@@ -1,10 +1,8 @@
 .vscode/
-.hypothesis/
 build/
-dist/
 __pycache__
 .*.swp
-.idea/
 *.so
-docs/_static/versions.js
+.pytest_cache/
 _codeql_detected_source_root
+docs/_static/versions.js

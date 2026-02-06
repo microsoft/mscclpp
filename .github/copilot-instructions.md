@@ -25,7 +25,7 @@ For C/C++/CUDA source code:
 ```
 
 ## Formatting
-If you have modified any code in the project, run `./tools/lint.sh` to automatically format the entire source code before finishing iterations. Note that this script formats only staged files.
+If you have modified any code in the project, run `./tools/lint.sh` to automatically format the entire source code before finishing iterations. Note that this script formats only files that are tracked by git, so if you have added new files, make sure to `git add` them first.
 
 ## Building and Testing
 The following commands are commonly used for building and testing the project. See `docs/quickstart.md` for more detailed instructions.
@@ -40,7 +40,7 @@ cd ..
 
 For testing after successful build:
 ```bash
-# To run all tests
+# To run tests with two GPUs - two is enough for most tests
 mpirun -np 2 ./build/bin/mp_unit_tests
 # To run tests excluding IB-related ones (when IB is not available)
 mpirun -np 2 ./build/bin/mp_unit_tests --gtest_filter=-*Ib*
@@ -49,6 +49,12 @@ mpirun -np 2 ./build/bin/mp_unit_tests --gtest_filter=-*Ib*
 For building a Python package:
 ```bash
 python3 -m pip install -e .
+```
+
+For Python tests after building the package:
+```bash
+# Run tests with 8 GPUs - adjust the number as needed
+mpirun -np 8 python3 -m pytest ./python/test/test_mscclpp.py -vx
 ```
 
 For building documentation (see dependencies in `docs/requirements.txt`):
