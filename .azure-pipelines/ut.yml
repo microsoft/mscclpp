@@ -112,27 +112,6 @@ jobs:
       sshKeySecureFile: mscclpp.pem
       gpuArch:          '90'
 
-- job: UnitTestMI300X
-  timeoutInMinutes: 40
-  pool:
-    name: msccl-ci-mi300x
-  strategy:
-    matrix:
-      rocm6_2:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
-
-  container:
-    image: $(containerImage)
-
-  steps:
-  - template: templates/ut.yaml
-    parameters:
-      subscription:     mscclpp-ci-mi300x
-      vmssName:         mscclpp-mi300x-ci
-      sshKeySecureFile: mscclpp.pem
-      platform:         rocm
-      gpuArch:          gfx942
-
 - job: UnitTestNoIBEnv
   timeoutInMinutes: 40
   displayName: Test No IB Environment

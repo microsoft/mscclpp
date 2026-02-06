@@ -32,7 +32,9 @@ if [[ "${CUDA_VERSION}" == *"11."* ]]; then
 elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda12.txt
 fi
-
+if [ "${PLATFORM}" == "rocm" ]; then
+    export CXX=/opt/rocm/bin/hipcc
+fi
 cd /root/mscclpp && pip3 install .
 pip3 install setuptools_scm
 python3 -m setuptools_scm --force-write-version-files
