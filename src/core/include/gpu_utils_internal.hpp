@@ -30,35 +30,35 @@ inline bool isCuTeardownError(CUresult r) {
 
 /// Execute a CUDA runtime call and ignore teardown errors (useful in destructors).
 /// Non-teardown errors will throw.
-#define MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cmd)       \
-  do {                                               \
-    cudaError_t __e = cmd;                           \
-    if (mscclpp::isCudaTeardownError(__e)) {         \
-      (void)cudaGetLastError();                      \
-    } else {                                         \
-      MSCCLPP_CUDATHROW(__e);                        \
-    }                                                \
+#define MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cmd) \
+  do {                                         \
+    cudaError_t __e = cmd;                     \
+    if (mscclpp::isCudaTeardownError(__e)) {   \
+      (void)cudaGetLastError();                \
+    } else {                                   \
+      MSCCLPP_CUDATHROW(__e);                  \
+    }                                          \
   } while (false)
 
 /// Execute a CUDA driver call and ignore teardown errors (useful in destructors).
 /// Non-teardown errors will throw.
-#define MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cmd)    \
-  do {                                          \
-    CUresult __e = cmd;                         \
-    if (!mscclpp::isCuTeardownError(__e)) {     \
-      MSCCLPP_CUTHROW(__e);                     \
-    }                                           \
+#define MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cmd) \
+  do {                                       \
+    CUresult __e = cmd;                      \
+    if (!mscclpp::isCuTeardownError(__e)) {  \
+      MSCCLPP_CUTHROW(__e);                  \
+    }                                        \
   } while (false)
 
 /// Execute a CUDA driver call and log (but don't throw) on error.
-#define MSCCLPP_CUTHROW_IGNORE(cmd)                                                               \
-  do {                                                                                            \
-    CUresult __e = cmd;                                                                           \
-    if (__e != CUDA_SUCCESS) {                                                                    \
-      const char* errStr;                                                                         \
-      cuGetErrorString(__e, &errStr);                                                             \
+#define MSCCLPP_CUTHROW_IGNORE(cmd)                                                                   \
+  do {                                                                                                \
+    CUresult __e = cmd;                                                                               \
+    if (__e != CUDA_SUCCESS) {                                                                        \
+      const char* errStr;                                                                             \
+      cuGetErrorString(__e, &errStr);                                                                 \
       WARN(GPU, __FILE__, ":", __LINE__, " Cuda failure ", static_cast<int>(__e), " '", errStr, "'"); \
-    }                                                                                             \
+    }                                                                                                 \
   } while (false)
 
 #endif  // MSCCLPP_GPU_UTILS_INTERNAL_HPP_

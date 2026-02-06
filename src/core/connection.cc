@@ -7,10 +7,6 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-#include <arpa/inet.h>
-
-#include <atomic>
-#include <cstring>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
