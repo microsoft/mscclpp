@@ -180,8 +180,11 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  size_t channelOutOffset = (char*)output - (char*)recvBasePtr;
+  size_t channelOutOffset = 0;
+  if (symmetricMemory_) {
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+    channelOutOffset = (char*)output - (char*)recvBasePtr;
+  }
   std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles;
   if (this->memoryChannelsMap_.find(input) != this->memoryChannelsMap_.end()) {
     inputChannelHandles = this->memoryChannelsMap_[input].second;
@@ -212,19 +215,20 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType, bool) {
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType, bool symmetricMemory) {
   static int tag = 0;
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  if (!env()->ncclSymmetricMemory) {
+  symmetricMemory_ = symmetricMemory;
+  if (!symmetricMemory_) {
     return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, tag++};
   }
   return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
 std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                              void* output, size_t, DataType) {
+                                                              void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -236,6 +240,10 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  if (!symmetricMemory_) {
+    recvBytes = size;
+    recvBasePtr = (CUdeviceptr)output;
+  }
   RegisteredMemory localMemory = comm->registerMemory((void*)recvBasePtr, recvBytes, Transport::CudaIpc);
   ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
   ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,

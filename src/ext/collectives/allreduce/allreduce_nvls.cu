@@ -107,6 +107,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
                                               size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
                                               cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                               const std::unordered_map<std::string, uintptr_t>&) {
+  if (!symmetricMemory_) {
+    WARN("AllreduceNvls requires symmetric memory for now.");
+    return CommResult::CommInvalidArgument;
+  }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype);
   if (!allreduce) {
@@ -145,7 +149,8 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
 }
 
 mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* input, void* output, size_t,
-                                                                    mscclpp::DataType, bool) {
+                                                                    mscclpp::DataType, bool symmetricMemory) {
+  symmetricMemory_ = symmetricMemory;
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));

@@ -65,15 +65,7 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     if (messageSize <= (1 << 21)) {  // <= 2MB
       return algoMap.at("default_allreduce_packet");
     }
-    if (config.inCaptureMode) {
-      // CUDA graph mode: setup new connections each time (zero-copy for graph)
-      return algoMap.at("default_allreduce_rsag_zero_copy");
-    }
-    // Non-graph mode: use non-zero-copy algorithms
-    if (messageSize <= (1 << 23)) {  // <= 8MB
-      return algoMap.at("default_allreduce_rsag");
-    }
-    return algoMap.at("default_allreduce_rsag_pipeline");
+    return nullptr;
   }
 
   // Symmetric memory path: can use cached memory handles
@@ -128,7 +120,7 @@ return algoMap.at("default_allreduce_fullmesh");
 #else
   // NVIDIA without NVLS: use RSAG pipeline if no NCCL fallback
   if (!config.ncclDlopenSharedLib) {
-    return algoMap.at("default_allreduce_rsag_pipeline");
+    return algoMap.at("default_allreduce_fullmesh");
   }
   return nullptr;
 #endif

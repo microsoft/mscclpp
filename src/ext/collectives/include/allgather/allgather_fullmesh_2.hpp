@@ -11,8 +11,7 @@ namespace collective {
 
 class AllgatherFullmesh2 : public AlgorithmBuilder {
  public:
-  AllgatherFullmesh2()
-      : symmetricMemory_(mscclpp::env()->ncclSymmetricMemory) {}
+  AllgatherFullmesh2() = default;
   std::shared_ptr<Algorithm> build() override;
 
  private:

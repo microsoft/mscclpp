@@ -12,6 +12,7 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::shared_ptr<Algorithm> build() override;
 
  private:
+  bool symmetricMemory_ = false;
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
                                  DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
