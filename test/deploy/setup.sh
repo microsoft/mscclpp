@@ -18,6 +18,7 @@ if [ "${PLATFORM}" == "cuda" ]; then
 elif [ "${PLATFORM}" == "rocm" ]; then
     # Wait for ROCm to be ready
     sleep 30
+fi
 
 make -C /root/mscclpp/tools/peer-access-test
 peer_access_success=false
