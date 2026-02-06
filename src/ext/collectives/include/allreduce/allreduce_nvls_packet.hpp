@@ -30,7 +30,6 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   const int maxBlockNum_ = 16;
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;
-  std::shared_ptr<uint32_t> flags_;
 };
 }  // namespace collective
 }  // namespace mscclpp

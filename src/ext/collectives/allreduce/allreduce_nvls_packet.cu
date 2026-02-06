@@ -76,9 +76,6 @@ struct AllreduceNvlsPacketAdapter {
 };
 
 void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator>) {
-  std::vector<uint32_t> flags(16, 1);
-  flags_ = detail::gpuCallocShared<uint32_t>(16);
-  gpuMemcpy<uint32_t>(flags_.get(), flags.data(), 16, cudaMemcpyHostToDevice);
 }
 
 AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
