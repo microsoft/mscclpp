@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 # run with:
 # LD_PRELOAD=<MSCCLPP_REPO>/build/lib/libmscclpp_nccl.so  MSCCLPP_NCCL_SYMMETRIC_MEMORY=false  torchrun --nproc_per_node=8 ./allreduce_temp_buff.py
