@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-from typing import List, Dict
+from typing import List, Dict, Set
 
 
 class ThreadBlockGroup:
@@ -20,10 +20,9 @@ class ThreadBlockGroup:
             tb_list: List of thread block objects
         """
 
-        self.tb_list: List[int] = tb_list
+        self.tb_list: Set[int] = set(tb_list)
         self._tb_id: Dict[int, int] = {}
 
-        # Check for duplicates and build ID mapping
         seen = set()
         for i, tb in enumerate(self.tb_list):
             if tb in seen:
@@ -51,3 +50,23 @@ class ThreadBlockGroup:
     def numtb(self) -> int:
         """Return the number of thread blocks in the group."""
         return len(self.tb_list)
+
+    def tbg_overlap(self, other):
+        for tb in self.tb_list:
+            if tb in other.tb_list:
+                return True
+        return False
+
+    def tb_overlap(self, tb_id):
+        return tb_id in self.tb_list
+
+    def to_dict(self, tb):
+        return {"tb_id": self.get_internal_id(tb), "tbg_size": self.numtb()}
+
+    def start_offset(self, tb, size):
+        tb_id = self.get_internal_id(tb)
+        return (size / self.numtb()) * tb_id
+
+    def end_offset(self, tb, size):
+        tb_id = self.get_internal_id(tb)
+        return (size / self.numtb()) * (tb_id + 1)

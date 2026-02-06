@@ -11,6 +11,8 @@ from mscclpp.language.internal.types import (
     DataAccess,
     DataAccessType,
 )
+from mscclpp.language.thread_block_group import ThreadBlockGroup
+from mscclpp.language.loop import LoopIterationContext
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List
@@ -32,7 +34,11 @@ class BaseOperation(ABC):
     """
 
     id: uuid.UUID = field(default_factory=uuid.uuid4, init=False)
+    rank: int
+    threadblock: int
     name: str
+    # TODO: Only fuse operation with the same pipeline_context
+    pipeline_context: LoopIterationContext = field(default=None)
 
     def local_data_access(self, sync_purpose=True):
         """Get list of local data accesses performed by this operation.
@@ -81,6 +87,16 @@ class BaseOperation(ABC):
         """
         return
 
+    def set_pipeline_context(self, pipeline_context):
+        self.pipeline_context = pipeline_context
+
+    def basic_fusion_check(self, other_op):
+        return (
+            self.rank == other_op.rank
+            and self.threadblock == other_op.threadblock
+            and self.pipeline_context is other_op.pipeline_context
+        )
+
     def __add__(self, other):
         """Attempt to fuse this operation with another operation.
 
@@ -112,29 +128,21 @@ class RemoteChunk(LocalChunk):
         return {"buffer_id": self.buffer_id, "index": self.index, "size": self.size}
 
 
-@dataclass
-class ThreadBlockGroupInfo:
-    tb_id: int
-    tbg_size: int
-
-    def to_dict(self):
-        return {"tb_id": self.tb_id, "tbg_size": self.tbg_size}
-
-
 class SyncOperation(BaseOperation):
-    def __init__(self):
-        super().__init__(Instruction.nop)
+    def __init__(self, rank: int, threadblock: int):
+        super().__init__(rank, threadblock, Instruction.nop)
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, SyncOperation):
-            fused_operation = SyncOperation()
-        elif isinstance(other, BarrierOperation):
-            fused_operation = other
-        elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before:
-            fused_operation = other
-        elif check_data_sync_op(other):
-            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+        if self.basic_fusion_check(other):
+            if isinstance(other, SyncOperation):
+                fused_operation = SyncOperation(self.rank, self.threadblock)
+            elif isinstance(other, BarrierOperation):
+                fused_operation = other
+            elif isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before:
+                fused_operation = other
+            elif check_data_sync_op(other):
+                other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
 
         return fused_operation
 
@@ -146,36 +154,76 @@ class SyncOperation(BaseOperation):
 class CopyOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         src_buff: List[LocalChunk],
         dst_buff: List[LocalChunk],
-        tbg_info: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         from_packet: bool = False,
         to_packet: bool = False,
     ):
         if from_packet and to_packet:
             raise RuntimeError(f"Copy Operation from Packet to Packet is not Supported.")
         elif from_packet:
-            super().__init__(Instruction.unpack_packet)
+            super().__init__(rank, threadblock, Instruction.unpack_packet)
         elif to_packet:
-            super().__init__(Instruction.copy_packet)
+            super().__init__(rank, threadblock, Instruction.copy_packet)
         else:
-            super().__init__(Instruction.copy)
+            super().__init__(rank, threadblock, Instruction.copy)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
-        self.tbg_info = tbg_info
+        self.tbg = tbg
 
-    def local_data_access(self, sync_purpose=True):
+    def local_data_access(self, order_id, sync_purpose=True):
         data_access = []
         if self.name != Instruction.unpack_packet or not sync_purpose:
             for chunk in self.src_buff:
                 data_access.append(
-                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                    DataAccess(
+                        self.rank,
+                        self.threadblock,
+                        self.id,
+                        order_id,
+                        (
+                            chunk.index + self.tbg.start_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else 0
+                        ),
+                        (
+                            chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else chunk.size
+                        ),
+                        chunk.type,
+                        DataAccessType.read,
+                        self.tbg,
+                        self.pipeline_context,
+                    )
                 )
         if self.name != Instruction.copy_packet or not sync_purpose:
             for chunk in self.dst_buff:
                 data_access.append(
-                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+                    DataAccess(
+                        self.rank,
+                        self.threadblock,
+                        self.id,
+                        order_id,
+                        (
+                            chunk.index + self.tbg.start_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else 0
+                        ),
+                        (
+                            chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else chunk.size
+                        ),
+                        chunk.type,
+                        DataAccessType.write,
+                        self.tbg,
+                        self.pipeline_context,
+                    )
                 )
         return data_access
 
@@ -193,16 +241,20 @@ class CopyOperation(BaseOperation):
         result["dst_buff"] = []
         for chunk in self.dst_buff:
             result["dst_buff"].append(chunk.to_dict())
-        if self.tbg_info is not None:
-            result["tbg_info"] = self.tbg_info.to_dict()
+        if self.tbg is not None:
+            result["tbg"] = self.tbg.to_dict(self.threadblock)
         return result
 
 
 class SemaphoreAcquireOperation(BaseOperation):
-    def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
-        super().__init__(Instruction.sem_acquire)
+    def __init__(self, rank: int, threadblock: int, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
+        super().__init__(rank, threadblock, Instruction.sem_acquire)
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
+        self.tb_sync = set()
+
+    def add_tb_sync(self, tb):
+        self.tb_sync.add(tb)
 
     def shift_ids(self, instance, num_instances, replication_function):
         for i in range(len(self.semaphore_ids)):
@@ -210,18 +262,24 @@ class SemaphoreAcquireOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, SemaphoreAcquireOperation):
-            fused_operation = SemaphoreAcquireOperation(
-                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
-                data_sync=self.data_sync | other.data_sync,
-            )
-        elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
-            or isinstance(other, SyncOperation)
-            or isinstance(other, BarrierOperation)
-        ):
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        if self.basic_fusion_check(other):
+            if isinstance(other, SemaphoreAcquireOperation):
+                fused_operation = SemaphoreAcquireOperation(
+                    self.rank,
+                    self.threadblock,
+                    semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                    data_sync=self.data_sync | other.data_sync,
+                )
+            elif (
+                (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+                or (
+                    isinstance(other, PipelineOperation)
+                    and (other.get_data_sync() & SyncType.before) == SyncType.before
+                )
+                or isinstance(other, SyncOperation)
+                or isinstance(other, BarrierOperation)
+            ):
+                self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -232,8 +290,8 @@ class SemaphoreAcquireOperation(BaseOperation):
 
 
 class SemaphoreReleaseOperation(BaseOperation):
-    def __init__(self, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
-        super().__init__(Instruction.sem_release)
+    def __init__(self, rank: int, threadblock: int, semaphore_ids: List[int], data_sync: SyncType = SyncType.none):
+        super().__init__(rank, threadblock, Instruction.sem_release)
         self.semaphore_ids = semaphore_ids
         self.data_sync = data_sync
 
@@ -243,18 +301,24 @@ class SemaphoreReleaseOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, SemaphoreReleaseOperation):
-            fused_operation = SemaphoreReleaseOperation(
-                semaphore_ids=self.semaphore_ids + other.semaphore_ids,
-                data_sync=self.data_sync | other.data_sync,
-            )
-        elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
-            or isinstance(other, SyncOperation)
-            or isinstance(other, BarrierOperation)
-        ):
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        if self.basic_fusion_check(other):
+            if isinstance(other, SemaphoreReleaseOperation):
+                fused_operation = SemaphoreReleaseOperation(
+                    self.rank,
+                    self.threadblock,
+                    semaphore_ids=self.semaphore_ids + other.semaphore_ids,
+                    data_sync=self.data_sync | other.data_sync,
+                )
+            elif (
+                (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+                or (
+                    isinstance(other, PipelineOperation)
+                    and (other.get_data_sync() & SyncType.before) == SyncType.before
+                )
+                or isinstance(other, SyncOperation)
+                or isinstance(other, BarrierOperation)
+            ):
+                self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -267,40 +331,48 @@ class SemaphoreReleaseOperation(BaseOperation):
 class SignalOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         channels_ids: List[int],
         channel_type: ChannelType,
         data_sync: SyncType = SyncType.none,
         relaxed: bool = False,
     ):
         if relaxed:
-            super().__init__(Instruction.relaxed_signal)
+            super().__init__(rank, threadblock, Instruction.relaxed_signal)
         else:
-            super().__init__(Instruction.signal)
+            super().__init__(rank, threadblock, Instruction.signal)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, SignalOperation)
-            and self.channel_type == other.channel_type
-            and self.name == other.name
-            and not self.channel_ids & other.channel_ids
-        ):
-            fused_operation = SignalOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
-                channel_type=self.channel_type,
-                data_sync=self.data_sync | other.data_sync,
-                relaxed=(self.name == Instruction.relaxed_signal),
-            )
-        elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
-            or isinstance(other, SyncOperation)
-            or isinstance(other, BarrierOperation)
-        ):
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, SignalOperation)
+                and self.channel_type == other.channel_type
+                and self.name == other.name
+                and not self.channel_ids & other.channel_ids
+            ):
+                fused_operation = SignalOperation(
+                    self.rank,
+                    self.threadblock,
+                    channels_ids=self.channel_ids | other.channel_ids,
+                    channel_type=self.channel_type,
+                    data_sync=self.data_sync | other.data_sync,
+                    relaxed=(self.name == Instruction.relaxed_signal),
+                )
+            elif (
+                (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+                or (
+                    isinstance(other, PipelineOperation)
+                    and (other.get_data_sync() & SyncType.before) == SyncType.before
+                )
+                or isinstance(other, SyncOperation)
+                or isinstance(other, BarrierOperation)
+            ):
+                self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -314,40 +386,48 @@ class SignalOperation(BaseOperation):
 class WaitOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         channels_ids: List[int],
         channel_type: ChannelType,
         data_sync: SyncType = SyncType.none,
         relaxed: bool = False,
     ):
         if relaxed:
-            super().__init__(Instruction.relaxed_wait)
+            super().__init__(rank, threadblock, Instruction.relaxed_wait)
         else:
-            super().__init__(Instruction.wait)
+            super().__init__(rank, threadblock, Instruction.wait)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, WaitOperation)
-            and self.name == other.name
-            and not self.channel_ids & other.channel_ids
-            and self.channel_type == other.channel_type
-        ):
-            fused_operation = WaitOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
-                channel_type=self.channel_type,
-                data_sync=self.data_sync | other.data_sync,
-                relaxed=(self.name == Instruction.relaxed_wait),
-            )
-        elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
-            or isinstance(other, SyncOperation)
-            or isinstance(other, BarrierOperation)
-        ):
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, WaitOperation)
+                and self.name == other.name
+                and not self.channel_ids & other.channel_ids
+                and self.channel_type == other.channel_type
+            ):
+                fused_operation = WaitOperation(
+                    self.rank,
+                    self.threadblock,
+                    channels_ids=self.channel_ids | other.channel_ids,
+                    channel_type=self.channel_type,
+                    data_sync=self.data_sync | other.data_sync,
+                    relaxed=(self.name == Instruction.relaxed_wait),
+                )
+            elif (
+                (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+                or (
+                    isinstance(other, PipelineOperation)
+                    and (other.get_data_sync() & SyncType.before) == SyncType.before
+                )
+                or isinstance(other, SyncOperation)
+                or isinstance(other, BarrierOperation)
+            ):
+                self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -361,7 +441,7 @@ class WaitOperation(BaseOperation):
 class BarrierOperation(BaseOperation):
     __current_barriers = []
 
-    def __init__(self, rank: int, tb_list: List[int]):
+    def __init__(self, rank: int, threadblock: int, tb_list: List[int]):
         for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
             BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
@@ -372,7 +452,7 @@ class BarrierOperation(BaseOperation):
         else:
             self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
 
-        super().__init__(Instruction.barrier)
+        super().__init__(rank, threadblock, Instruction.barrier)
         self.barrier_info = barrier_info
 
     def shift_ids(self, instance, num_instances, replication_function):
@@ -380,10 +460,11 @@ class BarrierOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if check_data_sync_op(other):
-            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation):
-            fused_operation = self
+        if self.basic_fusion_check(other):
+            if check_data_sync_op(other):
+                other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+            elif isinstance(other, SyncOperation):
+                fused_operation = self
 
         return fused_operation
 
@@ -406,27 +487,40 @@ class BarrierOperation(BaseOperation):
 
 
 class FlushOperation(BaseOperation):
-    def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
-        super().__init__(Instruction.flush)
+    def __init__(
+        self,
+        rank: int,
+        threadblock: int,
+        channels_ids: List[int],
+        channel_type: ChannelType,
+        data_sync: SyncType = SyncType.none,
+    ):
+        super().__init__(rank, threadblock, Instruction.flush)
         self.channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
     def __add__(self, other):
         fused_operation = None
-        if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
-            fused_operation = FlushOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
-                channel_type=self.channel_type,
-                data_sync=self.data_sync | other.data_sync,
-            )
-        elif (
-            (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
-            or (isinstance(other, PipelineOperation) and (other.get_data_sync() & SyncType.before) == SyncType.before)
-            or isinstance(other, SyncOperation)
-            or isinstance(other, BarrierOperation)
-        ):
-            self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
+        if self.basic_fusion_check(other):
+            if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
+                fused_operation = FlushOperation(
+                    self.rank,
+                    self.threadblock,
+                    channels_ids=self.channel_ids | other.channel_ids,
+                    channel_type=self.channel_type,
+                    data_sync=self.data_sync | other.data_sync,
+                )
+            elif (
+                (check_data_sync_op(other) and (other.data_sync & SyncType.before) == SyncType.before)
+                or (
+                    isinstance(other, PipelineOperation)
+                    and (other.get_data_sync() & SyncType.before) == SyncType.before
+                )
+                or isinstance(other, SyncOperation)
+                or isinstance(other, BarrierOperation)
+            ):
+                self.data_sync = self.data_sync ^ (SyncType.after & self.data_sync)
 
         return fused_operation
 
@@ -440,24 +534,41 @@ class FlushOperation(BaseOperation):
 class GetOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         src_buff: List[RemoteChunk],
         dst_buff: List[LocalChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
-        tbg_info: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
     ):
-        super().__init__(Instruction.get)
+        super().__init__(rank, threadblock, Instruction.get)
         self.src_buff = src_buff
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
-        self.tbg_info = tbg_info
+        self.tbg = tbg
 
-    def local_data_access(self, sync_purpose=True):
+    def local_data_access(self, order_id, sync_purpose=True):
         data_access = []
         for chunk in self.dst_buff:
             data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+                DataAccess(
+                    self.rank,
+                    self.threadblock,
+                    self.id,
+                    order_id,
+                    chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                    (
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                        if self.tbg is not None
+                        else chunk.size
+                    ),
+                    chunk.type,
+                    DataAccessType.write,
+                    self.tbg,
+                    self.pipeline_context,
+                )
             )
         return data_access
 
@@ -469,19 +580,22 @@ class GetOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, GetOperation)
-            and self.src_buff[0].size == other.src_buff[0].size
-            and self.channel_type == other.channel_type
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = GetOperation(
-                src_buff=self.src_buff + other.src_buff,
-                dst_buff=self.dst_buff + other.dst_buff,
-                channel_ids=self.channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
-                tbg_info=self.tbg_info,
-            )
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, GetOperation)
+                and self.src_buff[0].size == other.src_buff[0].size
+                and self.channel_type == other.channel_type
+                and self.tbg == other.tbg
+            ):
+                fused_operation = GetOperation(
+                    self.rank,
+                    self.threadblock,
+                    src_buff=self.src_buff + other.src_buff,
+                    dst_buff=self.dst_buff + other.dst_buff,
+                    channel_ids=self.channel_ids + other.channel_ids,
+                    channel_type=self.channel_type,
+                    tbg=self.tbg,
+                )
 
         return fused_operation
 
@@ -495,40 +609,42 @@ class GetOperation(BaseOperation):
             result["dst_buff"].append(chunk.to_dict())
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
-        if self.tbg_info is not None:
-            result["tbg_info"] = self.tbg_info.to_dict()
+        if self.tbg is not None:
+            result["tbg"] = self.tbg.to_dict(self.threadblock)
         return result
 
 
 class PutOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         src_buff: List[LocalChunk],
         dst_buff: List[RemoteChunk],
         channel_ids: List[int],
         channel_type: ChannelType,
-        tbg_info: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         from_packet: bool = False,
         to_packet: bool = False,
         with_signal: bool = False,
         with_signal_and_flush: bool = False,
     ):
         if from_packet and to_packet:
-            super().__init__(Instruction.read_put_packet)
+            super().__init__(rank, threadblock, Instruction.read_put_packet)
         elif to_packet:
-            super().__init__(Instruction.put_packet)
+            super().__init__(rank, threadblock, Instruction.put_packet)
         elif from_packet:
             raise RuntimeError(f"Put Operation from Packet is not Supported.")
         else:
             if with_signal:
                 if with_signal_and_flush:
-                    super().__init__(Instruction.put_with_signal_and_flush)
+                    super().__init__(rank, threadblock, Instruction.put_with_signal_and_flush)
                 else:
-                    super().__init__(Instruction.put_with_signal)
+                    super().__init__(rank, threadblock, Instruction.put_with_signal)
             elif with_signal_and_flush:
-                super().__init__(Instruction.put_with_signal_and_flush)
+                super().__init__(rank, threadblock, Instruction.put_with_signal_and_flush)
             else:
-                super().__init__(Instruction.put)
+                super().__init__(rank, threadblock, Instruction.put)
 
         self.src_buff = src_buff
         self.dst_buff = dst_buff
@@ -537,14 +653,33 @@ class PutOperation(BaseOperation):
         self.to_packet = to_packet
         self.with_signal = with_signal
         self.with_signal_and_flush = with_signal_and_flush
-        self.tbg_info = tbg_info
+        self.tbg = tbg
 
-    def local_data_access(self, sync_purpose=True):
+    def local_data_access(self, order_id, sync_purpose=True):
         data_access = []
         if self.name != Instruction.read_put_packet or not sync_purpose:
             for chunk in self.src_buff:
                 data_access.append(
-                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                    DataAccess(
+                        self.rank,
+                        self.threadblock,
+                        self.id,
+                        order_id,
+                        (
+                            chunk.index + self.tbg.start_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else 0
+                        ),
+                        (
+                            chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else chunk.size
+                        ),
+                        chunk.type,
+                        DataAccessType.read,
+                        self.tbg,
+                        self.pipeline_context,
+                    )
                 )
         return data_access
 
@@ -556,29 +691,32 @@ class PutOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, PutOperation)
-            and (
-                self.name == Instruction.put
-                or self.name == Instruction.put_packet
-                or self.name == Instruction.put_with_signal
-                or self.name == Instruction.put_with_signal_and_flush
-            )
-            and self.name == other.name
-            and self.src_buff[0].size == other.src_buff[0].size
-            and self.channel_type == other.channel_type
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = PutOperation(
-                src_buff=self.src_buff + other.src_buff,
-                dst_buff=self.dst_buff + other.dst_buff,
-                channel_ids=self.channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
-                tbg_info=self.tbg_info,
-                to_packet=self.to_packet,
-                with_signal=self.with_signal,
-                with_signal_and_flush=self.with_signal_and_flush,
-            )
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, PutOperation)
+                and (
+                    self.name == Instruction.put
+                    or self.name == Instruction.put_packet
+                    or self.name == Instruction.put_with_signal
+                    or self.name == Instruction.put_with_signal_and_flush
+                )
+                and self.name == other.name
+                and self.src_buff[0].size == other.src_buff[0].size
+                and self.channel_type == other.channel_type
+                and self.tbg == other.tbg
+            ):
+                fused_operation = PutOperation(
+                    self.rank,
+                    self.threadblock,
+                    src_buff=self.src_buff + other.src_buff,
+                    dst_buff=self.dst_buff + other.dst_buff,
+                    channel_ids=self.channel_ids + other.channel_ids,
+                    channel_type=self.channel_type,
+                    tbg=self.tbg,
+                    to_packet=self.to_packet,
+                    with_signal=self.with_signal,
+                    with_signal_and_flush=self.with_signal_and_flush,
+                )
 
         return fused_operation
 
@@ -593,8 +731,8 @@ class PutOperation(BaseOperation):
         if self.channel_type == ChannelType.port:
             result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
-        if self.tbg_info is not None:
-            result["tbg_info"] = self.tbg_info.to_dict()
+        if self.tbg is not None:
+            result["tbg"] = self.tbg.to_dict(self.threadblock)
         return result
 
 
@@ -602,6 +740,8 @@ class PutOperation(BaseOperation):
 class ReduceOperation(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         local_src_buff: List[LocalChunk],
         local_dst_buff: List[LocalChunk],
         local_pkt_dst_buff: List[LocalChunk] = None,
@@ -611,7 +751,7 @@ class ReduceOperation(BaseOperation):
         put_channel_ids: List[int] = None,
         channel_type: ChannelType = ChannelType.none,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
-        tbg_info: ThreadBlockGroupInfo = None,
+        tbg: ThreadBlockGroup = None,
         packet: bool = False,
     ):
         local_pkt_dst_buff = local_pkt_dst_buff if local_pkt_dst_buff is not None else []
@@ -623,23 +763,23 @@ class ReduceOperation(BaseOperation):
         if len(remote_src_buff) == 0 and len(remote_dst_buff) == 0:
             if packet:
                 if len(local_pkt_dst_buff) == 0:
-                    super().__init__(Instruction.reduce_packet)
+                    super().__init__(rank, threadblock, Instruction.reduce_packet)
                 else:
-                    super().__init__(Instruction.reduce_copy_packet)
+                    super().__init__(rank, threadblock, Instruction.reduce_copy_packet)
             else:
-                super().__init__(Instruction.reduce)
+                super().__init__(rank, threadblock, Instruction.reduce)
         elif len(remote_src_buff) == 0:
             if packet:
                 if len(local_pkt_dst_buff) == 0:
-                    super().__init__(Instruction.reduce_send_packet)
+                    super().__init__(rank, threadblock, Instruction.reduce_send_packet)
                 else:
-                    super().__init__(Instruction.reduce_copy_send_packet)
+                    super().__init__(rank, threadblock, Instruction.reduce_copy_send_packet)
             else:
-                super().__init__(Instruction.reduce_send)
+                super().__init__(rank, threadblock, Instruction.reduce_send)
         elif len(remote_dst_buff) == 0 and not packet:
-            super().__init__(Instruction.read_reduce)
+            super().__init__(rank, threadblock, Instruction.read_reduce)
         elif not packet:
-            super().__init__(Instruction.read_reduce_send)
+            super().__init__(rank, threadblock, Instruction.read_reduce_send)
         else:
             raise RuntimeError(f"Reduce Operation invalid parameters.")
 
@@ -652,20 +792,54 @@ class ReduceOperation(BaseOperation):
         self.put_channel_ids = put_channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
-        self.tbg_info = tbg_info
+        self.tbg = tbg
         self.packet = packet
 
-    def local_data_access(self, sync_purpose=True):
+    def local_data_access(self, order_id, sync_purpose=True):
         data_access = []
         for i in range(len(self.local_src_buff)):
             chunk = self.local_src_buff[i]
             if not self.packet or i != 0 or not sync_purpose:
                 data_access.append(
-                    DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.read)
+                    DataAccess(
+                        self.rank,
+                        self.threadblock,
+                        self.id,
+                        order_id,
+                        (
+                            chunk.index + self.tbg.start_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else 0
+                        ),
+                        (
+                            chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                            if self.tbg is not None
+                            else chunk.size
+                        ),
+                        chunk.type,
+                        DataAccessType.read,
+                        self.tbg,
+                        self.pipeline_context,
+                    )
                 )
         for chunk in self.local_dst_buff:
             data_access.append(
-                DataAccess(self.id, chunk.index, chunk.index + chunk.size - 1, chunk.type, DataAccessType.write)
+                DataAccess(
+                    self.rank,
+                    self.threadblock,
+                    self.id,
+                    order_id,
+                    chunk.index + self.tbg.start_offset(self.threadblock, chunk.size) if self.tbg is not None else 0,
+                    (
+                        chunk.index + self.tbg.end_offset(self.threadblock, chunk.size)
+                        if self.tbg is not None
+                        else chunk.size
+                    ),
+                    chunk.type,
+                    DataAccessType.write,
+                    self.tbg,
+                    self.pipeline_context,
+                )
             )
         return data_access
 
@@ -681,118 +855,129 @@ class ReduceOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, ReduceOperation)
-            and (
-                self.name == Instruction.reduce
-                or self.name == Instruction.reduce_packet
-                or self.name == Instruction.read_reduce
-            )
-            and self.name == other.name
-            and self.local_src_buff[0] == other.local_src_buff[0]
-            and self.local_dst_buff == other.local_dst_buff
-            and self.channel_type == other.channel_type
-            and self.reduce_operation == other.reduce_operation
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff + other.local_src_buff[1:],
-                self.local_dst_buff,
-                remote_src_buff=self.remote_src_buff + other.remote_src_buff,
-                channel_ids=self.channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
-                reduce_operation=self.reduce_operation,
-                tbg_info=self.tbg_info,
-                packet=self.packet,
-            )
-        if (
-            isinstance(other, PutOperation)
-            and (
-                self.name == Instruction.reduce
-                or self.name == Instruction.reduce_send
-                or self.name == Instruction.read_reduce
-                or self.name == Instruction.read_reduce_send
-            )
-            and other.name == Instruction.put
-            and self.local_dst_buff[0] == other.src_buff[0]
-            and other.channel_type == ChannelType.memory
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff,
-                self.local_dst_buff,
-                remote_src_buff=self.remote_src_buff,
-                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
-                channel_ids=self.channel_ids,
-                put_channel_ids=self.put_channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
-                reduce_operation=self.reduce_operation,
-                tbg_info=self.tbg_info,
-                packet=self.packet,
-            )
-        if (
-            isinstance(other, PutOperation)
-            and (self.name == Instruction.reduce_packet or self.name == Instruction.reduce_send_packet)
-            and other.name == Instruction.put_packet
-            and self.local_dst_buff[0] == other.src_buff[0]
-            and other.channel_type == ChannelType.memory
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff,
-                self.local_dst_buff,
-                remote_src_buff=self.remote_src_buff,
-                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
-                channel_ids=self.channel_ids,
-                put_channel_ids=self.put_channel_ids + other.channel_ids,
-                channel_type=other.channel_type,
-                reduce_operation=self.reduce_operation,
-                tbg_info=self.tbg_info,
-                packet=self.packet,
-            )
-        if (
-            isinstance(other, CopyOperation)
-            and self.name == Instruction.reduce_packet
-            and other.name == Instruction.copy_packet
-            and self.local_dst_buff[0] == other.src_buff[0]
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff,
-                self.local_dst_buff,
-                local_pkt_dst_buff=other.dst_buff,
-                remote_src_buff=self.remote_src_buff,
-                remote_dst_buff=self.remote_dst_buff,
-                channel_ids=self.channel_ids,
-                put_channel_ids=self.put_channel_ids,
-                channel_type=self.channel_type,
-                reduce_operation=self.reduce_operation,
-                tbg_info=self.tbg_info,
-                packet=self.packet,
-            )
-        if (
-            isinstance(other, PutOperation)
-            and (self.name == Instruction.reduce_copy_packet or self.name == Instruction.reduce_copy_send_packet)
-            and (
-                (other.name == Instruction.put_packet and self.local_dst_buff[0] == other.src_buff[0])
-                or (other.name == Instruction.read_put_packet and self.local_pkt_dst_buff[0] == other.src_buff[0])
-            )
-            and other.channel_type == ChannelType.memory
-            and self.tbg_info == other.tbg_info
-        ):
-            fused_operation = ReduceOperation(
-                self.local_src_buff,
-                self.local_dst_buff,
-                local_pkt_dst_buff=self.local_pkt_dst_buff,
-                remote_src_buff=self.remote_src_buff,
-                remote_dst_buff=self.remote_dst_buff + other.dst_buff,
-                channel_ids=self.channel_ids,
-                put_channel_ids=self.put_channel_ids + other.channel_ids,
-                channel_type=other.channel_type,
-                reduce_operation=self.reduce_operation,
-                tbg_info=self.tbg_info,
-                packet=self.packet,
-            )
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, ReduceOperation)
+                and (
+                    self.name == Instruction.reduce
+                    or self.name == Instruction.reduce_packet
+                    or self.name == Instruction.read_reduce
+                )
+                and self.name == other.name
+                and self.local_src_buff[0] == other.local_src_buff[0]
+                and self.local_dst_buff == other.local_dst_buff
+                and self.channel_type == other.channel_type
+                and self.reduce_operation == other.reduce_operation
+                and self.tbg == other.tbg
+            ):
+                fused_operation = ReduceOperation(
+                    self.rank,
+                    self.threadblock,
+                    self.local_src_buff + other.local_src_buff[1:],
+                    self.local_dst_buff,
+                    remote_src_buff=self.remote_src_buff + other.remote_src_buff,
+                    channel_ids=self.channel_ids + other.channel_ids,
+                    channel_type=self.channel_type,
+                    reduce_operation=self.reduce_operation,
+                    tbg=self.tbg,
+                    packet=self.packet,
+                )
+            if (
+                isinstance(other, PutOperation)
+                and (
+                    self.name == Instruction.reduce
+                    or self.name == Instruction.reduce_send
+                    or self.name == Instruction.read_reduce
+                    or self.name == Instruction.read_reduce_send
+                )
+                and other.name == Instruction.put
+                and self.local_dst_buff[0] == other.src_buff[0]
+                and other.channel_type == ChannelType.memory
+                and self.tbg == other.tbg
+            ):
+                fused_operation = ReduceOperation(
+                    self.rank,
+                    self.threadblock,
+                    self.local_src_buff,
+                    self.local_dst_buff,
+                    remote_src_buff=self.remote_src_buff,
+                    remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                    channel_ids=self.channel_ids,
+                    put_channel_ids=self.put_channel_ids + other.channel_ids,
+                    channel_type=self.channel_type,
+                    reduce_operation=self.reduce_operation,
+                    tbg=self.tbg,
+                    packet=self.packet,
+                )
+            if (
+                isinstance(other, PutOperation)
+                and (self.name == Instruction.reduce_packet or self.name == Instruction.reduce_send_packet)
+                and other.name == Instruction.put_packet
+                and self.local_dst_buff[0] == other.src_buff[0]
+                and other.channel_type == ChannelType.memory
+                and self.tbg == other.tbg
+            ):
+                fused_operation = ReduceOperation(
+                    self.rank,
+                    self.threadblock,
+                    self.local_src_buff,
+                    self.local_dst_buff,
+                    remote_src_buff=self.remote_src_buff,
+                    remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                    channel_ids=self.channel_ids,
+                    put_channel_ids=self.put_channel_ids + other.channel_ids,
+                    channel_type=other.channel_type,
+                    reduce_operation=self.reduce_operation,
+                    tbg=self.tbg,
+                    packet=self.packet,
+                )
+            if (
+                isinstance(other, CopyOperation)
+                and self.name == Instruction.reduce_packet
+                and other.name == Instruction.copy_packet
+                and self.local_dst_buff[0] == other.src_buff[0]
+                and self.tbg_info == other.tbg_info
+            ):
+                fused_operation = ReduceOperation(
+                    self.rank,
+                    self.threadblock,
+                    self.local_src_buff,
+                    self.local_dst_buff,
+                    local_pkt_dst_buff=other.dst_buff,
+                    remote_src_buff=self.remote_src_buff,
+                    remote_dst_buff=self.remote_dst_buff,
+                    channel_ids=self.channel_ids,
+                    put_channel_ids=self.put_channel_ids,
+                    channel_type=self.channel_type,
+                    reduce_operation=self.reduce_operation,
+                    tbg_info=self.tbg_info,
+                    packet=self.packet,
+                )
+            if (
+                isinstance(other, PutOperation)
+                and (self.name == Instruction.reduce_copy_packet or self.name == Instruction.reduce_copy_send_packet)
+                and (
+                    (other.name == Instruction.put_packet and self.local_dst_buff[0] == other.src_buff[0])
+                    or (other.name == Instruction.read_put_packet and self.local_pkt_dst_buff[0] == other.src_buff[0])
+                )
+                and other.channel_type == ChannelType.memory
+                and self.tbg_info == other.tbg_info
+            ):
+                fused_operation = ReduceOperation(
+                    self.rank,
+                    self.threadblock,
+                    self.local_src_buff,
+                    self.local_dst_buff,
+                    local_pkt_dst_buff=self.local_pkt_dst_buff,
+                    remote_src_buff=self.remote_src_buff,
+                    remote_dst_buff=self.remote_dst_buff + other.dst_buff,
+                    channel_ids=self.channel_ids,
+                    put_channel_ids=self.put_channel_ids + other.channel_ids,
+                    channel_type=other.channel_type,
+                    reduce_operation=self.reduce_operation,
+                    tbg_info=self.tbg_info,
+                    packet=self.packet,
+                )
 
         return fused_operation
 
@@ -817,8 +1002,8 @@ class ReduceOperation(BaseOperation):
         if self.channel_type != ChannelType.none:
             result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
-        if self.tbg_info is not None:
-            result["tbg_info"] = self.tbg_info.to_dict()
+        if self.tbg is not None:
+            result["tbg"] = self.tbg.to_dict(self.threadblock)
         return result
 
 
@@ -826,6 +1011,8 @@ class ReduceOperation(BaseOperation):
 class GroupLoadReduce(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         buffer_type: BufferType,
         buffer_offset: int,
         size: int,
@@ -834,7 +1021,7 @@ class GroupLoadReduce(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        super().__init__(Instruction.group_load_reduce)
+        super().__init__(rank, threadblock, Instruction.group_load_reduce)
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
         self.size = size
@@ -849,23 +1036,26 @@ class GroupLoadReduce(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (
-            isinstance(other, GroupStore)
-            and self.buffer_type == other.buffer_type
-            and self.size == other.size
-            and self.dst_chunk == other.src_chunk
-            and self.channel_ids == other.channel_ids
-            and self.channel_type == other.channel_type
-        ):
-            fused_operation = GroupLoadReduceStore(
-                buffer_type=self.buffer_type,
-                size=self.size,
-                src_index=[self.buffer_offset],
-                dst_index=[other.buffer_offset],
-                channel_ids=self.channel_ids,
-                channel_type=self.channel_type,
-                reduce_operation=self.reduce_operation,
-            )
+        if self.basic_fusion_check(other):
+            if (
+                isinstance(other, GroupStore)
+                and self.buffer_type == other.buffer_type
+                and self.size == other.size
+                and self.dst_chunk == other.src_chunk
+                and self.channel_ids == other.channel_ids
+                and self.channel_type == other.channel_type
+            ):
+                fused_operation = GroupLoadReduceStore(
+                    self.rank,
+                    self.threadblock,
+                    buffer_type=self.buffer_type,
+                    size=self.size,
+                    src_index=[self.buffer_offset],
+                    dst_index=[other.buffer_offset],
+                    channel_ids=self.channel_ids,
+                    channel_type=self.channel_type,
+                    reduce_operation=self.reduce_operation,
+                )
 
         return fused_operation
 
@@ -885,6 +1075,8 @@ class GroupLoadReduce(BaseOperation):
 class GroupStore(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         src_chunk: Chunk,
         buffer_type: BufferType,
         buffer_offset: int,
@@ -892,7 +1084,7 @@ class GroupStore(BaseOperation):
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
     ):
-        super().__init__(Instruction.group_store)
+        super().__init__(rank, threadblock, Instruction.group_store)
         self.src_chunk = src_chunk
         self.buffer_type = buffer_type
         self.buffer_offset = buffer_offset
@@ -919,6 +1111,8 @@ class GroupStore(BaseOperation):
 class GroupLoadReduceStore(BaseOperation):
     def __init__(
         self,
+        rank,
+        threadblock: int,
         buffer_type: BufferType,
         size: int,
         src_index: List[int],
@@ -927,7 +1121,7 @@ class GroupLoadReduceStore(BaseOperation):
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
     ):
-        super().__init__(Instruction.group_load_reduce_store)
+        super().__init__(rank, threadblock, Instruction.group_load_reduce_store)
         self.buffer_type = buffer_type
         self.size = size
         self.src_index = src_index
@@ -961,8 +1155,8 @@ class GroupLoadReduceStore(BaseOperation):
 
 @dataclass
 class PipelineOperation(BaseOperation):
-    def __init__(self, unit_size: int, num_chunks: int, operations=None):
-        super().__init__(Instruction.pipeline)
+    def __init__(self, rank: int, threadblock: int, unit_size: int, num_chunks: int, operations=None):
+        super().__init__(rank, threadblock, Instruction.pipeline)
         self.unit_size = unit_size
         self.num_chunks = num_chunks
         self.operations = operations if operations is not None else []
@@ -1006,10 +1200,11 @@ class PipelineOperation(BaseOperation):
 
     def __add__(self, other):
         fused_operation = None
-        if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
-            other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
-        elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after) == SyncType.after:
-            fused_operation = self
+        if self.basic_fusion_check(other):
+            if (self.get_data_sync() & SyncType.after) == SyncType.after and check_data_sync_op(other):
+                other.data_sync = other.data_sync ^ (SyncType.before & other.data_sync)
+            elif isinstance(other, SyncOperation) and (self.get_data_sync() & SyncType.after) == SyncType.after:
+                fused_operation = self
 
         return fused_operation
 
@@ -1052,11 +1247,11 @@ def add_data_sync(operations):
         if operation.name in data_sync_operations and (
             operation.data_sync == SyncType.before or operation.data_sync == SyncType.both
         ):
-            result_operations.append(SyncOperation())
+            result_operations.append(SyncOperation(operation.rank, operation.threadblock))
         result_operations.append(operation)
         if operation.name in data_sync_operations and (
             operation.data_sync == SyncType.after or operation.data_sync == SyncType.both
         ):
-            result_operations.append(SyncOperation())
+            result_operations.append(SyncOperation(operation.rank, operation.threadblock))
 
     return result_operations

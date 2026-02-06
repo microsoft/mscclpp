@@ -5,10 +5,14 @@ from mscclpp.language.collectives import Collective
 from mscclpp.language.internal.globals import set_program
 from mscclpp.language.internal.types import BufferType, RemoteBuffer, ChannelType
 from mscclpp.language.internal.gpu import Gpu
+from mscclpp.language.internal.register import ChannelRegister, SemaphoreRegister
+from mscclpp.language.internal.op_dep_graph import OperationDependencyGraph
+from mscclpp.language.internal.buffer_access import BuffersAccess
 from mscclpp.language.channel import *
 from mscclpp.language.rank import Semaphore
 from mscclpp.language.collectives import *
 from mscclpp.language.utils import AlgoSpec, ReplicationPolicy
+from mscclpp.language.internal.operations import add_data_sync
 from typing import List
 import json
 
@@ -49,6 +53,7 @@ class CollectiveProgram:
         protocol: str = "Simple",
         instr_fusion: bool = True,
         auto_sync: bool = True,
+        intra_rank_sync: bool = True,
         replication_policy: ReplicationPolicy = ReplicationPolicy.interleaved,
         reuse_resources: bool = False,
         num_threads_per_block: int = 1024,
@@ -103,6 +108,8 @@ class CollectiveProgram:
         self.min_message_size = min_message_size
         self.max_message_size = max_message_size
         assert protocol == "Simple" or protocol == "LL", f"Given protocol: {protocol}. Must be either Simple, LL"
+        self.op_dep_dag = OperationDependencyGraph()
+        self.buffers_access = BuffersAccess(num_ranks, intra_rank_sync)
         self.buffers = collective.init_buffers()
         self.gpus: List[Gpu] = []
         for rank in range(self.num_ranks):
@@ -182,6 +189,9 @@ class CollectiveProgram:
         Semaphore.reset()
         set_program(None)
 
+    def disable_inter_tb_sync(self):
+        self.buffers_access.intra_rank_sync = False
+
     def add_channel(self, channel):
         if channel.channel_type == ChannelType.switch:
             for gpu in channel.rank_group.ranks:
@@ -192,22 +202,37 @@ class CollectiveProgram:
     def setup_channel(self, tb, channel):
         tb_channel_ids = []
         tb_channel_ids.append(self.gpus[channel.src_rank].setup_channel(tb, channel))
+        for tb_channel_id in tb_channel_ids:
+            ChannelRegister.add_channel(channel.src_rank, tb, tb_channel_id, channel)
         return tb_channel_ids
 
     def setup_remote_chunk(self, rank, tb, remote_chunk: RemoteBuffer, channel_access: ChannelType):
         return self.gpus[rank].add_remote_buffer(tb, remote_chunk, channel_access)
 
     def add_semaphore(self, semaphore):
+        SemaphoreRegister.add_semaphore(semaphore)
         self.gpus[semaphore.rank].add_semaphore(semaphore)
 
     def add_operation(self, rank, tb, operation):
         if self.loop_context != None:
-            self.loop_context.add_operation(rank, tb, operation)
-        else:
-            self.gpus[rank].add_operation(tb, operation)
+            self.loop_context.process_operation([operation])
+        self.op_dep_dag.add_operation(operation)
+
+    def add_tbg_operation(self, operations):
+        if self.loop_context != None:
+            self.loop_context.process_operation(operations)
+        self.op_dep_dag.add_tbg_operation(operations)
 
     def post_process_operations(self):
-        for gpu in self.gpus:
+        self.op_dep_dag.add_semaphore_dependency()
+        self.op_dep_dag.fusion_operations()
+        list_op = self.op_dep_dag.get_execution_order()
+        list_op = add_data_sync(list_op)
+        list_op = self.buffers_access.process_operations(list_op)
+        for op in list_op:
+            self.gpus[op.rank].add_operation(op.threadblock, op)
+
+        """ for gpu in self.gpus:
             if self.instr_fusion:
                 gpu.optimize_operations()
             gpu.adding_data_sync()
@@ -217,7 +242,7 @@ class CollectiveProgram:
                 self.instances,
                 self.get_default_replication_policy_function(),
                 self.get_buffer_replication_policy_function(),
-            )
+            ) """
 
     def get_default_replication_policy_function(self):
         return lambda value, instance, num_instances: value * num_instances + instance
