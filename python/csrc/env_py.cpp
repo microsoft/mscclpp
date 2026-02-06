@@ -11,7 +11,7 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_env(nb::module_& m) {
-  nb::class_<Env>(m, "Env")
+  nb::class_<Env>(m, "CppEnv")
       .def_ro("debug", &Env::debug)
       .def_ro("debug_subsys", &Env::debugSubsys)
       .def_ro("debug_file", &Env::debugFile)
@@ -20,7 +20,7 @@ void register_env(nb::module_& m) {
       .def_ro("socket_family", &Env::socketFamily)
       .def_ro("socket_ifname", &Env::socketIfname)
       .def_ro("comm_id", &Env::commId)
-      .def_ro("execution_plan_dir", &Env::executionPlanDir)
+      .def_ro("cache_dir", &Env::cacheDir)
       .def_ro("npkit_dump_dir", &Env::npkitDumpDir)
       .def_ro("cuda_ipc_use_default_stream", &Env::cudaIpcUseDefaultStream);
 

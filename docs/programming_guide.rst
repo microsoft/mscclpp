@@ -12,3 +12,5 @@ This section provides advanced topics and best practices for using MSCCL++. It i
    guide/advanced-connections
    guide/cpp-examples
    guide/customized-algorithm-with-nccl-api
+   guide/mscclpp-dsl-integration
+   guide/mscclpp-torch-integration

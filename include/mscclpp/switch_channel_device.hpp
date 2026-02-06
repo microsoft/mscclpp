@@ -80,6 +80,30 @@ struct SwitchChannelDeviceHandle {
           : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
           : "l"(ptr)
           : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.e4m3x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e4m3x4 {%0,%1}, [%2];"
+          : "=r"(val.words[0]), "=r"(val.words[1])
+          : "l"(ptr)
+          : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x16>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e4m3x4 {%0,%1,%2,%3}, [%4];"
+          : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+          : "l"(ptr)
+          : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x4>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.e5m2x4 %0, [%1];" : "=r"(val.words[0]) : "l"(ptr) : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x8>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v2.e5m2x4 {%0,%1}, [%2];"
+          : "=r"(val.words[0]), "=r"(val.words[1])
+          : "l"(ptr)
+          : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x16>) {
+      asm("multimem.ld_reduce.relaxed.sys.global.add.v4.e5m2x4 {%0,%1,%2,%3}, [%4];"
+          : "=r"(val.words[0]), "=r"(val.words[1]), "=r"(val.words[2]), "=r"(val.words[3])
+          : "l"(ptr)
+          : "memory");
     } else {
       static_assert(dependentFalse<VectorType>, "Not supported type");
     }
@@ -122,6 +146,26 @@ struct SwitchChannelDeviceHandle {
                    : "memory");
     } else if constexpr (std::is_same_v<VectorType, bf16x8>) {
       asm volatile("multimem.st.relaxed.sys.global.v4.bf16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
+                   "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
+                   : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
+      asm volatile("multimem.st.relaxed.sys.global.e4m3x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
+      asm volatile("multimem.st.relaxed.sys.global.v2.e4m3x4  [%0], {%1,%2};" ::"l"(ptr), "r"(val.words[0]),
+                   "r"(val.words[1])
+                   : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x16>) {
+      asm volatile("multimem.st.relaxed.sys.global.v4.e4m3x4 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
+                   "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
+                   : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x4>) {
+      asm volatile("multimem.st.relaxed.sys.global.e5m2x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x8>) {
+      asm volatile("multimem.st.relaxed.sys.global.v2.e5m2x4  [%0], {%1,%2};" ::"l"(ptr), "r"(val.words[0]),
+                   "r"(val.words[1])
+                   : "memory");
+    } else if constexpr (std::is_same_v<VectorType, f8_e5m2x16>) {
+      asm volatile("multimem.st.relaxed.sys.global.v4.e5m2x4 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
     } else {

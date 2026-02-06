@@ -388,13 +388,13 @@ struct EndpointConfig {
       HostNoAtomic  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
     };
 
-    static const int DefaultPort = -1;
-    static const int DefaultGidIndex = 0;
-    static const int DefaultMaxCqSize = 1024;
-    static const int DefaultMaxCqPollNum = 1;
-    static const int DefaultMaxSendWr = 8192;
-    static const int DefaultMaxRecvWr = 16;
-    static const int DefaultMaxWrPerSend = 64;
+    static constexpr int DefaultPort = -1;
+    static constexpr int DefaultGidIndex = 0;
+    static constexpr int DefaultMaxCqSize = 1024;
+    static constexpr int DefaultMaxCqPollNum = 1;
+    static constexpr int DefaultMaxSendWr = 8192;
+    static constexpr int DefaultMaxRecvWr = 16;
+    static constexpr int DefaultMaxWrPerSend = 64;
 
     /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
     int deviceIndex;

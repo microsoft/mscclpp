@@ -15,9 +15,9 @@ from mscclpp import (
     Transport,
 )
 from mscclpp.utils import GpuBuffer
-import mscclpp.comm as mscclpp_comm
 
-def create_connection(group: mscclpp_comm.CommGroup, transport: str):
+
+def create_connection(group: mscclpp.CommGroup, transport: str):
     remote_nghrs = list(range(group.nranks))
     remote_nghrs.remove(group.my_rank)
     if transport == "NVLink":
@@ -30,7 +30,7 @@ def create_connection(group: mscclpp_comm.CommGroup, transport: str):
     return connections
 
 if __name__ == "__main__":
-    mscclpp_group = mscclpp_comm.CommGroup(MPI.COMM_WORLD)
+    mscclpp_group = mscclpp.CommGroup(MPI.COMM_WORLD)
     connections = create_connection(mscclpp_group, "NVLink")
     nelems = 1024
     memory = GpuBuffer(nelem, dtype=cp.int32)

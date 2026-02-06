@@ -72,8 +72,8 @@ steps:
       parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
         cd /root/mscclpp;                                             \
-        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-        ./build/test/unit_tests"'
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
+        ./build/bin/unit_tests"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -94,10 +94,10 @@ steps:
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
         export PATH=/usr/local/mpi/bin:\$PATH;                        \
         cd /root/mscclpp;                                             \
-        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH; \
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/test/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/test/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/test/mp_unit_tests"'
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests;  \
+        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests;  \
+        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -117,9 +117,9 @@ steps:
       parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
         export PATH=/usr/local/mpi/bin:\$PATH                          \
-        export LD_LIBRARY_PATH=/root/mscclpp/build:\$LD_LIBRARY_PATH;  \
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                              \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x LD_LIBRARY_PATH=/usr/local/cuda/compat:$LD_LIBRARY_PATH -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

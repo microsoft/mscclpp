@@ -1,10 +1,12 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
 import os
 import cupy as cp
 import ctypes
 from mscclpp import Transport, ProxyService, MemoryDevice2DeviceSemaphore
-import mscclpp.comm as mscclpp_comm
-from mscclpp.utils import KernelBuilder, GpuBuffer, pack
-
+from mscclpp import CommGroup, GpuBuffer
+from mscclpp.utils import KernelBuilder, pack
 
 IB_TRANSPORTS = [
     Transport.IB0,
@@ -32,7 +34,7 @@ def type_to_str(dtype):
 class MscclppAllReduce1:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         memory: cp.ndarray,
         read_only: int = 1,
         block_size: int = 1024,
@@ -98,7 +100,7 @@ class MscclppAllReduce1:
 class MscclppAllReduce2:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         memory: cp.ndarray,
         memory_out: cp.ndarray,
         block_size: int = 512,
@@ -165,7 +167,7 @@ class MscclppAllReduce2:
 class MscclppAllReduce3:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         memory: cp.ndarray,
         proxy_service: ProxyService,
         block_size: int = 1024,
@@ -235,7 +237,7 @@ class MscclppAllReduce3:
 class MscclppAllReduce4:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         memory: cp.ndarray,
         nranks_per_node: int,
         proxy_service: ProxyService,
@@ -336,7 +338,7 @@ class MscclppAllReduce4:
 class MscclppAllReduce5:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         memory: cp.ndarray,
         memory_out: cp.ndarray,
         nranks_per_node: int,
@@ -429,7 +431,7 @@ class MscclppAllReduce5:
 class MscclppAllReduce6:
     def __init__(
         self,
-        group: mscclpp_comm.CommGroup,
+        group: CommGroup,
         nelem: int,
         memory_dtype: cp.dtype,
         block_size: int = 1024,
