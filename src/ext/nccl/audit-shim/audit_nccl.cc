@@ -8,11 +8,11 @@
 
 extern "C" __attribute__((visibility("default"))) unsigned int la_version(unsigned int) { return LAV_CURRENT; }
 
-extern "C" __attribute__((visibility("default"))) char *la_objsearch(const char *name, uintptr_t *, unsigned int) {
-  const char *library = "libmscclpp_nccl.so";
+extern "C" __attribute__((visibility("default"))) char* la_objsearch(const char* name, uintptr_t*, unsigned int) {
+  const char* library = "libmscclpp_nccl.so";
   if (strcmp(name, "libnccl.so.2") && strcmp(name, "libnccl.so") && strcmp(name, "librccl.so") &&
       strcmp(name, "librccl.so.1")) {
-    return (char *)name;
+    return (char*)name;
   }
-  return (char *)library;
+  return (char*)library;
 }

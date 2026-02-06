@@ -5,3 +5,4 @@ __pycache__
 *.so
 .pytest_cache/
 _codeql_detected_source_root
+docs/_static/versions.js

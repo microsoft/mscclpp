@@ -34,5 +34,5 @@ jobs:
           cd docs
           rm -rf doxygen _build py_api
           doxygen
-          make html
+          make multiversion
           touch _build/html/.nojekyll
