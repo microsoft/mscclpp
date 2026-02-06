@@ -154,8 +154,7 @@ void register_core(nb::module_& m) {
 
   nb::class_<EndpointConfig::Ib>(m, "CppEndpointConfigIb")
       .def(nb::init<>())
-      .def(nb::init<int, int, int, int, int, int, int, int, EndpointConfig::Ib::Mode>(),
-           nb::arg("device_index") = -1,
+      .def(nb::init<int, int, int, int, int, int, int, int, EndpointConfig::Ib::Mode>(), nb::arg("device_index") = -1,
            nb::arg("port") = EndpointConfig::Ib::DefaultPort,
            nb::arg("gid_index") = EndpointConfig::Ib::DefaultGidIndex,
            nb::arg("max_cq_size") = EndpointConfig::Ib::DefaultMaxCqSize,
