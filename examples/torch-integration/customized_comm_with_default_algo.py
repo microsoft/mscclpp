@@ -15,8 +15,11 @@ import ipaddress
 def load_algorithms(scratch_buffer: torch.tensor, flag_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
     collection_builder = mscclpp.ext.AlgorithmCollectionBuilder()
     return collection_builder.build_default_algorithms(
-        scratch_buffer=scratch_buffer.data_ptr(), scratch_buffer_size=scratch_buffer.nbytes,
-        flag_buffer=flag_buffer.data_ptr(), flag_buffer_size=flag_buffer.nbytes, rank=rank
+        scratch_buffer=scratch_buffer.data_ptr(),
+        scratch_buffer_size=scratch_buffer.nbytes,
+        flag_buffer=flag_buffer.data_ptr(),
+        flag_buffer_size=flag_buffer.nbytes,
+        rank=rank,
     )
 
 

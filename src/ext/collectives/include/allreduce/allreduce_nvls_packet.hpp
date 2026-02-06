@@ -11,7 +11,10 @@ namespace collective {
 class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
  public:
   AllreduceNvlsPacket(uintptr_t scratchBuffer, size_t scratchBufferSize, uintptr_t flagBuffer, size_t flagBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize), flagBuffer_(flagBuffer), flagBufferSize_(flagBufferSize){};
+      : scratchBuffer_((void*)scratchBuffer),
+        scratchBufferSize_(scratchBufferSize),
+        flagBuffer_(flagBuffer),
+        flagBufferSize_(flagBufferSize){};
   std::shared_ptr<mscclpp::Algorithm> build() override;
 
  private:

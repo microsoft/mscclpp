@@ -147,8 +147,8 @@ struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
-                          cudaStream_t stream, void* flags, uint32_t flagBufferSize, uint32_t numScratchBuff, int nBlocks = 0,
-                          int nThreadsPerBlock = 0) {
+                          cudaStream_t stream, void* flags, uint32_t flagBufferSize, uint32_t numScratchBuff,
+                          int nBlocks = 0, int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
     // Optimize the number of blocks to be multiple of (worldSize - 1)
@@ -275,7 +275,8 @@ AlgorithmCtxKey AllreducePacket::generateAllreduceContextKey(const void* input, 
 }
 
 std::shared_ptr<Algorithm> AllreducePacket::build() {
-  auto self = std::make_shared<AllreducePacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_, flagBuffer_, flagBufferSize_);
+  auto self = std::make_shared<AllreducePacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_,
+                                                flagBuffer_, flagBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,

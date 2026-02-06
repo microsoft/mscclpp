@@ -14,7 +14,7 @@ __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                         [[maybe_unused]] size_t nelems, [[maybe_unused]] size_t scratchBufferSize,
-                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags, 
+                        [[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] void* flags,
                         [[maybe_unused]] uint32_t flagBufferSize) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
@@ -75,8 +75,7 @@ struct AllreduceNvlsPacketAdapter {
   }
 };
 
-void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator>) {
-}
+void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator>) {}
 
 AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
@@ -128,7 +127,8 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
 }
 
 std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
-  auto self = std::make_shared<AllreduceNvlsPacket>((uintptr_t)scratchBuffer_, scratchBufferSize_, flagBuffer_, flagBufferSize_);
+  auto self = std::make_shared<AllreduceNvlsPacket>((uintptr_t)scratchBuffer_, scratchBufferSize_, flagBuffer_,
+                                                    flagBufferSize_);
   return std::make_shared<mscclpp::NativeAlgorithm>(
       "default_allreduce_nvls_packet", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
