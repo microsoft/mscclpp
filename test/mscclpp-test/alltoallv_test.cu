@@ -3,6 +3,7 @@
 
 // AllToAllV test - tests variable-length alltoall operations
 // This test validates the alltoallv kernel that handles variable element counts per rank.
+// Uses the kernel implementations from src/ext/collectives/include/alltoallv/
 
 #include <cstdint>
 #include <cstring>
@@ -11,15 +12,11 @@
 
 #include "common.hpp"
 
-#if defined(__HIP_PLATFORM_AMD__)
-#define WARP_SIZE 64
-#else
-#define WARP_SIZE 32
-#endif
+// Include the alltoallv kernel implementations from src/ext/collectives
+#include "alltoallv/alltoallv_kernel.hpp"
 
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
-__constant__ DeviceHandle<mscclpp::PortChannel> constPortChansV[16];
 __device__ mscclpp::DeviceSyncer deviceSyncerV;
 
 static void* localRecvBuffV;
@@ -31,117 +28,8 @@ static size_t* d_sendDispls;
 static size_t* d_recvCounts;
 static size_t* d_recvDispls;
 
-/**
- * AllToAllV kernel implementation
- *
- * Each rank sends sendCounts[i] bytes to rank i at sendDispls[i] offset,
- * and receives recvCounts[i] bytes from rank i at recvDispls[i] offset.
- *
- * Uses ring-based exchange pattern to avoid deadlocks.
- */
-__global__ void __launch_bounds__(1024)
-    alltoallv0(int rank, int worldSize,
-               const void* sendBuff, void* recvBuff,
-               const size_t* sendCounts, const size_t* sendDispls,
-               const size_t* recvCounts, const size_t* recvDispls) {
-  int tid = threadIdx.x;
-  int nPeers = worldSize - 1;
-
-  // Step 1: Copy local data (rank's own portion)
-  if (tid == 0 && sendCounts[rank] > 0) {
-    const char* src = (const char*)sendBuff + sendDispls[rank];
-    char* dst = (char*)recvBuff + recvDispls[rank];
-    memcpy(dst, src, sendCounts[rank]);
-  }
-  __syncthreads();
-
-  // Step 2: Each warp handles one peer for sending
-  int warpId = tid / WARP_SIZE;
-  int laneId = tid % WARP_SIZE;
-
-  if (warpId < nPeers && laneId == 0) {
-    // Determine which peer this warp handles
-    int peer = warpId < rank ? warpId : warpId + 1;
-    int chanIdx = warpId;
-
-    if (sendCounts[peer] > 0) {
-      constPortChansV[chanIdx].putWithSignal(
-          recvDispls[rank],       // dst offset in peer's buffer
-          sendDispls[peer],       // src offset in our buffer
-          sendCounts[peer]        // size
-      );
-    }
-  }
-  __syncthreads();
-
-  // Step 3: Flush all pending operations
-  if (warpId < nPeers && laneId == 0) {
-    int peer = warpId < rank ? warpId : warpId + 1;
-    if (sendCounts[peer] > 0) {
-      constPortChansV[warpId].flush();
-    }
-  }
-  __syncthreads();
-
-  // Step 4: Wait for all incoming data
-  if (warpId < nPeers && laneId == 0) {
-    int peer = warpId < rank ? warpId : warpId + 1;
-    if (recvCounts[peer] > 0) {
-      constPortChansV[warpId].wait();
-    }
-  }
-  __syncthreads();
-}
-
-/**
- * Ring-based AllToAllV kernel for larger world sizes
- *
- * Uses step-by-step ring pattern to exchange data, sending to (rank+step) and
- * receiving from (rank-step) in each step. Single block to avoid concurrent
- * access to the same port channels.
- */
-__global__ void __launch_bounds__(1024)
-    alltoallv1(int rank, int worldSize,
-               const void* sendBuff, void* recvBuff,
-               const size_t* sendCounts, const size_t* sendDispls,
-               const size_t* recvCounts, const size_t* recvDispls) {
-  // Copy local data first
-  if (threadIdx.x == 0) {
-    if (sendCounts[rank] > 0) {
-      const char* src = (const char*)sendBuff + sendDispls[rank];
-      char* dst = (char*)recvBuff + recvDispls[rank];
-      memcpy(dst, src, sendCounts[rank]);
-    }
-  }
-  __syncthreads();
-
-  // Ring-based exchange - single thread handles the communication
-  // to avoid race conditions on port channels
-  if (threadIdx.x == 0) {
-    for (int step = 1; step < worldSize; step++) {
-      int sendPeer = (rank + step) % worldSize;
-      int recvPeer = (rank - step + worldSize) % worldSize;
-
-      int sendChanIdx = sendPeer < rank ? sendPeer : sendPeer - 1;
-      int recvChanIdx = recvPeer < rank ? recvPeer : recvPeer - 1;
-
-      // Send data to sendPeer (non-blocking put with signal)
-      if (sendCounts[sendPeer] > 0) {
-        constPortChansV[sendChanIdx].putWithSignal(
-            recvDispls[rank],       // dst offset in peer's buffer
-            sendDispls[sendPeer],   // src offset in our buffer
-            sendCounts[sendPeer]    // size
-        );
-        constPortChansV[sendChanIdx].flush();
-      }
-
-      // Wait for data from recvPeer
-      if (recvCounts[recvPeer] > 0) {
-        constPortChansV[recvChanIdx].wait();
-      }
-    }
-  }
-}
+// Device array for port channels (used by library kernels)
+static DeviceHandle<mscclpp::PortChannel>* d_portChannels;
 
 class AllToAllVTestColl : public BaseTestColl {
  public:
@@ -174,17 +62,23 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   CUDATHROW(cudaMemcpyToSymbol(deviceSyncerV, &syncer, sizeof(mscclpp::DeviceSyncer)));
 
   if (kernelNum == 0) {
-    int nThreads = (worldSize - 1) * WARP_SIZE;
+    // Use parallel warp-based kernel from library
+    int nThreads = (worldSize - 1) * 32;  // One warp per peer
+#if defined(__HIP_PLATFORM_AMD__)
+    nThreads = (worldSize - 1) * 64;
+#endif
     if (nThreads < 32) nThreads = 32;
     if (nThreads > 1024) nThreads = 1024;
-    alltoallv0<<<1, nThreads, 0, stream>>>(
+    mscclpp::collective::alltoallvKernel<<<1, nThreads, 0, stream>>>(
+        d_portChannels,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls);
   } else if (kernelNum == 1) {
-    // Single block, single thread for ring-based serialized communication
-    alltoallv1<<<1, 32, 0, stream>>>(
+    // Use ring-based kernel from library
+    mscclpp::collective::alltoallvRingKernel<<<1, 32, 0, stream>>>(
+        d_portChannels,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
@@ -275,8 +169,8 @@ void AllToAllVTestColl::setupCollTest(size_t size) {
 
 std::vector<KernelRestriction> AllToAllVTestColl::getKernelRestrictions() {
   return {
-      {0, "alltoallv0", true, 1, 4 * worldSize_},
-      {1, "alltoallv1", true, 1, 4 * worldSize_}
+      {0, "alltoallvKernel", true, 1, 4 * worldSize_},
+      {1, "alltoallvRingKernel", true, 1, 4 * worldSize_}
   };
 }
 
@@ -318,17 +212,19 @@ void AllToAllVTestEngine::allocateBuffer() {
   CUDATHROW(cudaMalloc(&d_sendDispls, args_.totalRanks * sizeof(size_t)));
   CUDATHROW(cudaMalloc(&d_recvCounts, args_.totalRanks * sizeof(size_t)));
   CUDATHROW(cudaMalloc(&d_recvDispls, args_.totalRanks * sizeof(size_t)));
+
+  // Allocate device array for port channels
+  CUDATHROW(cudaMalloc(&d_portChannels, args_.totalRanks * sizeof(DeviceHandle<mscclpp::PortChannel>)));
 }
 
 void AllToAllVTestEngine::setupConnections() {
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
   setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
 
-  if (portChannels.size() > sizeof(constPortChansV) / sizeof(DeviceHandle<mscclpp::PortChannel>)) {
-    throw std::runtime_error("Too many port channels for alltoallv test");
-  }
-  CUDATHROW(cudaMemcpyToSymbol(constPortChansV, portChannels.data(),
-                               sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size()));
+  // Copy port channels to device memory for use by library kernels
+  CUDATHROW(cudaMemcpy(d_portChannels, portChannels.data(),
+                       sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size(),
+                       cudaMemcpyHostToDevice));
 }
 
 std::vector<void*> AllToAllVTestEngine::getSendBuff() { return {sendBuff_.get()}; }
