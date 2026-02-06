@@ -4,7 +4,6 @@
 #include "endpoint.hpp"
 
 #include <algorithm>
-#include <cstring>
 #include <mscclpp/env.hpp>
 
 #include "api.h"
