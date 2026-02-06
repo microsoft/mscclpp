@@ -35,6 +35,10 @@ set -e
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${ROOT_DIR} ${DST_DIR}
 
+if [ "${PLATFORM}" == "rocm" ]; then
+  sudo modprobe amdgpu
+fi
+
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
