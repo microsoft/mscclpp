@@ -264,12 +264,6 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   }
 
   if (request.collective == "allreduce") {
-    // Blackwell architecture (compute capability 10.x) has special algorithm selection
-    if (deviceComputeCapability.first == 10) {
-      return mscclpp::nccl::selectSingleNodeAllreduceBlackwell(algoMap, request, config);
-    }
-
-    // Non-Blackwell architectures
     return mscclpp::nccl::selectSingleNodeAllreduce(algoMap, request, config);
   }
 

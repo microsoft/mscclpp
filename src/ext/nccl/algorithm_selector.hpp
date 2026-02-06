@@ -22,12 +22,7 @@ struct AlgorithmSelectorConfig {
   bool ncclDlopenSharedLib;
 };
 
-/// Select an algorithm for single-node allreduce on Blackwell architecture
-std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
-    const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
-    const AlgorithmSelectorConfig& config);
-
-/// Select an algorithm for single-node allreduce on non-Blackwell architectures
+/// Select an algorithm for single-node allreduce
 std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
     const AlgorithmSelectorConfig& config);

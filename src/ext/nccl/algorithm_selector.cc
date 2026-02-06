@@ -49,7 +49,7 @@ bool matchExecutionPlan(std::shared_ptr<DslAlgorithm> algo, const CollectiveRequ
   return result;
 }
 
-std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
+static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
     const AlgorithmSelectorConfig& config) {
   const size_t messageSize = request.messageSize;
@@ -84,6 +84,11 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
 std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
     const AlgorithmSelectorConfig& config) {
+  // Use Blackwell-specific selection for compute capability 10.x
+  if (config.computeCapability.first == 10) {
+    return selectSingleNodeAllreduceBlackwell(algoMap, request, config);
+  }
+
   const size_t messageSize = request.messageSize;
 
   // Determine NVLS availability based on data type and device capability

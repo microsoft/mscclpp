@@ -107,7 +107,8 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                size_t outputSize,
                mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
-        [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype) {
+        [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype,
+               bool symmetricMemory) {
           return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
                                                    static_cast<ncclDataType_t>(dtype), symmetricMemory);
         });
