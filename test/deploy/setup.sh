@@ -30,6 +30,7 @@ for i in {1..5}; do
     echo "Attempt $i failed, retrying..."
     sleep 5
 done
+sleep 30m
 make -C /root/mscclpp/tools/peer-access-test clean
 if [ "$peer_access_success" = false ]; then
     echo "Error: peer_access_test failed after 5 attempts"
