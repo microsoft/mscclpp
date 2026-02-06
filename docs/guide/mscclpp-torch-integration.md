@@ -119,8 +119,7 @@ class CustomizedComm:
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
 
         # Allocate flag buffer (required for packet-based algorithms)
-        flag_dlpack = mscclpp.RawGpuBuffer(128 * 4).to_dlpack(data_type=str(torch.uint8))
-        self.flag_buffer = torch.utils.dlpack.from_dlpack(flag_dlpack)
+        self.flag_buffer = torch.ones(128, dtype=torch.uint32, device='cuda')
 
         # Load and select algorithms
         algorithms = load_algorithms(self.scratch_buffer, self.flag_buffer, comm.my_rank)
