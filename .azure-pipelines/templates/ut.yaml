@@ -76,6 +76,7 @@ steps:
       : > azureuser@10.0.0.4
       tail -f azureuser@10.0.0.4 &
       CHILD_PID=$!
+      sleep 30m
       parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
         cd /root/mscclpp;                                             \
