@@ -15,9 +15,6 @@ if [ "${PLATFORM}" == "cuda" ]; then
     for i in $(seq 0 $(( $(nvidia-smi -L | wc -l) - 1 ))); do
         nvidia-smi -ac $(nvidia-smi --query-gpu=clocks.max.memory,clocks.max.sm --format=csv,noheader,nounits -i $i | sed 's/\ //') -i $i
     done
-elif [ "${PLATFORM}" == "rocm" ]; then
-    # Wait for ROCm to be ready
-    sleep 60
 fi
 
 make -C /root/mscclpp/tools/peer-access-test
@@ -30,7 +27,6 @@ for i in {1..5}; do
     echo "Attempt $i failed, retrying..."
     sleep 5
 done
-sleep 30m
 make -C /root/mscclpp/tools/peer-access-test clean
 if [ "$peer_access_success" = false ]; then
     echo "Error: peer_access_test failed after 5 attempts"
