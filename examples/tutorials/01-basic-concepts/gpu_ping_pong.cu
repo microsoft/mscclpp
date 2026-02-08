@@ -9,7 +9,7 @@
 #include <sstream>
 
 template <typename... Args>
-void log(Args &&...args) {
+void log(Args&&... args) {
   std::stringstream ss;
   (ss << ... << args);
   ss << std::endl;
@@ -23,7 +23,7 @@ __device__ void spin_cycles(unsigned long long cycles) {
   }
 }
 
-__global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
+__global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle* devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedWait();
@@ -34,7 +34,7 @@ __global__ void gpuKernel0(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, in
   }
 }
 
-__global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle *devHandle, int iter) {
+__global__ void gpuKernel1(mscclpp::BaseMemoryChannelDeviceHandle* devHandle, int iter) {
   if (threadIdx.x + blockIdx.x * blockDim.x == 0) {
     for (int i = 0; i < iter; ++i) {
       devHandle->relaxedSignal();
@@ -88,7 +88,7 @@ int main() {
   mscclpp::Semaphore sema0(/*localSemaphoreStub*/ semaStub0, /*remoteSemaphoreStub*/ semaStub1);
   mscclpp::BaseMemoryChannel memChan0(sema0);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle0 = memChan0.deviceHandle();
-  void *devHandle0;
+  void* devHandle0;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle0, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle0, &memChanHandle0, sizeof(memChanHandle0), cudaMemcpyHostToDevice));
 
@@ -98,14 +98,14 @@ int main() {
   mscclpp::Semaphore sema1(/*localSemaphoreStub*/ semaStub1, /*remoteSemaphoreStub*/ semaStub0);
   mscclpp::BaseMemoryChannel memChan1(sema1);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
-  void *devHandle1;
+  void* devHandle1;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle1, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle1, &memChanHandle1, sizeof(memChanHandle1), cudaMemcpyHostToDevice));
 
   log("GPU 0: Launching gpuKernel0 ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
-  gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle *>(devHandle0), iter);
+  gpuKernel0<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle*>(devHandle0), iter);
   MSCCLPP_CUDATHROW(cudaGetLastError());
 
   log("GPU 1: Launching gpuKernel1 ...");
@@ -115,7 +115,7 @@ int main() {
   MSCCLPP_CUDATHROW(cudaEventCreate(&start));
   MSCCLPP_CUDATHROW(cudaEventCreate(&end));
   MSCCLPP_CUDATHROW(cudaEventRecord(start));
-  gpuKernel1<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle *>(devHandle1), iter);
+  gpuKernel1<<<1, 1>>>(reinterpret_cast<mscclpp::BaseMemoryChannelDeviceHandle*>(devHandle1), iter);
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaEventRecord(end));
   MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
