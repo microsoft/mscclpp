@@ -18,26 +18,15 @@ if [ "${PLATFORM}" == "cuda" ]; then
 fi
 
 make -C /root/mscclpp/tools/peer-access-test
-peer_access_success=false
-for i in {1..5}; do
-    if /root/mscclpp/tools/peer-access-test/peer_access_test; then
-        peer_access_success=true
-        break
-    fi
-    echo "Attempt $i failed, retrying..."
-    sleep 5
-done
+/root/mscclpp/tools/peer-access-test/peer_access_test
 make -C /root/mscclpp/tools/peer-access-test clean
-if [ "$peer_access_success" = false ]; then
-    echo "Error: peer_access_test failed after 5 attempts"
-    exit 1
-fi
 
 if [[ "${CUDA_VERSION}" == *"11."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda11.txt
 elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
     pip3 install -r /root/mscclpp/python/requirements_cuda12.txt
 fi
+
 if [ "${PLATFORM}" == "rocm" ]; then
     export CXX=/opt/rocm/bin/hipcc
 fi
