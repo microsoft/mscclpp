@@ -69,13 +69,11 @@ docker build -t ${TAG_TMP} \
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
-    docker tag ${TAG_TMP} ${TAG_BASE}
-    docker rmi --no-prune ${TAG_TMP}
 else
     echo "Building CUDA base image..."
-    docker tag ${TAG_TMP} ${TAG_BASE}
-    docker rmi --no-prune ${TAG_TMP}
 fi
+docker tag ${TAG_TMP} ${TAG_BASE}
+docker rmi --no-prune ${TAG_TMP}
 
 docker build -t ${TAG_BASE_DEV} \
     -f docker/base-dev-x.dockerfile \
