@@ -145,7 +145,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
-  AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<AllpairAdapter, true>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
