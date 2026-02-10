@@ -298,11 +298,11 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
   ChannelType chType = op.channelType;
   if (chType == ChannelType::MEMORY) {
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
+    PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
+      PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
+      PacketType pkt(data, flag_);
       for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
-        PacketType pkt(data, flag_);
         size_t offset = (scratchOffset_ + (dstOffsets[idx] << 1)) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
@@ -312,10 +312,8 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
     // Ensuring Data Is Ready
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
-      for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        pkts[pktIdx].read(flag_);
-      }
+      PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
+      pkts[pktIdx].read(flag_);
     }
     __syncthreads();
 
@@ -325,7 +323,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
       return;
     }
     uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
-    uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
+    uint32_t srcOffset = (srcOffsets[0] << 1) + scratchOffset_;
     MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
     portChannels_[channelIndexes[chIdx]].put(
         dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH) + localMemoryIdBegin_, srcOffset, size << 1);
