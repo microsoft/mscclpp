@@ -381,11 +381,19 @@ struct EndpointConfig {
   /// These settings are only used when the transport is an InfiniBand type (IB0-IB7); they are ignored for other
   /// transports.
   struct Ib {
+    /// IB mode for signaling, used to select between different implementations.
+    enum class Mode {
+      Default,      // Use the MSCCLPP_IBV_MODE environment variable (or "host" if unset).
+      Host,         // Use the host stack with RDMA atomics.
+      HostNoAtomic  // Use the host stack with write-with-immediate signaling (no RDMA atomics).
+    };
+
     static constexpr int DefaultPort = -1;
     static constexpr int DefaultGidIndex = 0;
     static constexpr int DefaultMaxCqSize = 1024;
     static constexpr int DefaultMaxCqPollNum = 1;
     static constexpr int DefaultMaxSendWr = 8192;
+    static constexpr int DefaultMaxRecvWr = 16;
     static constexpr int DefaultMaxWrPerSend = 64;
 
     /// Device index. Currently ignored; use transport type (IB0-IB7) to select device.
@@ -394,32 +402,41 @@ struct EndpointConfig {
     int port;
     /// GID index.
     int gidIndex;
-    /// Maximum size of the completion queue.
+    /// Maximum size of the send completion queue.
     int maxCqSize;
-    /// Maximum number of completion queue polls per operation.
+    /// Maximum number of send completion queue polls per operation.
     int maxCqPollNum;
     /// Maximum number of outstanding send work requests.
     int maxSendWr;
+    /// Maximum number of outstanding receive work requests (used in HostNoAtomic mode for write-with-immediate).
+    int maxRecvWr;
     /// Maximum number of work requests per send operation.
     int maxWrPerSend;
+    /// IB mode for signaling. When set to Default, uses the MSCCLPP_IBV_MODE environment variable.
+    Mode mode;
 
     /// Constructor.
     /// @param deviceIndex Device index.
     /// @param port Port number.
     /// @param gidIndex GID index.
-    /// @param maxCqSize Maximum completion queue size.
-    /// @param maxCqPollNum Maximum completion queue poll count.
+    /// @param maxCqSize Maximum send completion queue size.
+    /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
+    /// @param maxRecvWr Maximum outstanding receive work requests (for HostNoAtomic mode).
     /// @param maxWrPerSend Maximum work requests per send operation.
+    /// @param mode IB mode for signaling (Default uses MSCCLPP_IBV_MODE env variable).
     Ib(int deviceIndex = -1, int port = DefaultPort, int gidIndex = DefaultGidIndex, int maxCqSize = DefaultMaxCqSize,
-       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxWrPerSend = DefaultMaxWrPerSend)
+       int maxCqPollNum = DefaultMaxCqPollNum, int maxSendWr = DefaultMaxSendWr, int maxRecvWr = DefaultMaxRecvWr,
+       int maxWrPerSend = DefaultMaxWrPerSend, Mode mode = Mode::Default)
         : deviceIndex(deviceIndex),
           port(port),
           gidIndex(gidIndex),
           maxCqSize(maxCqSize),
           maxCqPollNum(maxCqPollNum),
           maxSendWr(maxSendWr),
-          maxWrPerSend(maxWrPerSend) {}
+          maxRecvWr(maxRecvWr),
+          maxWrPerSend(maxWrPerSend),
+          mode(mode) {}
   };
 
   /// Communication transport type (e.g., CudaIpc, IB0-IB7, Ethernet).
@@ -658,6 +675,7 @@ class Connection {
   friend class SemaphoreStub;
   friend class Semaphore;
   friend class ProxyService;
+  friend class BaseConnection;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.

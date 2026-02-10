@@ -54,6 +54,12 @@ class Env {
   /// default libibverbs library found in the system.
   const std::string ibvSo;
 
+  /// Env name: `MSCCLPP_IBV_MODE`. Selects the IB stack implementation for PortChannel.
+  /// Allowed values:
+  /// - "host": use the host stack with RDMA atomics (default).
+  /// - "host-no-atomic": use the host stack with write-with-immediate signaling (no RDMA atomics).
+  const std::string ibvMode;
+
   /// Env name: `MSCCLPP_HOSTID`. A string that uniquely identifies the host. If unset, it will use the hostname.
   /// This is used to determine whether the host is the same across different processes.
   const std::string hostid;
