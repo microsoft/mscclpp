@@ -12,10 +12,10 @@
 
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
-__global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, int *ret) {
+__global__ void kernelLocalPortChannelTest(void* dst, void* src, size_t bytes, int* ret) {
   if (blockIdx.x == 0) {
     // sender
-    int *ptr = reinterpret_cast<int *>(src);
+    int* ptr = reinterpret_cast<int*>(src);
     for (size_t idx = threadIdx.x; idx < bytes / sizeof(int); idx += blockDim.x) {
       ptr[idx] = MAGIC_CONST;
     }
@@ -29,7 +29,7 @@ __global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, i
       gPortChannel.wait();
     }
     __syncthreads();
-    int *ptr = reinterpret_cast<int *>(dst);
+    int* ptr = reinterpret_cast<int*>(dst);
     for (size_t idx = threadIdx.x; idx < bytes / sizeof(int); idx += blockDim.x) {
       if (ptr[idx] != MAGIC_CONST) {
         *ret = 1;  // Error: value mismatch

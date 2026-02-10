@@ -11,18 +11,18 @@ using namespace mscclpp;
 
 #define REGISTER_EXCEPTION_TRANSLATOR(name_)                                                                         \
   nb::register_exception_translator(                                                                                 \
-      [](const std::exception_ptr &p, void *payload) {                                                               \
+      [](const std::exception_ptr& p, void* payload) {                                                               \
         try {                                                                                                        \
           std::rethrow_exception(p);                                                                                 \
-        } catch (const name_ &e) {                                                                                   \
-          PyErr_SetObject(reinterpret_cast<PyObject *>(payload),                                                     \
+        } catch (const name_& e) {                                                                                   \
+          PyErr_SetObject(reinterpret_cast<PyObject*>(payload),                                                      \
                           PyTuple_Pack(2, PyLong_FromLong(long(e.getErrorCode())), PyUnicode_FromString(e.what()))); \
         }                                                                                                            \
       },                                                                                                             \
       m.attr(#name_).ptr());
 
-void register_error(nb::module_ &m) {
-  nb::enum_<ErrorCode>(m, "ErrorCode")
+void register_error(nb::module_& m) {
+  nb::enum_<ErrorCode>(m, "CppErrorCode")
       .value("SystemError", ErrorCode::SystemError)
       .value("InternalError", ErrorCode::InternalError)
       .value("RemoteError", ErrorCode::RemoteError)

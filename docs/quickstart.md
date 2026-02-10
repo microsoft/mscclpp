@@ -196,7 +196,7 @@ mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib
 Example 2, ReduceScatter will still use msccl++ implementation since reducescatter is not in the fallbacklist.
 ```bash
 export LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH;
-mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" -x MSCCLPP_EXECUTION_PLAN_DIR=/$PATH_TO_EXECUTION_PLANS/execution-files ./build/reduce_scatter_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
+mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=$MSCCLPP_BUILD/lib/libmscclpp_nccl.so -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=$NCCL_BUILD/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" ./build/reduce_scatter_perf -b 1K -e 256M -f 2 -d half -G 20 -w 10 -n 50
 ```
 
 On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with the fallback features.

@@ -15,16 +15,16 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_executor(nb::module_& m) {
-  nb::enum_<PacketType>(m, "PacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
+  nb::enum_<PacketType>(m, "CppPacketType").value("LL8", PacketType::LL8).value("LL16", PacketType::LL16);
 
-  nb::class_<ExecutionPlan>(m, "ExecutionPlan")
+  nb::class_<ExecutionPlan>(m, "CppExecutionPlan")
       .def(nb::init<const std::string&, int>(), nb::arg("planPath"), nb::arg("rank"))
       .def_prop_ro("name", [](const ExecutionPlan& self) -> std::string { return self.name(); })
       .def_prop_ro("collective", [](const ExecutionPlan& self) -> std::string { return self.collective(); })
       .def_prop_ro("min_message_size", [](const ExecutionPlan& self) -> size_t { return self.minMessageSize(); })
       .def_prop_ro("max_message_size", [](const ExecutionPlan& self) -> size_t { return self.maxMessageSize(); });
 
-  nb::class_<Executor>(m, "Executor")
+  nb::class_<Executor>(m, "CppExecutor")
       .def(nb::init<std::shared_ptr<Communicator>>(), nb::arg("comm"))
       .def(
           "execute",
