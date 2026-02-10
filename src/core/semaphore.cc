@@ -8,7 +8,6 @@
 #include "atomic.hpp"
 #include "connection.hpp"
 #include "context.hpp"
-#include "debug.h"
 #include "registered_memory.hpp"
 #include "serialization.hpp"
 
@@ -122,6 +121,8 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
   if (connection().localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }
+  BaseConnection::getImpl(connection())
+      ->setRemoteUpdateDstAddr(reinterpret_cast<uint64_t>(semaphore_.localMemory().data()));
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator, const Connection& connection)
@@ -150,6 +151,8 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphor
   if (connection().localDevice().type != DeviceType::CPU) {
     throw Error("Local endpoint device type of Host2HostSemaphore should be CPU", ErrorCode::InvalidUsage);
   }
+  BaseConnection::getImpl(connection())
+      ->setRemoteUpdateDstAddr(reinterpret_cast<uint64_t>(semaphore_.localMemory().data()));
 }
 
 MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicator, const Connection& connection)

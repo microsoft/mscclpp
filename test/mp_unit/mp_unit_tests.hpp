@@ -71,12 +71,12 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void registerBufferAndConnect(void* buf, size_t size);
 
-  void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
+  void stageSendWrite(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
 
-  void stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
+  void stageSendAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
 
-  void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
-                        unsigned int immData);
+  void stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
+                             unsigned int immData);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
@@ -131,6 +131,8 @@ class CommunicatorTest : public CommunicatorTestBase {
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
+using IbMode = mscclpp::EndpointConfig::Ib::Mode;
+
 class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
@@ -138,17 +140,19 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useIB;
     bool useEthernet;
     bool waitWithPoll;
+    IbMode ibMode;
   };
 
   void SetUp() override;
   void TearDown() override;
 
   void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
-                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
+                            IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
-  void testPacketPingPong(bool useIbOnly);
-  void testPacketPingPongPerf(bool useIbOnly);
+  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

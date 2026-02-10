@@ -12,7 +12,7 @@ baseImageTable=(
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu22.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
-    ["rocm6.2"]="rocm/rocm-terminal:6.2.1"
+    ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
 )
 
 declare -A extraLdPathTable
@@ -29,6 +29,7 @@ ofedVersionTable=(
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
+    ["rocm6.2"]="24.10-1.1.4.0"
 )
 
 TARGET=${1}
@@ -68,18 +69,11 @@ docker build -t ${TAG_TMP} \
 
 if [[ ${TARGET} == rocm* ]]; then
     echo "Building ROCm base image..."
-    docker build -t ${TAG_BASE} \
-        -f docker/base-x-rocm.dockerfile \
-        --build-arg BASE_IMAGE=${TAG_TMP} \
-        --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
-        --build-arg TARGET=${TARGET} \
-        --build-arg GPU_ARCH="gfx942" .
-    docker rmi ${TAG_TMP}
 else
     echo "Building CUDA base image..."
-    docker tag ${TAG_TMP} ${TAG_BASE}
-    docker rmi --no-prune ${TAG_TMP}
 fi
+docker tag ${TAG_TMP} ${TAG_BASE}
+docker rmi --no-prune ${TAG_TMP}
 
 docker build -t ${TAG_BASE_DEV} \
     -f docker/base-dev-x.dockerfile \
