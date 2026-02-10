@@ -156,17 +156,17 @@ struct NvlsWithCopy2Adapter {
       return cudaErrorNotSupported;
     } else
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-      return cudaErrorNotSupported;
-    } else
+      if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+        return cudaErrorNotSupported;
+      } else
 #endif
-    {
-      using ChannelType = DeviceHandle<BaseMemoryChannel>;
-      allreduceNvlsWithCopy2<T>
-          <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels, nvlsChannels,
-                                                     inputSize, scratchBufferSize, rank, nRanksPerNode);
-      return cudaGetLastError();
-    }
+      {
+        using ChannelType = DeviceHandle<BaseMemoryChannel>;
+        allreduceNvlsWithCopy2<T>
+            <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                       nvlsChannels, inputSize, scratchBufferSize, rank, nRanksPerNode);
+        return cudaGetLastError();
+      }
   }
 };
 
