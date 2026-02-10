@@ -47,7 +47,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(MSCCLPP_ENABLE_TRACE "Enable tracing" OFF)
-option(MSCCLPP_BUILD_TESTS "Build tests" ON)
+option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
