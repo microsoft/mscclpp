@@ -63,20 +63,21 @@ void IbPeerToPeerTest::registerBufferAndConnect(void* buf, size_t size) {
   bootstrap->barrier();
 }
 
-void IbPeerToPeerTest::stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled) {
+void IbPeerToPeerTest::stageSendWrite(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
+                                      bool signaled) {
   const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageSend(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
+  qp->stageSendWrite(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled);
 }
 
-void IbPeerToPeerTest::stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled) {
+void IbPeerToPeerTest::stageSendAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled) {
   const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageAtomicAdd(mr.get(), remoteMrInfo, wrId, dstOffset, addVal, signaled);
+  qp->stageSendAtomicAdd(mr.get(), remoteMrInfo, wrId, dstOffset, addVal, signaled);
 }
 
-void IbPeerToPeerTest::stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
-                                        bool signaled, unsigned int immData) {
+void IbPeerToPeerTest::stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset,
+                                             bool signaled, unsigned int immData) {
   const mscclpp::IbMrInfo& remoteMrInfo = mrInfo[(gEnv->rank == 1) ? 0 : 1];
-  qp->stageSendWithImm(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
+  qp->stageSendWriteWithImm(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
 }
 
 TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
@@ -96,15 +97,15 @@ TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
     for (int iter = 0; iter < maxIter; ++iter) {
-      stageSend(sizeof(uint64_t) * nelem, 0, 0, 0, true);
+      stageSendWrite(sizeof(uint64_t) * nelem, 0, 0, 0, true);
       qp->postSend();
       bool waiting = true;
       int spin = 0;
       while (waiting) {
-        int wcNum = qp->pollCq();
+        int wcNum = qp->pollSendCq();
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
-          int status = qp->getWcStatus(i);
+          int status = qp->getSendWcStatus(i);
           EXPECT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
           waiting = false;
           break;
@@ -261,26 +262,26 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
       bool signaled = (iter % signalPeriod == 0);
 
       // Send from the second element to the last
-      stageSend(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
+      stageSendWrite(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
       qp->postSend();
 
 #if 0
       // For reference: send the first element using a normal send. This should occasionally see a wrong result.
-      stageSend(sizeof(uint64_t), 0, 0, 0, false);
+      stageSendWrite(sizeof(uint64_t), 0, 0, 0, false);
       qp->postSend();
 #else
       // Send the first element using AtomicAdd. This should see the correct result.
-      stageAtomicAdd(0, 0, 1, false);
+      stageSendAtomicAdd(0, 0, 1, false);
       qp->postSend();
 #endif
 
       if (signaled) {
-        int wcNum = qp->pollCq();
+        int wcNum = qp->pollSendCq();
         while (wcNum == 0) {
-          wcNum = qp->pollCq();
+          wcNum = qp->pollSendCq();
         }
         ASSERT_EQ(wcNum, 1);
-        int status = qp->getWcStatus(0);
+        int status = qp->getSendWcStatus(0);
         ASSERT_EQ(status, static_cast<int>(mscclpp::WsStatus::Success));
       }
 
@@ -319,17 +320,17 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
   if (gEnv->rank == 1) {
     mscclpp::Timer timer;
     for (int iter = 0; iter < maxIter; ++iter) {
-      stageAtomicAdd(0, 0, 1, true);
+      stageSendAtomicAdd(0, 0, 1, true);
       qp->postSend();
       bool waiting = true;
       int spin = 0;
       while (waiting) {
-        int wcNum = qp->pollCq();
+        int wcNum = qp->pollSendCq();
         ASSERT_GE(wcNum, 0);
         for (int i = 0; i < wcNum; ++i) {
-          int status = qp->getWcStatus(i);
+          int status = qp->getSendWcStatus(i);
           if (status != static_cast<int>(mscclpp::WsStatus::Success)) {
-            FAIL() << "Work completion status error: " << qp->getWcStatusString(i);
+            FAIL() << "Work completion status error: " << qp->getSendWcStatusString(i);
           }
           waiting = false;
           break;
