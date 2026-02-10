@@ -5,6 +5,9 @@ parameters:
   type: string
 - name: sshKeySecureFile
   type: string
+- name: platform
+  type: string
+  default: 'cuda'
 - name: gpuArch
   type: string
 
@@ -16,7 +19,11 @@ steps:
     targetType: 'inline'
     script: |
       mkdir build && cd build
-      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
+      if [ "${{ parameters.platform }}" == "rocm" ]; then
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
+      else
+        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
+      fi
       make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
@@ -52,7 +59,7 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: "single-node-test"
+    arguments: "single-node-test true ${{ parameters.platform }}"
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 
@@ -119,7 +126,7 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH                          \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                              \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

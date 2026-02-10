@@ -1,0 +1,50 @@
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - apps/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - apps/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
+
+jobs:
+- job: UnitTestMI300X
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci-mi300x
+  strategy:
+    matrix:
+      rocm6_2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut.yaml
+    parameters:
+      subscription:     mscclpp-ci-mi300x
+      vmssName:         mscclpp-mi300x-ci
+      sshKeySecureFile: mscclpp.pem
+      platform:         rocm
+      gpuArch:          gfx942
