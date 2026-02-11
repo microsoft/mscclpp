@@ -373,6 +373,11 @@ void reportSuccess();
   } while (0)
 
 // Helper class for GTEST_SKIP functionality
+// This class uses RAII (Resource Acquisition Is Initialization) pattern:
+// - The constructor records file and line information
+// - The stream operator (<<) allows appending a skip message
+// - The destructor throws an exception to skip the test
+// This enables usage like: GTEST_SKIP() << "Reason for skipping";
 class SkipHelper {
  public:
   explicit SkipHelper(const char* file, int line) : file_(file), line_(line) {}
@@ -397,6 +402,8 @@ class SkipHelper {
   std::ostringstream message_;
 };
 
+// Test skip macro - throws exception to skip test execution
+// Usage: GTEST_SKIP() << "Optional skip message";
 #define GTEST_SKIP() ::mscclpp::test::SkipHelper(__FILE__, __LINE__)
 
 // Create a namespace alias for compatibility with GTest code

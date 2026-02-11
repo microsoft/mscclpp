@@ -11,8 +11,8 @@
 namespace mscclpp {
 namespace test {
 
-// Global state for performance test results
-static std::vector < struct PerfTestResult {
+// Performance test result structure
+struct PerfTestResult {
   std::string test_name;
   std::string test_category;
   std::map<std::string, std::string> test_params;
@@ -20,15 +20,20 @@ static std::vector < struct PerfTestResult {
   int num_processes;
   int process_rank;
   std::string timestamp;
-} > g_perf_results;
+};
 
-static std::string getCurrentTimestamp() {
+// Global state for performance test results
+static std::vector<PerfTestResult> g_perf_results;
+
+namespace {
+std::string getCurrentTimestamp() {
   auto now = std::chrono::system_clock::now();
   auto time_t = std::chrono::system_clock::to_time_t(now);
   std::stringstream ss;
   ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%dT%H:%M:%S");
   return ss.str();
 }
+}  // namespace
 
 void recordResult(const std::string& test_name, const std::string& test_category, const nlohmann::ordered_json& metrics,
                   const std::map<std::string, std::string>& test_params) {
