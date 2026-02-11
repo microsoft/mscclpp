@@ -2,7 +2,7 @@
 // Licensed under the MIT license.
 
 #include <gmock/gmock.h>
-#include <gtest/gtest.h>
+#include "../framework.hpp"
 
 #include <mscclpp/core.hpp>
 

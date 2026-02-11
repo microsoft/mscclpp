@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <gtest/gtest.h>
+#include "../framework.hpp"
 
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
