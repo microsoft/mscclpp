@@ -146,6 +146,61 @@ void reportSuccess();
 
 }  // namespace utils
 
+// Helper class for FAIL functionality with message streaming support
+class FailHelper {
+ public:
+  explicit FailHelper(const char* file, int line) : file_(file), line_(line) {}
+  template <typename T>
+  FailHelper& operator<<(const T& value) {
+    message_ << value;
+    return *this;
+  }
+  ~FailHelper() noexcept(false) {
+    std::string msg = message_.str();
+    if (!msg.empty()) {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed: " + msg);
+    } else {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed");
+    }
+    throw std::runtime_error("Test failed");
+  }
+
+ private:
+  const char* file_;
+  int line_;
+  std::ostringstream message_;
+};
+
+// Helper class for GTEST_SKIP functionality
+// This class uses RAII (Resource Acquisition Is Initialization) pattern:
+// - The constructor records file and line information
+// - The stream operator (<<) allows appending a skip message
+// - The destructor throws an exception to skip the test
+// This enables usage like: GTEST_SKIP() << "Reason for skipping";
+class SkipHelper {
+ public:
+  explicit SkipHelper(const char* file, int line) : file_(file), line_(line) {}
+  template <typename T>
+  SkipHelper& operator<<(const T& value) {
+    message_ << value;
+    return *this;
+  }
+  ~SkipHelper() noexcept(false) {
+    std::string msg = message_.str();
+    if (!msg.empty()) {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped: " + msg);
+    } else {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped");
+    }
+    throw std::runtime_error("Test skipped");
+  }
+
+ private:
+  const char* file_;
+  int line_;
+  std::ostringstream message_;
+};
+
 }  // namespace test
 }  // namespace mscclpp
 
@@ -366,64 +421,9 @@ void reportSuccess();
     }                                                                                                      \
   } while (0)
 
-// Helper class for FAIL functionality with message streaming support
-class FailHelper {
- public:
-  explicit FailHelper(const char* file, int line) : file_(file), line_(line) {}
-  template <typename T>
-  FailHelper& operator<<(const T& value) {
-    message_ << value;
-    return *this;
-  }
-  ~FailHelper() noexcept(false) {
-    std::string msg = message_.str();
-    if (!msg.empty()) {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed: " + msg);
-    } else {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed");
-    }
-    throw std::runtime_error("Test failed");
-  }
-
- private:
-  const char* file_;
-  int line_;
-  std::ostringstream message_;
-};
-
 // Test fail macro - throws exception to fail test execution
 // Usage: FAIL() << "Optional fail message";
 #define FAIL() ::mscclpp::test::FailHelper(__FILE__, __LINE__)
-
-// Helper class for GTEST_SKIP functionality
-// This class uses RAII (Resource Acquisition Is Initialization) pattern:
-// - The constructor records file and line information
-// - The stream operator (<<) allows appending a skip message
-// - The destructor throws an exception to skip the test
-// This enables usage like: GTEST_SKIP() << "Reason for skipping";
-class SkipHelper {
- public:
-  explicit SkipHelper(const char* file, int line) : file_(file), line_(line) {}
-  template <typename T>
-  SkipHelper& operator<<(const T& value) {
-    message_ << value;
-    return *this;
-  }
-  ~SkipHelper() noexcept(false) {
-    std::string msg = message_.str();
-    if (!msg.empty()) {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped: " + msg);
-    } else {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped");
-    }
-    throw std::runtime_error("Test skipped");
-  }
-
- private:
-  const char* file_;
-  int line_;
-  std::ostringstream message_;
-};
 
 // Test skip macro - throws exception to skip test execution
 // Usage: GTEST_SKIP() << "Optional skip message";
