@@ -109,9 +109,11 @@ if(MSCCLPP_ENABLE_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         message(STATUS "Code coverage enabled")
         
-        # Add coverage flags to all targets
-        add_compile_options(--coverage -O0 -g)
-        add_link_options(--coverage)
+        # Add coverage flags to C++ targets only (not CUDA)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--coverage>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
+        add_link_options($<$<LINK_LANGUAGE:CXX>:--coverage>)
         
         # Find lcov
         find_program(LCOV_PATH lcov)

@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "../framework.hpp"
 
+#include <cassert>
 #include <memory>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
+#include <unordered_map>
 
 // Simple FIFO performance test to be run as part of unit_tests
 // This is a performance test that can be excluded from coverage runs

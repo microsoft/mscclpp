@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "framework.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -10,6 +11,86 @@
 
 namespace mscclpp {
 namespace test {
+
+// Helper function for wildcard pattern matching (supports * and ?)
+static bool matchPattern(const std::string& str, const std::string& pattern) {
+  size_t strIdx = 0;
+  size_t patIdx = 0;
+  size_t starIdx = std::string::npos;
+  size_t matchIdx = 0;
+
+  while (strIdx < str.length()) {
+    if (patIdx < pattern.length() && (pattern[patIdx] == '?' || pattern[patIdx] == str[strIdx])) {
+      strIdx++;
+      patIdx++;
+    } else if (patIdx < pattern.length() && pattern[patIdx] == '*') {
+      starIdx = patIdx;
+      matchIdx = strIdx;
+      patIdx++;
+    } else if (starIdx != std::string::npos) {
+      patIdx = starIdx + 1;
+      matchIdx++;
+      strIdx = matchIdx;
+    } else {
+      return false;
+    }
+  }
+
+  while (patIdx < pattern.length() && pattern[patIdx] == '*') {
+    patIdx++;
+  }
+
+  return patIdx == pattern.length();
+}
+
+// Helper function to check if test name matches GTest-style filter
+static bool matchesFilter(const std::string& testName, const std::string& filter) {
+  if (filter.empty()) return true;
+
+  // Split filter by ':' for multiple patterns
+  std::vector<std::string> patterns;
+  size_t start = 0;
+  size_t end = filter.find(':');
+  while (end != std::string::npos) {
+    patterns.push_back(filter.substr(start, end - start));
+    start = end + 1;
+    end = filter.find(':', start);
+  }
+  patterns.push_back(filter.substr(start));
+
+  // Check for positive patterns first
+  bool hasPositivePattern = false;
+  bool positiveMatch = false;
+  
+  for (const auto& pattern : patterns) {
+    if (pattern.empty()) continue;
+    
+    if (pattern[0] != '-') {
+      hasPositivePattern = true;
+      if (matchPattern(testName, pattern)) {
+        positiveMatch = true;
+      }
+    }
+  }
+
+  // If there are positive patterns and none matched, exclude
+  if (hasPositivePattern && !positiveMatch) {
+    return false;
+  }
+
+  // Check negative patterns
+  for (const auto& pattern : patterns) {
+    if (pattern.empty()) continue;
+    
+    if (pattern[0] == '-' && pattern.length() > 1) {
+      if (matchPattern(testName, pattern.substr(1))) {
+        return false;  // Negative match - exclude this test
+      }
+    }
+  }
+
+  return true;
+}
 
 // Global state
 static int gMpiRank = 0;
@@ -24,7 +105,12 @@ namespace utils {
 void initializeMPI(int argc, char* argv[]) {
   if (gMpiInitialized) return;
 
-  MPI_Init(&argc, &argv);
+  int initialized = 0;
+  MPI_Initialized(&initialized);
+  if (!initialized) {
+    MPI_Init(&argc, &argv);
+  }
+  
   MPI_Comm_rank(MPI_COMM_WORLD, &gMpiRank);
   MPI_Comm_size(MPI_COMM_WORLD, &gMpiSize);
   gMpiInitialized = true;
@@ -223,6 +309,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   int passed = 0;
   int failed = 0;
   int skipped = 0;
+  int skippedByFilter = 0;
 
   // Count tests to run
   int total_to_run = 0;
@@ -258,8 +345,8 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       continue;
     }
     
-    // Apply filter
-    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
+    // Apply name filter with wildcard support
+    if (!matchesFilter(full_name, filter)) {
       continue;
     }
 
@@ -275,11 +362,19 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     UnitTest::GetInstance()->set_current_test_info(&current_info);
 
     TestCase* test_case = nullptr;
+    bool testSkipped = false;
     try {
       test_case = test_info.factory();
       test_case->SetUp();
       test_case->TestBody();
       test_case->TearDown();
+    } catch (const SkipException& e) {
+      // Test was skipped - count as skipped, not failed
+      gCurrentTestPassed = true;  // Skipped tests don't count as failures
+      testSkipped = true;
+      if (gMpiRank == 0) {
+        std::cout << "[  SKIPPED ] " << full_name << ": " << e.what() << std::endl;
+      }
     } catch (const std::exception& e) {
       gCurrentTestPassed = false;
       if (gCurrentTestFailureMessage.empty()) {
@@ -296,6 +391,12 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
 
     // Clear current test info
     UnitTest::GetInstance()->set_current_test_info(nullptr);
+
+    // For skipped tests, handle specially
+    if (testSkipped) {
+      skipped++;
+      continue;  // Don't synchronize or count skipped tests
+    }
 
     // Synchronize test status across all MPI processes
     int local_passed = gCurrentTestPassed ? 1 : 0;
@@ -322,6 +423,9 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     if (passed > 0) {
       std::cout << "[  PASSED  ] " << passed << " tests.\n";
     }
+    if (skipped > 0) {
+      std::cout << "[  SKIPPED ] " << skipped << " tests.\n";
+    }
     if (failed > 0) {
       std::cout << "[  FAILED  ] " << failed << " tests.\n";
     }
@@ -331,12 +435,14 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   for (auto it = environments_.rbegin(); it != environments_.rend(); ++it) {
     try {
       (*it)->TearDown();
+      delete *it;  // Clean up environment objects
     } catch (const std::exception& e) {
       if (gMpiRank == 0) {
         std::cerr << "Failed to tear down test environment: " << e.what() << std::endl;
       }
     }
   }
+  environments_.clear();
 
   return failed > 0 ? 1 : 0;
 }

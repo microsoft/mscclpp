@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_TEST_FRAMEWORK_HPP_
 #define MSCCLPP_TEST_FRAMEWORK_HPP_
@@ -149,6 +149,12 @@ void reportSuccess();
 
 }  // namespace utils
 
+// Custom exception for test skips
+class SkipException : public std::runtime_error {
+ public:
+  explicit SkipException(const std::string& message) : std::runtime_error(message) {}
+};
+
 // Helper class for FAIL functionality with message streaming support
 class FailHelper {
  public:
@@ -191,11 +197,10 @@ class SkipHelper {
   ~SkipHelper() noexcept(false) {
     std::string msg = message_.str();
     if (!msg.empty()) {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped: " + msg);
+      throw SkipException("Test skipped: " + msg);
     } else {
-      ::mscclpp::test::utils::reportFailure(file_, line_, "Test skipped");
+      throw SkipException("Test skipped");
     }
-    throw std::runtime_error("Test skipped");
   }
 
  private:
