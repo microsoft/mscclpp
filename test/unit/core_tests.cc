@@ -5,6 +5,9 @@
 
 #include "../framework.hpp"
 
+// TODO: TransportFlags needs operator<< for EXPECT_EQ to work
+// Using ASSERT_TRUE with manual comparisons as workaround
+
 class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
  protected:
   void SetUp() override {
@@ -22,7 +25,7 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
   EXPECT_EQ(memory.size(), sizeof(dummy));
-  EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
+  ASSERT_TRUE(memory.transports() == mscclpp::NoTransports);
 }
 
 TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
@@ -33,5 +36,5 @@ TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
   auto sameMemory = memoryFuture.get();
   EXPECT_EQ(sameMemory.data(), memory.data());
   EXPECT_EQ(sameMemory.size(), memory.size());
-  EXPECT_EQ(sameMemory.transports(), memory.transports());
+  ASSERT_TRUE(sameMemory.transports() == memory.transports());
 }
