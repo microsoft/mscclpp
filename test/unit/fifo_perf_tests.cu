@@ -9,8 +9,8 @@
 #include <mscclpp/numa.hpp>
 
 // Simple FIFO performance test to be run as part of unit_tests
-// This is a simplified version of test/perf/fifo_test.cu that can be
-// integrated into the unit test suite and marked as a performance test.
+// This is a performance test that can be excluded from coverage runs
+// using the --exclude-perf-tests flag.
 
 constexpr uint64_t TIMEOUT_SPINS = 1000000;
 constexpr int MIN_TRIGGERS = 100;  // Reduced for faster unit test execution

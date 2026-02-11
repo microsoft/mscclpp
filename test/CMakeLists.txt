@@ -59,6 +59,3 @@ add_test(NAME mp_unit_tests COMMAND ${CMAKE_CURRENT_BINARY_DIR}/run_mpi_test.sh 
 
 # mscclpp-test
 add_subdirectory(mscclpp-test)
-
-# Performance tests
-add_subdirectory(perf)
