@@ -12,86 +12,6 @@
 namespace mscclpp {
 namespace test {
 
-// Helper function for wildcard pattern matching (supports * and ?)
-static bool matchPattern(const std::string& str, const std::string& pattern) {
-  size_t strIdx = 0;
-  size_t patIdx = 0;
-  size_t starIdx = std::string::npos;
-  size_t matchIdx = 0;
-
-  while (strIdx < str.length()) {
-    if (patIdx < pattern.length() && (pattern[patIdx] == '?' || pattern[patIdx] == str[strIdx])) {
-      strIdx++;
-      patIdx++;
-    } else if (patIdx < pattern.length() && pattern[patIdx] == '*') {
-      starIdx = patIdx;
-      matchIdx = strIdx;
-      patIdx++;
-    } else if (starIdx != std::string::npos) {
-      patIdx = starIdx + 1;
-      matchIdx++;
-      strIdx = matchIdx;
-    } else {
-      return false;
-    }
-  }
-
-  while (patIdx < pattern.length() && pattern[patIdx] == '*') {
-    patIdx++;
-  }
-
-  return patIdx == pattern.length();
-}
-
-// Helper function to check if test name matches GTest-style filter
-static bool matchesFilter(const std::string& testName, const std::string& filter) {
-  if (filter.empty()) return true;
-
-  // Split filter by ':' for multiple patterns
-  std::vector<std::string> patterns;
-  size_t start = 0;
-  size_t end = filter.find(':');
-  while (end != std::string::npos) {
-    patterns.push_back(filter.substr(start, end - start));
-    start = end + 1;
-    end = filter.find(':', start);
-  }
-  patterns.push_back(filter.substr(start));
-
-  // Check for positive patterns first
-  bool hasPositivePattern = false;
-  bool positiveMatch = false;
-  
-  for (const auto& pattern : patterns) {
-    if (pattern.empty()) continue;
-    
-    if (pattern[0] != '-') {
-      hasPositivePattern = true;
-      if (matchPattern(testName, pattern)) {
-        positiveMatch = true;
-      }
-    }
-  }
-
-  // If there are positive patterns and none matched, exclude
-  if (hasPositivePattern && !positiveMatch) {
-    return false;
-  }
-
-  // Check negative patterns
-  for (const auto& pattern : patterns) {
-    if (pattern.empty()) continue;
-    
-    if (pattern[0] == '-' && pattern.length() > 1) {
-      if (matchPattern(testName, pattern.substr(1))) {
-        return false;  // Negative match - exclude this test
-      }
-    }
-  }
-
-  return true;
-}
-
 // Global state
 static int gMpiRank = 0;
 static int gMpiSize = 1;
@@ -345,8 +265,8 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       continue;
     }
     
-    // Apply name filter with wildcard support
-    if (!matchesFilter(full_name, filter)) {
+    // Apply simple substring filter
+    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
       continue;
     }
 
