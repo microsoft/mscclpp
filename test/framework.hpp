@@ -24,15 +24,15 @@ namespace test {
 
 // Test result structure
 struct TestResult {
-  std::string test_name;
-  std::string test_category;
-  std::map<std::string, std::string> test_params;
+  std::string testName;
+  std::string testCategory;
+  std::map<std::string, std::string> testParams;
   nlohmann::ordered_json metrics;
-  int num_processes;
-  int process_rank;
+  int numProcesses;
+  int processRank;
   std::string timestamp;
   bool passed;
-  std::string failure_message;
+  std::string failureMessage;
 };
 
 // Forward declarations
@@ -61,14 +61,14 @@ class Environment {
 // Test info class (for getting current test information)
 class TestInfo {
  public:
-  TestInfo(const std::string& suite, const std::string& name) : test_suite_name_(suite), test_name_(name) {}
+  TestInfo(const std::string& suite, const std::string& name) : testSuiteName_(suite), testName_(name) {}
 
-  const char* test_suite_name() const { return test_suite_name_.c_str(); }
-  const char* name() const { return test_name_.c_str(); }
+  const char* test_suite_name() const { return testSuiteName_.c_str(); }
+  const char* name() const { return testName_.c_str(); }
 
  private:
-  std::string test_suite_name_;
-  std::string test_name_;
+  std::string testSuiteName_;
+  std::string testName_;
 };
 
 // UnitTest singleton (for getting test information)
@@ -76,12 +76,12 @@ class UnitTest {
  public:
   static UnitTest* GetInstance();
 
-  const TestInfo* current_test_info() const { return current_test_info_; }
-  void set_current_test_info(const TestInfo* info) { current_test_info_ = info; }
+  const TestInfo* current_test_info() const { return currentTestInfo_; }
+  void set_current_test_info(const TestInfo* info) { currentTestInfo_ = info; }
 
  private:
   UnitTest() = default;
-  const TestInfo* current_test_info_ = nullptr;
+  const TestInfo* currentTestInfo_ = nullptr;
 };
 
 // Test registry and runner
@@ -99,8 +99,8 @@ class TestRegistry {
  private:
   TestRegistry() = default;
   struct TestInfoInternal {
-    std::string suite_name;
-    std::string test_name;
+    std::string suiteName;
+    std::string testName;
     TestFactory factory;
   };
   std::vector<TestInfoInternal> tests_;
@@ -133,9 +133,9 @@ class Timer {
   double elapsedSeconds() const;
 
  private:
-  std::chrono::high_resolution_clock::time_point start_time_;
-  std::chrono::high_resolution_clock::time_point end_time_;
-  bool is_running_;
+  std::chrono::high_resolution_clock::time_point startTime_;
+  std::chrono::high_resolution_clock::time_point endTime_;
+  bool isRunning_;
 };
 
 // CUDA utilities

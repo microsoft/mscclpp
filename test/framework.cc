@@ -12,77 +12,77 @@ namespace mscclpp {
 namespace test {
 
 // Global state
-static int g_mpi_rank = 0;
-static int g_mpi_size = 1;
-static bool g_mpi_initialized = false;
-static bool g_current_test_passed = true;
-static std::string g_current_test_failure_message;
+static int gMpiRank = 0;
+static int gMpiSize = 1;
+static bool gMpiInitialized = false;
+static bool gCurrentTestPassed = true;
+static std::string gCurrentTestFailureMessage;
 
 namespace utils {
 
 // Internal MPI helper functions (not exposed in header)
 void initializeMPI(int argc, char* argv[]) {
-  if (g_mpi_initialized) return;
+  if (gMpiInitialized) return;
 
   MPI_Init(&argc, &argv);
-  MPI_Comm_rank(MPI_COMM_WORLD, &g_mpi_rank);
-  MPI_Comm_size(MPI_COMM_WORLD, &g_mpi_size);
-  g_mpi_initialized = true;
+  MPI_Comm_rank(MPI_COMM_WORLD, &gMpiRank);
+  MPI_Comm_size(MPI_COMM_WORLD, &gMpiSize);
+  gMpiInitialized = true;
 }
 
 static void finalizeMPI() {
-  if (!g_mpi_initialized) return;
+  if (!gMpiInitialized) return;
 
   MPI_Finalize();
-  g_mpi_initialized = false;
+  gMpiInitialized = false;
 }
 
-static bool isMainProcess() { return g_mpi_rank == 0; }
+static bool isMainProcess() { return gMpiRank == 0; }
 
 // Public utility functions for test output
-bool isMainRank() { return g_mpi_rank == 0; }
+bool isMainRank() { return gMpiRank == 0; }
 
-int getMPIRank() { return g_mpi_rank; }
+int getMPIRank() { return gMpiRank; }
 
-int getMPISize() { return g_mpi_size; }
+int getMPISize() { return gMpiSize; }
 
 void cleanupMPI() { finalizeMPI(); }
 
 void reportFailure(const char* file, int line, const std::string& message) {
-  g_current_test_passed = false;
+  gCurrentTestPassed = false;
   std::ostringstream oss;
   oss << file << ":" << line << ": " << message;
-  if (!g_current_test_failure_message.empty()) {
-    g_current_test_failure_message += "\n";
+  if (!gCurrentTestFailureMessage.empty()) {
+    gCurrentTestFailureMessage += "\n";
   }
-  g_current_test_failure_message += oss.str();
+  gCurrentTestFailureMessage += oss.str();
   std::cerr << oss.str() << std::endl;
 }
 
 void reportSuccess() {
-  g_current_test_passed = true;
-  g_current_test_failure_message.clear();
+  gCurrentTestPassed = true;
+  gCurrentTestFailureMessage.clear();
 }
 
 // Timer implementation
-Timer::Timer() : is_running_(false) {}
+Timer::Timer() : isRunning_(false) {}
 
 void Timer::start() {
-  start_time_ = std::chrono::high_resolution_clock::now();
-  is_running_ = true;
+  startTime_ = std::chrono::high_resolution_clock::now();
+  isRunning_ = true;
 }
 
 void Timer::stop() {
-  end_time_ = std::chrono::high_resolution_clock::now();
-  is_running_ = false;
+  endTime_ = std::chrono::high_resolution_clock::now();
+  isRunning_ = false;
 }
 
 double Timer::elapsedMicroseconds() const {
-  if (is_running_) {
+  if (isRunning_) {
     auto now = std::chrono::high_resolution_clock::now();
-    return std::chrono::duration_cast<std::chrono::microseconds>(now - start_time_).count();
+    return std::chrono::duration_cast<std::chrono::microseconds>(now - startTime_).count();
   }
-  return std::chrono::duration_cast<std::chrono::microseconds>(end_time_ - start_time_).count();
+  return std::chrono::duration_cast<std::chrono::microseconds>(endTime_ - startTime_).count();
 }
 
 double Timer::elapsedMilliseconds() const { return elapsedMicroseconds() / 1000.0; }
@@ -145,7 +145,7 @@ int runMultipleTests(
     // finalizeMPI();
 
   } catch (const std::exception& e) {
-    if (g_mpi_rank == 0) {
+    if (gMpiRank == 0) {
       std::cerr << "Error: " << e.what() << std::endl;
     }
     finalizeMPI();
@@ -171,8 +171,8 @@ TestRegistry& TestRegistry::instance() {
 
 void TestRegistry::registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory) {
   TestInfoInternal info;
-  info.suite_name = test_suite;
-  info.test_name = test_name;
+  info.suiteName = test_suite;
+  info.testName = test_name;
   info.factory = factory;
   tests_.push_back(info);
 }
@@ -186,7 +186,7 @@ void TestRegistry::initGoogleTest(int* argc, char** argv) {
 
 int TestRegistry::runAllTests(int argc, char* argv[]) {
   // Initialize MPI if not already initialized
-  if (!g_mpi_initialized) {
+  if (!gMpiInitialized) {
     utils::initializeMPI(argc, argv);
   }
 
@@ -207,7 +207,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     try {
       env->SetUp();
     } catch (const std::exception& e) {
-      if (g_mpi_rank == 0) {
+      if (gMpiRank == 0) {
         std::cerr << "Failed to set up test environment: " << e.what() << std::endl;
       }
       return 1;
@@ -221,7 +221,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   // Count tests to run
   int total_to_run = 0;
   for (const auto& test_info : tests_) {
-    std::string full_name = test_info.suite_name + "." + test_info.test_name;
+    std::string full_name = test_info.suiteName + "." + test_info.testName;
     if (!filter.empty() && full_name.find(filter) == std::string::npos) {
       skipped++;
       continue;
@@ -229,7 +229,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     total_to_run++;
   }
 
-  if (g_mpi_rank == 0) {
+  if (gMpiRank == 0) {
     std::cout << "[==========] Running " << total_to_run << " tests";
     if (skipped > 0) {
       std::cout << " (" << skipped << " skipped by filter)";
@@ -238,22 +238,22 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   }
 
   for (const auto& test_info : tests_) {
-    std::string full_name = test_info.suite_name + "." + test_info.test_name;
+    std::string full_name = test_info.suiteName + "." + test_info.testName;
 
     // Apply filter
     if (!filter.empty() && full_name.find(filter) == std::string::npos) {
       continue;
     }
 
-    g_current_test_passed = true;
-    g_current_test_failure_message.clear();
+    gCurrentTestPassed = true;
+    gCurrentTestFailureMessage.clear();
 
-    if (g_mpi_rank == 0) {
+    if (gMpiRank == 0) {
       std::cout << "[ RUN      ] " << full_name << std::endl;
     }
 
     // Set current test info for UnitTest::GetInstance()->current_test_info()
-    TestInfo current_info(test_info.suite_name, test_info.test_name);
+    TestInfo current_info(test_info.suiteName, test_info.testName);
     UnitTest::GetInstance()->set_current_test_info(&current_info);
 
     TestCase* test_case = nullptr;
@@ -263,14 +263,14 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       test_case->TestBody();
       test_case->TearDown();
     } catch (const std::exception& e) {
-      g_current_test_passed = false;
-      if (g_current_test_failure_message.empty()) {
-        g_current_test_failure_message = e.what();
+      gCurrentTestPassed = false;
+      if (gCurrentTestFailureMessage.empty()) {
+        gCurrentTestFailureMessage = e.what();
       }
     } catch (...) {
-      g_current_test_passed = false;
-      if (g_current_test_failure_message.empty()) {
-        g_current_test_failure_message = "Unknown exception";
+      gCurrentTestPassed = false;
+      if (gCurrentTestFailureMessage.empty()) {
+        gCurrentTestFailureMessage = "Unknown exception";
       }
     }
 
@@ -280,15 +280,15 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     UnitTest::GetInstance()->set_current_test_info(nullptr);
 
     // Synchronize test status across all MPI processes
-    int local_passed = g_current_test_passed ? 1 : 0;
+    int local_passed = gCurrentTestPassed ? 1 : 0;
     int global_passed = 1;
-    if (g_mpi_initialized) {
+    if (gMpiInitialized) {
       MPI_Allreduce(&local_passed, &global_passed, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     } else {
       global_passed = local_passed;
     }
 
-    if (g_mpi_rank == 0) {
+    if (gMpiRank == 0) {
       if (global_passed) {
         std::cout << "[       OK ] " << full_name << std::endl;
         passed++;
@@ -299,7 +299,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     }
   }
 
-  if (g_mpi_rank == 0) {
+  if (gMpiRank == 0) {
     std::cout << "[==========] " << total_to_run << " tests ran.\n";
     if (passed > 0) {
       std::cout << "[  PASSED  ] " << passed << " tests.\n";
@@ -314,7 +314,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     try {
       (*it)->TearDown();
     } catch (const std::exception& e) {
-      if (g_mpi_rank == 0) {
+      if (gMpiRank == 0) {
         std::cerr << "Failed to tear down test environment: " << e.what() << std::endl;
       }
     }

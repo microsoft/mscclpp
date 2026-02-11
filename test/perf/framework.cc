@@ -12,7 +12,7 @@ namespace mscclpp {
 namespace test {
 
 // Global state for performance test results
-static std::vector<TestResult> g_perf_results;
+static std::vector<TestResult> gPerfResults;
 
 namespace {
 std::string getCurrentTimestamp() {
@@ -26,18 +26,18 @@ std::string getCurrentTimestamp() {
 
 namespace utils {
 
-void recordResult(const std::string& test_name, const std::string& test_category, const nlohmann::ordered_json& metrics,
-                  const std::map<std::string, std::string>& test_params) {
+void recordResult(const std::string& testName, const std::string& testCategory, const nlohmann::ordered_json& metrics,
+                  const std::map<std::string, std::string>& testParams) {
   TestResult result;
-  result.test_name = test_name;
-  result.test_category = test_category;
-  result.test_params = test_params;
+  result.testName = testName;
+  result.testCategory = testCategory;
+  result.testParams = testParams;
   result.metrics = metrics;
-  result.num_processes = getMPISize();
-  result.process_rank = getMPIRank();
+  result.numProcesses = getMPISize();
+  result.processRank = getMPIRank();
   result.timestamp = getCurrentTimestamp();
 
-  g_perf_results.push_back(result);
+  gPerfResults.push_back(result);
 }
 
 void writeResultsToFile(const std::string& filename) {
@@ -46,14 +46,14 @@ void writeResultsToFile(const std::string& filename) {
     throw std::runtime_error("Cannot open output file: " + filename);
   }
 
-  for (const auto& result : g_perf_results) {
+  for (const auto& result : gPerfResults) {
     nlohmann::ordered_json j;
-    j["test_name"] = result.test_name;
-    j["test_category"] = result.test_category;
-    j["test_config"] = result.test_params;
+    j["test_name"] = result.testName;
+    j["test_category"] = result.testCategory;
+    j["test_config"] = result.testParams;
     j["metrics"] = result.metrics;
-    j["num_processes"] = result.num_processes;
-    j["process_rank"] = result.process_rank;
+    j["num_processes"] = result.numProcesses;
+    j["process_rank"] = result.processRank;
     j["timestamp"] = result.timestamp;
 
     file << j.dump() << std::endl;
@@ -65,12 +65,12 @@ void printResults(bool verbose) {
 
   std::cout << "\n=== Test Results ===" << std::endl;
 
-  for (const auto& result : g_perf_results) {
-    std::cout << "\nTest: " << result.test_name << " (" << result.test_category << ")" << std::endl;
+  for (const auto& result : gPerfResults) {
+    std::cout << "\nTest: " << result.testName << " (" << result.testCategory << ")" << std::endl;
 
-    if (verbose && !result.test_params.empty()) {
+    if (verbose && !result.testParams.empty()) {
       std::cout << "  Parameters:" << std::endl;
-      for (const auto& param : result.test_params) {
+      for (const auto& param : result.testParams) {
         std::cout << "    " << param.first << ": " << param.second << std::endl;
       }
     }

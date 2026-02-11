@@ -18,8 +18,8 @@ namespace utils {
 // Additional performance test utilities not in the base framework
 
 // Result recording for performance tests
-void recordResult(const std::string& test_name, const std::string& test_category, const nlohmann::ordered_json& metrics,
-                  const std::map<std::string, std::string>& test_params = {});
+void recordResult(const std::string& testName, const std::string& testCategory, const nlohmann::ordered_json& metrics,
+                  const std::map<std::string, std::string>& testParams = {});
 
 // Output utilities for performance tests
 void writeResultsToFile(const std::string& filename);
