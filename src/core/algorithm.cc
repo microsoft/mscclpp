@@ -213,5 +213,4 @@ std::pair<std::shared_ptr<void>, size_t> getDefaultFlagBuffer() {
   return {flagBuffer, gDefaultFlagCount * sizeof(uint32_t)};
 }
 
-
 }  // namespace mscclpp

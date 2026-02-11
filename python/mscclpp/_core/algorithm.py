@@ -240,6 +240,7 @@ class AlgorithmCollection:
         self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
         self._algorithms.append(algorithm)
 
+
 def get_default_flag_buffer() -> cp.ndarray:
     """Get the default flag buffer for algorithm selection.
 
@@ -252,6 +253,7 @@ def get_default_flag_buffer() -> cp.ndarray:
     buffer_ptr, buffer_size = cpp_get_default_flag_buffer()
     memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, None), 0)
     return cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+
 
 def reset_default_flag_buffer():
     """Reset the default flag buffer, freeing the allocated memory.
