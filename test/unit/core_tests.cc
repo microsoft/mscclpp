@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "../framework.hpp"
-
 #include <mscclpp/core.hpp>
+
+#include "../framework.hpp"
 
 class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
  protected:

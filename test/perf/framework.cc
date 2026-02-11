@@ -11,19 +11,8 @@
 namespace mscclpp {
 namespace test {
 
-// Performance test result structure
-struct PerfTestResult {
-  std::string test_name;
-  std::string test_category;
-  std::map<std::string, std::string> test_params;
-  nlohmann::ordered_json metrics;
-  int num_processes;
-  int process_rank;
-  std::string timestamp;
-};
-
 // Global state for performance test results
-static std::vector<PerfTestResult> g_perf_results;
+static std::vector<TestResult> g_perf_results;
 
 namespace {
 std::string getCurrentTimestamp() {
@@ -35,15 +24,17 @@ std::string getCurrentTimestamp() {
 }
 }  // namespace
 
+namespace utils {
+
 void recordResult(const std::string& test_name, const std::string& test_category, const nlohmann::ordered_json& metrics,
                   const std::map<std::string, std::string>& test_params) {
-  PerfTestResult result;
+  TestResult result;
   result.test_name = test_name;
   result.test_category = test_category;
   result.test_params = test_params;
   result.metrics = metrics;
-  result.num_processes = utils::getMPISize();
-  result.process_rank = utils::getMPIRank();
+  result.num_processes = getMPISize();
+  result.process_rank = getMPIRank();
   result.timestamp = getCurrentTimestamp();
 
   g_perf_results.push_back(result);
@@ -70,7 +61,7 @@ void writeResultsToFile(const std::string& filename) {
 }
 
 void printResults(bool verbose) {
-  if (!utils::isMainRank()) return;
+  if (!isMainRank()) return;
 
   std::cout << "\n=== Test Results ===" << std::endl;
 
@@ -92,5 +83,6 @@ void printResults(bool verbose) {
   std::cout << std::endl;
 }
 
+}  // namespace utils
 }  // namespace test
 }  // namespace mscclpp

@@ -13,6 +13,7 @@
 
 namespace mscclpp {
 namespace test {
+namespace utils {
 
 // Additional performance test utilities not in the base framework
 
@@ -24,6 +25,7 @@ void recordResult(const std::string& test_name, const std::string& test_category
 void writeResultsToFile(const std::string& filename);
 void printResults(bool verbose = false);
 
+}  // namespace utils
 }  // namespace test
 }  // namespace mscclpp
 

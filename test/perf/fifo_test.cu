@@ -48,7 +48,7 @@ __global__ void kernelFifoPushSync(size_t numTriggers) {
 }
 
 static void setupCuda(int& cudaDevice, int& numaNode) {
-  utils::CUDA_CHECK(cudaGetDevice(&cudaDevice));
+  CUDA_CHECK(cudaGetDevice(&cudaDevice));
   numaNode = mscclpp::getDeviceNumaNode(cudaDevice);
   mscclpp::numaBind(numaNode);
 }
@@ -88,26 +88,26 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
 
   // Warmup
   kernel<<<numParallel, 1, 0, stream>>>(warmupTriggers);
-  utils::CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaGetLastError());
 
   // Process warmup triggers (note: total triggers = warmupTriggers * numParallel)
   if (!consumeTriggers(hostFifo, warmupTriggers, numParallel)) {
     return {0.0, 0.0, 0, 0};  // Return error values
   }
-  utils::CUDA_CHECK(cudaStreamSynchronize(stream));
+  CUDA_CHECK(cudaStreamSynchronize(stream));
 
   // Benchmark
   utils::Timer timer;
   timer.start();
 
   kernel<<<numParallel, 1, 0, stream>>>(numTriggers);
-  utils::CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaGetLastError());
 
   // Process all triggers
   if (!consumeTriggers(hostFifo, numTriggers, numParallel)) {
     return {0.0, 0.0, 0, 0};
   }
-  utils::CUDA_CHECK(cudaStreamSynchronize(stream));
+  CUDA_CHECK(cudaStreamSynchronize(stream));
 
   timer.stop();
 
@@ -115,7 +115,7 @@ std::tuple<double, double, int, int> runSingleKernelVariant(void (*kernel)(size_
   double throughput = totalTriggers / timer.elapsedSeconds();
   double duration_us = timer.elapsedMicroseconds();
 
-  utils::CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaDeviceSynchronize());
 
   return {throughput, duration_us, totalTriggers, warmupTriggers * numParallel};
 }
@@ -165,10 +165,10 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
   auto hostFifo = std::make_unique<mscclpp::Fifo>(config.fifoSize);
 
   mscclpp::FifoDeviceHandle hostHandle = hostFifo->deviceHandle();
-  utils::CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
+  CUDA_CHECK(cudaMemcpyToSymbol(gFifoDeviceHandle, &hostHandle, sizeof(mscclpp::FifoDeviceHandle)));
 
   cudaStream_t stream;
-  utils::CUDA_CHECK(cudaStreamCreate(&stream));
+  CUDA_CHECK(cudaStreamCreate(&stream));
 
   // Create test name with parallelism range
   std::string testName = "FifoTest_Size" + std::to_string(config.fifoSize) + "_Parallel";
@@ -218,7 +218,7 @@ void runFifoTest(const FifoTestConfig& config, [[maybe_unused]] int rank, [[mayb
 
   utils::recordResult(testName, "fifo", combinedMetrics, testParams);
 
-  utils::CUDA_CHECK(cudaStreamDestroy(stream));
+  CUDA_CHECK(cudaStreamDestroy(stream));
 }
 
 void runAllFifoTests([[maybe_unused]] int rank, [[maybe_unused]] int worldSize, [[maybe_unused]] int localRank) {

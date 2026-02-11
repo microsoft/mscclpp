@@ -12,6 +12,7 @@
 #include <iostream>
 #include <map>
 #include <mscclpp/gpu.hpp>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -26,6 +27,7 @@ struct TestResult {
   std::string test_name;
   std::string test_category;
   std::map<std::string, std::string> test_params;
+  nlohmann::ordered_json metrics;
   int num_processes;
   int process_rank;
   std::string timestamp;
