@@ -115,17 +115,12 @@ if(MSCCLPP_ENABLE_COVERAGE)
         
         # Find lcov
         find_program(LCOV_PATH lcov)
-        find_program(GENHTML_PATH genhtml)
         
         if(NOT LCOV_PATH)
             message(WARNING "lcov not found. Install lcov to generate coverage reports.")
         endif()
         
-        if(NOT GENHTML_PATH)
-            message(WARNING "genhtml not found. Install lcov to generate HTML coverage reports.")
-        endif()
-        
-        if(LCOV_PATH AND GENHTML_PATH)
+        if(LCOV_PATH)
             # Add coverage target
             add_custom_target(coverage
                 COMMAND ${CMAKE_COMMAND} -E echo "Removing old coverage data..."
@@ -140,10 +135,7 @@ if(MSCCLPP_ENABLE_COVERAGE)
                 COMMAND ${CMAKE_COMMAND} -E echo "Filtering coverage data..."
                 COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' '*/build/*' --output-file coverage.info
                 
-                COMMAND ${CMAKE_COMMAND} -E echo "Generating HTML report..."
-                COMMAND ${GENHTML_PATH} coverage.info --output-directory coverage_html
-                
-                COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in coverage_html/index.html"
+                COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in coverage.info"
                 
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
                 COMMENT "Generating code coverage report"
@@ -151,7 +143,6 @@ if(MSCCLPP_ENABLE_COVERAGE)
             
             # Add coverage clean target
             add_custom_target(coverage-clean
-                COMMAND ${CMAKE_COMMAND} -E remove_directory coverage_html
                 COMMAND ${CMAKE_COMMAND} -E remove coverage.info
                 COMMAND ${LCOV_PATH} --directory . --zerocounters
                 WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
