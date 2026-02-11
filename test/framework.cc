@@ -37,10 +37,6 @@ static void finalizeMPI() {
   g_mpi_initialized = false;
 }
 
-static int getMPIRank() { return g_mpi_rank; }
-
-static int getMPISize() { return g_mpi_size; }
-
 static bool isMainProcess() { return g_mpi_rank == 0; }
 
 // Public utility functions for test output

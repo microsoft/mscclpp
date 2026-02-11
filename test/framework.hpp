@@ -397,7 +397,7 @@ class SkipHelper {
   std::ostringstream message_;
 };
 
-#define GTEST_SKIP() ::SkipHelper(__FILE__, __LINE__)
+#define GTEST_SKIP() ::mscclpp::test::SkipHelper(__FILE__, __LINE__)
 
 // Create a namespace alias for compatibility with GTest code
 namespace testing = ::mscclpp::test;
