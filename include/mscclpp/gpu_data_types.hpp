@@ -150,7 +150,6 @@ using VectorType = typename VectorTypeHelper<T, N>::type;
 
 DEFINE_VEC(i32x1, int32_t, 1, int32_t);
 DEFINE_VEC(u32x1, uint32_t, 1, uint32_t);
-DEFINE_VEC(u8x1, uint8_t, 1, uint8_t);
 DEFINE_VEC(f32x1, float, 1, float);
 DEFINE_VEC(f64x1, double, 1, double);
 
@@ -462,9 +461,9 @@ MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
   uint32_t ub = b.storage;
   uint32_t x = (ua & even) + (ub & even);
   uint32_t y = (ua & ~even) + (ub & ~even);
-  return bit_cast<u8x4>(__byte_perm(x, y, 0x7250));
+  return __byte_perm(x, y, 0x7250);
 #else
-  return bit_cast<u8x4>(__vadd4(a.storage, b.storage));
+  return __vadd4(a.storage, b.storage);
 #endif
 }
 
@@ -484,9 +483,9 @@ MSCCLPP_DEVICE_INLINE u8x4 min(const u8x4& a, const u8x4& b) {
   // Broadcast least bit across whole byte
   s *= 0xffu;
   // Compose result by selecting bytes via: signbit(a-b)==1 ? a : b
-  return bit_cast<u8x4>((ua & s) | (ub & ~s));
+  return (ua & s) | (ub & ~s);
 #else
-  return bit_cast<u8x4>(__vminu4(a.storage, b.storage));
+  return __vminu4(a.storage, b.storage);
 #endif
 }
 
