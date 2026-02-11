@@ -523,7 +523,7 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
-  assert((!std::is_same_v<T, uint8_t>) && "MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
+  assert((!std::is_same_v<T, uint8_t>)&&"MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
   if constexpr (std::is_same_v<T, uint8_t>) return;
   static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
