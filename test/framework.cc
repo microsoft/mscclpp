@@ -169,11 +169,13 @@ TestRegistry& TestRegistry::instance() {
   return registry;
 }
 
-void TestRegistry::registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory) {
+void TestRegistry::registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory,
+                                bool isPerfTest) {
   TestInfoInternal info;
   info.suiteName = test_suite;
   info.testName = test_name;
   info.factory = factory;
+  info.isPerfTest = isPerfTest;
   tests_.push_back(info);
 }
 
@@ -190,8 +192,10 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     utils::initializeMPI(argc, argv);
   }
 
-  // Parse command line arguments for test filter
+  // Parse command line arguments
   std::string filter = "";
+  bool excludePerfTests = false;
+  
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg.find("--gtest_filter=") == 0) {
@@ -199,6 +203,8 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     } else if (arg == "--gtest_filter" && i + 1 < argc) {
       filter = argv[i + 1];
       ++i;
+    } else if (arg == "--exclude-perf-tests") {
+      excludePerfTests = true;
     }
   }
 
@@ -222,6 +228,13 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   int total_to_run = 0;
   for (const auto& test_info : tests_) {
     std::string full_name = test_info.suiteName + "." + test_info.testName;
+    
+    // Skip performance tests if requested
+    if (excludePerfTests && test_info.isPerfTest) {
+      skipped++;
+      continue;
+    }
+    
     if (!filter.empty() && full_name.find(filter) == std::string::npos) {
       skipped++;
       continue;
@@ -232,7 +245,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   if (gMpiRank == 0) {
     std::cout << "[==========] Running " << total_to_run << " tests";
     if (skipped > 0) {
-      std::cout << " (" << skipped << " skipped by filter)";
+      std::cout << " (" << skipped << " skipped)";
     }
     std::cout << ".\n";
   }
@@ -240,6 +253,11 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   for (const auto& test_info : tests_) {
     std::string full_name = test_info.suiteName + "." + test_info.testName;
 
+    // Skip performance tests if requested
+    if (excludePerfTests && test_info.isPerfTest) {
+      continue;
+    }
+    
     // Apply filter
     if (!filter.empty() && full_name.find(filter) == std::string::npos) {
       continue;

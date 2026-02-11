@@ -91,7 +91,7 @@ class TestRegistry {
 
   static TestRegistry& instance();
 
-  void registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory);
+  void registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory, bool isPerfTest = false);
   void addGlobalTestEnvironment(Environment* env);
   int runAllTests(int argc, char* argv[]);
   void initGoogleTest(int* argc, char** argv);
@@ -102,6 +102,7 @@ class TestRegistry {
     std::string suiteName;
     std::string testName;
     TestFactory factory;
+    bool isPerfTest;
   };
   std::vector<TestInfoInternal> tests_;
   std::vector<Environment*> environments_;
@@ -216,7 +217,8 @@ class SkipHelper {
   static bool test_suite##_##test_name##_registered = []() {                                   \
     ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
         #test_suite, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }); \
+        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }, \
+        false);                                                                                \
     return true;                                                                               \
   }();                                                                                         \
   void test_suite##_##test_name##_Test::TestBody()
@@ -230,9 +232,41 @@ class SkipHelper {
   static bool test_fixture##_##test_name##_registered = []() {                                   \
     ::mscclpp::test::TestRegistry::instance().registerTest(                                      \
         #test_fixture, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }); \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }, \
+        false);                                                                                  \
     return true;                                                                                 \
   }();                                                                                           \
+  void test_fixture##_##test_name##_Test::TestBody()
+
+// Performance test registration macros
+#define PERF_TEST(test_suite, test_name)                                                       \
+  class test_suite##_##test_name##_Test : public ::mscclpp::test::TestCase {                   \
+   public:                                                                                     \
+    test_suite##_##test_name##_Test() {}                                                       \
+    void TestBody() override;                                                                  \
+  };                                                                                           \
+  static bool test_suite##_##test_name##_registered = []() {                                   \
+    ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
+        #test_suite, #test_name,                                                               \
+        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }, \
+        true);                                                                                 \
+    return true;                                                                               \
+  }();                                                                                         \
+  void test_suite##_##test_name##_Test::TestBody()
+
+#define PERF_TEST_F(test_fixture, test_name)                                           \
+  class test_fixture##_##test_name##_Test : public test_fixture {                     \
+   public:                                                                             \
+    test_fixture##_##test_name##_Test() {}                                            \
+    void TestBody() override;                                                          \
+  };                                                                                   \
+  static bool test_fixture##_##test_name##_registered = []() {                        \
+    ::mscclpp::test::TestRegistry::instance().registerTest(                           \
+        #test_fixture, #test_name,                                                     \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }, \
+        true);                                                                         \
+    return true;                                                                       \
+  }();                                                                                 \
   void test_fixture##_##test_name##_Test::TestBody()
 
 // Test runner macro
