@@ -15,7 +15,7 @@
 #include "ib.hpp"
 #include "utils_internal.hpp"
 
-class MultiProcessTestEnv : public ::testing::Environment {
+class MultiProcessTestEnv : public ::mscclpp::test::Environment {
  public:
   MultiProcessTestEnv(int argc, const char** argv);
 
@@ -36,7 +36,7 @@ mscclpp::Transport ibIdToTransport(int id);
 int rankToLocalRank(int rank);
 int rankToNode(int rank);
 
-class MultiProcessTest : public ::testing::Test {
+class MultiProcessTest : public ::mscclpp::test::TestCase {
  protected:
   void TearDown() override;
 };

@@ -1,13 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <gmock/gmock.h>
+#include "../framework.hpp"
 
 #include <mscclpp/core.hpp>
 
-#include "../framework.hpp"
-
-class LocalCommunicatorTest : public ::testing::Test {
+class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
  protected:
   void SetUp() override {
     bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);

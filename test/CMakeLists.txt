@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
-find_package(MPI)
+find_package(MPI REQUIRED)
 
 set(TEST_LIBS_COMMON mscclpp ${GPU_LIBRARIES} ${NUMA_LIBRARIES} Threads::Threads)
 if(MSCCLPP_USE_IB)
@@ -40,7 +40,7 @@ include(CTest)
 
 # Build test framework library
 add_library(test_framework STATIC framework.cc)
-target_include_directories(test_framework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(test_framework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${TEST_INC_COMMON})
 target_link_libraries(test_framework PUBLIC MPI::MPI_CXX)
 
 # Unit tests

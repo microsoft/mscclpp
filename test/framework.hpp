@@ -366,11 +366,34 @@ void reportSuccess();
     }                                                                                                      \
   } while (0)
 
-#define FAIL()                                                                \
-  do {                                                                        \
-    ::mscclpp::test::utils::reportFailure(__FILE__, __LINE__, "Test failed"); \
-    throw std::runtime_error("Test failed");                                  \
-  } while (0)
+// Helper class for FAIL functionality with message streaming support
+class FailHelper {
+ public:
+  explicit FailHelper(const char* file, int line) : file_(file), line_(line) {}
+  template <typename T>
+  FailHelper& operator<<(const T& value) {
+    message_ << value;
+    return *this;
+  }
+  ~FailHelper() noexcept(false) {
+    std::string msg = message_.str();
+    if (!msg.empty()) {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed: " + msg);
+    } else {
+      ::mscclpp::test::utils::reportFailure(file_, line_, "Test failed");
+    }
+    throw std::runtime_error("Test failed");
+  }
+
+ private:
+  const char* file_;
+  int line_;
+  std::ostringstream message_;
+};
+
+// Test fail macro - throws exception to fail test execution
+// Usage: FAIL() << "Optional fail message";
+#define FAIL() ::mscclpp::test::FailHelper(__FILE__, __LINE__)
 
 // Helper class for GTEST_SKIP functionality
 // This class uses RAII (Resource Acquisition Is Initialization) pattern:
