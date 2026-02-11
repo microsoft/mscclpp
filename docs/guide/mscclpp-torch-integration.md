@@ -95,14 +95,12 @@ Use pre-built, optimized algorithms from MSCCL++. Best for standard collective o
 import mscclpp
 import mscclpp.utils as mscclpp_utils
 
-def load_algorithms(scratch_buffer: torch.Tensor, flag_buffer: torch.Tensor, rank: int):
+def load_algorithms(scratch_buffer: torch.Tensor, rank: int):
     """Load MSCCL++ default algorithm collection."""
     collection_builder = mscclpp.AlgorithmCollectionBuilder()
     return collection_builder.build_default_algorithms(
         scratch_buffer=scratch_buffer.data_ptr(),
         scratch_buffer_size=scratch_buffer.nbytes,
-        flag_buffer=flag_buffer.data_ptr(),
-        flag_buffer_size=flag_buffer.nbytes,
         rank=rank
     )
 ```
@@ -118,11 +116,8 @@ class CustomizedComm:
         dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
 
-        # Allocate flag buffer (required for packet-based algorithms)
-        self.flag_buffer = torch.ones(128, dtype=torch.uint32, device='cuda')
-
         # Load and select algorithms
-        algorithms = load_algorithms(self.scratch_buffer, self.flag_buffer, comm.my_rank)
+        algorithms = load_algorithms(self.scratch_buffer, comm.my_rank)
 
         # Select specific algorithms by name
         self._algo_small = [

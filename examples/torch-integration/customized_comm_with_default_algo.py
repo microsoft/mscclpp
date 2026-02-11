@@ -12,13 +12,11 @@ import netifaces as ni
 import ipaddress
 
 
-def load_algorithms(scratch_buffer: torch.tensor, flag_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
+def load_algorithms(scratch_buffer: torch.tensor, rank: int) -> mscclpp.AlgorithmCollection:
     collection_builder = mscclpp.ext.AlgorithmCollectionBuilder()
     return collection_builder.build_default_algorithms(
         scratch_buffer=scratch_buffer.data_ptr(),
         scratch_buffer_size=scratch_buffer.nbytes,
-        flag_buffer=flag_buffer.data_ptr(),
-        flag_buffer_size=flag_buffer.nbytes,
         rank=rank,
     )
 
@@ -54,8 +52,7 @@ class CustomizedComm:
         self.n_ranks_per_node = comm.nranks_per_node
         dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
-        self.flag_buffer = torch.ones(128, dtype=torch.uint32, device=torch.device("cuda"))
-        algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, flag_buffer=self.flag_buffer, rank=self.rank)
+        algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
         self._algorithm_nvls_packet = [
             algo
             for algo in algorithms
