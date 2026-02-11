@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_MP_UNIT_TESTS_HPP_
 #define MSCCLPP_MP_UNIT_TESTS_HPP_
 
-#include <gtest/gtest.h>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
@@ -13,6 +11,7 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "../framework.hpp"
 #include "ib.hpp"
 #include "utils_internal.hpp"
 

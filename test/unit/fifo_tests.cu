@@ -1,13 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "../framework.hpp"
-
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "../framework.hpp"
 #include "utils_internal.hpp"
 
 #define ITER 10000  // should be larger than the FIFO size for proper testing

@@ -7,9 +7,9 @@
 // This file is kept for backwards compatibility with perf tests
 // The actual framework is now in test/framework.hpp
 
-#include "../framework.hpp"
-
 #include <nlohmann/json.hpp>
+
+#include "../framework.hpp"
 
 namespace mscclpp {
 namespace test {

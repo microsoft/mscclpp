@@ -161,6 +161,12 @@ int runMultipleTests(
 
 }  // namespace utils
 
+// UnitTest implementation
+UnitTest* UnitTest::GetInstance() {
+  static UnitTest instance;
+  return &instance;
+}
+
 // TestRegistry implementation
 TestRegistry& TestRegistry::instance() {
   static TestRegistry registry;
@@ -168,17 +174,36 @@ TestRegistry& TestRegistry::instance() {
 }
 
 void TestRegistry::registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory) {
-  TestInfo info;
+  TestInfoInternal info;
   info.suite_name = test_suite;
   info.test_name = test_name;
   info.factory = factory;
   tests_.push_back(info);
 }
 
+void TestRegistry::addGlobalTestEnvironment(Environment* env) { environments_.push_back(env); }
+
+void TestRegistry::initGoogleTest(int* argc, char** argv) {
+  // Parse command-line arguments if needed
+  // For now, this is a no-op placeholder for compatibility
+}
+
 int TestRegistry::runAllTests(int argc, char* argv[]) {
   // Initialize MPI if not already initialized
   if (!g_mpi_initialized) {
     utils::initializeMPI(argc, argv);
+  }
+
+  // Set up global test environments
+  for (auto* env : environments_) {
+    try {
+      env->SetUp();
+    } catch (const std::exception& e) {
+      if (g_mpi_rank == 0) {
+        std::cerr << "Failed to set up test environment: " << e.what() << std::endl;
+      }
+      return 1;
+    }
   }
 
   int passed = 0;
@@ -195,6 +220,10 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     if (g_mpi_rank == 0) {
       std::cout << "[ RUN      ] " << test_info.suite_name << "." << test_info.test_name << std::endl;
     }
+
+    // Set current test info for UnitTest::GetInstance()->current_test_info()
+    TestInfo current_info(test_info.suite_name, test_info.test_name);
+    UnitTest::GetInstance()->set_current_test_info(&current_info);
 
     TestCase* test_case = nullptr;
     try {
@@ -215,6 +244,9 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     }
 
     delete test_case;
+
+    // Clear current test info
+    UnitTest::GetInstance()->set_current_test_info(nullptr);
 
     // Synchronize test status across all MPI processes
     int local_passed = g_current_test_passed ? 1 : 0;
@@ -243,6 +275,17 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     }
     if (failed > 0) {
       std::cout << "[  FAILED  ] " << failed << " tests.\n";
+    }
+  }
+
+  // Tear down global test environments (in reverse order)
+  for (auto it = environments_.rbegin(); it != environments_.rend(); ++it) {
+    try {
+      (*it)->TearDown();
+    } catch (const std::exception& e) {
+      if (g_mpi_rank == 0) {
+        std::cerr << "Failed to tear down test environment: " << e.what() << std::endl;
+      }
     }
   }
 

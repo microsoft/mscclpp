@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "../framework.hpp"
-
 #include <mscclpp/errors.hpp>
+
+#include "../framework.hpp"
 
 TEST(ErrorsTest, SystemError) {
   mscclpp::Error error("test", mscclpp::ErrorCode::SystemError);

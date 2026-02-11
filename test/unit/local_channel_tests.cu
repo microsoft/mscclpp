@@ -1,12 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "../framework.hpp"
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/port_channel_device.hpp>
+
+#include "../framework.hpp"
 
 #define MAGIC_CONST 777
 

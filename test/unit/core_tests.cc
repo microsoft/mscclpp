@@ -2,9 +2,10 @@
 // Licensed under the MIT license.
 
 #include <gmock/gmock.h>
-#include "../framework.hpp"
 
 #include <mscclpp/core.hpp>
+
+#include "../framework.hpp"
 
 class LocalCommunicatorTest : public ::testing::Test {
  protected:

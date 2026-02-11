@@ -1,11 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include "../framework.hpp"
-
 #include <mscclpp/utils.hpp>
 #include <thread>
 
+#include "../framework.hpp"
 #include "socket.h"
 #include "utils_internal.hpp"
 

@@ -12,7 +12,7 @@ namespace mscclpp {
 namespace test {
 
 // Global state for performance test results
-static std::vector<struct PerfTestResult {
+static std::vector < struct PerfTestResult {
   std::string test_name;
   std::string test_category;
   std::map<std::string, std::string> test_params;
@@ -20,7 +20,7 @@ static std::vector<struct PerfTestResult {
   int num_processes;
   int process_rank;
   std::string timestamp;
-}> g_perf_results;
+} > g_perf_results;
 
 static std::string getCurrentTimestamp() {
   auto now = std::chrono::system_clock::now();
