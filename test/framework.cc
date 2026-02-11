@@ -190,6 +190,18 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     utils::initializeMPI(argc, argv);
   }
 
+  // Parse command line arguments for test filter
+  std::string filter = "";
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg.find("--gtest_filter=") == 0) {
+      filter = arg.substr(15);  // Length of "--gtest_filter="
+    } else if (arg == "--gtest_filter" && i + 1 < argc) {
+      filter = argv[i + 1];
+      ++i;
+    }
+  }
+
   // Set up global test environments
   for (auto* env : environments_) {
     try {
@@ -204,17 +216,40 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
 
   int passed = 0;
   int failed = 0;
+  int skipped = 0;
+
+  // Count tests to run
+  int total_to_run = 0;
+  for (const auto& test_info : tests_) {
+    std::string full_name = test_info.suite_name + "." + test_info.test_name;
+    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
+      skipped++;
+      continue;
+    }
+    total_to_run++;
+  }
 
   if (g_mpi_rank == 0) {
-    std::cout << "[==========] Running " << tests_.size() << " tests.\n";
+    std::cout << "[==========] Running " << total_to_run << " tests";
+    if (skipped > 0) {
+      std::cout << " (" << skipped << " skipped by filter)";
+    }
+    std::cout << ".\n";
   }
 
   for (const auto& test_info : tests_) {
+    std::string full_name = test_info.suite_name + "." + test_info.test_name;
+
+    // Apply filter
+    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
+      continue;
+    }
+
     g_current_test_passed = true;
     g_current_test_failure_message.clear();
 
     if (g_mpi_rank == 0) {
-      std::cout << "[ RUN      ] " << test_info.suite_name << "." << test_info.test_name << std::endl;
+      std::cout << "[ RUN      ] " << full_name << std::endl;
     }
 
     // Set current test info for UnitTest::GetInstance()->current_test_info()
@@ -255,17 +290,17 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
 
     if (g_mpi_rank == 0) {
       if (global_passed) {
-        std::cout << "[       OK ] " << test_info.suite_name << "." << test_info.test_name << std::endl;
+        std::cout << "[       OK ] " << full_name << std::endl;
         passed++;
       } else {
-        std::cout << "[  FAILED  ] " << test_info.suite_name << "." << test_info.test_name << std::endl;
+        std::cout << "[  FAILED  ] " << full_name << std::endl;
         failed++;
       }
     }
   }
 
   if (g_mpi_rank == 0) {
-    std::cout << "[==========] " << tests_.size() << " tests ran.\n";
+    std::cout << "[==========] " << total_to_run << " tests ran.\n";
     if (passed > 0) {
       std::cout << "[  PASSED  ] " << passed << " tests.\n";
     }
