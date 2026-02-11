@@ -22,7 +22,7 @@ function(add_perf_test_executable name sources)
         set_source_files_properties(${sources} PROPERTIES LANGUAGE CXX)
     endif()
     add_executable(${name} ${sources})
-    target_link_libraries(${name} ${PERF_TEST_LIBS_COMMON})
+    target_link_libraries(${name} ${PERF_TEST_LIBS_COMMON} test_framework)
     
     # Link nlohmann_json - use the target from main project
     target_link_libraries(${name} nlohmann_json::nlohmann_json)

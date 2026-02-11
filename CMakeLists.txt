@@ -56,6 +56,7 @@ option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
+option(MSCCLPP_ENABLE_COVERAGE "Enable code coverage" OFF)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -96,6 +97,69 @@ else()
         set(MSCCLPP_USE_ROCM ON)
     else()
         message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
+    endif()
+endif()
+
+# Code coverage setup
+if(MSCCLPP_ENABLE_COVERAGE)
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(WARNING "Code coverage results with an optimized (non-Debug) build may be misleading")
+    endif()
+    
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(STATUS "Code coverage enabled")
+        
+        # Add coverage flags to all targets
+        add_compile_options(--coverage -O0 -g)
+        add_link_options(--coverage)
+        
+        # Find lcov
+        find_program(LCOV_PATH lcov)
+        find_program(GENHTML_PATH genhtml)
+        
+        if(NOT LCOV_PATH)
+            message(WARNING "lcov not found. Install lcov to generate coverage reports.")
+        endif()
+        
+        if(NOT GENHTML_PATH)
+            message(WARNING "genhtml not found. Install lcov to generate HTML coverage reports.")
+        endif()
+        
+        if(LCOV_PATH AND GENHTML_PATH)
+            # Add coverage target
+            add_custom_target(coverage
+                COMMAND ${CMAKE_COMMAND} -E echo "Removing old coverage data..."
+                COMMAND ${LCOV_PATH} --directory . --zerocounters
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Collecting coverage data..."
+                COMMAND ${LCOV_PATH} --directory . --capture --output-file coverage.info
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Filtering coverage data..."
+                COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' '*/build/*' --output-file coverage.info
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Generating HTML report..."
+                COMMAND ${GENHTML_PATH} coverage.info --output-directory coverage_html
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in coverage_html/index.html"
+                
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                COMMENT "Generating code coverage report"
+            )
+            
+            # Add coverage clean target
+            add_custom_target(coverage-clean
+                COMMAND ${CMAKE_COMMAND} -E remove_directory coverage_html
+                COMMAND ${CMAKE_COMMAND} -E remove coverage.info
+                COMMAND ${LCOV_PATH} --directory . --zerocounters
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                COMMENT "Cleaning coverage data"
+            )
+        endif()
+    else()
+        message(WARNING "Code coverage is only supported with GCC or Clang compilers")
     endif()
 endif()
 if(MSCCLPP_GPU_ARCHS)
