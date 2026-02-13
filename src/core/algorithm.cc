@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
 
@@ -40,12 +41,12 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    const std::unordered_map<std::string, uintptr_t>& extras) {
+                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype);
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
@@ -155,7 +156,7 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
-                                 std::shared_ptr<Executor> executor, int, int,
+                                 std::shared_ptr<Executor> executor, int, int, bool,
                                  const std::unordered_map<std::string, uintptr_t>&) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
@@ -197,5 +198,19 @@ std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
 // TODO: implement this
 void DslAlgorithm::reset() {}
+
+static std::weak_ptr<uint32_t> gDefaultFlagBuffer;
+static size_t gDefaultFlagCount = 128;
+
+std::pair<std::shared_ptr<void>, size_t> getDefaultFlagBuffer() {
+  std::shared_ptr<uint32_t> flagBuffer = gDefaultFlagBuffer.lock();
+  if (!flagBuffer) {
+    flagBuffer = mscclpp::detail::gpuCallocShared<uint32_t>(gDefaultFlagCount);
+    std::vector<uint32_t> initFlags(gDefaultFlagCount, 1);
+    mscclpp::gpuMemcpy(flagBuffer.get(), initFlags.data(), gDefaultFlagCount, cudaMemcpyHostToDevice);
+    gDefaultFlagBuffer = flagBuffer;
+  }
+  return {flagBuffer, gDefaultFlagCount * sizeof(uint32_t)};
+}
 
 }  // namespace mscclpp

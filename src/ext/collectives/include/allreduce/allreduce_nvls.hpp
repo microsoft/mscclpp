@@ -12,6 +12,7 @@ class AllreduceNvls : public AlgorithmBuilder {
   std::shared_ptr<Algorithm> build() override;
 
  private:
+  bool symmetricMemory_ = false;
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
                                  DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
@@ -19,13 +20,14 @@ class AllreduceNvls : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
 
   const size_t nvlsBufferSize_ = (1 << 30);
   uint32_t nSwitchChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;
+  int computeCapabilityMajor_{0};
 };
 
 }  // namespace collective

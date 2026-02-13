@@ -107,12 +107,6 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-AllgatherFullmesh2::AllgatherFullmesh2() : disableChannelCache_(false) {
-  if (mscclpp::env()->disableChannelCache) {
-    disableChannelCache_ = true;
-  }
-}
-
 void AllgatherFullmesh2::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
   this->memorySemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
@@ -174,7 +168,7 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
   size_t channelOutOffset = (char*)output - (char*)recvBasePtr;
-  if (disableChannelCache_) {
+  if (!symmetricMemory_) {
     channelOutOffset = 0;
     recvBytes = inputSize * comm->bootstrap()->getNranks();
     recvBasePtr = (CUdeviceptr)output;
@@ -197,10 +191,11 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
 }
 
 mscclpp::AlgorithmCtxKey AllgatherFullmesh2::generateAllgatherContextKey(const void*, void* output, size_t,
-                                                                         mscclpp::DataType) {
+                                                                         mscclpp::DataType, bool symmetricMemory) {
   static int tag = 0;
-  if (disableChannelCache_) {
-    // always return a new key if channel cache is disabled
+  symmetricMemory_ = symmetricMemory;
+  if (!symmetricMemory_) {
+    // always return a new key if symmetric memory is not enabled.
     return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, tag++};
   }
   size_t recvBytes;
@@ -224,7 +219,9 @@ std::shared_ptr<Algorithm> AllgatherFullmesh2::build() {
              [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
-             mscclpp::DataType dtype) { return self->generateAllgatherContextKey(input, output, inputSize, dtype); });
+             mscclpp::DataType dtype, bool symmetricMemory) {
+        return self->generateAllgatherContextKey(input, output, inputSize, dtype, symmetricMemory);
+      });
 }
 
 }  // namespace collective

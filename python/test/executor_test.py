@@ -11,7 +11,7 @@ from mscclpp import (
     env,
 )
 from mscclpp import CommGroup, GpuBuffer
-from mscclpp.utils import KernelBuilder, GpuBuffer, pack
+from mscclpp.utils import KernelBuilder, pack
 import os
 import struct
 

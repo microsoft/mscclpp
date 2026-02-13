@@ -9,6 +9,8 @@
 #include <cstddef>
 #include <mscclpp/gpu_data_types.hpp>
 
+#include "logger.hpp"
+
 // Convert ncclDataType_t to mscclpp::DataType
 inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
   switch (dtype) {
@@ -75,8 +77,8 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclFloat8e5m2;
 #endif
     default:
-      assert(false && "Unsupported mscclpp::DataType");
-      return ncclNumTypes;
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "Unsupported mscclpp::DataType: " + std::to_string(static_cast<int>(dtype)));
   }
 }
 
