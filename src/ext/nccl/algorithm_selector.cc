@@ -62,12 +62,9 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
 
   const bool nvlsSupported = isNvlsSupportedForDataType(config, request.dtype);
 
-  // Small messages use NVLS packet algorithm if supported, otherwise packet algorithm
+  // Small messages always use NVLS packet algorithm
   if (messageSize <= (1 << 15)) {  // <= 32KB
-    if (nvlsSupported) {
-      return algoMap.at("default_allreduce_nvls_packet");
-    }
-    return algoMap.at("default_allreduce_packet");
+    return algoMap.at("default_allreduce_nvls_packet");
   }
 
   if (!config.symmetricMemory) {
