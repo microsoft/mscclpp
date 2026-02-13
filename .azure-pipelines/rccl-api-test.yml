@@ -26,7 +26,7 @@ pr:
       - '**/*.md'
 
 jobs:
-- job: NcclTestMI300X
+- job: RcclTestMI300X
   displayName: Run MSCCLPP over RCCL Test (MI300X)
   pool:
     name: msccl-ci-mi300x
