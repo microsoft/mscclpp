@@ -13,6 +13,12 @@ namespace nccl {
 
 static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, DataType dtype) {
   bool nvlsSupported = config.nvlsSupported;
+
+  // NVLS does not support uint8_t (no hardware support for byte-level reduction)
+  if (dtype == DataType::UINT8) {
+    return false;
+  }
+
   const bool isFp8 = dtype == DataType::FP8_E4M3 || dtype == DataType::FP8_E5M2;
 
   if (!isFp8) {
