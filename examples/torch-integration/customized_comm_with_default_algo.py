@@ -52,8 +52,6 @@ class CustomizedComm:
         self.n_ranks_per_node = comm.nranks_per_node
         dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
-        flag_dlpack = mscclpp.RawGpuBuffer(128 * 4).to_dlpack(data_type=str(torch.uint8))
-        self.flag_buffer = torch.utils.dlpack.from_dlpack(flag_dlpack)
         algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
         self._algorithm_nvls_packet = [
             algo
