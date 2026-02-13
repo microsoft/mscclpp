@@ -1,4 +1,4 @@
-# .azure-pipelines/templates/rccl.yaml
+# .azure-pipelines/templates/rccl-test.yaml
 # ------------------------------------------------
 # A step-template that runs the entire MSCCLPP→RCCL test suite on one pool/container.
 #
