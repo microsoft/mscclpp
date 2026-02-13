@@ -430,6 +430,20 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 operator+(const f8_e5m2x4& a, const f8_e5m2x4& b
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
 
+MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
+#if defined(MSCCLPP_DEVICE_HIP)
+  // Optimized uint8_t x 4 sum using byte permute to avoid overflow between adjacent bytes
+  constexpr uint32_t even = 0x00ff00ffu;
+  uint32_t ua = a.storage;
+  uint32_t ub = b.storage;
+  uint32_t x = (ua & even) + (ub & even);
+  uint32_t y = (ua & ~even) + (ub & ~even);
+  return __byte_perm(x, y, 0x7250);
+#else
+  return __vadd4(a.storage, b.storage);
+#endif
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE T min(const T& a, const T& b) {
   return (a < b ? a : b);
@@ -451,20 +465,6 @@ MSCCLPP_DEVICE_INLINE f16x2 min(const f16x2& a, const f16x2& b) {
 template <>
 MSCCLPP_DEVICE_INLINE bf16x2 min(const bf16x2& a, const bf16x2& b) {
   return __hmin2(a, b);
-}
-
-MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
-#if defined(MSCCLPP_DEVICE_HIP)
-  // Optimized uint8_t x 4 sum using byte permute to avoid overflow between adjacent bytes
-  constexpr uint32_t even = 0x00ff00ffu;
-  uint32_t ua = a.storage;
-  uint32_t ub = b.storage;
-  uint32_t x = (ua & even) + (ub & even);
-  uint32_t y = (ua & ~even) + (ub & ~even);
-  return __byte_perm(x, y, 0x7250);
-#else
-  return __vadd4(a.storage, b.storage);
-#endif
 }
 
 template <>
