@@ -234,7 +234,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
   void* flags = this->flags_.get();
-  AllreduceFunc allreduce = dispatch<PacketAdapter, true>(op, dtype);
+  AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;

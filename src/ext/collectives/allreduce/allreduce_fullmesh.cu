@@ -194,7 +194,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
 
-  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter, true>(op, dtype);
+  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));
