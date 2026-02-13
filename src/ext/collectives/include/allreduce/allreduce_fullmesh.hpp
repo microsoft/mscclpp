@@ -32,6 +32,7 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   RegisteredMemory localScratchMemory_;
   std::unordered_map<const void*, std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>
       memoryChannelsMap_;
+  bool symmetricMemory_ = false;
 };
 }  // namespace collective
 }  // namespace mscclpp

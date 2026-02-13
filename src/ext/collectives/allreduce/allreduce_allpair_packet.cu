@@ -14,7 +14,8 @@ namespace collective {
 template <ReduceOp OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                                  int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags, uint32_t flagSize) {
+                                  int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags,
+                                  uint32_t flagSize) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
 
@@ -153,7 +154,8 @@ AlgorithmCtxKey AllreduceAllpairPacket::generateAllreduceContextKey(const void* 
 }
 
 std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
-  auto self = std::make_shared<AllreduceAllpairPacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_, flagBuffer_, flagBufferSize_);
+  auto self = std::make_shared<AllreduceAllpairPacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_,
+                                                       flagBuffer_, flagBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_allpair_packet", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },

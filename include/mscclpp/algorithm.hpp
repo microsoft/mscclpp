@@ -364,6 +364,10 @@ class AlgorithmCollection {
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 };
 
+/// Get a default GPU flag buffer (allocated once and reused).
+/// @return A pair of (shared_ptr to the flag buffer, size in bytes).
+std::pair<std::shared_ptr<void>, size_t> getDefaultFlagBuffer();
+
 }  // namespace mscclpp
 
 #endif  // MSCCLPP_ALGORITHM_HPP_

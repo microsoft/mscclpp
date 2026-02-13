@@ -13,12 +13,18 @@ namespace nccl {
 
 static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, DataType dtype) {
   bool nvlsSupported = config.nvlsSupported;
+
+  // NVLS does not support uint8_t (no hardware support for byte-level reduction)
+  if (dtype == DataType::UINT8) {
+    return false;
+  }
+
   const bool isFp8 = dtype == DataType::FP8_E4M3 || dtype == DataType::FP8_E5M2;
-  
+
   if (!isFp8) {
     return nvlsSupported;
   }
-  
+
   // FP8 handling
 #if !defined(__HIP_PLATFORM_AMD__)
   // NVLS does not support FP8 on devices with compute capability < 10
@@ -49,7 +55,7 @@ bool matchExecutionPlan(std::shared_ptr<DslAlgorithm> algo, const CollectiveRequ
   return result;
 }
 
-std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
+static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
     const AlgorithmSelectorConfig& config) {
   const size_t messageSize = request.messageSize;
@@ -65,15 +71,7 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     if (messageSize <= (1 << 21)) {  // <= 2MB
       return algoMap.at("default_allreduce_packet");
     }
-    if (config.inCaptureMode) {
-      // CUDA graph mode: setup new connections each time (zero-copy for graph)
-      return algoMap.at("default_allreduce_rsag_zero_copy");
-    }
-    // Non-graph mode: use non-zero-copy algorithms
-    if (messageSize <= (1 << 23)) {  // <= 8MB
-      return algoMap.at("default_allreduce_rsag");
-    }
-    return algoMap.at("default_allreduce_rsag_pipeline");
+    return nullptr;
   }
 
   // Symmetric memory path: can use cached memory handles
@@ -92,6 +90,11 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
 std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
     const std::unordered_map<std::string, std::shared_ptr<Algorithm>>& algoMap, const CollectiveRequest& request,
     const AlgorithmSelectorConfig& config) {
+  // Use Blackwell-specific selection for compute capability 10.x
+  if (config.computeCapability.first == 10) {
+    return selectSingleNodeAllreduceBlackwell(algoMap, request, config);
+  }
+
   const size_t messageSize = request.messageSize;
 
   // Determine NVLS availability based on data type and device capability
@@ -101,34 +104,34 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
 
   // Very small messages: use allpair packet algorithm
   if (messageSize <= (1 << 14)) {  // <= 16KB
-  return algoMap.at("default_allreduce_allpair_packet");
-}
-// Small messages with NVLS support
-if (messageSize <= (1 << 15) && nvlsSupported) {  // <= 32KB
-  return algoMap.at("default_allreduce_nvls_packet");
-}
-// Medium messages: use packet algorithm
-if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {  // <= 64KB or <= 1MB
-  return algoMap.at("default_allreduce_packet");
-}
-// Large messages with NVLS zero-copy support
-if (nvlsSupported && useNvlsWithZeroCopy) {
-  return algoMap.at("default_allreduce_nvls");
-}
-// Large messages with NVLS but without zero-copy
-if (nvlsSupported) {
-  if (messageSize < (1 << 24)) {  // < 16MB
-    return algoMap.at("default_allreduce_nvls_with_copy");
+    return algoMap.at("default_allreduce_allpair_packet");
   }
-  return algoMap.at("default_allreduce_nvls_with_copy2");
-}
+  // Small messages with NVLS support
+  if (messageSize <= (1 << 15) && nvlsSupported) {  // <= 32KB
+    return algoMap.at("default_allreduce_nvls_packet");
+  }
+  // Medium messages: use packet algorithm
+  if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {  // <= 64KB or <= 1MB
+    return algoMap.at("default_allreduce_packet");
+  }
+  // Large messages with NVLS zero-copy support
+  if (nvlsSupported && useNvlsWithZeroCopy) {
+    return algoMap.at("default_allreduce_nvls");
+  }
+  // Large messages with NVLS but without zero-copy
+  if (nvlsSupported) {
+    if (messageSize < (1 << 24)) {  // < 16MB
+      return algoMap.at("default_allreduce_nvls_with_copy");
+    }
+    return algoMap.at("default_allreduce_nvls_with_copy2");
+  }
 #if defined(__HIP_PLATFORM_AMD__)
-// AMD platform: use fullmesh algorithm
-return algoMap.at("default_allreduce_fullmesh");
+  // AMD platform: use fullmesh algorithm
+  return algoMap.at("default_allreduce_fullmesh");
 #else
   // NVIDIA without NVLS: use RSAG pipeline if no NCCL fallback
   if (!config.ncclDlopenSharedLib) {
-    return algoMap.at("default_allreduce_rsag_pipeline");
+    return algoMap.at("default_allreduce_fullmesh");
   }
   return nullptr;
 #endif

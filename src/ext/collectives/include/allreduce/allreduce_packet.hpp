@@ -10,7 +10,10 @@ namespace collective {
 class AllreducePacket : public AlgorithmBuilder {
  public:
   AllreducePacket(uintptr_t scratchBuffer, size_t scratchBufferSize, uintptr_t flagBuffer, size_t flagBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize), flagBuffer_(flagBuffer), flagBufferSize_(flagBufferSize){};
+      : scratchBuffer_((void*)scratchBuffer),
+        scratchBufferSize_(scratchBufferSize),
+        flagBuffer_(flagBuffer),
+        flagBufferSize_(flagBufferSize){};
   std::shared_ptr<Algorithm> build() override;
 
  private:
@@ -32,7 +35,6 @@ class AllreducePacket : public AlgorithmBuilder {
   size_t flagBufferSize_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
-  std::shared_ptr<LL8Packet> flags_;
 };
 }  // namespace collective
 }  // namespace mscclpp

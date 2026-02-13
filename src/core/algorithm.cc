@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
 
@@ -197,5 +198,19 @@ std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
 // TODO: implement this
 void DslAlgorithm::reset() {}
+
+static std::weak_ptr<uint32_t> gDefaultFlagBuffer;
+static size_t gDefaultFlagCount = 128;
+
+std::pair<std::shared_ptr<void>, size_t> getDefaultFlagBuffer() {
+  std::shared_ptr<uint32_t> flagBuffer = gDefaultFlagBuffer.lock();
+  if (!flagBuffer) {
+    flagBuffer = mscclpp::detail::gpuCallocShared<uint32_t>(gDefaultFlagCount);
+    std::vector<uint32_t> initFlags(gDefaultFlagCount, 1);
+    mscclpp::gpuMemcpy(flagBuffer.get(), initFlags.data(), gDefaultFlagCount, cudaMemcpyHostToDevice);
+    gDefaultFlagBuffer = flagBuffer;
+  }
+  return {flagBuffer, gDefaultFlagCount * sizeof(uint32_t)};
+}
 
 }  // namespace mscclpp

@@ -114,4 +114,12 @@ void register_algorithm(nb::module_& m) {
       .def_ro("dtype", &CollectiveRequest::dtype)
       .def_prop_ro("hints", [](const CollectiveRequest& self) { return self.hints; })
       .def("buffer_mode", &CollectiveRequest::bufferMode);
+
+  m.def(
+      "cpp_get_default_flag_buffer",
+      []() {
+        auto [buffer, size] = getDefaultFlagBuffer();
+        return std::make_pair(reinterpret_cast<uintptr_t>(buffer.get()), size);
+      },
+      "Get the default flag buffer. Returns a tuple of (buffer_ptr, buffer_size).");
 }

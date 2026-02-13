@@ -191,8 +191,9 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
 }
 
 mscclpp::AlgorithmCtxKey AllgatherFullmesh2::generateAllgatherContextKey(const void*, void* output, size_t,
-                                                                         mscclpp::DataType, bool) {
+                                                                         mscclpp::DataType, bool symmetricMemory) {
   static int tag = 0;
+  symmetricMemory_ = symmetricMemory;
   if (!symmetricMemory_) {
     // always return a new key if symmetric memory is not enabled.
     return mscclpp::AlgorithmCtxKey{nullptr, nullptr, 0, 0, tag++};

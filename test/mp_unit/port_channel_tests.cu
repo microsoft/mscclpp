@@ -18,7 +18,7 @@ void PortChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
 void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC,
                                                    bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
-                                                   void* recvBuff, size_t recvBuffBytes) {
+                                                   void* recvBuff, size_t recvBuffBytes, IbMode ibMode) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -47,6 +47,7 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     } else if (useIb) {
       cfg.transport = ibTransport;
       cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+      cfg.ib.mode = ibMode;
     } else if (useEthernet) {
       cfg.transport = mscclpp::Transport::Ethernet;
     }
@@ -162,7 +163,8 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
 
   std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -207,7 +209,8 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -245,47 +248,64 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 }
 
 TEST_F(PortChannelOneToOneTest, PingPong) {
-  testPingPong(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false});
+  testPingPong(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIb) {
+TEST_F(PortChannelOneToOneTest, PingPongIbHostMode) {
 #if defined(USE_IBVERBS)
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 #else   // !defined(USE_IBVERBS)
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
 TEST_F(PortChannelOneToOneTest, PingPongEthernet) {
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
 TEST_F(PortChannelOneToOneTest, PingPongWithPoll) {
-  testPingPong(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true});
+  testPingPong(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIbWithPoll) {
+TEST_F(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
 #if defined(USE_IBVERBS)
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true});
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
 #else   // !defined(USE_IBVERBS)
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
 TEST_F(PortChannelOneToOneTest, PingPongPerf) {
-  testPingPongPerf(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false});
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfIb) {
+TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
 #if defined(USE_IBVERBS)
-  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
+#else   // !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+}
+
+TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
+#if defined(USE_IBVERBS)
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 #else   // !defined(USE_IBVERBS)
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
 TEST_F(PortChannelOneToOneTest, PingPongPerfEthernet) {
-  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestPortChansSyncer;
@@ -354,7 +374,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
   }
 }
 
-void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
+void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -367,7 +387,7 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
   setupMeshConnections(portChannels, !useIb, useIb, false, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
 
@@ -421,7 +441,7 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
   proxyService->stopProxy();
 }
 
-void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
+void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -434,7 +454,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
   setupMeshConnections(portChannels, !useIb, useIb, false, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
 
@@ -477,21 +497,46 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
   proxyService->stopProxy();
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false); }
+TEST_F(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongIb) {
+TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
 #if defined(USE_IBVERBS)
-  testPacketPingPong(true);
+  testPacketPingPong(true, IbMode::Host);
 #else   // !defined(USE_IBVERBS)
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false); }
+TEST_F(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIb) {
+TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
 #if defined(USE_IBVERBS)
-  testPacketPingPongPerf(true);
+  testPacketPingPongPerf(true, IbMode::Host);
+#else   // !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+}
+
+TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
+#if defined(USE_IBVERBS)
+  testPacketPingPongPerf(true, IbMode::HostNoAtomic);
+#else   // !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+}
+
+TEST_F(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
+#if defined(USE_IBVERBS)
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
+#else   // !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+}
+
+TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
+#if defined(USE_IBVERBS)
+  testPacketPingPong(true, IbMode::HostNoAtomic);
 #else   // !defined(USE_IBVERBS)
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)

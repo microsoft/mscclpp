@@ -298,11 +298,11 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
   ChannelType chType = op.channelType;
   if (chType == ChannelType::MEMORY) {
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
+    PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
+      PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
+      PacketType pkt(data, flag_);
       for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
-        PacketType pkt(data, flag_);
         size_t offset = (scratchOffset_ + (dstOffsets[idx] << 1)) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
@@ -312,10 +312,8 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
     // Ensuring Data Is Ready
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
-      for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        pkts[pktIdx].read(flag_);
-      }
+      PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
+      pkts[pktIdx].read(flag_);
     }
     __syncthreads();
 
@@ -325,7 +323,7 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
       return;
     }
     uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
-    uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
+    uint32_t srcOffset = (srcOffsets[0] << 1) + scratchOffset_;
     MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
     portChannels_[channelIndexes[chIdx]].put(
         dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH) + localMemoryIdBegin_, srcOffset, size << 1);
@@ -523,51 +521,56 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
-  static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
-  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
-  if (size <= 0) {
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    assert(false && "MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
     return;
-  }
-  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
-  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
-  assert(size % sizeof(T) == 0);
-  assert(srcOffset % sizeof(T) == 0);
-  assert(dstOffset % sizeof(T) == 0);
-
-  T* src = (T*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
-  T* dst = (T*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
-  if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
-    const size_t nElem = size / sizeof(T);
-    const size_t srcOffsetElem = srcOffset / sizeof(T);
-    const size_t dstOffsetElem = dstOffset / sizeof(T);
-    VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
-    VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
-    for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
-      auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
-    }
   } else {
-    // handle data in 16-byte unit
-    using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
-    const size_t nType16 = size / sizeof(Type16);
-    const size_t srcOffset16 = srcOffset / sizeof(Type16);
-    const size_t dstOffset16 = dstOffset / sizeof(Type16);
-    Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
-    Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
-    for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
-      Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+    static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
+    const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+    if (size <= 0) {
+      return;
     }
-    // handle rest of data
-    constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
-    using TypeRest = mscclpp::VectorType<T, RedBytes / sizeof(T)>;
-    const size_t processed = nType16 * sizeof(Type16);
-    const size_t nRest = (size - processed) / sizeof(TypeRest);
-    TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
-    TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
-    for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
-      TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
+    const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+    assert(size % sizeof(T) == 0);
+    assert(srcOffset % sizeof(T) == 0);
+    assert(dstOffset % sizeof(T) == 0);
+
+    T* src = (T*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
+    T* dst = (T*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
+    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
+      const size_t nElem = size / sizeof(T);
+      const size_t srcOffsetElem = srcOffset / sizeof(T);
+      const size_t dstOffsetElem = dstOffset / sizeof(T);
+      VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
+      VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
+      for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
+        auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
+      }
+    } else {
+      // handle data in 16-byte unit
+      using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
+      const size_t nType16 = size / sizeof(Type16);
+      const size_t srcOffset16 = srcOffset / sizeof(Type16);
+      const size_t dstOffset16 = dstOffset / sizeof(Type16);
+      Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
+      Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
+      for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
+        Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+      }
+      // handle rest of data
+      constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
+      using TypeRest = mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+      const size_t processed = nType16 * sizeof(Type16);
+      const size_t nRest = (size - processed) / sizeof(TypeRest);
+      TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
+      TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
+      for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
+        TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+      }
     }
   }
 }
@@ -896,6 +899,17 @@ class ExecutionKernel {
 #endif
         break;
 #endif  // __FP8_TYPES_EXIST__
+      case DataType::UINT8:
+        executionKernel<uint8_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (uint8_t*)src, (uint8_t*)dst, (uint8_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)

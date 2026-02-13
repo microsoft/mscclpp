@@ -4,6 +4,7 @@
 from __future__ import annotations
 from typing import Optional, Tuple, Dict
 from functools import cached_property
+import cupy as cp
 
 
 from mscclpp._mscclpp import (
@@ -18,6 +19,7 @@ from mscclpp._mscclpp import (
     CppReduceOp,
     CppAlgorithmBuilder,
     CppAlgorithmCollection,
+    cpp_get_default_flag_buffer,
 )
 
 __all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
@@ -237,3 +239,17 @@ class AlgorithmCollection:
         """Register an algorithm for a collective operation."""
         self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
         self._algorithms.append(algorithm)
+
+
+def get_default_flag_buffer() -> cp.ndarray:
+    """Get the default flag buffer for algorithm selection.
+
+    This buffer is used internally by default algorithms to store selection flags.
+    It is allocated as a shared GPU buffer and can be accessed from Python.
+
+    Returns:
+        A CuPy array representing the flag buffer on the GPU.
+    """
+    buffer_ptr, buffer_size = cpp_get_default_flag_buffer()
+    memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, None), 0)
+    return cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)

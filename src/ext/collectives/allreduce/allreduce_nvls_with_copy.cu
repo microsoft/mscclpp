@@ -114,18 +114,22 @@ struct NvlsWithCopyAdapter {
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
-#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-    if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
+    if constexpr (std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
     } else
+#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
+      if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+        return cudaErrorNotSupported;
+      } else
 #endif
-    {
-      using ChannelType = DeviceHandle<BaseMemoryChannel>;
-      allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                               nvlsChannels, inputSize, scratchBufferSize, rank,
-                                                               nRanksPerNode);
-      return cudaGetLastError();
-    }
+      {
+        using ChannelType = DeviceHandle<BaseMemoryChannel>;
+        allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                                 nvlsChannels, inputSize, scratchBufferSize, rank,
+                                                                 nRanksPerNode);
+        return cudaGetLastError();
+      }
   }
 };
 
@@ -157,8 +161,8 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<void
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr,
-                                0, 0, blockAndThreadNum.first, blockAndThreadNum.second);
+                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0, 0,
+                                blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;

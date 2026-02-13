@@ -534,6 +534,7 @@ class PutOperation(BaseOperation):
         self.dst_buff = dst_buff
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+        self.from_packet = from_packet
         self.to_packet = to_packet
         self.with_signal = with_signal
         self.with_signal_and_flush = with_signal_and_flush
@@ -575,6 +576,25 @@ class PutOperation(BaseOperation):
                 channel_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 tbg_info=self.tbg_info,
+                to_packet=self.to_packet,
+                with_signal=self.with_signal,
+                with_signal_and_flush=self.with_signal_and_flush,
+            )
+        elif (
+            isinstance(other, PutOperation)
+            and self.name == Instruction.read_put_packet
+            and self.name == other.name
+            and self.src_buff == other.src_buff
+            and self.channel_type == other.channel_type
+            and self.tbg_info == other.tbg_info
+        ):
+            fused_operation = PutOperation(
+                src_buff=self.src_buff,
+                dst_buff=self.dst_buff + other.dst_buff,
+                channel_ids=self.channel_ids + other.channel_ids,
+                channel_type=self.channel_type,
+                tbg_info=self.tbg_info,
+                from_packet=self.from_packet,
                 to_packet=self.to_packet,
                 with_signal=self.with_signal,
                 with_signal_and_flush=self.with_signal_and_flush,
