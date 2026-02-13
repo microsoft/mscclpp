@@ -128,9 +128,9 @@ void MultiProcessTest::TearDown() {
 }
 
 int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
+  InitGoogleTest(&argc, argv);
   gEnv = new MultiProcessTestEnv(argc, (const char**)argv);
-  ::testing::AddGlobalTestEnvironment(gEnv);
+  AddGlobalTestEnvironment(gEnv);
   return RUN_ALL_TESTS();
 }
 

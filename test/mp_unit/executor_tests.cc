@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <mpi.h>
+#include <unistd.h>
 
 #include <filesystem>
 #include <mscclpp/env.hpp>

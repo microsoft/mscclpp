@@ -66,5 +66,8 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
   for (int i = 0; i < numRanksToUse; i++) {
     expected += i + 1.0f;
   }
-  ASSERT_EQ(result, expected) << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank;
+  if (result != expected) {
+    std::cerr << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank << std::endl;
+  }
+  ASSERT_EQ(result, expected);
 }

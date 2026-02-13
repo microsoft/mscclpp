@@ -1,5 +1,6 @@
 .vscode/
 build/
+build_*/
 __pycache__
 .*.swp
 *.so
