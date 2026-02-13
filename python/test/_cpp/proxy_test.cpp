@@ -63,6 +63,9 @@ class MyProxyService {
 };
 
 NB_MODULE(_ext, m) {
+  #ifdef MSCCLPP_DISABLE_NB_LEAK_WARNINGS
+    nb::set_leak_warnings(false);
+  #endif
   nb::class_<MyProxyService>(m, "MyProxyService")
       .def(nb::init<int, int, int, nb::list, nb::list>(), nb::arg("rank"), nb::arg("nranks"), nb::arg("data_size"),
            nb::arg("reg_mem_list"), nb::arg("sem_list"))
