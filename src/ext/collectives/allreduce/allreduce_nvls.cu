@@ -23,9 +23,18 @@ __global__ void __launch_bounds__(1024, 1)
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
   size_t sizePerRank = size / nRanksPerNode;
-  size_t sizePerBlock = sizePerRank / nBlocks;
+  const size_t minAlign = 16;
+  // Align sizePerBlock to 16 bytes to ensure aligned vector access in handleMultiLoadReduceStore
+  size_t sizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
+  sizePerBlock = (sizePerBlock + minAlign - 1) / minAlign * minAlign;
+
   size_t rankOffset = sizePerRank * rank;
   size_t blockOffset = sizePerBlock * bid + rankOffset;
+  size_t curBlockSize = 0;
+  if (sizePerBlock * bid < sizePerRank) {
+    curBlockSize = min(sizePerBlock, sizePerRank - sizePerBlock * bid);
+  }
+
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOutPtr = multicastOut + bid;
 
@@ -44,8 +53,10 @@ __global__ void __launch_bounds__(1024, 1)
   __syncthreads();
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
-  handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, sizePerBlock,
-                             threadIdx.x, blockDim.x);
+  if (curBlockSize > 0) {
+    handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, curBlockSize,
+                               threadIdx.x, blockDim.x);
+  }
   __syncthreads();
   if (threadIdx.x < nPeers) {
     channels[threadIdx.x].relaxedSignal();
@@ -60,7 +71,7 @@ struct NvlsAdapter {
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
                           size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t inputSize,
-                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
 #if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
       return cudaErrorNotSupported;
@@ -77,7 +88,12 @@ struct NvlsAdapter {
 };
 
 void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
-  nSwitchChannels_ = 8;
+  int device;
+  MSCCLPP_CUDATHROW(cudaGetDevice(&device));
+  cudaDeviceProp deviceProp;
+  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
+  computeCapabilityMajor_ = deviceProp.major;
+  nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
@@ -91,6 +107,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
                                               size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
                                               cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
                                               const std::unordered_map<std::string, uintptr_t>&) {
+  if (!symmetricMemory_) {
+    WARN("AllreduceNvls requires symmetric memory for now.");
+    return CommResult::CommInvalidArgument;
+  }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype);
   if (!allreduce) {
@@ -110,12 +130,16 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {ctx->nRanksPerNode, 1024};
+    numBlocksAndThreads = {::min(ctx->nRanksPerNode, nSwitchChannels_), 1024};
+    // For GB200 devices, using more blocks to improve the performances when nRanksPerNode <= 8
+    if (computeCapabilityMajor_ == 10 && ctx->nRanksPerNode <= 8) {
+      numBlocksAndThreads.first = ::min(32, nSwitchChannels_);
+    }
   }
   cudaError_t error =
       allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
                 nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize,
-                inputSize, stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                inputSize, stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvls failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -124,7 +148,8 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
 }
 
 mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* input, void* output, size_t,
-                                                                    mscclpp::DataType) {
+                                                                    mscclpp::DataType, bool symmetricMemory) {
+  symmetricMemory_ = symmetricMemory;
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -174,7 +199,9 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvls::build() {
              [[maybe_unused]] size_t outputSize,
              mscclpp::DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
       [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize,
-             mscclpp::DataType dtype) { return self->generateAllreduceContextKey(input, output, inputSize, dtype); });
+             mscclpp::DataType dtype, bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
+      });
 }
 }  // namespace collective
 }  // namespace mscclpp

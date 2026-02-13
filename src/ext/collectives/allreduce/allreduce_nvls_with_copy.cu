@@ -113,7 +113,7 @@ struct NvlsWithCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
-                          cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
     if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
       return cudaErrorNotSupported;
@@ -157,7 +157,7 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<void
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0,
+                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0, 0,
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
@@ -166,7 +166,7 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<void
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceNvlsWithCopy::generateAllreduceContextKey(const void*, void*, size_t, DataType) {
+AlgorithmCtxKey AllreduceNvlsWithCopy::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
@@ -199,8 +199,9 @@ std::shared_ptr<Algorithm> AllreduceNvlsWithCopy::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

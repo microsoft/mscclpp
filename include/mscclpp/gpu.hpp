@@ -15,6 +15,7 @@ using cudaGraphExec_t = hipGraphExec_t;
 using cudaDeviceProp = hipDeviceProp_t;
 using cudaStream_t = hipStream_t;
 using cudaStreamCaptureMode = hipStreamCaptureMode;
+using cudaStreamCaptureStatus = hipStreamCaptureStatus;
 using cudaMemcpyKind = hipMemcpyKind;
 using cudaIpcMemHandle_t = hipIpcMemHandle_t;
 
@@ -35,6 +36,9 @@ constexpr auto cudaErrorNotSupported = hipErrorNotSupported;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;
 constexpr auto cudaStreamCaptureModeGlobal = hipStreamCaptureModeGlobal;
 constexpr auto cudaStreamCaptureModeRelaxed = hipStreamCaptureModeRelaxed;
+constexpr auto cudaStreamCaptureStatusNone = hipStreamCaptureStatusNone;
+constexpr auto cudaStreamCaptureStatusActive = hipStreamCaptureStatusActive;
+constexpr auto cudaStreamCaptureStatusInvalidated = hipStreamCaptureStatusInvalidated;
 constexpr auto cudaHostAllocMapped = hipHostMallocMapped;
 constexpr auto cudaHostAllocWriteCombined = hipHostMallocWriteCombined;
 constexpr auto cudaMemcpyDefault = hipMemcpyDefault;
@@ -98,6 +102,7 @@ constexpr auto CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL = HIP_POINTER_ATTRIBUTE_DEVIC
 #define cudaStreamBeginCapture(...) hipStreamBeginCapture(__VA_ARGS__)
 #define cudaStreamEndCapture(...) hipStreamEndCapture(__VA_ARGS__)
 #define cudaStreamDestroy(...) hipStreamDestroy(__VA_ARGS__)
+#define cudaStreamIsCapturing(...) hipStreamIsCapturing(__VA_ARGS__)
 #define cudaGraphCreate(...) hipGraphCreate(__VA_ARGS__)
 #define cudaGraphInstantiate(...) hipGraphInstantiate(__VA_ARGS__)
 #define cudaGraphLaunch(...) hipGraphLaunch(__VA_ARGS__)

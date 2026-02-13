@@ -11,29 +11,18 @@
 namespace mscclpp {
 namespace collective {
 
-__device__ uint32_t deviceFlag = 1;
-
-template <ReduceOp OpType, typename T, bool flagPerBlock = false>
+template <ReduceOp OpType, typename T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
-                                  int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags) {
+                                  int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags,
+                                  uint32_t flagSize) {
   // This version of allreduce only works for single nodes
   if (worldSize != nRanksPerNode) return;
 
   if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
-  uint32_t flag = 0;
-  if constexpr (flagPerBlock) {
-    flag = ((uint32_t*)flags)[blockIdx.x];
-  } else {
-    flag = deviceFlag;
-    __syncthreads();
-    if (threadIdx.x == 0) {
-      ((LL8Packet*)flags)[blockIdx.x].write(0, flag);
-    }
-  }
-
+  uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
   size_t scratchBaseOffset = (flag % numScratchBuff) ? (scratchBufferSize / numScratchBuff) : 0;
   size_t channelScratchOffset = scratchBaseOffset;
 
@@ -62,22 +51,12 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     }
     dst[idx] = data;
   }
-  if constexpr (flagPerBlock) {
-    __syncthreads();
-    if (threadIdx.x == 0) {
-      ((uint32_t*)flags)[blockIdx.x] = flag + 1;
-    }
-  } else {
-    // Make sure all threadblocks have finished reading before incrementing the flag
-    if (blockIdx.x == 0 && threadIdx.x < gridDim.x) {
-      ((LL8Packet*)flags)[threadIdx.x].read(flag, -1);
-    }
-    if (blockIdx.x == 0) {
-      __syncthreads();
-    }
-    if (threadIdx.x == 0 && blockIdx.x == 0) {
-      deviceFlag++;
-    }
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    ((uint32_t*)flags)[blockIdx.x] = flag + 1;
+  }
+  if (blockIdx.x == 0 && threadIdx.x >= gridDim.x && threadIdx.x < flagSize / sizeof(uint32_t)) {
+    ((uint32_t*)flags)[threadIdx.x] = flag + 1;
   }
 }
 
@@ -93,19 +72,13 @@ struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize, size_t inputSize,
-                          cudaStream_t stream, void* flags, uint32_t numScratchBuff, int nBlocks = 0,
+                          cudaStream_t stream, void* flags, uint32_t flagSize, uint32_t numScratchBuff, int nBlocks = 0,
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    if (nBlocks == 7 || nBlocks == 28) {
-      allreduceAllPairs<OpType, T, true><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-          (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-          nRanksPerNode, worldSize, nelems, numScratchBuff, flags);
-      return cudaGetLastError();
-    }
     allreduceAllPairs<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        nRanksPerNode, worldSize, nelems, numScratchBuff, flags);
+        nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
     return cudaGetLastError();
   }
 };
@@ -116,12 +89,6 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
   RegisteredMemory scratchMemory = comm->registerMemory(scratchBuffer_, scratchBufferSize_, Transport::CudaIpc);
   registeredMemories_ = setupRemoteMemories(comm, comm->bootstrap()->getRank(), scratchMemory);
   registeredMemories_.push_back(scratchMemory);
-  flags_ = detail::gpuCallocShared<LL8Packet>(maxBlockNum_);
-  std::vector<uint32_t> flags(28, 1);
-  flags7_ = detail::gpuCallocShared<uint32_t>(7);
-  flags28_ = detail::gpuCallocShared<uint32_t>(28);
-  gpuMemcpy<uint32_t>(flags7_.get(), flags.data(), 7, cudaMemcpyHostToDevice);
-  gpuMemcpy<uint32_t>(flags28_.get(), flags.data(), 28, cudaMemcpyHostToDevice);
 }
 
 CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
@@ -133,13 +100,6 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
   }
-  void* flags = this->flags_.get();
-  if (blockAndThreadNum.first == 7) {
-    flags = this->flags7_.get();
-  } else if (blockAndThreadNum.first == 28) {
-    flags = this->flags28_.get();
-  }
-
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -150,10 +110,11 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
-  cudaError_t error = allreduce(input, this->scratchBuffer_, output, algoCtx->memoryChannelDeviceHandles.get(), nullptr,
-                                nullptr, nullptr, channelInOffset, 0, this->scratchBufferSize_, algoCtx->rank,
-                                algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, flags,
-                                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
+  cudaError_t error =
+      allreduce(input, this->scratchBuffer_, output, algoCtx->memoryChannelDeviceHandles.get(), nullptr, nullptr,
+                nullptr, channelInOffset, 0, this->scratchBufferSize_, algoCtx->rank, algoCtx->nRanksPerNode,
+                algoCtx->workSize, inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_,
+                this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -185,7 +146,7 @@ std::shared_ptr<void> AllreduceAllpairPacket::initAllreduceContext(std::shared_p
   return ctx;
 }
 
-AlgorithmCtxKey AllreduceAllpairPacket::generateAllreduceContextKey(const void* input, void*, size_t, DataType) {
+AlgorithmCtxKey AllreduceAllpairPacket::generateAllreduceContextKey(const void* input, void*, size_t, DataType, bool) {
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
@@ -193,7 +154,8 @@ AlgorithmCtxKey AllreduceAllpairPacket::generateAllreduceContextKey(const void* 
 }
 
 std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
-  auto self = std::make_shared<AllreduceAllpairPacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
+  auto self = std::make_shared<AllreduceAllpairPacket>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_,
+                                                       flagBuffer_, flagBufferSize_);
   return std::make_shared<NativeAlgorithm>(
       "default_allreduce_allpair_packet", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
@@ -206,8 +168,9 @@ std::shared_ptr<Algorithm> AllreduceAllpairPacket::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

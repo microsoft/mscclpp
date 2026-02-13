@@ -149,7 +149,8 @@ struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t,
                           size_t channelOutDataOffset, size_t, int rank, int nRanksPerNode, int worldSize,
-                          size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          size_t inputSize, cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks,
+                          int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0) nBlocks = 35;
@@ -180,8 +181,11 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  size_t channelOutOffset = (char*)output - (char*)recvBasePtr;
+  size_t channelOutOffset = 0;
+  if (symmetricMemory_) {
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+    channelOutOffset = (char*)output - (char*)recvBasePtr;
+  }
   std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles;
   if (this->memoryChannelsMap_.find(input) != this->memoryChannelsMap_.end()) {
     inputChannelHandles = this->memoryChannelsMap_[input].second;
@@ -204,7 +208,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
                 nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -212,19 +216,21 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType) {
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType,
+                                                               bool symmetricMemory) {
   static int tag = 0;
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  if (env()->disableChannelCache) {
+  symmetricMemory_ = symmetricMemory;
+  if (!symmetricMemory_) {
     return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, tag++};
   }
   return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
 std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                              void* output, size_t, DataType) {
+                                                              void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -236,6 +242,10 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  if (!symmetricMemory_) {
+    recvBytes = size;
+    recvBasePtr = (CUdeviceptr)output;
+  }
   RegisteredMemory localMemory = comm->registerMemory((void*)recvBasePtr, recvBytes, Transport::CudaIpc);
   ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
   ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,
@@ -258,8 +268,9 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

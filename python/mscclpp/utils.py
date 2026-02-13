@@ -192,5 +192,11 @@ def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
         return DataType.int32
     elif dtype == torch.bfloat16:
         return DataType.bfloat16
+    # Hardware supports either OCP format or FNUZ format for float8.
+    # Mapping both to the same MSCClPP data type.
+    elif dtype == torch.float8_e5m2 or dtype == torch.float8_e5m2fnuz:
+        return DataType.float8_e5m2
+    elif dtype == torch.float8_e4m3fn or dtype == torch.float8_e4m3fnuz:
+        return DataType.float8_e4m3
     else:
         raise ValueError(f"Unknown data type: {dtype}")
