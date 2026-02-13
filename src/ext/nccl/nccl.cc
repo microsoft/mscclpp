@@ -172,6 +172,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Executor> executor;
   mscclpp::AlgorithmCollection algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
+  std::shared_ptr<void> flagBuffer_;
+  size_t flagBufferSize_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
   int nRanksPerNode;
   int worldSize;
@@ -292,7 +294,9 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
 
-  auto [flagBuffer, flagBufferSize] = mscclpp::getDefaultFlagBuffer();
+  auto [buffer, size] = mscclpp::getDefaultFlagBuffer();
+  commPtr->flagBuffer_ = buffer;
+  commPtr->flagBufferSize_ = size;
 
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
@@ -300,7 +304,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   algoBuilder->setFallbackAlgorithmSelector(algoSelector);
   commPtr->algorithmCollection = algoBuilder->buildDefaultAlgorithms(
       reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_,
-      reinterpret_cast<uintptr_t>(flagBuffer.get()), flagBufferSize, rank);
+      reinterpret_cast<uintptr_t>(commPtr->flagBuffer_.get()), commPtr->flagBufferSize_, rank);
   // Extend with user-defined algorithms
   commPtr->algorithmCollection.extend(algoBuilder->build());
 
