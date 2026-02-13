@@ -18,6 +18,8 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
       return mscclpp::DataType::INT32;
     case ncclUint32:
       return mscclpp::DataType::UINT32;
+    case ncclUint8:
+      return mscclpp::DataType::UINT8;
     case ncclFloat16:
       return mscclpp::DataType::FLOAT16;
     case ncclFloat32:
@@ -38,6 +40,7 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
 // Get the size in bytes of a data type
 inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   switch (dtype) {
+    case mscclpp::DataType::UINT8:
     case mscclpp::DataType::FP8_E4M3:
     case mscclpp::DataType::FP8_E5M2:
       return 1;
@@ -59,6 +62,8 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclInt32;
     case mscclpp::DataType::UINT32:
       return ncclUint32;
+    case mscclpp::DataType::UINT8:
+      return ncclUint8;
     case mscclpp::DataType::FLOAT16:
       return ncclFloat16;
     case mscclpp::DataType::FLOAT32:

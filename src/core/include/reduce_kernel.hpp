@@ -60,16 +60,18 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) 
   static_assert(sizeof(DataType) >= 4, "DataType size must be at least 4 bytes");
   using CompType = typename std::conditional_t<
       std::is_same_v<T, __half>, f16x2,
-      std::conditional_t<std::is_same_v<T, __bfloat16>, bf16x2,
+      std::conditional_t<
+          std::is_same_v<T, __bfloat16>, bf16x2,
+          std::conditional_t<std::is_same_v<T, uint8_t>, u8x4,
 #if defined(__FP8_TYPES_EXIST__)
-                         std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
-                                            std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4,
+                             std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
+                                                std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4,
 #endif
-                                                               T
+                                                                   T
 #if defined(__FP8_TYPES_EXIST__)
-                                                               >>>>;
+                                                                   >>>>>;
 #else
-                         >>;
+                             >>>;
 #endif
   return cal_vector_helper<CompType, OpType>(a, b);
 }
