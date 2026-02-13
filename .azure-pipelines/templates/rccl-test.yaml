@@ -89,7 +89,7 @@ steps:
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
-  name: RcclAllGatherTest
+  name: RunRcclAllGatherTest
   displayName: Run RCCL AllGather Test with or without MSCCLPP Lib
   inputs:
     targetType: inline
@@ -110,7 +110,7 @@ steps:
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
-  name: RcclAllReduceTest
+  name: RunRcclAllReduceTest
   displayName: Run RCCL AllReduce Test with or without MSCCLPP Lib
   inputs:
     targetType: 'inline'
