@@ -32,7 +32,7 @@ class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
 
   std::vector<BaseMemoryChannel> baseChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> baseMemoryChannelHandles_;
-  std::shared_ptr<void*> remoteMemorieHandles_;
+  std::shared_ptr<void*> remoteMemoryHandles_;
 };
 }  // namespace collective
 }  // namespace mscclpp
