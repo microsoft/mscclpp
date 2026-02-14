@@ -23,7 +23,7 @@ class AllreduceNvlsWithCopy2 : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
 
   const size_t nvlsBufferSize_ = (1 << 30);
   void* scratchBuffer_;

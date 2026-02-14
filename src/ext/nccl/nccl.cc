@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <algorithm>
 #include <filesystem>
@@ -19,8 +19,10 @@
 
 #include <mscclpp/algorithm.hpp>
 
+#include "algorithm_selector.hpp"
 #include "datatype_conversion.hpp"
-#include "debug.h"
+
+static constexpr auto MSCCLPP_NCCL = mscclpp::LogSubsys::NCCL;
 
 #define NCCL_API extern "C" __attribute__((visibility("default")))
 
@@ -80,17 +82,17 @@ static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
-      WARN("The value of the environment variable %s is a directory", ncclLibPath);
+      WARN(MSCCLPP_NCCL, "The value of the environment variable %s is a directory", ncclLibPath);
       return dlopenError;
     }
 
     mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
     if (!mscclppNcclDlHandle) {
-      WARN("Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
+      WARN(MSCCLPP_NCCL, "Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
       return dlopenError;
     }
   } else {
-    WARN("The value of MSCCLPP_NCCL_LIB_PATH is empty!\n");
+    WARN(MSCCLPP_NCCL, "The value of MSCCLPP_NCCL_LIB_PATH is empty!\n");
     return dlopenError;
   }
 
@@ -170,6 +172,8 @@ struct ncclComm {
   std::shared_ptr<mscclpp::Executor> executor;
   mscclpp::AlgorithmCollection algorithmCollection;
   std::shared_ptr<char> scratchBuffer_;
+  std::shared_ptr<void> flagBuffer_;
+  size_t flagBufferSize_;
   const size_t scratchBufferSize_ = (1 << 27);  // 128MB
   int nRanksPerNode;
   int worldSize;
@@ -179,7 +183,7 @@ struct ncclComm {
 
 NCCL_API ncclResult_t ncclGetVersion(int* version) {
   if (version == nullptr) {
-    WARN("version is nullptr");
+    WARN(MSCCLPP_NCCL, "version is nullptr");
     return ncclInvalidArgument;
   }
   *version = MSCCLPP_VERSION;
@@ -188,7 +192,7 @@ NCCL_API ncclResult_t ncclGetVersion(int* version) {
 
 NCCL_API ncclResult_t ncclGetUniqueId(ncclUniqueId* uniqueId) {
   if (uniqueId == nullptr) {
-    WARN("uniqueId is nullptr");
+    WARN(MSCCLPP_NCCL, "uniqueId is nullptr");
     return ncclInvalidArgument;
   }
   if (mscclpp::UniqueIdBytes != NCCL_UNIQUE_ID_BYTES) return ncclInternalError;
@@ -212,21 +216,6 @@ static std::pair<int, int> getDeviceComputeCapability() {
   return std::make_pair(major, minor);
 }
 
-static bool matchExecutionPlan(std::shared_ptr<mscclpp::DslAlgorithm> algo, const mscclpp::CollectiveRequest& request) {
-  bool worldSizeMatch = algo->constraint().worldSize == request.worldSize;
-  bool ranksPerNodeMatch = algo->constraint().nRanksPerNode == request.nRanksPerNode;
-  bool collectiveMatch = algo->collective() == request.collective;
-  bool bufferModeMatch =
-      algo->bufferMode() == mscclpp::CollectiveBufferMode::Any || request.bufferMode() == algo->bufferMode();
-  size_t effectiveSize =
-      (request.collective == "allgather") ? (request.messageSize * request.worldSize) : request.messageSize;
-  bool minSizeMatch = effectiveSize >= algo->messageRange().first;
-  bool maxSizeMatch = effectiveSize <= algo->messageRange().second;
-  bool result =
-      worldSizeMatch && ranksPerNodeMatch && collectiveMatch && bufferModeMatch && minSizeMatch && maxSizeMatch;
-  return result;
-}
-
 static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     const std::unordered_map<std::string, std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>&
         algoMapByCollective,
@@ -234,86 +223,64 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   if (algoMapByCollective.find(request.collective) == algoMapByCollective.end()) {
     return nullptr;
   }
+
   for (const auto& pair : algoMapByCollective.at(request.collective)) {
     const auto& algo = pair.second;
     if (algo->type() == mscclpp::AlgorithmType::DSL) {
-      if (matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
+      if (mscclpp::nccl::matchExecutionPlan(std::static_pointer_cast<mscclpp::DslAlgorithm>(algo), request)) {
         return algo;
       }
     }
   }
-  if (request.nRanksPerNode != request.worldSize) {
-    // Fallback to nccl/rccl when multi-node
-    return nullptr;
-  }
-  static const bool mscclppDisableChannelCache = mscclpp::env()->disableChannelCache;
+
+  // Prepare algorithm selector configuration
   static const bool isNvlsSupported = mscclpp::isNvlsSupported();
   static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
-  size_t messageSize = request.messageSize;
-  const std::string& collective = request.collective;
-  bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
-                             mscclpp::isCuMemMapAllocated(request.outputBuffer);
-  bool useNvlsWithZeroCopy = isNvlsSupported && !mscclppDisableChannelCache && isCuMemMapAllocated;
-  if (collective == "allgather") {
-    if (messageSize <= 32 * (1 << 20)) {
-      return algoMapByCollective.at(collective).at("default_allgather_fullmesh2");
-    } else {
-#if defined(__HIP_PLATFORM_AMD__)
-      return algoMapByCollective.at(collective).at("default_allgather_fullmesh2");
-#else
-      if (!mscclppNcclDlopenSharedLib) {
-        return algoMapByCollective.at(collective).at("default_allgather_fullmesh");
-      }
-#endif
-    }
+  static const bool ncclSymmetricMemory = mscclpp::env()->ncclSymmetricMemory;
+
+  const bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
+                                   mscclpp::isCuMemMapAllocated(request.outputBuffer);
+
+  cudaStreamCaptureStatus captureStatus = cudaStreamCaptureStatusNone;
+  CUDACHECK(cudaStreamIsCapturing(request.stream, &captureStatus));
+  const bool inCaptureMode = (captureStatus == cudaStreamCaptureStatusActive);
+
+  mscclpp::nccl::AlgorithmSelectorConfig config{.symmetricMemory = ncclSymmetricMemory,
+                                                .nvlsSupported = isNvlsSupported,
+                                                .isCuMemMapAllocated = isCuMemMapAllocated,
+                                                .inCaptureMode = inCaptureMode,
+                                                .computeCapability = deviceComputeCapability,
+                                                .ncclDlopenSharedLib = mscclppNcclDlopenSharedLib};
+
+  const auto& algoMap = algoMapByCollective.at(request.collective);
+
+  // Check if this is a multi-node scenario
+  if (request.nRanksPerNode != request.worldSize) {
+    return mscclpp::nccl::selectMultiNodeAlgorithm(algoMap, request, config);
   }
-  if (collective == "allreduce") {
-    bool useNvls = isNvlsSupported;
-    bool isFp8 = request.dtype == mscclpp::DataType::FP8_E4M3 || request.dtype == mscclpp::DataType::FP8_E5M2;
-#if !defined(__HIP_PLATFORM_AMD__)
-    if (isFp8 && deviceComputeCapability.first < 10) {
-      // NVLS does not support FP8 on devices with compute capability < 10
-      useNvls = false;
-    }
-#endif
-    if (messageSize <= (1 << 15) && useNvls) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_packet");
-    }
-    if (messageSize <= (1 << 14)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_allpair_packet");
-    }
-    if (messageSize <= (1 << 16) || (messageSize <= (1 << 20) && !useNvlsWithZeroCopy)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_packet");
-    }
-    if (useNvls && useNvlsWithZeroCopy) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls");
-    }
-    if (useNvls && messageSize < (1 << 24)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy");
-    }
-    if (useNvls && messageSize >= (1 << 24)) {
-      return algoMapByCollective.at(collective).at("default_allreduce_nvls_with_copy2");
-    }
-#if defined(__HIP_PLATFORM_AMD__)
-    return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
-#else
-    if (!mscclppNcclDlopenSharedLib) {
-      return algoMapByCollective.at(collective).at("default_allreduce_fullmesh");
-    }
-#endif
+
+  // Single-node scenarios
+  if (request.collective == "allgather") {
+    return mscclpp::nccl::selectSingleNodeAllgather(algoMap, request, config);
   }
-  INFO(MSCCLPP_NCCL, "Failed to get algo from customized kernel, fallback to nccl/rccl");
+
+  if (request.collective == "allreduce") {
+    return mscclpp::nccl::selectSingleNodeAllreduce(algoMap, request, config);
+  }
+
+  INFO(MSCCLPP_NCCL, "No suitable algorithm found for collective '%s', fallback to nccl/rccl",
+       request.collective.c_str());
   return nullptr;
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
   INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
   if (comm == nullptr) {
-    WARN("comm is nullptr");
+    WARN(MSCCLPP_NCCL, "comm is nullptr");
     return ncclInvalidArgument;
   }
   if (nranks < 0 || rank < 0 || rank >= nranks) {
-    WARN("nranks is %d, rank is %d", nranks, rank);
+    WARN(MSCCLPP_NCCL, "nranks is %d, rank is %d", nranks, rank);
     return ncclInvalidArgument;
   }
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nranks);
@@ -327,12 +294,17 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
 
+  auto [buffer, size] = mscclpp::getDefaultFlagBuffer();
+  commPtr->flagBuffer_ = buffer;
+  commPtr->flagBufferSize_ = size;
+
   commPtr->nRanksPerNode = mscclppComm->bootstrap()->getNranksPerNode();
   commPtr->worldSize = mscclppComm->bootstrap()->getNranks();
   auto algoBuilder = mscclpp::collective::AlgorithmCollectionBuilder::getInstance();
   algoBuilder->setFallbackAlgorithmSelector(algoSelector);
   commPtr->algorithmCollection = algoBuilder->buildDefaultAlgorithms(
-      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_, rank);
+      reinterpret_cast<uintptr_t>(commPtr->scratchBuffer_.get()), commPtr->scratchBufferSize_,
+      reinterpret_cast<uintptr_t>(commPtr->flagBuffer_.get()), commPtr->flagBufferSize_, rank);
   // Extend with user-defined algorithms
   commPtr->algorithmCollection.extend(algoBuilder->build());
 
@@ -346,7 +318,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   const std::string ncclLibPath = mscclpp::env()->ncclSharedLibPath;
   if (!ncclLibPath.empty() && !mscclppNcclDlopenSharedLib) {
     if (!tryLoadNcclSharedLib()) {
-      WARN("Failed to load the shared library for nccl/rccl");
+      WARN(MSCCLPP_NCCL, "Failed to load the shared library for nccl/rccl");
       return ncclInternalError;
     }
   }
@@ -361,7 +333,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
 
     commPtr->mscclppNcclComm = new ncclComm_t();
     if (commPtr->mscclppNcclComm == nullptr) {
-      WARN("Failed to allocate memory for mscclppNcclComm");
+      WARN(MSCCLPP_NCCL, "Failed to allocate memory for mscclppNcclComm");
       return ncclInternalError;
     }
     mscclppNcclOps.CommInitRank(reinterpret_cast<ncclComm_t*>(commPtr->mscclppNcclComm), nranks, mscclppNcclUniqueId,
@@ -378,7 +350,7 @@ NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int*) {
     return ncclCommInitRank(comm, ndev, Id, 0);
   }
   // TODO: implement this function
-  WARN("ncclCommInitAll is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommInitAll is currently unavailable");
   return ncclInternalError;
 }
 
@@ -389,7 +361,7 @@ NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
 
 NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
   if (comm == nullptr) {
-    WARN("comm is nullptr");
+    WARN(MSCCLPP_NCCL, "comm is nullptr");
     return ncclInvalidArgument;
   }
 #if defined(ENABLE_NPKIT)
@@ -447,7 +419,7 @@ NCCL_API ncclResult_t ncclCommSplit(ncclComm_t comm, int color, int key, ncclCom
 }
 
 ncclResult_t ncclCommInitRankScalable(ncclComm_t*, int, int, int, ncclUniqueId*, ncclConfig_t*) {
-  WARN("ncclCommInitRankScalable is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommInitRankScalable is currently unavailable");
   return ncclInternalError;
 }
 
@@ -481,7 +453,7 @@ NCCL_API const char* ncclGetLastError(ncclComm_t) {
 
 NCCL_API ncclResult_t ncclCommGetAsyncError(ncclComm_t, ncclResult_t* asyncError) {
   if (asyncError == nullptr) {
-    WARN("asyncError is nullptr");
+    WARN(MSCCLPP_NCCL, "asyncError is nullptr");
     return ncclInvalidArgument;
   }
   *asyncError = ncclSuccess;
@@ -490,7 +462,7 @@ NCCL_API ncclResult_t ncclCommGetAsyncError(ncclComm_t, ncclResult_t* asyncError
 
 NCCL_API ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
   if (comm == nullptr || count == nullptr) {
-    WARN("comm is nullptr or count is nullptr");
+    WARN(MSCCLPP_NCCL, "comm is nullptr or count is nullptr");
     return ncclInvalidArgument;
   }
   *count = comm->comm->bootstrap()->getNranks();
@@ -499,7 +471,7 @@ NCCL_API ncclResult_t ncclCommCount(const ncclComm_t comm, int* count) {
 
 NCCL_API ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device) {
   if (comm == nullptr || device == nullptr) {
-    WARN("comm is nullptr or device is nullptr");
+    WARN(MSCCLPP_NCCL, "comm is nullptr or device is nullptr");
     return ncclInvalidArgument;
   }
   *device = comm->comm->bootstrap()->getRank();
@@ -508,7 +480,7 @@ NCCL_API ncclResult_t ncclCommCuDevice(const ncclComm_t comm, int* device) {
 
 NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
   if (comm == nullptr || rank == nullptr) {
-    WARN("comm is nullptr or rank is nullptr");
+    WARN(MSCCLPP_NCCL, "comm is nullptr or rank is nullptr");
     return ncclInvalidArgument;
   }
 
@@ -521,24 +493,24 @@ NCCL_API ncclResult_t ncclCommUserRank(const ncclComm_t comm, int* rank) {
 }
 
 NCCL_API ncclResult_t ncclCommWindowRegister(ncclComm_t, void*, size_t, ncclWindow_t*, int) {
-  WARN("ncclCommWindowRegister is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommWindowRegister is currently unavailable");
   return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommWindowDeregister(ncclComm_t, ncclWindow_t) {
-  WARN("ncclCommWindowDeregister is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommWindowDeregister is currently unavailable");
   return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclRedOpCreatePreMulSum(ncclRedOp_t*, void*, ncclDataType_t, ncclScalarResidence_t, ncclComm_t) {
   // TODO: implement this function
-  WARN("ncclRedOpCreatePreMulSum is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclRedOpCreatePreMulSum is currently unavailable");
   return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclRedOpDestroy(ncclRedOp_t, ncclComm_t) {
   // TODO: implement this function
-  WARN("ncclRedOpDestroy is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclRedOpDestroy is currently unavailable");
   return ncclInternalError;
 }
 
@@ -549,7 +521,7 @@ NCCL_API ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t co
     return mscclppNcclOps.Reduce(sendbuff, recvbuff, count, datatype, op, root,
                                  *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
-  WARN("ncclReduce is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclReduce is currently unavailable");
   return ncclInternalError;
 }
 
@@ -569,9 +541,9 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   }
   int rank = comm->comm->bootstrap()->getRank();
   if ((sendbuff == nullptr && root == rank) || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-        "or comm is nullptr.");
+    WARN(MSCCLPP_NCCL,
+         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+         "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -587,12 +559,15 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
   static std::unordered_map<std::string, std::vector<uint64_t>> hints{{"root", {static_cast<uint64_t>(root)}}};
   hints["root"][0] = static_cast<uint64_t>(root);
+
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "broadcast",
                                         .dtype = dtype,
                                         .hints = hints};
@@ -600,7 +575,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0, extras));
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
+                                                   symmetricMemory, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -608,7 +584,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  WARN("No FallBack implementation for broadcast");
+  WARN(MSCCLPP_NCCL, "No FallBack implementation for broadcast");
   return ncclInvalidUsage;
 }
 
@@ -623,9 +599,9 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
   // Checking if the parameters are valids
   if (sendbuff == nullptr || recvbuff == nullptr || count == 0 || ncclTypeSize(datatype) == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
-        "datatype is invalid, or comm is nullptr.");
+    WARN(MSCCLPP_NCCL,
+         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, count is 0, "
+         "datatype is invalid, or comm is nullptr.");
     return ncclInvalidArgument;
   }
   // Declarating variables
@@ -639,12 +615,14 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "allreduce",
                                         .dtype = dtype,
                                         .hints = {}};
@@ -652,7 +630,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   ncclRedOpToMscclpp(reductionOperation), stream, comm->executor));
+                                                   ncclRedOpToMscclpp(reductionOperation), stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -660,7 +639,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  WARN("No FallBack implementation for AllReduce");
+  WARN(MSCCLPP_NCCL, "No FallBack implementation for AllReduce");
   return ncclInvalidUsage;
 }
 
@@ -675,9 +654,9 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   }
 
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-        "or comm is nullptr.");
+    WARN(MSCCLPP_NCCL,
+         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+         "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -693,19 +672,22 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes * nRank,
+                                        .stream = stream,
                                         .collective = "reducescatter",
                                         .dtype = dtype,
                                         .hints = {}};
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
-                                                   ncclRedOpToMscclpp(op), stream, comm->executor));
+                                                   ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -713,7 +695,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
                                         *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  WARN("No FallBack implementation for ReduceScatter");
+  WARN(MSCCLPP_NCCL, "No FallBack implementation for ReduceScatter");
   return ncclInternalError;
 }
 
@@ -727,9 +709,9 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
     return ncclSuccess;
   }
   if (sendbuff == nullptr || recvbuff == nullptr || bytes == 0 || comm == nullptr) {
-    WARN(
-        "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
-        "or comm is nullptr.");
+    WARN(MSCCLPP_NCCL,
+         "One or more of the following conditions is met: sendbuff or recvbuff pointer is nullptr, bytes is 0, "
+         "or comm is nullptr.");
     return ncclInvalidArgument;
   }
 
@@ -745,12 +727,14 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   }
 
   mscclpp::DataType dtype = ncclDataTypeToMscclpp(datatype);
+  const bool symmetricMemory = mscclpp::env()->ncclSymmetricMemory;
   mscclpp::CollectiveRequest request = {.worldSize = comm->worldSize,
                                         .nRanksPerNode = comm->nRanksPerNode,
                                         .rank = rank,
                                         .inputBuffer = sendbuff,
                                         .outputBuffer = recvbuff,
                                         .messageSize = bytes,
+                                        .stream = stream,
                                         .collective = "allgather",
                                         .dtype = dtype,
                                         .hints = {}};
@@ -758,7 +742,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor));
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -766,7 +751,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
                                     *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm), stream);
   }
 
-  WARN("No FallBack implementation for AllGather");
+  WARN(MSCCLPP_NCCL, "No FallBack implementation for AllGather");
   return ncclInvalidUsage;
 }
 
@@ -776,7 +761,7 @@ NCCL_API ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_
     return mscclppNcclOps.Send(sendbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
                                stream);
   }
-  WARN("ncclSend is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclSend is currently unavailable");
   return ncclInternalError;
 }
 
@@ -786,7 +771,7 @@ NCCL_API ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t data
     return mscclppNcclOps.Recv(recvbuff, count, datatype, peer, *reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm),
                                stream);
   }
-  WARN("ncclRecv is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclRecv is currently unavailable");
   return ncclInternalError;
 }
 
@@ -800,7 +785,7 @@ NCCL_API ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t 
     return ncclSuccess;
   }
   // TODO: implement this function
-  WARN("ncclAllToAll is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclAllToAll is currently unavailable");
   return ncclInternalError;
 }
 
@@ -815,7 +800,7 @@ NCCL_API ncclResult_t ncclAllToAllv(const void* sendbuff, [[maybe_unused]] const
                                       cudaMemcpyDeviceToDevice, stream));
     return ncclSuccess;
   }
-  WARN("ncclAllToAllv is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclAllToAllv is currently unavailable");
   return ncclInternalError;
 }
 
@@ -824,7 +809,7 @@ NCCL_API ncclResult_t ncclGroupStart() {
   if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.GroupStart();
   }
-  WARN("ncclGroupStart is currently unavailable, return success");
+  WARN(MSCCLPP_NCCL, "ncclGroupStart is currently unavailable, return success");
   return ncclSuccess;
 }
 
@@ -832,56 +817,56 @@ NCCL_API ncclResult_t ncclGroupEnd() {
   if (mscclppNcclDlopenSharedLib == true) {
     return mscclppNcclOps.GroupEnd();
   }
-  WARN("ncclGroupEnd is currently unavailable, return success");
+  WARN(MSCCLPP_NCCL, "ncclGroupEnd is currently unavailable, return success");
   return ncclSuccess;
 }
 
 NCCL_API ncclResult_t ncclGroupSimulateEnd(ncclSimInfo_t*) {
   // TODO: implement this function
-  WARN("ncclGroupSimulateEnd is not implemented");
+  WARN(MSCCLPP_NCCL, "ncclGroupSimulateEnd is not implemented");
   return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommRegister(const ncclComm_t, void*, size_t, void**) {
   // TODO: Implementation
-  WARN("ncclCommRegister is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommRegister is currently unavailable");
   return ncclInternalError;
 }
 
 NCCL_API ncclResult_t ncclCommDeregister(const ncclComm_t, void*) {
   // TODO: Implementation
-  WARN("ncclCommDeregister is currently unavailable");
+  WARN(MSCCLPP_NCCL, "ncclCommDeregister is currently unavailable");
   return ncclInternalError;
 }
 
 ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
   if (ptr == nullptr || size == 0) {
-    WARN("ptr is nullptr or size is 0");
+    WARN(MSCCLPP_NCCL, "ptr is nullptr or size is 0");
     return ncclInvalidArgument;
   }
   std::shared_ptr<char> sharedPtr;
   try {
     sharedPtr = mscclpp::GpuBuffer(size).memory();
     if (sharedPtr == nullptr) {
-      WARN("Failed to allocate memory via ncclMemAlloc");
+      WARN(MSCCLPP_NCCL, "Failed to allocate memory via ncclMemAlloc");
       return ncclSystemError;
     }
   } catch (const mscclpp::Error& e) {
     if (e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage) {
-      WARN("Invalid usage: %s", e.what());
+      WARN(MSCCLPP_NCCL, "Invalid usage: %s", e.what());
       return ncclInvalidUsage;
     } else {
-      WARN("Internal error: %s", e.what());
+      WARN(MSCCLPP_NCCL, "Internal error: %s", e.what());
       return ncclInternalError;
     }
   } catch (const mscclpp::CudaError& e) {
-    WARN("Cuda error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Cuda error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::CuError& e) {
-    WARN("Cu error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Cu error: %s", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::BaseError& e) {
-    WARN("Base error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Base error: %s", e.what());
     return ncclInternalError;
   }
   ptrMap[sharedPtr.get()] = sharedPtr;
@@ -899,6 +884,6 @@ ncclResult_t ncclMemFree(void* ptr) {
   }
 
   // Pointer not found
-  WARN("Pointer not found");
+  WARN(MSCCLPP_NCCL, "Pointer not found");
   return ncclInvalidUsage;
 }

@@ -68,16 +68,17 @@ void register_algorithm(nb::module_& m) {
               "execute",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
                  size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op, uintptr_t stream,
-                 std::shared_ptr<Executor> executor, int nBlocks, int nThreadsPerBlock,
+                 std::shared_ptr<Executor> executor, int nBlocks, int nThreadsPerBlock, bool symmetricMemory,
                  std::unordered_map<std::string, uintptr_t> extras) {
                 return self.execute(comm, reinterpret_cast<const void*>(input), reinterpret_cast<void*>(output),
                                     inputSize, outputSize, dtype, op, reinterpret_cast<cudaStream_t>(stream), executor,
-                                    nBlocks, nThreadsPerBlock, extras);
+                                    nBlocks, nThreadsPerBlock, symmetricMemory, extras);
               },
               nb::arg("comm"), nb::arg("input"), nb::arg("output"), nb::arg("input_size"), nb::arg("output_size"),
               nb::arg("dtype"), nb::arg("op") = ReduceOp::NOP, nb::arg("stream") = 0, nb::arg("executor") = nullptr,
-              nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0,
-              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>());
+              nb::arg("n_blocks") = 0, nb::arg("n_threads_per_block") = 0, nb::arg("symmetric_memory") = false,
+              nb::arg("extras") = std::unordered_map<std::string, uintptr_t>())
+          .def("reset", &Algorithm::reset);
 
   nb::class_<Algorithm::Constraint>(algorithmClass, "Constraint")
       .def(nb::init<>())
@@ -108,8 +109,17 @@ void register_algorithm(nb::module_& m) {
       .def_prop_ro("output_buffer",
                    [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.outputBuffer); })
       .def_ro("message_size", &CollectiveRequest::messageSize)
+      .def_prop_ro("stream", [](const CollectiveRequest& self) { return reinterpret_cast<uintptr_t>(self.stream); })
       .def_prop_ro("collective", [](const CollectiveRequest& self) { return self.collective; })
       .def_ro("dtype", &CollectiveRequest::dtype)
       .def_prop_ro("hints", [](const CollectiveRequest& self) { return self.hints; })
       .def("buffer_mode", &CollectiveRequest::bufferMode);
+
+  m.def(
+      "cpp_get_default_flag_buffer",
+      []() {
+        auto [buffer, size] = getDefaultFlagBuffer();
+        return std::make_pair(reinterpret_cast<uintptr_t>(buffer.get()), size);
+      },
+      "Get the default flag buffer. Returns a tuple of (buffer_ptr, buffer_size).");
 }
