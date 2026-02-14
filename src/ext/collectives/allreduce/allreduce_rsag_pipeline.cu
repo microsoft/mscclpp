@@ -254,9 +254,8 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
-                                algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
-                                nullptr, 0, 0, numBlocksAndThreads.first,
-                                numBlocksAndThreads.second);
+                                algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0,
+                                0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;

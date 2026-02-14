@@ -90,7 +90,7 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
   if (useNvlsWithZeroCopy) {
     return algoMap.at("default_allreduce_nvls");
   }
-  
+
   return algoMap.at("default_allreduce_rsag_zero_copy");
 }
 
