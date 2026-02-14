@@ -56,7 +56,7 @@ class CustomizedComm:
             for algo in algorithms
             if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_packet"
         ][0]
-        self._algorithm_nvls_nonzero_copy = [
+        self._algorithm_rsag_zero_copy = [
             algo
             for algo in algorithms
             if algo.collective == "allreduce" and algo.name == "default_allreduce_rsag_zero_copy"
@@ -81,7 +81,7 @@ class CustomizedComm:
                 algos.append(self._algorithm_nvls_packet)
                 algos.append(self._algorithm_packet)
             if size >= 512 * 1024:
-                algos.append(self._algorithm_nvls_nonzero_copy)
+                algos.append(self._algorithm_rsag_zero_copy)
 
             best_time = float("inf")
             best_config = None
