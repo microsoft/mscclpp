@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "allreduce/allreduce_rsag.hpp"
 #include "allreduce/common.hpp"

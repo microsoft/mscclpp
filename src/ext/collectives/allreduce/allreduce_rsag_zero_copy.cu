@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include "allreduce/allreduce_rsag_zero_copy.hpp"
 #include "allreduce/common.hpp"
@@ -141,7 +141,7 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
 
 AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer,
                                                                    size_t size, DataType, bool symmetricMemory) {
-  // For non-synmmetric algorithms, we use both input and output buffer pointers in the key.
+  // For non-symmetric algorithms, we use both input and output buffer pointers in the key.
   static int tag = 0;
   if (symmetricMemory) {
     size_t inputBytes, outputBytes;
