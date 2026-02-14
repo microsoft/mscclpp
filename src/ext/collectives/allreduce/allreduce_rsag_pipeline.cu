@@ -231,12 +231,12 @@ void AllreduceRsAgPipeline::initialize(std::shared_ptr<Communicator> comm) {
 
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, this->scratchSemaphores_, nChannelsPerConnection_);
   this->baseMemoryChannelHandles_ = setupBaseMemoryChannelDeviceHandles(baseChannels_);
-  std::vector<void*> remoteMemorieHandles;
+  std::vector<void*> remoteMemoryHandles;
   for (const auto& remoteMemory : this->remoteScratchMemories_) {
-    remoteMemorieHandles.push_back(remoteMemory.data());
+    remoteMemoryHandles.push_back(remoteMemory.data());
   }
-  this->remoteMemorieHandles_ = detail::gpuCallocShared<void*>(remoteMemorieHandles.size());
-  gpuMemcpy(this->remoteMemorieHandles_.get(), remoteMemorieHandles.data(), remoteMemorieHandles.size(),
+  this->remoteMemoryHandles_ = detail::gpuCallocShared<void*>(remoteMemoryHandles.size());
+  gpuMemcpy(this->remoteMemoryHandles_.get(), remoteMemoryHandles.data(), remoteMemoryHandles.size(),
             cudaMemcpyHostToDevice);
 }
 
@@ -253,7 +253,7 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
-                                this->remoteMemorieHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
+                                this->remoteMemoryHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
                                 algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0,
                                 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
