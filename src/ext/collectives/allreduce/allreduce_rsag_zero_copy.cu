@@ -4,7 +4,7 @@
 #include "allreduce/allreduce_rsag_zero_copy.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -100,7 +100,7 @@ struct AllreduceRsAgZeroCopyAdapter {
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      assert(false && "Unsupported nranks per node for RsAgZeroCopy allreduce");
+      THROW(ALGO, Error, ErrorCode::InvalidUsage, "Unsupported number of ranks per node: ", nRanksPerNode);
     }
     return cudaGetLastError();
   }
@@ -123,8 +123,8 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   AllreduceFunc allreduce = dispatch<AllreduceRsAgZeroCopyAdapter>(op, dtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
-         static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
+         ", dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
@@ -133,7 +133,7 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
                 nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
                 nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
-    WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;

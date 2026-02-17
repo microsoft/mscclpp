@@ -4,7 +4,7 @@
 #include "allreduce/allreduce_rsag.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -150,12 +150,12 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, c
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   AllreduceFunc allreduce = dispatch<AllreduceRsAgAdapter>(op, dtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
-         static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
+         ", dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   if (inputSize > this->scratchBufferSize_) {
-    WARN("Input size %zu exceeds scratch buffer size %zu", inputSize, this->scratchBufferSize_);
+    WARN(ALGO, "Input size ", inputSize, " exceeds scratch buffer size ", this->scratchBufferSize_);
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
@@ -164,7 +164,7 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, c
                                 algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0, 0,
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
-    WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;
