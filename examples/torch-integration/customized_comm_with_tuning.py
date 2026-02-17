@@ -130,8 +130,8 @@ class CustomizedComm:
                             dtype=torch.float32
                         )
                         torch.cuda.current_stream().wait_stream(capture_stream)
-                        # TODO: use all_reduce may cause problem if the time elapsed btween different algos are too close.
-                        # May change to boradcast in the future if that becomes an issue.
+                        # TODO: use all_reduce may cause problem if the time elapsed between different algos are too close.
+                        # May change to broadcast in the future if that becomes an issue.
                         self.all_reduce(time_tensor, op=torch.distributed.ReduceOp.SUM)
                         avg_time = time_tensor[self.rank].item() / self.world_size
 
