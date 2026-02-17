@@ -18,7 +18,7 @@ __device__ DeviceSemaphore semaphoreForReduce[MAX_NBLOCKS_FOR_REDUCE];
 
 // TODO: move it to a common header file
 template <typename T>
-__device__ __forceinline__ int4 loadPacket(const T* buff, size_t i, size_t nelems) {
+__device__ __forceinline__ int4 loadVec(const T* buff, size_t i, size_t nelems) {
   constexpr size_t ElemsPerInt4 = sizeof(int4) / sizeof(T);
   size_t offset = i * ElemsPerInt4;
   if (offset + ElemsPerInt4 <= nelems) {
@@ -27,17 +27,17 @@ __device__ __forceinline__ int4 loadPacket(const T* buff, size_t i, size_t nelem
     union {
       int4 i;
       T t[ElemsPerInt4];
-    } packet;
-    packet.i = make_int4(0, 0, 0, 0);
+    } vec;
+    vec.i = make_int4(0, 0, 0, 0);
     for (size_t j = 0; j < ElemsPerInt4 && offset + j < nelems; ++j) {
-      packet.t[j] = buff[offset + j];
+      vec.t[j] = buff[offset + j];
     }
-    return packet.i;
+    return vec.i;
   }
 }
 
 template <typename T>
-__device__ __forceinline__ void storePacket(T* buff, size_t i, int4 val, size_t nelems) {
+__device__ __forceinline__ void storeVec(T* buff, size_t i, int4 val, size_t nelems) {
   constexpr size_t ElemsPerInt4 = sizeof(int4) / sizeof(T);
   size_t offset = i * ElemsPerInt4;
   if (offset + ElemsPerInt4 <= nelems) {
@@ -46,10 +46,10 @@ __device__ __forceinline__ void storePacket(T* buff, size_t i, int4 val, size_t 
     union {
       int4 i;
       T t[ElemsPerInt4];
-    } packet;
-    packet.i = val;
+    } vec;
+    vec.i = val;
     for (size_t j = 0; j < ElemsPerInt4 && offset + j < nelems; ++j) {
-      buff[offset + j] = packet.t[j];
+      buff[offset + j] = vec.t[j];
     }
   }
 }
@@ -92,7 +92,7 @@ __global__ void __launch_bounds__(1024, 1)
 #pragma unroll
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = srcOffset + threadIdInPut + step * blockDim.x * nblocksForPut;
-          tmp[step] = loadPacket(buff, offset, nelems);
+          tmp[step] = loadVec(buff, offset, nelems);
         }
 #pragma unroll
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
@@ -133,7 +133,7 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t putStep = subBlockId * nStepsPerIter + step;
         uint32_t myChunkOffset =
             baseSrcOffset + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
-        int4 tmp = loadPacket(buff, myChunkOffset, nelems);
+        int4 tmp = loadVec(buff, myChunkOffset, nelems);
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
         for (uint32_t peer = 0; peer < nPeers; peer++) {
           int remoteRankId = (rank + peer + 1) % nRanksPerNode;
@@ -142,7 +142,7 @@ __global__ void __launch_bounds__(1024, 1)
           int4 data = scratch4[peerSlotOffset];
           tmp = cal_vector<T, OpType>(data, tmp);
         }
-        storePacket(resultBuff, myChunkOffset, tmp, nelems);
+        storeVec(resultBuff, myChunkOffset, tmp, nelems);
         // Broadcast reduced result to all peers' scratch at SCATTER_AG_OFFSET + rank * nInt4PerIter
         uint32_t dstOffset =
             baseOffset + chunkSize + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
@@ -181,7 +181,7 @@ __global__ void __launch_bounds__(1024, 1)
                             step * blockDim.x * nblocksForRecv;
           uint32_t dstOffset =
               baseDstOffset + remoteRankId * nInt4PerIter + threadIdInRecv + step * blockDim.x * nblocksForRecv;
-          storePacket(resultBuff, dstOffset, scratch4[offset], nelems);
+          storeVec(resultBuff, dstOffset, scratch4[offset], nelems);
         }
       }
       __syncthreads();
@@ -203,7 +203,7 @@ struct AllreduceRsAgPipelineAdapter {
     uint32_t nblocksForPut = MAX_NBLOCKS_FOR_PUT;
     uint32_t nblocksForReduce = MAX_NBLOCKS_FOR_REDUCE;
     uint32_t nblocksForRecv = MAX_NBLOCKS_FOR_RECV;
-    uint32_t maxNblocks = nblocksForPut + nblocksForReduce + nblocksForRecv;
+    int maxNblocks = nblocksForPut + nblocksForReduce + nblocksForRecv;
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
       nThreadsPerBlock = 1024;
       nBlocks = maxNblocks;
