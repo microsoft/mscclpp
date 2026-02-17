@@ -3,10 +3,11 @@
 
 #include "alltoallv/alltoallv_fullmesh.hpp"
 #include "alltoallv/alltoallv_kernel.hpp"
+#include "collective_utils.hpp"
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/port_channel.hpp>
-#include <mscclpp/port_channel_device.hpp>
+#include <mscclpp/memory_channel.hpp>
+#include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
 #include <algorithm>
@@ -27,14 +28,12 @@ struct AllToAllVContext {
   int nRanksPerNode;
 
   std::vector<RegisteredMemory> registeredMemories;
-  std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
+  std::vector<MemoryChannel> memoryChannels;
+  std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
 };
 
-AlltoallvFullmesh::~AlltoallvFullmesh() {
-  if (proxyService_) {
-    proxyService_->stopProxy();
-  }
-}
+AlltoallvFullmesh::~AlltoallvFullmesh() = default;
 
 std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
   auto self = std::shared_ptr<AlltoallvFullmesh>(this, [](AlltoallvFullmesh*) {});
@@ -65,22 +64,8 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
 }
 
 void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
-  std::vector<std::shared_future<Connection>> connectionFutures;
   worldSize_ = comm->bootstrap()->getNranks();
-  int rank = comm->bootstrap()->getRank();
-
-  for (int i = 0; i < worldSize_; i++) {
-    if (i == rank) continue;
-    connectionFutures.push_back(comm->connect(Transport::CudaIpc, i));
-  }
-
-  std::vector<Connection> connections;
-  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
-                 [](const auto& future) { return future.get(); });
-  this->conns_ = std::move(connections);
-
-  proxyService_ = std::make_shared<ProxyService>();
-  proxyService_->startProxy(true);
+  this->conns_ = setupConnections(comm);
 }
 
 CommResult AlltoallvFullmesh::alltoallvKernelFunc(
@@ -117,7 +102,7 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
     if (nThreads > 1024) nThreads = 1024;
 
     alltoallvKernel<<<1, nThreads, 0, stream>>>(
-        algoCtx->portChannelDeviceHandles.get(),
+        algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
@@ -125,7 +110,7 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   } else {
     // Use ring-based kernel for larger world sizes
     alltoallvRingKernel<<<1, 32, 0, stream>>>(
-        algoCtx->portChannelDeviceHandles.get(),
+        algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
@@ -151,34 +136,26 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
   RegisteredMemory inputBufRegMem = comm->registerMemory((void*)input, inputSize, Transport::CudaIpc);
   RegisteredMemory outputBufRegMem = comm->registerMemory(output, outputSize, Transport::CudaIpc);
 
-  // Exchange output buffer registration with all peers
-  std::vector<std::shared_future<RegisteredMemory>> remoteRegMemories;
-  for (int i = 0; i < ctx->worldSize; i++) {
-    if (i == ctx->rank) continue;
-    comm->sendMemory(outputBufRegMem, i, 0);
-    remoteRegMemories.push_back(comm->recvMemory(i, 0));
-  }
+  // Exchange output buffer registration with all peers (we write to peer's output buffer)
+  std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, ctx->rank, outputBufRegMem);
 
-  // Setup port channels for each peer
-  std::vector<DeviceHandle<PortChannel>> portChannels;
-  MemoryId inputMemoryId = this->proxyService_->addMemory(inputBufRegMem);
+  // Setup memory semaphores for synchronization (1 channel per peer)
+  constexpr int nChannelsPerConnection = 1;
+  ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
 
-  for (size_t i = 0; i < this->conns_.size(); i++) {
-    auto remoteMemory = remoteRegMemories[i].get();
-    MemoryId remoteMemoryId = this->proxyService_->addMemory(remoteMemory);
-    portChannels.push_back(deviceHandle(this->proxyService_->portChannel(
-        this->proxyService_->buildAndAddSemaphore(*comm, this->conns_[i]), remoteMemoryId, inputMemoryId)));
-  }
+  // Setup memory channels: we read from our input buffer, write to peer's output buffer
+  ctx->memoryChannels = setupMemoryChannels(
+      this->conns_,
+      ctx->memorySemaphores,
+      remoteOutputMemories,  // remote output buffers (where we write)
+      inputBufRegMem,        // local input buffer (where we read from)
+      nChannelsPerConnection);
 
-  // Allocate and copy port channels to device
-  ctx->portChannelDeviceHandles = detail::gpuCallocShared<DeviceHandle<PortChannel>>(portChannels.size());
-  gpuMemcpy(ctx->portChannelDeviceHandles.get(), portChannels.data(), portChannels.size(),
-            cudaMemcpyHostToDevice);
+  // Setup device handles
+  ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // Keep registered memory references to prevent deallocation
-  std::transform(remoteRegMemories.begin(), remoteRegMemories.end(),
-                 std::back_inserter(ctx->registeredMemories),
-                 [](const auto& fut) { return fut.get(); });
+  ctx->registeredMemories = std::move(remoteOutputMemories);
   ctx->registeredMemories.push_back(inputBufRegMem);
   ctx->registeredMemories.push_back(outputBufRegMem);
 

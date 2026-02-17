@@ -28,8 +28,8 @@ static size_t* d_sendDispls;
 static size_t* d_recvCounts;
 static size_t* d_recvDispls;
 
-// Device array for port channels (used by library kernels)
-static DeviceHandle<mscclpp::PortChannel>* d_portChannels;
+// Device array for memory channels (used by library kernels)
+static DeviceHandle<mscclpp::MemoryChannel>* d_memoryChannels;
 
 class AllToAllVTestColl : public BaseTestColl {
  public:
@@ -70,7 +70,7 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     if (nThreads < 32) nThreads = 32;
     if (nThreads > 1024) nThreads = 1024;
     mscclpp::collective::alltoallvKernel<<<1, nThreads, 0, stream>>>(
-        d_portChannels,
+        d_memoryChannels,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
@@ -78,7 +78,7 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   } else if (kernelNum == 1) {
     // Use ring-based kernel from library
     mscclpp::collective::alltoallvRingKernel<<<1, 32, 0, stream>>>(
-        d_portChannels,
+        d_memoryChannels,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
@@ -213,17 +213,23 @@ void AllToAllVTestEngine::allocateBuffer() {
   CUDATHROW(cudaMalloc(&d_recvCounts, args_.totalRanks * sizeof(size_t)));
   CUDATHROW(cudaMalloc(&d_recvDispls, args_.totalRanks * sizeof(size_t)));
 
-  // Allocate device array for port channels
-  CUDATHROW(cudaMalloc(&d_portChannels, args_.totalRanks * sizeof(DeviceHandle<mscclpp::PortChannel>)));
+  // Allocate device array for memory channels
+  CUDATHROW(cudaMalloc(&d_memoryChannels, args_.totalRanks * sizeof(DeviceHandle<mscclpp::MemoryChannel>)));
 }
 
 void AllToAllVTestEngine::setupConnections() {
-  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannels;
-  setupMeshConnections(portChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes);
+  std::vector<mscclpp::MemoryChannel> memoryChannels;
+  // Setup MemoryChannels: we write to peer's recv buffer from our send buffer
+  setupMeshConnections(memoryChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes,
+                       ChannelSemantic::PUT, 1);
 
-  // Copy port channels to device memory for use by library kernels
-  CUDATHROW(cudaMemcpy(d_portChannels, portChannels.data(),
-                       sizeof(DeviceHandle<mscclpp::PortChannel>) * portChannels.size(),
+  // Convert to device handles and copy to device memory
+  std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
+  for (auto& channel : memoryChannels) {
+    memoryChannelHandles.push_back(mscclpp::deviceHandle(channel));
+  }
+  CUDATHROW(cudaMemcpy(d_memoryChannels, memoryChannelHandles.data(),
+                       sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size(),
                        cudaMemcpyHostToDevice));
 }
 

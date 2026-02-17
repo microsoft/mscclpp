@@ -5,7 +5,8 @@
 
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
-#include <mscclpp/port_channel.hpp>
+#include <mscclpp/memory_channel.hpp>
+#include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
 namespace collective {
@@ -14,10 +15,11 @@ namespace collective {
  * AllToAllV collective operation builder.
  *
  * This class builds an AllToAllV algorithm that handles variable element counts
- * per rank, similar to MPI_Alltoallv. Unlike NCCL's ncclGroupStart/ncclGroupEnd
- * approach, mscclpp uses explicit put/signal/wait operations on PortChannels.
+ * per rank. Uses direct MemoryChannel for low-latency
+ * intra-node communication instead of proxy-based PortChannel.
  *
- * The implementation uses a ring-based exchange pattern to avoid deadlocks.
+ * The implementation uses a parallel warp-based exchange pattern where each warp
+ * handles communication with one peer for maximum throughput.
  *
  * Usage:
  *   auto builder = std::make_shared<AlltoallvFullmesh>();
@@ -47,7 +49,6 @@ class AlltoallvFullmesh : public AlgorithmBuilder {
                                               size_t outputSize, DataType dtype);
 
   std::vector<Connection> conns_;
-  std::shared_ptr<ProxyService> proxyService_;
   int worldSize_;
 };
 
