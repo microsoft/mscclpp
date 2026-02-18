@@ -71,7 +71,7 @@ void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AlltoallvFullmesh::alltoallvKernelFunc(
     const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
     size_t outputSize, [[maybe_unused]] DataType dtype, cudaStream_t stream,
-    [[maybe_unused]] int nBlocks, [[maybe_unused]] int nThreadsPerBlock,
+    [[maybe_unused]] int nBlocks, int nThreadsPerBlock,
     const std::unordered_map<std::string, uintptr_t>& extras) {
 
   auto algoCtx = std::static_pointer_cast<AllToAllVContext>(ctx);
@@ -94,14 +94,13 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   const size_t* d_recvCounts = reinterpret_cast<const size_t*>(it_recvCounts->second);
   const size_t* d_recvDispls = reinterpret_cast<const size_t*>(it_recvDispls->second);
 
+  // Use maximum threads (1024) for best bandwidth utilization
+  const int threadsPerBlock = (nThreadsPerBlock > 0 && nThreadsPerBlock <= 1024) ? nThreadsPerBlock : 1024;
+
   // Choose kernel based on world size
   if (worldSize <= 16) {
-    // Use parallel warp-based kernel for small world sizes
-    int nThreads = (worldSize - 1) * ALLTOALLV_WARP_SIZE;
-    if (nThreads < 32) nThreads = 32;
-    if (nThreads > 1024) nThreads = 1024;
-
-    alltoallvKernel<<<1, nThreads, 0, stream>>>(
+    // Use high-throughput kernel with all threads
+    alltoallvKernel<<<1, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,
@@ -109,7 +108,7 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         d_recvCounts, d_recvDispls);
   } else {
     // Use ring-based kernel for larger world sizes
-    alltoallvRingKernel<<<1, 32, 0, stream>>>(
+    alltoallvRingKernel<<<1, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,

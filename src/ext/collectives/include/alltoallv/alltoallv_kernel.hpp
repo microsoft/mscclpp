@@ -17,10 +17,13 @@ namespace collective {
 #endif
 
 /**
- * AllToAllV kernel implementation using parallel warp-based communication with MemoryChannel.
+ * High-performance AllToAllV kernel using maximum thread parallelism.
  *
- * Each warp handles communication with one peer. Data is copied in parallel using all threads
- * in the warp, which significantly improves throughput for large messages.
+ * Processes each peer sequentially but uses ALL block threads (1024) for each
+ * data transfer to maximize copy bandwidth. This provides much better performance
+ * than the warp-per-peer approach for large message sizes.
+ *
+ * Launch config: <<<1, 1024>>> for maximum bandwidth within a single block.
  *
  * @param memoryChannels Array of MemoryChannel handles for each peer (worldSize-1 channels)
  * @param rank Current rank
@@ -43,64 +46,54 @@ __global__ void __launch_bounds__(1024)
                     const size_t* recvCounts,
                     const size_t* recvDispls) {
   int tid = threadIdx.x;
+  int nThreads = blockDim.x;
   int nPeers = worldSize - 1;
 
-  // Step 1: Copy local data (rank's own portion) using all threads
+  // Step 1: Copy local data using ALL threads for maximum bandwidth
   if (sendCounts[rank] > 0) {
     mscclpp::copy((char*)recvBuff + recvDispls[rank],
                   (void*)((const char*)sendBuff + sendDispls[rank]),
-                  sendCounts[rank], tid, blockDim.x);
+                  sendCounts[rank], tid, nThreads);
   }
   __syncthreads();
 
-  // Step 2: Each warp handles one peer for sending (parallel copy within warp)
-  int warpId = tid / ALLTOALLV_WARP_SIZE;
-  int laneId = tid % ALLTOALLV_WARP_SIZE;
-
-  if (warpId < nPeers) {
-    // Determine which peer this warp handles
-    int peer = warpId < rank ? warpId : warpId + 1;
-    int chanIdx = warpId;
+  // Step 2: Process each peer sequentially, but use ALL threads for each transfer
+  // This maximizes bandwidth for each transfer compared to warp-per-peer approach
+  for (int peerIdx = 0; peerIdx < nPeers; peerIdx++) {
+    int peer = peerIdx < rank ? peerIdx : peerIdx + 1;
+    int chanIdx = peerIdx;
 
     if (sendCounts[peer] > 0) {
-      // Use parallel put with all threads in the warp
-      // targetOffset: recvDispls[rank] - where peer should receive our data
-      // originOffset: sendDispls[peer] - where our data for this peer starts
+      // Use all threads for maximum copy throughput
       memoryChannels[chanIdx].put(
           recvDispls[rank],       // dst offset in peer's buffer
           sendDispls[peer],       // src offset in our buffer
           sendCounts[peer],       // size
-          laneId,                 // thread id within warp
-          ALLTOALLV_WARP_SIZE     // number of threads
+          tid,                    // thread id
+          nThreads                // total threads
       );
     }
-  }
-  __syncthreads();
+    __syncthreads();
 
-  // Step 3: Signal completion to all peers
-  if (warpId < nPeers && laneId == 0) {
-    memoryChannels[warpId].signal();
-  }
-  __syncthreads();
-
-  // Step 4: Wait for all incoming data
-  if (warpId < nPeers && laneId == 0) {
-    int peer = warpId < rank ? warpId : warpId + 1;
-    if (recvCounts[peer] > 0) {
-      memoryChannels[warpId].wait();
+    // Only one thread signals per peer
+    if (tid == 0) {
+      memoryChannels[chanIdx].signal();
     }
+    __syncthreads();
+
+    // Wait for incoming data from this peer
+    if (tid == 0 && recvCounts[peer] > 0) {
+      memoryChannels[chanIdx].wait();
+    }
+    __syncthreads();
   }
-  __syncthreads();
 }
 
 /**
- * Ring-based AllToAllV kernel for serialized communication with MemoryChannel.
+ * Ring-based AllToAllV kernel with maximum thread parallelism.
  *
- * Uses step-by-step ring pattern to exchange data, sending to (rank+step) and
- * receiving from (rank-step) in each step. All threads participate in the copy
- * for better throughput.
- *
- * This kernel is more robust for larger world sizes.
+ * Uses step-by-step ring pattern with ALL threads for maximum bandwidth.
+ * Better for larger world sizes to avoid congestion.
  */
 __global__ void __launch_bounds__(1024)
     alltoallvRingKernel(DeviceHandle<MemoryChannel>* memoryChannels,
@@ -113,12 +106,13 @@ __global__ void __launch_bounds__(1024)
                         const size_t* recvCounts,
                         const size_t* recvDispls) {
   int tid = threadIdx.x;
+  int nThreads = blockDim.x;
 
-  // Copy local data first using all threads
+  // Copy local data first using ALL threads
   if (sendCounts[rank] > 0) {
     mscclpp::copy((char*)recvBuff + recvDispls[rank],
                   (void*)((const char*)sendBuff + sendDispls[rank]),
-                  sendCounts[rank], tid, blockDim.x);
+                  sendCounts[rank], tid, nThreads);
   }
   __syncthreads();
 
@@ -130,14 +124,14 @@ __global__ void __launch_bounds__(1024)
     int sendChanIdx = sendPeer < rank ? sendPeer : sendPeer - 1;
     int recvChanIdx = recvPeer < rank ? recvPeer : recvPeer - 1;
 
-    // Send data to sendPeer using all threads
+    // Send data to sendPeer using ALL threads
     if (sendCounts[sendPeer] > 0) {
       memoryChannels[sendChanIdx].put(
           recvDispls[rank],
           sendDispls[sendPeer],
           sendCounts[sendPeer],
           tid,
-          blockDim.x
+          nThreads
       );
     }
     __syncthreads();

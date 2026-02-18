@@ -57,18 +57,11 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int rank = args.rank;
   const int kernelNum = args.kernelNum;
 
-  // Reset device syncer
-  mscclpp::DeviceSyncer syncer = {};
-  CUDATHROW(cudaMemcpyToSymbol(deviceSyncerV, &syncer, sizeof(mscclpp::DeviceSyncer)));
+  // Use maximum threads (1024) for best bandwidth utilization
+  const int nThreads = 1024;
 
   if (kernelNum == 0) {
-    // Use parallel warp-based kernel from library
-    int nThreads = (worldSize - 1) * 32;  // One warp per peer
-#if defined(__HIP_PLATFORM_AMD__)
-    nThreads = (worldSize - 1) * 64;
-#endif
-    if (nThreads < 32) nThreads = 32;
-    if (nThreads > 1024) nThreads = 1024;
+    // Use high-throughput kernel with all threads participating in each transfer
     mscclpp::collective::alltoallvKernel<<<1, nThreads, 0, stream>>>(
         d_memoryChannels,
         rank, worldSize,
@@ -76,8 +69,8 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls);
   } else if (kernelNum == 1) {
-    // Use ring-based kernel from library
-    mscclpp::collective::alltoallvRingKernel<<<1, 32, 0, stream>>>(
+    // Use ring-based kernel for larger world sizes
+    mscclpp::collective::alltoallvRingKernel<<<1, nThreads, 0, stream>>>(
         d_memoryChannels,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
