@@ -54,6 +54,36 @@ __device__ __forceinline__ void storeVec(T* buff, size_t i, int4 val, size_t nel
   }
 }
 
+
+
+// Pipelined Reduce-Scatter + All-Gather (RSAG) allreduce.
+//
+// This is a pipelined variant of the basic RSAG allreduce that overlaps
+// communication and computation by splitting the data into chunks processed
+// across multiple iterations. Three groups of thread blocks run concurrently
+// with different roles, synchronized via device semaphores:
+//
+//   PUT blocks  — Read local input chunks and write them into peers' scratch
+//                 buffers via remote memory handles (CudaIpc).
+//
+//   REDUCE blocks — After a signal/wait barrier confirming PUT completion,
+//                   reduce the local chunk with data received from all peers
+//                   in the scratch buffer. Write the reduced result to both
+//                   the local output and peers' scratch (for the AG phase).
+//
+//   RECV blocks — After a signal/wait barrier confirming REDUCE completion,
+//                 copy other ranks' reduced chunks from scratch into the
+//                 local result buffer, completing the all-gather.
+//
+// Pipelining is achieved by using a circular scratch buffer (pipelineDepth
+// stages). PUT blocks wait on a semaphore before reusing a scratch slot,
+// allowing the next iteration's PUT to overlap with the current iteration's
+// REDUCE and RECV. Each REDUCE block handles a subset of the PUT block's
+// data (controlled by REDUCE_COPY_RATIO), enabling finer-grained overlap.
+//
+// Data is processed in int4-sized (16-byte) units with vectorized load/store
+// helpers that handle tail elements.
+
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgPipeline(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,

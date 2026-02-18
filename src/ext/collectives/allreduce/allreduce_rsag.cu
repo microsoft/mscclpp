@@ -8,6 +8,26 @@
 
 namespace mscclpp {
 namespace collective {
+  
+// Allreduce using the Reduce-Scatter + All-Gather (RSAG) pattern.
+//
+// This algorithm performs allreduce in three phases over intra-node peers
+// connected via CudaIpc memory channels:
+//
+//   1. Scatter: Each rank copies its input data into a scratch buffer, then
+//      signals peers and waits for all peers to do the same.
+//
+//   2. Reduce-Scatter: Each rank reduces its assigned chunk by reading the
+//      corresponding chunks from all peers' scratch buffers (via remote memory
+//      handles) and applying the reduction op. The reduced result is written
+//      back to both the local result buffer and peers' scratch buffers.
+//
+//   3. All-Gather: After a second signal/wait barrier, each rank copies the
+//      reduced chunks produced by other ranks from the scratch buffer into its
+//      result buffer, completing the allreduce.
+//
+// Data is processed in int4-sized (16-byte) units for coalesced memory access,
+// with special handling for any remainder elements at the tail.
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAg(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,

@@ -11,6 +11,31 @@ namespace collective {
 
 __device__ mscclpp::DeviceSyncer globalSyncer;
 
+// Zero-copy Reduce-Scatter + All-Gather (RSAG) allreduce.
+//
+// Unlike the standard RSAG which copies input into a scratch buffer first,
+// this variant reads directly from peers' input buffers and writes reduced
+// results directly to peers' output buffers — eliminating the need for a
+// separate scratch buffer and reducing memory traffic.
+//
+// The algorithm runs in a single kernel with the following steps:
+//
+//   1. Barrier: Signal and wait on all peers to ensure input buffers are ready.
+//
+//   2. Reduce-Scatter: Each rank reads its assigned chunk from every peer's
+//      input buffer (via CudaIpc remote memory handles), reduces all values
+//      locally, then writes the reduced result to its own output buffer AND
+//      directly to every peer's output buffer at the same offset.
+//
+//   3. Global sync + Barrier: A device-wide sync ensures all writes complete,
+//      followed by a final signal/wait to guarantee all peers have finished
+//      writing, making the full output buffer valid on every rank.
+//
+// This approach requires registering both input and output buffers as remote
+// memories (2 * nPeers handles), but avoids scratch buffer allocation and
+// the extra copy steps of the standard RSAG. The NRanksPerNode template
+// parameter enables compile-time unrolling of peer loops (supports 4 or 8).
+
 template <int NRanksPerNode, ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
@@ -69,6 +94,7 @@ __global__ void __launch_bounds__(1024, 1)
     }
     resultBuff4[offset] = tmp;
   }
+  // Use device barrier gives better performance here.
   globalSyncer.sync(gridDim.x);
   if (blockIdx.x == 0 && threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].signal();
