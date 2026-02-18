@@ -76,6 +76,14 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls);
+  } else if (kernelNum == 2) {
+    // Use pipelined kernel for imbalanced workloads (MoE)
+    mscclpp::collective::alltoallvPipelinedKernel<<<1, nThreads, 0, stream>>>(
+        d_memoryChannels,
+        rank, worldSize,
+        localSendBuffV, localRecvBuffV,
+        d_sendCounts, d_sendDispls,
+        d_recvCounts, d_recvDispls);
   }
 }
 
@@ -163,7 +171,8 @@ void AllToAllVTestColl::setupCollTest(size_t size) {
 std::vector<KernelRestriction> AllToAllVTestColl::getKernelRestrictions() {
   return {
       {0, "alltoallvKernel", true, 1, 4 * worldSize_},
-      {1, "alltoallvRingKernel", true, 1, 4 * worldSize_}
+      {1, "alltoallvRingKernel", true, 1, 4 * worldSize_},
+      {2, "alltoallvPipelinedKernel", true, 1, 4 * worldSize_}
   };
 }
 

@@ -16,6 +16,10 @@ namespace collective {
 #define ALLTOALLV_WARP_SIZE 32
 #endif
 
+// Chunk size for pipelined transfers (1MB)
+// Large enough to amortize overhead, small enough for good memory patterns
+constexpr size_t ALLTOALLV_CHUNK_SIZE = 1 << 20;
+
 /**
  * High-performance AllToAllV kernel using maximum thread parallelism.
  *
@@ -90,10 +94,84 @@ __global__ void __launch_bounds__(1024)
 }
 
 /**
+ * Pipelined AllToAllV kernel for imbalanced workloads.
+ *
+ * For large messages, breaks transfers into chunks to improve memory access
+ * patterns, but avoids excessive signaling overhead by signaling only once
+ * per peer after all chunks are sent.
+ *
+ * Optimized for MoE workloads where message sizes can vary by 100x+ between ranks.
+ *
+ * Launch config: <<<1, 1024>>>
+ */
+__global__ void __launch_bounds__(1024)
+    alltoallvPipelinedKernel(DeviceHandle<MemoryChannel>* memoryChannels,
+                             int rank,
+                             int worldSize,
+                             const void* sendBuff,
+                             void* recvBuff,
+                             const size_t* sendCounts,
+                             const size_t* sendDispls,
+                             const size_t* recvCounts,
+                             const size_t* recvDispls) {
+  int tid = threadIdx.x;
+  int nThreads = blockDim.x;
+  int nPeers = worldSize - 1;
+
+  // Step 1: Copy local data
+  if (sendCounts[rank] > 0) {
+    mscclpp::copy((char*)recvBuff + recvDispls[rank],
+                  (void*)((const char*)sendBuff + sendDispls[rank]),
+                  sendCounts[rank], tid, nThreads);
+  }
+  __syncthreads();
+
+  // Step 2: Process each peer - send all data in chunks, then signal once
+  for (int peerIdx = 0; peerIdx < nPeers; peerIdx++) {
+    int peer = peerIdx < rank ? peerIdx : peerIdx + 1;
+    int chanIdx = peerIdx;
+
+    size_t sendSize = sendCounts[peer];
+    size_t recvSize = recvCounts[peer];
+    size_t dstOffset = recvDispls[rank];
+    size_t srcOffset = sendDispls[peer];
+
+    // Send data in chunks for better memory access patterns
+    // But only signal ONCE after all chunks are sent (avoids signaling overhead)
+    if (sendSize > 0) {
+      for (size_t offset = 0; offset < sendSize; offset += ALLTOALLV_CHUNK_SIZE) {
+        size_t chunkSize = (sendSize - offset < ALLTOALLV_CHUNK_SIZE)
+                           ? (sendSize - offset) : ALLTOALLV_CHUNK_SIZE;
+        memoryChannels[chanIdx].put(
+            dstOffset + offset,
+            srcOffset + offset,
+            chunkSize,
+            tid,
+            nThreads
+        );
+        __syncthreads();
+      }
+    }
+
+    // Signal ONCE after all data is sent
+    if (tid == 0 && sendSize > 0) {
+      memoryChannels[chanIdx].signal();
+    }
+    __syncthreads();
+
+    // Wait ONCE for all peer's data
+    if (tid == 0 && recvSize > 0) {
+      memoryChannels[chanIdx].wait();
+    }
+    __syncthreads();
+  }
+}
+
+/**
  * Ring-based AllToAllV kernel with maximum thread parallelism.
  *
  * Uses step-by-step ring pattern with ALL threads for maximum bandwidth.
- * Better for larger world sizes to avoid congestion.
+ * Each step processes one peer pair, with correct semaphore handling.
  */
 __global__ void __launch_bounds__(1024)
     alltoallvRingKernel(DeviceHandle<MemoryChannel>* memoryChannels,
@@ -116,17 +194,15 @@ __global__ void __launch_bounds__(1024)
   }
   __syncthreads();
 
-  // Ring-based exchange - all threads participate in copy
+  // Ring-based exchange - process each peer sequentially
+  // Key fix: use the SAME channel for both signal and wait (peer-pair symmetry)
   for (int step = 1; step < worldSize; step++) {
     int sendPeer = (rank + step) % worldSize;
-    int recvPeer = (rank - step + worldSize) % worldSize;
-
-    int sendChanIdx = sendPeer < rank ? sendPeer : sendPeer - 1;
-    int recvChanIdx = recvPeer < rank ? recvPeer : recvPeer - 1;
+    int chanIdx = sendPeer < rank ? sendPeer : sendPeer - 1;
 
     // Send data to sendPeer using ALL threads
     if (sendCounts[sendPeer] > 0) {
-      memoryChannels[sendChanIdx].put(
+      memoryChannels[chanIdx].put(
           recvDispls[rank],
           sendDispls[sendPeer],
           sendCounts[sendPeer],
@@ -136,15 +212,15 @@ __global__ void __launch_bounds__(1024)
     }
     __syncthreads();
 
-    // Signal completion
-    if (tid == 0 && sendCounts[sendPeer] > 0) {
-      memoryChannels[sendChanIdx].signal();
+    // Signal completion on the SAME channel we'll wait on
+    if (tid == 0) {
+      memoryChannels[chanIdx].signal();
     }
     __syncthreads();
 
-    // Wait for data from recvPeer
-    if (tid == 0 && recvCounts[recvPeer] > 0) {
-      memoryChannels[recvChanIdx].wait();
+    // Wait for peer's data on the SAME channel (correct semaphore pairing)
+    if (tid == 0 && recvCounts[sendPeer] > 0) {
+      memoryChannels[chanIdx].wait();
     }
     __syncthreads();
   }
