@@ -54,8 +54,6 @@ __device__ __forceinline__ void storeVec(T* buff, size_t i, int4 val, size_t nel
   }
 }
 
-
-
 // Pipelined Reduce-Scatter + All-Gather (RSAG) allreduce.
 //
 // This is a pipelined variant of the basic RSAG allreduce that overlaps

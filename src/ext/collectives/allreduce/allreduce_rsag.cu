@@ -8,7 +8,7 @@
 
 namespace mscclpp {
 namespace collective {
-  
+
 // Allreduce using the Reduce-Scatter + All-Gather (RSAG) pattern.
 //
 // This algorithm performs allreduce in three phases over intra-node peers
