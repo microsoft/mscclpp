@@ -4,10 +4,6 @@
 add_subdirectory(csrc)
 add_subdirectory(test)
 
-if(CMAKE_BUILD_TYPE STREQUAL "Release")
-    target_compile_definitions(mscclpp_py PRIVATE MSCCLPP_DISABLE_NB_LEAK_WARNINGS=1)
-endif()
-
 add_custom_target(pytest_lib_copy ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/_mscclpp.*.so
