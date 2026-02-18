@@ -28,9 +28,9 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
       return mscclpp::DataType::BFLOAT16;
 #ifdef __FP8_TYPES_EXIST__
     case ncclFloat8e4m3:
-      return mscclpp::DataType::FP8_E4M3;
+      return mscclpp::DataType::FLOAT8_E4M3;
     case ncclFloat8e5m2:
-      return mscclpp::DataType::FP8_E5M2;
+      return mscclpp::DataType::FLOAT8_E5M2;
 #endif
     default:
       throw mscclpp::Error("Unsupported ncclDataType_t: " + std::to_string(dtype), mscclpp::ErrorCode::InvalidUsage);
@@ -41,8 +41,8 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
 inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   switch (dtype) {
     case mscclpp::DataType::UINT8:
-    case mscclpp::DataType::FP8_E4M3:
-    case mscclpp::DataType::FP8_E5M2:
+    case mscclpp::DataType::FLOAT8_E4M3:
+    case mscclpp::DataType::FLOAT8_E5M2:
       return 1;
     case mscclpp::DataType::FLOAT16:
     case mscclpp::DataType::BFLOAT16:
@@ -71,9 +71,9 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
     case mscclpp::DataType::BFLOAT16:
       return ncclBfloat16;
 #ifdef __FP8_TYPES_EXIST__
-    case mscclpp::DataType::FP8_E4M3:
+    case mscclpp::DataType::FLOAT8_E4M3:
       return ncclFloat8e4m3;
-    case mscclpp::DataType::FP8_E5M2:
+    case mscclpp::DataType::FLOAT8_E5M2:
       return ncclFloat8e5m2;
 #endif
     default:

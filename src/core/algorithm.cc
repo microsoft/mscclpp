@@ -174,13 +174,13 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
-    case DataType::FP8_E4M3:
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FP8_E4M3, plan_,
-                        stream);
+    case DataType::FLOAT8_E4M3:
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3,
+                        plan_, stream);
       break;
-    case DataType::FP8_E5M2:
-      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FP8_E5M2, plan_,
-                        stream);
+    case DataType::FLOAT8_E5M2:
+      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FLOAT8_E5M2,
+                        plan_, stream);
       break;
 #endif
     case DataType::INT32:

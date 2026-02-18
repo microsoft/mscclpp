@@ -876,7 +876,7 @@ class ExecutionKernel {
 #endif
         break;
 #if defined(__FP8_TYPES_EXIST__)
-      case DataType::FP8_E4M3:
+      case DataType::FLOAT8_E4M3:
         executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -887,7 +887,7 @@ class ExecutionKernel {
         );
 #endif
         break;
-      case DataType::FP8_E5M2:
+      case DataType::FLOAT8_E5M2:
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
