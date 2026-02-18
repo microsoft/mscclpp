@@ -97,18 +97,33 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   // Use maximum threads (1024) for best bandwidth utilization
   const int threadsPerBlock = (nThreadsPerBlock > 0 && nThreadsPerBlock <= 1024) ? nThreadsPerBlock : 1024;
 
-  // Choose kernel based on world size
-  if (worldSize <= 16) {
-    // Use high-throughput kernel with all threads
+  // Size-adaptive algorithm selection based on message size and world size:
+  // - Small messages (<1MB avg): use basic kernel (lower latency)
+  // - Large messages (>=1MB avg) with small world (<=16): use pipelined kernel
+  // - Large messages (>=1MB avg) with large world (>16): use ring kernel (avoids congestion)
+  constexpr size_t SIZE_THRESHOLD = 1 << 20;  // 1MB
+  constexpr int WORLD_SIZE_THRESHOLD = 16;
+  size_t avgMsgSize = inputSize / worldSize;
+
+  if (avgMsgSize < SIZE_THRESHOLD) {
+    // Small messages: use basic kernel for lower latency
     alltoallvKernel<<<1, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls);
-  } else {
-    // Use ring-based kernel for larger world sizes
+  } else if (worldSize > WORLD_SIZE_THRESHOLD) {
+    // Large messages + large world: use ring kernel to avoid congestion
     alltoallvRingKernel<<<1, threadsPerBlock, 0, stream>>>(
+        algoCtx->memoryChannelDeviceHandles.get(),
+        rank, worldSize,
+        input, output,
+        d_sendCounts, d_sendDispls,
+        d_recvCounts, d_recvDispls);
+  } else {
+    // Large messages + small world: use pipelined chunked kernel
+    alltoallvPipelinedKernel<<<1, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
         rank, worldSize,
         input, output,
