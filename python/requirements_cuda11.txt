@@ -1,5 +1,4 @@
 mpi4py
-torch
 cupy-cuda11x
 prettytable
 netifaces
