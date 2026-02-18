@@ -63,7 +63,7 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON ..
-        make -j
+        make -j4
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
@@ -108,7 +108,7 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON ..
-        make -j
+        make -j4
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v4
