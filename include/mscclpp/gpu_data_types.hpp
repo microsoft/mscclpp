@@ -68,14 +68,14 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,     // 32-bit signed integer.
-  UINT32,    // 32-bit unsigned integer.
-  FLOAT16,   // IEEE 754 half precision.
-  FLOAT32,   // IEEE 754 single precision.
-  BFLOAT16,  // bfloat16 precision.
-  FP8_E4M3,  // FP8 with E4M3 layout.
-  FP8_E5M2,  // FP8 with E5M2 layout.
-  UINT8,     // 8-bit unsigned integer.
+  INT32,        // 32-bit signed integer.
+  UINT32,       // 32-bit unsigned integer.
+  FLOAT16,      // IEEE 754 half precision.
+  FLOAT32,      // IEEE 754 single precision.
+  BFLOAT16,     // bfloat16 precision.
+  FLOAT8_E4M3,  // float8 with E4M3 layout.
+  FLOAT8_E5M2,  // float8 with E5M2 layout.
+  UINT8,        // 8-bit unsigned integer.
 };
 
 /// Word array.

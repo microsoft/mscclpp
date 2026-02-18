@@ -198,5 +198,7 @@ def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
         return DataType.float8_e5m2
     elif dtype == torch.float8_e4m3fn or dtype == torch.float8_e4m3fnuz:
         return DataType.float8_e4m3
+    elif dtype == torch.uint8:
+        return DataType.uint8
     else:
         raise ValueError(f"Unknown data type: {dtype}")
