@@ -93,6 +93,15 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   int maxWriteQueueSize = conn.getMaxWriteQueueSize();
   auto& numRequests = inflightRequests_[conn.impl_];
 
+  if (trigger.fields.type == 0) {
+    // type == 0 indicates an atomic add operation.
+    // The full 64-bit add value is encoded in fst (size + srcOffset fields).
+    RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
+    uint64_t value = trigger.fst;
+    conn.atomicAdd(dst, trigger.fields.dstOffset, value);
+    numRequests++;
+  }
+
   if (trigger.fields.type & TriggerData) {
     RegisteredMemory& dst = memories_[trigger.fields.dstMemoryId];
     RegisteredMemory& src = memories_[trigger.fields.srcMemoryId];

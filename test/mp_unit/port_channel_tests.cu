@@ -541,3 +541,95 @@ TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
   GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
+
+// ================================ AtomicAdd Tests ================================
+
+__constant__ DeviceHandle<mscclpp::PortChannel> gChannelOneToOneTestConstPortChanForAdd;
+
+// Kernel: Each rank atomically adds to the remote rank's buffer, then signals and flushes.
+// After waiting for the signal, each rank checks that its own buffer has the expected value.
+__global__ void kernelPortChannelAtomicAdd(uint64_t* buff, int rank, int nTries, int* ret) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChanForAdd;
+
+  for (int i = 0; i < nTries; i++) {
+    if (threadIdx.x == 0) {
+      // Each rank adds (i + 1) to offset 0 of the remote buffer.
+      portChan.add(0, (uint64_t)(i + 1));
+      portChan.flush();
+    }
+    __syncthreads();
+
+    // Signal the remote side that the add is complete.
+    if (threadIdx.x == 0) {
+      portChan.signal();
+      portChan.flush();
+    }
+    __syncthreads();
+
+    // Wait for the remote side's signal.
+    if (threadIdx.x == 0) {
+      portChan.wait();
+    }
+    __syncthreads();
+  }
+
+  // After nTries iterations, the local buffer at offset 0 should have been incremented by
+  // sum(1..nTries) = nTries * (nTries + 1) / 2 from the remote rank.
+  if (threadIdx.x == 0) {
+    uint64_t expected = (uint64_t)nTries * ((uint64_t)nTries + 1) / 2;
+    if (buff[0] != expected) {
+      printf("rank %d: buff[0] = %llu, expected = %llu\n", rank, (unsigned long long)buff[0],
+             (unsigned long long)expected);
+      *ret = 1;
+    }
+  }
+}
+
+void PortChannelOneToOneTest::testAtomicAdd(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 1;  // Single uint64_t element
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  // Allocate a single uint64_t on each rank, zero-initialized.
+  auto buff = mscclpp::GpuBuffer<uint64_t>(nElem);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, nElem * sizeof(uint64_t)));
+
+  // In-place: sendBuff is both src and dst. The remote rank will atomicAdd into our buffer.
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(uint64_t), nullptr,
+                       0, ibMode);
+
+  ASSERT_EQ(portChannels.size(), 1);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChanForAdd, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  proxyService->startProxy();
+
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+
+  const int nTries = 100;
+
+  kernelPortChannelAtomicAdd<<<1, 1>>>(buff.memory().get(), gEnv->rank, nTries, ret.get());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+TEST_F(PortChannelOneToOneTest, AtomicAdd) { testAtomicAdd(true, false, false); }
+
+TEST_F(PortChannelOneToOneTest, AtomicAddIb) {
+#if defined(USE_IBVERBS)
+  testAtomicAdd(false, true, false, IbMode::Host);
+#else   // !defined(USE_IBVERBS)
+  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+#endif  // !defined(USE_IBVERBS)
+}
+
+TEST_F(PortChannelOneToOneTest, AtomicAddEthernet) { testAtomicAdd(false, false, true); }

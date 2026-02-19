@@ -642,6 +642,13 @@ class Connection {
   /// @param newValue The new value to write.
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue);
 
+  /// Atomically add a value to a 64-bit unsigned integer in a destination RegisteredMemory.
+  ///
+  /// @param dst The destination RegisteredMemory.
+  /// @param dstOffset The offset in bytes from the start of the destination RegisteredMemory.
+  /// @param value The 64-bit value to atomically add.
+  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, uint64_t value);
+
   /// Flush any pending writes to the remote process.
   /// @param timeoutUsec Timeout in microseconds. Default: -1 (no timeout)
   void flush(int64_t timeoutUsec = -1);

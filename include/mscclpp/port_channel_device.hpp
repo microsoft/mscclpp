@@ -109,6 +109,24 @@ struct BasePortChannelDeviceHandle {
     fifo_.sync(curFifoHead, maxSpinCount);
   }
 
+  /// Push an atomic add trigger to the FIFO to perform a remote atomic add on a 64-bit value.
+  /// Uses type == 0 to indicate an atomic add operation.
+  /// @param dstId The ID of destination memory region.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit value to atomically add.
+  MSCCLPP_DEVICE_INLINE void add(MemoryId dstId, uint64_t dstOffset, uint64_t value) {
+    ProxyTrigger trigger;
+    // Encode the full 64-bit add value in fst (size + srcOffset fields).
+    trigger.fst = value;
+    // Build snd with dstOffset, dstMemoryId, type=0 (atomic add), semaphoreId.
+    trigger.snd = 0;
+    trigger.fields.dstOffset = dstOffset;
+    trigger.fields.dstMemoryId = dstId;
+    trigger.fields.type = 0;
+    trigger.fields.semaphoreId = semaphoreId_;
+    fifo_.push(trigger);
+  }
+
   /// Check if the port channel has been signaled.
   /// @return true if the port channel has been signaled.
   MSCCLPP_DEVICE_INLINE bool poll() { return semaphore_.poll(); }
@@ -173,6 +191,13 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
   /// @param size The size of the transfer.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(uint64_t offset, uint64_t size) {
     putWithSignalAndFlush(offset, offset, size);
+  }
+
+  /// Push an atomic add trigger to the FIFO to perform a remote atomic add on a 64-bit value.
+  /// @param dstOffset The offset into the destination memory region.
+  /// @param value The 64-bit value to atomically add.
+  MSCCLPP_DEVICE_INLINE void add(uint64_t dstOffset, uint64_t value) {
+    BasePortChannelDeviceHandle::add(dst_, dstOffset, value);
   }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 };

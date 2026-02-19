@@ -9,6 +9,10 @@
 #include <unordered_map>
 #include <vector>
 
+#if !defined(MSCCLPP_DEVICE_HIP)
+#include <cuda.h>
+#endif
+
 #include "ib.hpp"
 
 namespace mscclpp {
@@ -19,14 +23,27 @@ class CudaIpcStream {
   int deviceId_;
   bool dirty_;
 
+  // Separate CUDA context and stream for atomic operations launched from the proxy thread.
+  // This avoids deadlocks: kernel launches in this context don't contend with
+  // cudaDeviceSynchronize on the primary context held by the main thread.
+#if !defined(MSCCLPP_DEVICE_HIP)
+  CUcontext proxyAtomicCtx_ = nullptr;
+  CUstream proxyAtomicStream_ = nullptr;
+  CUfunction proxyAtomicFunc_ = nullptr;
+  bool atomicDirty_ = false;
+#endif
+
   void setStreamIfNeeded();
 
  public:
   CudaIpcStream(int deviceId);
+  ~CudaIpcStream();
 
   void memcpyD2D(void* dst, const void* src, size_t nbytes);
 
   void memcpyH2D(void* dst, const void* src, size_t nbytes);
+
+  void atomicAdd(uint64_t* dst, uint64_t value);
 
   void sync();
 

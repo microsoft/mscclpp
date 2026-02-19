@@ -17,6 +17,17 @@ namespace mscclpp {
 CudaIpcStream::CudaIpcStream(int deviceId)
     : stream_(std::make_shared<CudaStreamWithFlags>()), deviceId_(deviceId), dirty_(false) {}
 
+CudaIpcStream::~CudaIpcStream() {
+#if !defined(MSCCLPP_DEVICE_HIP)
+  if (proxyAtomicCtx_) {
+    cuCtxPushCurrent(proxyAtomicCtx_);
+    if (proxyAtomicStream_) cuStreamDestroy(proxyAtomicStream_);
+    cuCtxPopCurrent(nullptr);
+    cuCtxDestroy(proxyAtomicCtx_);
+  }
+#endif
+}
+
 void CudaIpcStream::setStreamIfNeeded() {
   if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
     stream_->set(cudaStreamNonBlocking);
@@ -44,6 +55,14 @@ void CudaIpcStream::sync() {
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
     dirty_ = false;
   }
+#if !defined(MSCCLPP_DEVICE_HIP)
+  if (atomicDirty_ && proxyAtomicCtx_) {
+    cuCtxPushCurrent(proxyAtomicCtx_);
+    cuStreamSynchronize(proxyAtomicStream_);
+    cuCtxPopCurrent(nullptr);
+    atomicDirty_ = false;
+  }
+#endif
 }
 
 Context::Impl::Impl() {}
