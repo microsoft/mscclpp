@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "../framework.hpp"
-
 #include <cassert>
 #include <memory>
 #include <mscclpp/fifo.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <unordered_map>
+
+#include "../framework.hpp"
 
 // Simple FIFO performance test to be run as part of unit_tests
 // This is a performance test that can be excluded from coverage runs
@@ -76,7 +76,7 @@ PERF_TEST(FifoPerfTest, BasicPerformance) {
   // Process triggers
   bool success = consumePerfTriggers(hostFifo, numTriggers, numParallel);
   ASSERT_TRUE(success);
-  
+
   CUDA_CHECK(cudaStreamSynchronize(stream));
   CUDA_CHECK(cudaStreamDestroy(stream));
   CUDA_CHECK(cudaDeviceSynchronize());

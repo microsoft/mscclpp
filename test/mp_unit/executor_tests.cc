@@ -50,7 +50,7 @@ void ExecutorTest::TearDown() {
   MultiProcessTest::TearDown();
 }
 
-TEST_F(ExecutorTest, TwoNodesAllreduce) {
+TEST(ExecutorTest, TwoNodesAllreduce) {
   std::string executablePath = getExecutablePath();
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =

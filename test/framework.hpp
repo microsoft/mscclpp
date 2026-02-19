@@ -155,63 +155,55 @@ class SkipHelper {
   std::ostringstream message_;
 };
 
+// SFINAE helper: resolves to T if T is a complete type (user-defined fixture),
+// otherwise falls back to TestCase. This lets TEST() work with or without a fixture class.
+namespace detail {
+template <typename...>
+using void_t = void;
+
+template <typename T, typename = void_t<>>
+struct FixtureOf {
+  using type = TestCase;
+};
+template <typename T>
+struct FixtureOf<T, void_t<decltype(sizeof(T))>> {
+  using type = T;
+};
+}  // namespace detail
+
 }  // namespace test
 }  // namespace mscclpp
 
 // --- Test registration macros ---
+// TEST(Suite, Name): if Suite is a previously-defined class, the test inherits from it (fixture).
+// Otherwise, the test inherits from TestCase (no fixture needed).
 
-#define TEST(test_suite, test_name)                                                            \
-  class test_suite##_##test_name##_Test : public ::mscclpp::test::TestCase {                   \
-   public:                                                                                     \
-    void TestBody() override;                                                                  \
-  };                                                                                           \
-  static bool test_suite##_##test_name##_registered = []() {                                   \
-    ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
-        #test_suite, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }); \
-    return true;                                                                               \
-  }();                                                                                         \
-  void test_suite##_##test_name##_Test::TestBody()
-
-#define TEST_F(test_fixture, test_name)                                                          \
-  class test_fixture##_##test_name##_Test : public test_fixture {                                \
-   public:                                                                                       \
-    void TestBody() override;                                                                    \
-  };                                                                                             \
-  static bool test_fixture##_##test_name##_registered = []() {                                   \
-    ::mscclpp::test::TestRegistry::instance().registerTest(                                      \
-        #test_fixture, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }); \
-    return true;                                                                                 \
-  }();                                                                                           \
+#define TEST(test_fixture, test_name)                                                                       \
+  class test_fixture;                                                                                       \
+  class test_fixture##_##test_name##_Test : public ::mscclpp::test::detail::FixtureOf<test_fixture>::type { \
+   public:                                                                                                  \
+    void TestBody() override;                                                                               \
+  };                                                                                                        \
+  static bool test_fixture##_##test_name##_registered = []() {                                              \
+    ::mscclpp::test::TestRegistry::instance().registerTest(                                                 \
+        #test_fixture, #test_name,                                                                          \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); });            \
+    return true;                                                                                            \
+  }();                                                                                                      \
   void test_fixture##_##test_name##_Test::TestBody()
 
-#define PERF_TEST(test_suite, test_name)                                                       \
-  class test_suite##_##test_name##_Test : public ::mscclpp::test::TestCase {                   \
-   public:                                                                                     \
-    void TestBody() override;                                                                  \
-  };                                                                                           \
-  static bool test_suite##_##test_name##_registered = []() {                                   \
-    ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
-        #test_suite, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); },  \
-        true);                                                                                 \
-    return true;                                                                               \
-  }();                                                                                         \
-  void test_suite##_##test_name##_Test::TestBody()
-
-#define PERF_TEST_F(test_fixture, test_name)                                                     \
-  class test_fixture##_##test_name##_Test : public test_fixture {                                \
-   public:                                                                                       \
-    void TestBody() override;                                                                    \
-  };                                                                                             \
-  static bool test_fixture##_##test_name##_registered = []() {                                   \
-    ::mscclpp::test::TestRegistry::instance().registerTest(                                      \
-        #test_fixture, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); },  \
-        true);                                                                                   \
-    return true;                                                                                 \
-  }();                                                                                           \
+#define PERF_TEST(test_fixture, test_name)                                                                  \
+  class test_fixture;                                                                                       \
+  class test_fixture##_##test_name##_Test : public ::mscclpp::test::detail::FixtureOf<test_fixture>::type { \
+   public:                                                                                                  \
+    void TestBody() override;                                                                               \
+  };                                                                                                        \
+  static bool test_fixture##_##test_name##_registered = []() {                                              \
+    ::mscclpp::test::TestRegistry::instance().registerTest(                                                 \
+        #test_fixture, #test_name,                                                                          \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }, true);      \
+    return true;                                                                                            \
+  }();                                                                                                      \
   void test_fixture##_##test_name##_Test::TestBody()
 
 // --- Test runner macro ---

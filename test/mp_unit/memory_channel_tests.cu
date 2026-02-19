@@ -88,27 +88,12 @@ void MemoryChannelOneToOneTest::packetPingPongTest(const std::string testName,
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   // The least nelem is 2 for packet ping pong
-  kernelWrapper(buff.get(), gEnv->rank, 2, ret.get(), defaultNTries);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-  *ret = 0;
-
-  kernelWrapper(buff.get(), gEnv->rank, 1024, ret.get(), defaultNTries);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelWrapper(buff.get(), gEnv->rank, 1024 * 1024, ret.get(), defaultNTries);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelWrapper(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get(), defaultNTries);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
+  for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelWrapper(buff.get(), gEnv->rank, nElem, ret.get(), defaultNTries);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 
   int nTries = 1000000;
   communicator->bootstrap()->barrier();
@@ -169,7 +154,7 @@ __global__ void kernelMemPutPingPong(int* buff, int rank, int nElem, int* ret) {
   }
 }
 
-TEST_F(MemoryChannelOneToOneTest, PutPingPong) {
+TEST(MemoryChannelOneToOneTest, PutPingPong) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -187,28 +172,12 @@ TEST_F(MemoryChannelOneToOneTest, PutPingPong) {
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
-  kernelMemPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelMemPutPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 }
 
 __global__ void kernelMemGetPingPong(int* buff, int rank, int nElem, int* ret) {
@@ -248,7 +217,7 @@ __global__ void kernelMemGetPingPong(int* buff, int rank, int nElem, int* ret) {
   }
 }
 
-TEST_F(MemoryChannelOneToOneTest, GetPingPong) {
+TEST(MemoryChannelOneToOneTest, GetPingPong) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -266,28 +235,12 @@ TEST_F(MemoryChannelOneToOneTest, GetPingPong) {
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
-  kernelMemGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelMemGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelMemGetPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 }
 
 __global__ void kernelMemLL8PacketPingPong(int* buff, int rank, int nElem, int* ret, int nTries) {
@@ -371,14 +324,14 @@ __global__ void kernelMemLL16PacketPingPong(int* buff, int rank, int nElem, int*
   }
 }
 
-TEST_F(MemoryChannelOneToOneTest, LL8PacketPingPong) {
+TEST(MemoryChannelOneToOneTest, LL8PacketPingPong) {
   auto kernelMemLL8PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
     kernelMemLL8PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };
   packetPingPongTest("memoryLL8PacketPingPong", kernelMemLL8PacketPingPongWrapper);
 }
 
-TEST_F(MemoryChannelOneToOneTest, LL16PacketPingPong) {
+TEST(MemoryChannelOneToOneTest, LL16PacketPingPong) {
   auto kernelMemLL16PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
     kernelMemLL16PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };

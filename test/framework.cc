@@ -125,9 +125,18 @@ void TestRegistry::addEnvironment(Environment* env) { environments_.push_back(en
 static bool matchesFilter(const std::string& fullName, const std::string& filter) {
   if (filter.empty()) return true;
   if (filter[0] == '-') {
-    // Negative filter: exclude matching tests
-    std::string pattern = filter.substr(1);
-    return fullName.find(pattern) == std::string::npos;
+    // Negative filter: exclude tests matching any comma-separated pattern
+    std::string patterns = filter.substr(1);
+    size_t pos = 0;
+    while (pos < patterns.size()) {
+      size_t comma = patterns.find(',', pos);
+      std::string pattern = (comma == std::string::npos) ? patterns.substr(pos) : patterns.substr(pos, comma - pos);
+      if (!pattern.empty() && fullName.find(pattern) != std::string::npos) {
+        return false;
+      }
+      pos = (comma == std::string::npos) ? patterns.size() : comma + 1;
+    }
+    return true;
   }
   // Positive filter: include only matching tests
   return fullName.find(filter) != std::string::npos;

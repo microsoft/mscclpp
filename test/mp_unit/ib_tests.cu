@@ -18,9 +18,7 @@ void IbTestBase::SetUp() {
 }
 
 void IbPeerToPeerTest::SetUp() {
-#if !defined(USE_IBVERBS)
-  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+  REQUIRE_IBVERBS;
 
   IbTestBase::SetUp();
 
@@ -80,7 +78,7 @@ void IbPeerToPeerTest::stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint6
   qp->stageSendWriteWithImm(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
 }
 
-TEST_F(IbPeerToPeerTest, SimpleSendRecv) {
+TEST(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
@@ -195,7 +193,7 @@ __global__ void kernelMemoryConsistency(uint64_t* data, volatile uint64_t* curIt
   }
 }
 
-TEST_F(IbPeerToPeerTest, MemoryConsistency) {
+TEST(IbPeerToPeerTest, MemoryConsistency) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
@@ -303,7 +301,7 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
   EXPECT_EQ(res, 0);
 }
 
-TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
+TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;

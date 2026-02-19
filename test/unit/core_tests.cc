@@ -20,7 +20,7 @@ class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
   std::shared_ptr<mscclpp::Communicator> comm;
 };
 
-TEST_F(LocalCommunicatorTest, RegisterMemory) {
+TEST(LocalCommunicatorTest, RegisterMemory) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
@@ -28,7 +28,7 @@ TEST_F(LocalCommunicatorTest, RegisterMemory) {
   ASSERT_TRUE(memory.transports() == mscclpp::NoTransports);
 }
 
-TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
+TEST(LocalCommunicatorTest, SendMemoryToSelf) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   comm->sendMemory(memory, 0);

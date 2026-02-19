@@ -137,12 +137,12 @@ int main(int argc, char** argv) {
   return RUN_ALL_TESTS();
 }
 
-TEST_F(MultiProcessTest, Prelim) {
+TEST(MultiProcessTest, Prelim) {
   // Test to make sure the MPI environment is set up correctly
   ASSERT_GE(gEnv->worldSize, 2);
 }
 
-TEST_F(MultiProcessTest, HostName) {
+TEST(MultiProcessTest, HostName) {
   const size_t maxNameLen = 1024;
   std::vector<char> buffer(gEnv->worldSize * maxNameLen, '\0');
   std::string hostName = mscclpp::getHostName(maxNameLen, '\0');
@@ -162,7 +162,7 @@ TEST_F(MultiProcessTest, HostName) {
   }
 }
 
-TEST_F(MultiProcessTest, HostHash) {
+TEST(MultiProcessTest, HostHash) {
   std::vector<uint64_t> buffer(gEnv->worldSize, 0);
   uint64_t hostHash = mscclpp::getHostHash();
   buffer[gEnv->rank] = hostHash;

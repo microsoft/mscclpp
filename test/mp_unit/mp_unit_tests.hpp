@@ -15,6 +15,13 @@
 #include "ib.hpp"
 #include "utils_internal.hpp"
 
+// Skip the current test if IBVerbs is not available in this build
+#if defined(USE_IBVERBS)
+#define REQUIRE_IBVERBS
+#else
+#define REQUIRE_IBVERBS SKIP_TEST() << "This test requires IBVerbs that the current build does not support."
+#endif
+
 class MultiProcessTestEnv : public ::mscclpp::test::Environment {
  public:
   MultiProcessTestEnv(int argc, const char** argv);

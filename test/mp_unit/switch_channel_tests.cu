@@ -31,7 +31,7 @@ __global__ void kernelSwitchReduce() {
 #endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
-TEST_F(SwitchChannelTest, SimpleAllReduce) {
+TEST(SwitchChannelTest, SimpleAllReduce) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::vector<int> ranks;
