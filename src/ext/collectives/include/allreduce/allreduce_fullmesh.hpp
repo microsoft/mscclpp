@@ -20,7 +20,7 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   std::shared_ptr<Communicator> comm_;
@@ -32,6 +32,7 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   RegisteredMemory localScratchMemory_;
   std::unordered_map<const void*, std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>
       memoryChannelsMap_;
+  bool symmetricMemory_ = false;
 };
 }  // namespace collective
 }  // namespace mscclpp

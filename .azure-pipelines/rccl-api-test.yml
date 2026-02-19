@@ -1,0 +1,48 @@
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
+
+jobs:
+- job: RcclTestMI300X
+  displayName: Run MSCCLPP over RCCL Test (MI300X)
+  pool:
+    name: msccl-ci-mi300x
+
+  strategy:
+    matrix:
+      rocm6_2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/rccl-test.yaml
+    parameters:
+      subscription:     mscclpp-ci-mi300x
+      vmssName:         mscclpp-mi300x-ci
+      sshKeySecureFile: mscclpp.pem
+      gpuArch:          gfx942

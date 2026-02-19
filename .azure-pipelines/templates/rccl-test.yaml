@@ -1,0 +1,142 @@
+# .azure-pipelines/templates/rccl-test.yaml
+# ------------------------------------------------
+# A step-template that runs the entire MSCCLPP→RCCL test suite on one pool/container.
+#
+# Parameters:
+#   subscription     – Azure subscription to use for VMSS start/stop
+#   vmssName         – VMSS name to start/stop
+#   sshKeySecureFile – the secureFile name for your SSH key
+#   gpuArch          – GPU architecture (e.g. gfx942)
+
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: sshKeySecureFile
+  type: string
+- name: gpuArch
+  type: string
+  default: "gfx942"
+
+steps:
+- task: Bash@3
+  name: Build
+  displayName: Build
+  inputs:
+    targetType: 'inline'
+    script: |
+      mkdir build && cd build
+      CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
+      make -j
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: DownloadSecureFile@1
+  name: SshKeyFile
+  displayName: Download key file
+  inputs:
+    secureFile: ${{ parameters.sshKeySecureFile }}
+
+- task: Bash@3
+  name: InstallPackages
+  displayName: Install Packages
+  inputs:
+    targetType: 'inline'
+    script: |
+      sudo apt-get update -y
+      sudo apt-get install pssh -y
+      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+- task: AzureCLI@2
+  name: StartVMSS
+  displayName: Start VMSS
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss start --name ${{ parameters.vmssName }} --resource-group mscclpp
+- task: Bash@3
+  name: DeployTestEnv
+  displayName: Deploy Test Env
+  inputs:
+    targetType: filePath
+    filePath: test/deploy/deploy.sh
+    arguments: "single-node-test true rocm"
+    workingDirectory: $(System.DefaultWorkingDirectory)
+
+
+- task: Bash@3
+  name: InstallRcclTests
+  displayName: Install RCCL Tests
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      ROOT_DIR=$(System.DefaultWorkingDirectory)
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"   \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+        cd;                                                        \
+        git clone --filter=blob:none --no-checkout https://github.com/ROCm/rocm-systems.git; \
+        cd rocm-systems;                                           \
+        git sparse-checkout init --cone;                           \
+        git sparse-checkout set projects/rccl-tests;               \
+        git checkout;                                              \
+        cd projects/rccl-tests;                                    \
+        MPI=1 MPI_HOME=/usr/local/mpi make -j"'
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: RunRcclAllGatherTest
+  displayName: Run RCCL AllGather Test with or without MSCCLPP Lib
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      ROOT_DIR=$(System.DefaultWorkingDirectory)
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
+        cd /root/mscclpp;                                         \
+        echo \"mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20\";\
+        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN  /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20;           \
+        echo \"mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20\";\
+        mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: RunRcclAllReduceTest
+  displayName: Run RCCL AllReduce Test with or without MSCCLPP Lib
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      ROOT_DIR=$(System.DefaultWorkingDirectory)
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}"  \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "\
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
+        cd /root/mscclpp;                                         \
+        echo \"mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20\";\
+        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN  /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20;           \
+        echo \"mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20\";\
+        mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20"'
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: AzureCLI@2
+  name: StopVMSS
+  displayName: Deallocate VMSS
+  condition: always()
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp

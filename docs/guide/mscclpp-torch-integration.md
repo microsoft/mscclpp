@@ -343,8 +343,8 @@ public:
             },
             // Context key generation function
             [self](const void* input, void* output,
-                   size_t inputSize, size_t outputSize, mscclpp::DataType dtype) {
-                return self->generateContextKey(input, output, inputSize, outputSize, dtype);
+                   size_t inputSize, size_t outputSize, mscclpp::DataType dtype, bool symmetricMemory) {
+                return self->generateContextKey(input, output, inputSize, outputSize, dtype, symmetricMemory);
             }
         );
     }

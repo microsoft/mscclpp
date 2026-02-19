@@ -9,8 +9,11 @@ namespace mscclpp {
 namespace collective {
 class AllreducePacket : public AlgorithmBuilder {
  public:
-  AllreducePacket(uintptr_t scratchBuffer, size_t scratchBufferSize)
-      : scratchBuffer_((void*)scratchBuffer), scratchBufferSize_(scratchBufferSize){};
+  AllreducePacket(uintptr_t scratchBuffer, size_t scratchBufferSize, uintptr_t flagBuffer, size_t flagBufferSize)
+      : scratchBuffer_((void*)scratchBuffer),
+        scratchBufferSize_(scratchBufferSize),
+        flagBuffer_(flagBuffer),
+        flagBufferSize_(flagBufferSize){};
   std::shared_ptr<Algorithm> build() override;
 
  private:
@@ -21,16 +24,17 @@ class AllreducePacket : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
 
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
   const int maxBlockNum_ = 56;
   std::vector<Connection> conns_;
+  uintptr_t flagBuffer_;
+  size_t flagBufferSize_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
-  std::shared_ptr<LL8Packet> flags_;
 };
 }  // namespace collective
 }  // namespace mscclpp
