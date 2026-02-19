@@ -82,19 +82,17 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
 
   /// Signal remote device, ensures prior memory ops complete.
   MSCCLPP_DEVICE_INLINE void signal() {
-    auto outbound = incOutbound();
 #if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ == 800)
     // Using memoryOrderSeqCst is faster for A100.
-    atomicStore(remoteInboundToken, outbound, memoryOrderSeqCst);
+    atomicFetchAdd(remoteInboundToken, 1UL, memoryOrderSeqCst);
 #else
-    atomicStore(remoteInboundToken, outbound, memoryOrderRelease);
+    atomicFetchAdd(remoteInboundToken, 1UL, memoryOrderRelease);
 #endif
   }
 
   /// Relaxed signal; no memory completion guarantee. Use it only for synchronizing execution, not data.
   MSCCLPP_DEVICE_INLINE void relaxedSignal() {
-    auto outbound = incOutbound();
-    atomicStore(remoteInboundToken, outbound, memoryOrderRelaxed);
+    atomicFetchAdd(remoteInboundToken, 1UL, memoryOrderRelaxed);
   }
 
   /// Thread-safe read of expected inbound value.
@@ -121,27 +119,13 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
     return atomicLoad<uint64_t, scopeSystem>(inboundToken, memoryOrderRelaxed);
   }
 
-  /// Thread-safe read of outbound value.
-  /// @return The outbound value.
-  MSCCLPP_DEVICE_INLINE uint64_t loadOutbound() {
-    return atomicLoad<uint64_t, scopeDevice>(outboundToken, memoryOrderRelaxed);
-  }
-
-  /// Thread-safe increment of outbound value.
-  /// @return The incremented outbound value.
-  MSCCLPP_DEVICE_INLINE uint64_t incOutbound() {
-    return atomicFetchAdd<uint64_t, scopeDevice>(outboundToken, 1, memoryOrderRelaxed) + 1;
-  }
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
   /// A local memory space where the remote device will write its semaphore value and the local device will read it.
   uint64_t* inboundToken;
 
-  /// A local memory space where the local device stores the semaphore value to be written to the remote device.
-  uint64_t* outboundToken;
-
-  /// A remote memory space where the local device writes its outboundToken on. This is inboundToken of the
-  /// remote device.
+  /// A remote memory space where the local device writes to signal the remote device. This points to the
+  /// inboundToken of the remote device.
   uint64_t* remoteInboundToken;
 
   /// A local memory space where the local device stores the expected value of the inboundToken to wait for.
