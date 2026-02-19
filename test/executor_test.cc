@@ -139,7 +139,8 @@ int main(int argc, char* argv[]) {
     NpKit::Shutdown();
   }
 
-  std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
+  double latencyUs = deltaSec * 1.e6;
+  std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << latencyUs << " us" << std::endl;
   MPI_Finalize();
   return 0;
 }
