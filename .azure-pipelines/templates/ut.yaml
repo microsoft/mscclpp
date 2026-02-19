@@ -152,6 +152,34 @@ steps:
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
+  name: FetchCoverage
+  displayName: Fetch coverage data from remote VM
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      HOST=$(head -1 ${HOSTFILE})
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST} \
+        'sudo docker cp mscclpp-test:/root/mscclpp/build_coverage/coverage.info /tmp/coverage.info'
+      scp -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST}:/tmp/coverage.info $(System.DefaultWorkingDirectory)/coverage.info
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: UploadCodecov
+  displayName: Upload coverage to Codecov
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      curl -Os https://cli.codecov.io/latest/linux/codecov
+      chmod +x codecov
+      ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
   name: PyTests
   displayName: Run pytests
   inputs:
