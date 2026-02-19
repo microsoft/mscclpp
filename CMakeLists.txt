@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.25)
 project(mscclpp LANGUAGES CXX)

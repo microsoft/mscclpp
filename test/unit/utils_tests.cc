@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
