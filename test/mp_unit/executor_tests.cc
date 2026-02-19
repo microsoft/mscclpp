@@ -23,7 +23,7 @@ std::string getExecutablePath() {
 
 void ExecutorTest::SetUp() {
   if (gEnv->worldSize != 2 || gEnv->nRanksPerNode != 2) {
-    GTEST_SKIP() << "This test requires world size to be 2 and ranks per node to be 2";
+    SKIP_TEST() << "This test requires world size to be 2 and ranks per node to be 2";
   }
   MultiProcessTest::SetUp();
 

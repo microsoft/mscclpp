@@ -18,10 +18,12 @@ static int gMpiSize = 1;
 static bool gMpiInitialized = false;
 static bool gCurrentTestPassed = true;
 static std::string gCurrentTestFailureMessage;
+static std::string gCurrentTestName;
+
+std::string currentTestName() { return gCurrentTestName; }
 
 namespace utils {
 
-// Internal MPI helper functions (not exposed in header)
 void initializeMPI(int argc, char* argv[]) {
   if (gMpiInitialized) return;
 
@@ -30,7 +32,7 @@ void initializeMPI(int argc, char* argv[]) {
   if (!initialized) {
     MPI_Init(&argc, &argv);
   }
-  
+
   MPI_Comm_rank(MPI_COMM_WORLD, &gMpiRank);
   MPI_Comm_size(MPI_COMM_WORLD, &gMpiSize);
   gMpiInitialized = true;
@@ -43,9 +45,6 @@ static void finalizeMPI() {
   gMpiInitialized = false;
 }
 
-static bool isMainProcess() { return gMpiRank == 0; }
-
-// Public utility functions for test output
 bool isMainRank() { return gMpiRank == 0; }
 
 int getMPIRank() { return gMpiRank; }
@@ -103,71 +102,7 @@ void cudaCheck(cudaError_t err, const char* file, int line) {
   }
 }
 
-int runMultipleTests(
-    int argc, char* argv[],
-    const std::vector<std::tuple<std::string, std::string, std::function<void(int, int, int)>>>& tests) {
-  int totalResult = 0;
-
-  // Initialize MPI once for all tests
-  initializeMPI(argc, argv);
-
-  try {
-    // Get MPI information
-    int rank = getMPIRank();
-    int size = getMPISize();
-    int local_rank = rank;  // For simplicity, assume local_rank = rank
-
-    for (const auto& test : tests) {
-      const std::string& testName = std::get<0>(test);
-      const std::string& testDescription = std::get<1>(test);
-      const std::function<void(int, int, int)>& testFunction = std::get<2>(test);
-
-      if (rank == 0) {
-        std::cout << "Running test: " << testName << std::endl;
-        if (!testDescription.empty()) {
-          std::cout << "  " << testDescription << std::endl;
-        }
-      }
-
-      // Don't clear results - accumulate them for all tests in the same file
-      // g_results.clear();  // Commented out to accumulate results
-
-      try {
-        // Run the individual test function with MPI information
-        testFunction(rank, size, local_rank);
-
-        // Synchronize before moving to next test
-        MPI_Barrier(MPI_COMM_WORLD);
-
-      } catch (const std::exception& e) {
-        if (rank == 0) {
-          std::cerr << "Error in test " << testName << ": " << e.what() << std::endl;
-        }
-        totalResult = 1;
-      }
-    }
-
-    // Don't cleanup MPI here - let the caller handle it
-    // finalizeMPI();
-
-  } catch (const std::exception& e) {
-    if (gMpiRank == 0) {
-      std::cerr << "Error: " << e.what() << std::endl;
-    }
-    finalizeMPI();
-    return 1;
-  }
-
-  return totalResult;
-}
-
 }  // namespace utils
-
-// UnitTest implementation
-UnitTest* UnitTest::GetInstance() {
-  static UnitTest instance;
-  return &instance;
-}
 
 // TestRegistry implementation
 TestRegistry& TestRegistry::instance() {
@@ -175,21 +110,27 @@ TestRegistry& TestRegistry::instance() {
   return registry;
 }
 
-void TestRegistry::registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory,
+void TestRegistry::registerTest(const std::string& suiteName, const std::string& testName, TestFactory factory,
                                 bool isPerfTest) {
-  TestInfoInternal info;
-  info.suiteName = test_suite;
-  info.testName = test_name;
-  info.factory = factory;
-  info.isPerfTest = isPerfTest;
-  tests_.push_back(info);
+  tests_.push_back({suiteName, testName, std::move(factory), isPerfTest});
 }
 
-void TestRegistry::addGlobalTestEnvironment(Environment* env) { environments_.push_back(env); }
+void TestRegistry::addEnvironment(Environment* env) { environments_.push_back(env); }
 
-void TestRegistry::initGoogleTest(int* argc, char** argv) {
-  // Parse command-line arguments if needed
-  // For now, this is a no-op placeholder for compatibility
+// Returns true if the test should run given the filter string.
+// Filter syntax:
+//   ""          -> run all
+//   "Pattern"   -> run only tests whose full name contains Pattern
+//   "-Pattern"  -> run all tests EXCEPT those whose full name contains Pattern
+static bool matchesFilter(const std::string& fullName, const std::string& filter) {
+  if (filter.empty()) return true;
+  if (filter[0] == '-') {
+    // Negative filter: exclude matching tests
+    std::string pattern = filter.substr(1);
+    return fullName.find(pattern) == std::string::npos;
+  }
+  // Positive filter: include only matching tests
+  return fullName.find(filter) != std::string::npos;
 }
 
 int TestRegistry::runAllTests(int argc, char* argv[]) {
@@ -199,14 +140,14 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   }
 
   // Parse command line arguments
-  std::string filter = "";
+  std::string filter;
   bool excludePerfTests = false;
-  
+
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg.find("--gtest_filter=") == 0) {
-      filter = arg.substr(15);  // Length of "--gtest_filter="
-    } else if (arg == "--gtest_filter" && i + 1 < argc) {
+    if (arg.find("--filter=") == 0) {
+      filter = arg.substr(9);  // Length of "--filter="
+    } else if (arg == "--filter" && i + 1 < argc) {
       filter = argv[i + 1];
       ++i;
     } else if (arg == "--exclude-perf-tests") {
@@ -229,71 +170,57 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   int passed = 0;
   int failed = 0;
   int skipped = 0;
-  int skippedByFilter = 0;
 
   // Count tests to run
-  int total_to_run = 0;
-  for (const auto& test_info : tests_) {
-    std::string full_name = test_info.suiteName + "." + test_info.testName;
-    
-    // Skip performance tests if requested
-    if (excludePerfTests && test_info.isPerfTest) {
-      skipped++;
+  int totalToRun = 0;
+  int skippedByFilter = 0;
+  for (const auto& entry : tests_) {
+    std::string fullName = entry.suiteName + "." + entry.testName;
+    if (excludePerfTests && entry.isPerfTest) {
+      skippedByFilter++;
       continue;
     }
-    
-    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
-      skipped++;
+    if (!matchesFilter(fullName, filter)) {
+      skippedByFilter++;
       continue;
     }
-    total_to_run++;
+    totalToRun++;
   }
 
   if (gMpiRank == 0) {
-    std::cout << "[==========] Running " << total_to_run << " tests";
-    if (skipped > 0) {
-      std::cout << " (" << skipped << " skipped)";
+    std::cout << "[==========] Running " << totalToRun << " tests";
+    if (skippedByFilter > 0) {
+      std::cout << " (" << skippedByFilter << " skipped by filter)";
     }
     std::cout << ".\n";
   }
 
-  for (const auto& test_info : tests_) {
-    std::string full_name = test_info.suiteName + "." + test_info.testName;
+  for (const auto& entry : tests_) {
+    std::string fullName = entry.suiteName + "." + entry.testName;
 
-    // Skip performance tests if requested
-    if (excludePerfTests && test_info.isPerfTest) {
-      continue;
-    }
-    
-    // Apply simple substring filter
-    if (!filter.empty() && full_name.find(filter) == std::string::npos) {
-      continue;
-    }
+    if (excludePerfTests && entry.isPerfTest) continue;
+    if (!matchesFilter(fullName, filter)) continue;
 
     gCurrentTestPassed = true;
     gCurrentTestFailureMessage.clear();
+    gCurrentTestName = fullName;
 
     if (gMpiRank == 0) {
-      std::cout << "[ RUN      ] " << full_name << std::endl;
+      std::cout << "[ RUN      ] " << fullName << std::endl;
     }
 
-    // Set current test info for UnitTest::GetInstance()->current_test_info()
-    TestInfo current_info(test_info.suiteName, test_info.testName);
-    UnitTest::GetInstance()->set_current_test_info(&current_info);
-
-    TestCase* test_case = nullptr;
+    TestCase* testCase = nullptr;
     bool testSkipped = false;
     try {
-      test_case = test_info.factory();
-      test_case->SetUp();
-      test_case->TestBody();
-      test_case->TearDown();
+      testCase = entry.factory();
+      testCase->SetUp();
+      testCase->TestBody();
+      testCase->TearDown();
     } catch (const SkipException& e) {
-      // Test was skipped - count as skipped, not failed
-      gCurrentTestPassed = true;  // Skipped tests don't count as failures
+      gCurrentTestPassed = true;
       testSkipped = true;
       if (gMpiRank == 0) {
-        std::cout << "[  SKIPPED ] " << full_name << ": " << e.what() << std::endl;
+        std::cout << "[  SKIPPED ] " << fullName << ": " << e.what() << std::endl;
       }
     } catch (const std::exception& e) {
       gCurrentTestPassed = false;
@@ -307,39 +234,36 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       }
     }
 
-    delete test_case;
+    delete testCase;
+    gCurrentTestName.clear();
 
-    // Clear current test info
-    UnitTest::GetInstance()->set_current_test_info(nullptr);
-
-    // For skipped tests, handle specially
     if (testSkipped) {
       skipped++;
-      continue;  // Don't synchronize or count skipped tests
+      continue;
     }
 
     // Synchronize test status across all MPI processes
-    int local_passed = gCurrentTestPassed ? 1 : 0;
-    int global_passed = 1;
+    int localPassed = gCurrentTestPassed ? 1 : 0;
+    int globalPassed = 1;
     if (gMpiInitialized) {
-      MPI_Allreduce(&local_passed, &global_passed, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+      MPI_Allreduce(&localPassed, &globalPassed, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     } else {
-      global_passed = local_passed;
+      globalPassed = localPassed;
     }
 
     if (gMpiRank == 0) {
-      if (global_passed) {
-        std::cout << "[       OK ] " << full_name << std::endl;
+      if (globalPassed) {
+        std::cout << "[       OK ] " << fullName << std::endl;
         passed++;
       } else {
-        std::cout << "[  FAILED  ] " << full_name << std::endl;
+        std::cout << "[  FAILED  ] " << fullName << std::endl;
         failed++;
       }
     }
   }
 
   if (gMpiRank == 0) {
-    std::cout << "[==========] " << total_to_run << " tests ran.\n";
+    std::cout << "[==========] " << totalToRun << " tests ran.\n";
     if (passed > 0) {
       std::cout << "[  PASSED  ] " << passed << " tests.\n";
     }
@@ -355,7 +279,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   for (auto it = environments_.rbegin(); it != environments_.rend(); ++it) {
     try {
       (*it)->TearDown();
-      delete *it;  // Clean up environment objects
+      delete *it;
     } catch (const std::exception& e) {
       if (gMpiRank == 0) {
         std::cerr << "Failed to tear down test environment: " << e.what() << std::endl;

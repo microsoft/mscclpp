@@ -10,10 +10,10 @@
 void SwitchChannelTest::SetUp() {
   // Need at least two ranks within a node
   if (gEnv->nRanksPerNode < 2) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   if (!mscclpp::isNvlsSupported()) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   // Use only two ranks
   setNumRanksToUse(2);

@@ -7,39 +7,17 @@
 #include <mpi.h>
 
 #include <chrono>
-#include <fstream>
 #include <functional>
+#include <iomanip>
 #include <iostream>
-#include <map>
 #include <mscclpp/gpu.hpp>
-#include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <vector>
 
 namespace mscclpp {
 namespace test {
-
-// Test result structure
-struct TestResult {
-  std::string testName;
-  std::string testCategory;
-  std::map<std::string, std::string> testParams;
-  nlohmann::ordered_json metrics;
-  int numProcesses;
-  int processRank;
-  std::string timestamp;
-  bool passed;
-  std::string failureMessage;
-};
-
-// Forward declarations
-class Environment;
-class TestCase;
-class TestInfo;
-class UnitTest;
 
 // Test case base class
 class TestCase {
@@ -58,32 +36,6 @@ class Environment {
   virtual void TearDown() {}
 };
 
-// Test info class (for getting current test information)
-class TestInfo {
- public:
-  TestInfo(const std::string& suite, const std::string& name) : testSuiteName_(suite), testName_(name) {}
-
-  const char* test_suite_name() const { return testSuiteName_.c_str(); }
-  const char* name() const { return testName_.c_str(); }
-
- private:
-  std::string testSuiteName_;
-  std::string testName_;
-};
-
-// UnitTest singleton (for getting test information)
-class UnitTest {
- public:
-  static UnitTest* GetInstance();
-
-  const TestInfo* current_test_info() const { return currentTestInfo_; }
-  void set_current_test_info(const TestInfo* info) { currentTestInfo_ = info; }
-
- private:
-  UnitTest() = default;
-  const TestInfo* currentTestInfo_ = nullptr;
-};
-
 // Test registry and runner
 class TestRegistry {
  public:
@@ -91,30 +43,28 @@ class TestRegistry {
 
   static TestRegistry& instance();
 
-  void registerTest(const std::string& test_suite, const std::string& test_name, TestFactory factory, bool isPerfTest = false);
-  void addGlobalTestEnvironment(Environment* env);
+  void registerTest(const std::string& suiteName, const std::string& testName, TestFactory factory,
+                    bool isPerfTest = false);
+  void addEnvironment(Environment* env);
   int runAllTests(int argc, char* argv[]);
-  void initGoogleTest(int* argc, char** argv);
 
  private:
   TestRegistry() = default;
-  struct TestInfoInternal {
+  struct TestEntry {
     std::string suiteName;
     std::string testName;
     TestFactory factory;
     bool isPerfTest;
   };
-  std::vector<TestInfoInternal> tests_;
+  std::vector<TestEntry> tests_;
   std::vector<Environment*> environments_;
 };
 
-// Simple utility functions for testing
-namespace utils {
+// Returns "Suite.Name" for the currently running test, or "" if none.
+std::string currentTestName();
 
-// Test execution utilities (for performance tests)
-int runMultipleTests(
-    int argc, char* argv[],
-    const std::vector<std::tuple<std::string, std::string, std::function<void(int, int, int)>>>& tests);
+// Utility functions
+namespace utils {
 
 // MPI management
 void initializeMPI(int argc, char* argv[]);
@@ -149,13 +99,13 @@ void reportSuccess();
 
 }  // namespace utils
 
-// Custom exception for test skips
+// Exception for test skips
 class SkipException : public std::runtime_error {
  public:
   explicit SkipException(const std::string& message) : std::runtime_error(message) {}
 };
 
-// Helper class for FAIL functionality with message streaming support
+// Helper class for FAIL() macro — supports message streaming via operator<<
 class FailHelper {
  public:
   explicit FailHelper(const char* file, int line) : file_(file), line_(line) {}
@@ -180,12 +130,8 @@ class FailHelper {
   std::ostringstream message_;
 };
 
-// Helper class for GTEST_SKIP functionality
-// This class uses RAII (Resource Acquisition Is Initialization) pattern:
-// - The constructor records file and line information
-// - The stream operator (<<) allows appending a skip message
-// - The destructor throws an exception to skip the test
-// This enables usage like: GTEST_SKIP() << "Reason for skipping";
+// Helper class for SKIP_TEST() macro — supports message streaming via operator<<
+// Usage: SKIP_TEST() << "Reason for skipping";
 class SkipHelper {
  public:
   explicit SkipHelper(const char* file, int line) : file_(file), line_(line) {}
@@ -212,18 +158,17 @@ class SkipHelper {
 }  // namespace test
 }  // namespace mscclpp
 
-// Test registration macros
+// --- Test registration macros ---
+
 #define TEST(test_suite, test_name)                                                            \
   class test_suite##_##test_name##_Test : public ::mscclpp::test::TestCase {                   \
    public:                                                                                     \
-    test_suite##_##test_name##_Test() {}                                                       \
     void TestBody() override;                                                                  \
   };                                                                                           \
   static bool test_suite##_##test_name##_registered = []() {                                   \
     ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
         #test_suite, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }, \
-        false);                                                                                \
+        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }); \
     return true;                                                                               \
   }();                                                                                         \
   void test_suite##_##test_name##_Test::TestBody()
@@ -231,50 +176,45 @@ class SkipHelper {
 #define TEST_F(test_fixture, test_name)                                                          \
   class test_fixture##_##test_name##_Test : public test_fixture {                                \
    public:                                                                                       \
-    test_fixture##_##test_name##_Test() {}                                                       \
     void TestBody() override;                                                                    \
   };                                                                                             \
   static bool test_fixture##_##test_name##_registered = []() {                                   \
     ::mscclpp::test::TestRegistry::instance().registerTest(                                      \
         #test_fixture, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }, \
-        false);                                                                                  \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }); \
     return true;                                                                                 \
   }();                                                                                           \
   void test_fixture##_##test_name##_Test::TestBody()
 
-// Performance test registration macros
 #define PERF_TEST(test_suite, test_name)                                                       \
   class test_suite##_##test_name##_Test : public ::mscclpp::test::TestCase {                   \
    public:                                                                                     \
-    test_suite##_##test_name##_Test() {}                                                       \
     void TestBody() override;                                                                  \
   };                                                                                           \
   static bool test_suite##_##test_name##_registered = []() {                                   \
     ::mscclpp::test::TestRegistry::instance().registerTest(                                    \
         #test_suite, #test_name,                                                               \
-        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); }, \
+        []() -> ::mscclpp::test::TestCase* { return new test_suite##_##test_name##_Test(); },  \
         true);                                                                                 \
     return true;                                                                               \
   }();                                                                                         \
   void test_suite##_##test_name##_Test::TestBody()
 
-#define PERF_TEST_F(test_fixture, test_name)                                           \
-  class test_fixture##_##test_name##_Test : public test_fixture {                     \
-   public:                                                                             \
-    test_fixture##_##test_name##_Test() {}                                            \
-    void TestBody() override;                                                          \
-  };                                                                                   \
-  static bool test_fixture##_##test_name##_registered = []() {                        \
-    ::mscclpp::test::TestRegistry::instance().registerTest(                           \
-        #test_fixture, #test_name,                                                     \
-        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); }, \
-        true);                                                                         \
-    return true;                                                                       \
-  }();                                                                                 \
+#define PERF_TEST_F(test_fixture, test_name)                                                     \
+  class test_fixture##_##test_name##_Test : public test_fixture {                                \
+   public:                                                                                       \
+    void TestBody() override;                                                                    \
+  };                                                                                             \
+  static bool test_fixture##_##test_name##_registered = []() {                                   \
+    ::mscclpp::test::TestRegistry::instance().registerTest(                                      \
+        #test_fixture, #test_name,                                                               \
+        []() -> ::mscclpp::test::TestCase* { return new test_fixture##_##test_name##_Test(); },  \
+        true);                                                                                   \
+    return true;                                                                                 \
+  }();                                                                                           \
   void test_fixture##_##test_name##_Test::TestBody()
 
-// Test runner macro
+// --- Test runner macro ---
 #define RUN_ALL_TESTS() ::mscclpp::test::TestRegistry::instance().runAllTests(argc, argv)
 
 // Assertion macros
@@ -462,25 +402,12 @@ class SkipHelper {
     }                                                                                                      \
   } while (0)
 
-// Test fail macro - throws exception to fail test execution
-// Usage: FAIL() << "Optional fail message";
+// --- Test control macros ---
+
+// Fail the current test immediately. Usage: FAIL() << "reason";
 #define FAIL() ::mscclpp::test::FailHelper(__FILE__, __LINE__)
 
-// Test skip macro - throws exception to skip test execution
-// Usage: GTEST_SKIP() << "Optional skip message";
-#define GTEST_SKIP() ::mscclpp::test::SkipHelper(__FILE__, __LINE__)
-
-// Create a namespace alias for compatibility with GTest code
-namespace testing = ::mscclpp::test;
-
-// Helper functions for compatibility with GTest API
-inline void InitGoogleTest(int* argc, char** argv) {
-  ::mscclpp::test::TestRegistry::instance().initGoogleTest(argc, argv);
-}
-
-inline ::mscclpp::test::Environment* AddGlobalTestEnvironment(::mscclpp::test::Environment* env) {
-  ::mscclpp::test::TestRegistry::instance().addGlobalTestEnvironment(env);
-  return env;
-}
+// Skip the current test. Usage: SKIP_TEST() << "reason";
+#define SKIP_TEST() ::mscclpp::test::SkipHelper(__FILE__, __LINE__)
 
 #endif  // MSCCLPP_TEST_FRAMEWORK_HPP_

@@ -98,14 +98,18 @@ static std::unordered_map<std::string, std::string> parseArgs(int argc, const ch
       continue;
     }
 
-    // Unrecognized positional token: ignore to keep parser permissive for gtest/MPI extras
+    // Unrecognized positional token: ignore
   }
 
   return options;
 }
 
 void MultiProcessTestEnv::SetUp() {
-  MPI_Init(NULL, NULL);
+  int initialized = 0;
+  MPI_Initialized(&initialized);
+  if (!initialized) {
+    MPI_Init(NULL, NULL);
+  }
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   MPI_Comm_size(MPI_COMM_WORLD, &worldSize);
   // get the local number of nodes with MPI
@@ -128,9 +132,8 @@ void MultiProcessTest::TearDown() {
 }
 
 int main(int argc, char** argv) {
-  InitGoogleTest(&argc, argv);
   gEnv = new MultiProcessTestEnv(argc, (const char**)argv);
-  AddGlobalTestEnvironment(gEnv);
+  ::mscclpp::test::TestRegistry::instance().addEnvironment(gEnv);
   return RUN_ALL_TESTS();
 }
 

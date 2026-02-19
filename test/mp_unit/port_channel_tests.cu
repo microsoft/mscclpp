@@ -223,8 +223,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000;
 
   // Warm-up
@@ -257,7 +256,7 @@ TEST_F(PortChannelOneToOneTest, PingPongIbHostMode) {
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -276,7 +275,7 @@ TEST_F(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -290,7 +289,7 @@ TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -299,7 +298,7 @@ TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -471,8 +470,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
 
   proxyService->startProxy();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000000;
 
   // Warm-up
@@ -503,7 +501,7 @@ TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
 #if defined(USE_IBVERBS)
   testPacketPingPong(true, IbMode::Host);
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -513,7 +511,7 @@ TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
 #if defined(USE_IBVERBS)
   testPacketPingPongPerf(true, IbMode::Host);
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -521,7 +519,7 @@ TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
 #if defined(USE_IBVERBS)
   testPacketPingPongPerf(true, IbMode::HostNoAtomic);
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -530,7 +528,7 @@ TEST_F(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }
 
@@ -538,6 +536,6 @@ TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
 #if defined(USE_IBVERBS)
   testPacketPingPong(true, IbMode::HostNoAtomic);
 #else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
+  SKIP_TEST() << "This test requires IBVerbs that the current build does not support.";
 #endif  // !defined(USE_IBVERBS)
 }

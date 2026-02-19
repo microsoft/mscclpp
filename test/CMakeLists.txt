@@ -41,7 +41,7 @@ include(CTest)
 # Build test framework library
 add_library(test_framework STATIC framework.cc)
 target_include_directories(test_framework PUBLIC ${CMAKE_CURRENT_SOURCE_DIR} ${TEST_INC_COMMON})
-target_link_libraries(test_framework PUBLIC MPI::MPI_CXX nlohmann_json::nlohmann_json)
+target_link_libraries(test_framework PUBLIC MPI::MPI_CXX)
 
 # Unit tests
 add_executable(unit_tests)
