@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/github/license/microsoft/mscclpp.svg)](LICENSE)
 [![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
 [![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yaml/badge.svg)](https://microsoft.github.io/mscclpp/)
+[![codecov](https://codecov.io/gh/microsoft/mscclpp/graph/badge.svg?token=DAV9DGHAY2)](https://codecov.io/gh/microsoft/mscclpp)
 
 | Testing Pipelines        | Build Status      |
 |--------------------------|-------------------|
