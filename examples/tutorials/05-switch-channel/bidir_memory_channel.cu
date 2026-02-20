@@ -95,6 +95,7 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   log("Rank ", myRank, " (GPU ", gpuId, "): synchronize ...");
   auto deviceHandle = switchChannel.deviceHandle();
 
+  cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle));
   cudaDeviceSynchronize();
 
   log("Rank ", myRank, " (GPU ", gpuId, "): launch kernel ...");
@@ -108,6 +109,8 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
     }
 
     comm->bootstrap()->barrier();
+
+    log("Rank ", myRank, " (GPU ", gpuId, "): kernel launched ...");
 
   //mscclpp::GpuBuffer buffer(bufferBytes);
   //mscclpp::GpuBuffer pktBuffer(pktBufferBytes);
