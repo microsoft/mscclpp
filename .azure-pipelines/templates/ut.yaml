@@ -25,6 +25,14 @@ steps:
         cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
       fi
       make -j
+      cd ..
+      mkdir build_coverage && cd build_coverage
+      if [ "${{ parameters.platform }}" == "rocm" ]; then
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
+      else
+        cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
+      fi
+      make -j
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: DownloadSecureFile@1
@@ -109,21 +117,6 @@ steps:
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
-  name: DebugBuildWithCoverage
-  displayName: Build Debug with Coverage
-  inputs:
-    targetType: 'inline'
-    script: |
-      mkdir build_coverage && cd build_coverage
-      if [ "${{ parameters.platform }}" == "rocm" ]; then
-        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
-      else
-        cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
-      fi
-      make -j
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-- task: Bash@3
   name: TestsCoverageNonPerf
   displayName: Run unit_tests + mp_unit_tests (non-perf) with coverage
   inputs:
@@ -145,8 +138,8 @@ steps:
         mpirun --allow-run-as-root -tag-output -np 2 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
         mpirun --allow-run-as-root -tag-output -np 4 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
         cd build_coverage;                                            \
-        lcov --directory . --capture --output-file coverage.info --ignore-errors mismatch;  \
-        lcov --remove coverage.info '/usr/*' '*/test/*' '*/build/*' --output-file coverage.info --ignore-errors unused;  \
+        lcov --directory . --capture --output-file coverage.info;  \
+        lcov --remove coverage.info '/usr/*' '*/test/*' '*/build/*' --output-file coverage.info;  \
         lcov --list coverage.info"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
