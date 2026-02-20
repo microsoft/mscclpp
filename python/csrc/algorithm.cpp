@@ -116,9 +116,9 @@ void register_algorithm(nb::module_& m) {
       .def("buffer_mode", &CollectiveRequest::bufferMode);
 
   m.def(
-      "cpp_get_default_flag_buffer",
+      "cpp_get_flag_buffer",
       []() {
-        auto [buffer, size] = getDefaultFlagBuffer();
+        auto [buffer, size] = getFlagBuffer();
         uintptr_t ptr = reinterpret_cast<uintptr_t>(buffer.get());
         // Transfer shared_ptr ownership into a capsule so Python's GC manages the lifetime.
         auto prevent = std::make_unique<std::shared_ptr<void>>(std::move(buffer));

@@ -19,7 +19,7 @@ from mscclpp._mscclpp import (
     CppReduceOp,
     CppAlgorithmBuilder,
     CppAlgorithmCollection,
-    cpp_get_default_flag_buffer,
+    cpp_get_flag_buffer,
 )
 
 __all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
@@ -241,15 +241,22 @@ class AlgorithmCollection:
         self._algorithms.append(algorithm)
 
 
-def get_default_flag_buffer() -> cp.ndarray:
+_flag_buffer_cache = None
+
+
+def get_flag_buffer() -> cp.ndarray:
     """Get the default flag buffer for algorithm selection.
 
     This buffer is used internally by default algorithms to store selection flags.
     It is allocated as a shared GPU buffer and can be accessed from Python.
+    The result is cached so all callers share the same buffer.
 
     Returns:
         A CuPy array representing the flag buffer on the GPU.
     """
-    buffer_ptr, buffer_size, owner = cpp_get_default_flag_buffer()
-    memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
-    return cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+    global _flag_buffer_cache
+    if _flag_buffer_cache is None:
+        buffer_ptr, buffer_size, owner = cpp_get_flag_buffer()
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
+        _flag_buffer_cache = cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+    return _flag_buffer_cache
