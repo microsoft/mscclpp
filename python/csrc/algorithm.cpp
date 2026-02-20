@@ -116,10 +116,15 @@ void register_algorithm(nb::module_& m) {
       .def("buffer_mode", &CollectiveRequest::bufferMode);
 
   m.def(
-      "cpp_get_default_flag_buffer",
+      "cpp_get_flag_buffer",
       []() {
-        auto [buffer, size] = getDefaultFlagBuffer();
-        return std::make_pair(reinterpret_cast<uintptr_t>(buffer.get()), size);
+        auto [buffer, size] = getFlagBuffer();
+        uintptr_t ptr = reinterpret_cast<uintptr_t>(buffer.get());
+        // Transfer shared_ptr ownership into a capsule so Python's GC manages the lifetime.
+        auto prevent = std::make_unique<std::shared_ptr<void>>(std::move(buffer));
+        nb::capsule owner(prevent.get(), [](void* p) noexcept { delete static_cast<std::shared_ptr<void>*>(p); });
+        prevent.release();  // capsule now owns the pointer
+        return nb::make_tuple(ptr, size, owner);
       },
-      "Get the default flag buffer. Returns a tuple of (buffer_ptr, buffer_size).");
+      "Get the default flag buffer. Returns a tuple of (buffer_ptr, buffer_size, owner).");
 }
