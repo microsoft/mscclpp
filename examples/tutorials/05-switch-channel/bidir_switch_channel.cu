@@ -55,7 +55,7 @@ __global__ void kernelSwitchReduce(int indx) {
   gConstSwitchChan.broadcast(indx, val);
 }
 
-void worker(int myRank, int gpuId, const std::string &ipPort) {
+int worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int nRanks = 2;
   const int iter = 1000;
@@ -105,14 +105,14 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   }
   cudaMemcpy(dataout, buffer.data(), sizeof(dataout), cudaMemcpyDeviceToHost);
 
-  //for (int i = 0; i < 1024; ++i) {
-	  log("result= ", dataout[0]);
-	  /*if(dataout[i]!=3) {
+  for (int i = 0; i < 1024; ++i) {
+	  if(dataout[i]!=3) {
 		  log("Wrong result.");
-		  break;
-	  }*/
-  //}
+		  return -1;
+	  }
+  }
 
+	  return 0;
 }
 
 int main(int argc, char **argv) {
@@ -149,9 +149,12 @@ int main(int argc, char **argv) {
       log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
       return -1;
     }
-    worker(rank, gpuId, ipPort);
+    if (worker(rank, gpuId, ipPort)==0) {
     log("Rank ", rank, ": Succeed!");
     return 0;
+    } else {
+    return -1;
+    }
   } else {
     std::cerr << "Usage:\n"
               << "  " << argv[0] << "                Run in intra-node mode\n"
