@@ -68,13 +68,14 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,     // 32-bit signed integer.
-  UINT32,    // 32-bit unsigned integer.
-  FLOAT16,   // IEEE 754 half precision.
-  FLOAT32,   // IEEE 754 single precision.
-  BFLOAT16,  // bfloat16 precision.
-  FP8_E4M3,  // FP8 with E4M3 layout.
-  FP8_E5M2,  // FP8 with E5M2 layout.
+  INT32,        // 32-bit signed integer.
+  UINT32,       // 32-bit unsigned integer.
+  FLOAT16,      // IEEE 754 half precision.
+  FLOAT32,      // IEEE 754 single precision.
+  BFLOAT16,     // bfloat16 precision.
+  FLOAT8_E4M3,  // float8 with E4M3 layout.
+  FLOAT8_E5M2,  // float8 with E5M2 layout.
+  UINT8,        // 8-bit unsigned integer.
 };
 
 /// Word array.
@@ -154,12 +155,14 @@ DEFINE_VEC(f64x1, double, 1, double);
 
 DEFINE_VEC(i32x2, int32_t, 2, int2);
 DEFINE_VEC(u32x2, uint32_t, 2, uint2);
+DEFINE_VEC(u8x2, uint8_t, 2, uint16_t);
 DEFINE_VEC(f32x2, float, 2, float2);
 DEFINE_VEC(f16x2, __half, 2, __half2);
 DEFINE_VEC(bf16x2, __bfloat16, 2, __bfloat162);
 
 DEFINE_VEC(i32x4, int32_t, 4, int4);
 DEFINE_VEC(u32x4, uint32_t, 4, uint4);
+DEFINE_VEC(u8x4, uint8_t, 4, uint32_t);
 DEFINE_VEC(f32x4, float, 4, float4);
 DEFINE_VEC(f16x4, __half, 4, uint2);
 DEFINE_VEC(bf16x4, __bfloat16, 4, uint2);
@@ -427,6 +430,20 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 operator+(const f8_e5m2x4& a, const f8_e5m2x4& b
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
 
+MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
+#if defined(MSCCLPP_DEVICE_HIP)
+  // Optimized uint8_t x 4 sum using byte permute to avoid overflow between adjacent bytes
+  constexpr uint32_t even = 0x00ff00ffu;
+  uint32_t ua = a.storage;
+  uint32_t ub = b.storage;
+  uint32_t x = (ua & even) + (ub & even);
+  uint32_t y = (ua & ~even) + (ub & ~even);
+  return __byte_perm(x, y, 0x7250);
+#else
+  return __vadd4(a.storage, b.storage);
+#endif
+}
+
 template <typename T>
 MSCCLPP_DEVICE_INLINE T min(const T& a, const T& b) {
   return (a < b ? a : b);
@@ -448,6 +465,28 @@ MSCCLPP_DEVICE_INLINE f16x2 min(const f16x2& a, const f16x2& b) {
 template <>
 MSCCLPP_DEVICE_INLINE bf16x2 min(const bf16x2& a, const bf16x2& b) {
   return __hmin2(a, b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE u8x4 min(const u8x4& a, const u8x4& b) {
+#if defined(MSCCLPP_DEVICE_HIP)
+  // Optimized uint8_t x 4 min using 9-bit arithmetic
+  constexpr uint32_t ones = 0x01010101u;
+  constexpr uint32_t even = 0x00ff00ffu;  // even byte mask
+  uint32_t ua = a.storage;
+  uint32_t ub = b.storage;
+  // Use 9-bit arithmetic to compute d=a-b for each byte
+  uint32_t d0 = (ua & even) + (~ub & even) + ones;
+  uint32_t d1 = ((ua >> 8) & even) + (~(ub >> 8) & even) + ones;
+  // Move sign bit of each 9-bit delta into the least bit of origin byte
+  uint32_t s = __byte_perm(d0, d1, 0x7351) & ones;
+  // Broadcast least bit across whole byte
+  s *= 0xffu;
+  // Compose result by selecting bytes via: signbit(a-b)==1 ? a : b
+  return (ua & s) | (ub & ~s);
+#else
+  return __vminu4(a.storage, b.storage);
+#endif
 }
 
 #if defined(__FP8_TYPES_EXIST__)

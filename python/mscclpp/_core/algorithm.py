@@ -4,6 +4,7 @@
 from __future__ import annotations
 from typing import Optional, Tuple, Dict
 from functools import cached_property
+import cupy as cp
 
 
 from mscclpp._mscclpp import (
@@ -18,6 +19,7 @@ from mscclpp._mscclpp import (
     CppReduceOp,
     CppAlgorithmBuilder,
     CppAlgorithmCollection,
+    cpp_get_flag_buffer,
 )
 
 __all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
@@ -160,6 +162,7 @@ class Algorithm:
         executor: Optional[CppExecutor] = None,
         nblocks=0,
         nthreads_per_block=0,
+        symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
     ) -> int:
         """Execute the collective algorithm.
@@ -176,6 +179,7 @@ class Algorithm:
             executor: The executor for DSL algorithms (required for DSL, optional for native).
             nblocks: Number of CUDA blocks (0 for auto-selection).
             nthreads_per_block: Number of threads per block (0 for auto-selection).
+            symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
 
         Returns:
@@ -193,8 +197,13 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
+            symmetric_memory,
             extras if extras is not None else {},
         )
+
+    def reset(self):
+        """Reset the internal state of the algorithm, if applicable."""
+        self._algorithm.reset()
 
 
 class AlgorithmBuilder:
@@ -230,3 +239,24 @@ class AlgorithmCollection:
         """Register an algorithm for a collective operation."""
         self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
         self._algorithms.append(algorithm)
+
+
+_flag_buffer_cache = None
+
+
+def get_flag_buffer() -> cp.ndarray:
+    """Get the default flag buffer for algorithm selection.
+
+    This buffer is used internally by default algorithms to store selection flags.
+    It is allocated as a shared GPU buffer and can be accessed from Python.
+    The result is cached so all callers share the same buffer.
+
+    Returns:
+        A CuPy array representing the flag buffer on the GPU.
+    """
+    global _flag_buffer_cache
+    if _flag_buffer_cache is None:
+        buffer_ptr, buffer_size, owner = cpp_get_flag_buffer()
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
+        _flag_buffer_cache = cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+    return _flag_buffer_cache

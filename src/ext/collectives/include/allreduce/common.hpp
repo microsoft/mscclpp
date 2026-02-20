@@ -75,7 +75,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
 using AllreduceFunc =
     std::function<cudaError_t(const void*, void*, void*, void*, void*, mscclpp::DeviceHandle<mscclpp::SwitchChannel>*,
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
-                              size_t, cudaStream_t, void*, uint32_t, int, int)>;
+                              size_t, cudaStream_t, void*, uint32_t, uint32_t, int, int)>;
 
 template <template <ReduceOp, typename> class Adapter>
 AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
@@ -89,13 +89,15 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
       return Adapter<SUM, __fp8_e4m3>::call;
-    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
       return Adapter<SUM, __fp8_e5m2>::call;
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<SUM, int>::call;
+    } else if (dtype == mscclpp::DataType::UINT8) {
+      return Adapter<SUM, uint8_t>::call;
     } else {
       return nullptr;
     }
@@ -109,13 +111,15 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
       return Adapter<MIN, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
       return Adapter<MIN, __fp8_e4m3>::call;
-    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
       return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
       return Adapter<MIN, int>::call;
+    } else if (dtype == mscclpp::DataType::UINT8) {
+      return Adapter<MIN, uint8_t>::call;
     } else {
       return nullptr;
     }

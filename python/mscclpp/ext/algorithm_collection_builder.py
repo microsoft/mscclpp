@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from typing import Union
-from mscclpp._core.algorithm import Algorithm, AlgorithmBuilder, AlgorithmCollection
+from mscclpp._core.algorithm import Algorithm, AlgorithmBuilder, AlgorithmCollection, get_flag_buffer
 import atexit
 
 from mscclpp._mscclpp import CppAlgorithmCollectionBuilder
@@ -29,6 +29,7 @@ class AlgorithmCollectionBuilder:
         if not hasattr(self, "_initialized"):
             self._builder = CppAlgorithmCollectionBuilder.get_instance()
             self._initialized = True
+            self._flag_buffer = None
 
     def add_algorithm_builder(self, algorithm_builder: Union[AlgorithmBuilder, Algorithm]):
         if isinstance(algorithm_builder, AlgorithmBuilder):
@@ -50,8 +51,17 @@ class AlgorithmCollectionBuilder:
         collection = self._builder.build()
         return AlgorithmCollection(collection)
 
-    def build_default_algorithms(self, scratch_buffer: int, scratch_buffer_size: int, rank: int) -> AlgorithmCollection:
-        native_collection = self._builder.build_default_algorithms(int(scratch_buffer), scratch_buffer_size, rank)
+    def build_default_algorithms(
+        self,
+        scratch_buffer: int,
+        scratch_buffer_size: int,
+        rank: int,
+    ) -> AlgorithmCollection:
+        if self._flag_buffer is None:
+            self._flag_buffer = get_flag_buffer()
+        native_collection = self._builder.build_default_algorithms(
+            int(scratch_buffer), scratch_buffer_size, self._flag_buffer.data.ptr, self._flag_buffer.nbytes, rank
+        )
         return AlgorithmCollection(native_collection)
 
 

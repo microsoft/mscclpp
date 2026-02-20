@@ -49,8 +49,9 @@ AlgorithmCollection AlgorithmCollectionBuilder::build() {
 void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
 
 AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
-                                                                       size_t scratchBufferSize, int rank) {
-  auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
+                                                                       size_t scratchBufferSize, uintptr_t flagBuffer,
+                                                                       size_t flagBufferSize, int rank) {
+  auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize);
   auto dslCollection = buildDefaultDslAlgorithms(rank);
   nativeCollection.extend(dslCollection);
   nativeCollection.setSelectors(algoSelector_, fallbackAlgoSelector_);
@@ -58,11 +59,15 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t
 }
 
 AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
-                                                                             size_t scratchBufferSize) {
+                                                                             size_t scratchBufferSize,
+                                                                             uintptr_t flagBuffer,
+                                                                             size_t flagBufferSize) {
   AlgorithmCollection collection;
-  auto allreduceAllpairPkt = std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceAllpairPkt =
+      std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);
-  auto allreduceNvlsPacket = std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceNvlsPacket =
+      std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreduceNvlsPacket->collective(), allreduceNvlsPacket->name(), allreduceNvlsPacket);
   auto allreduceNvlsWithCopy = std::make_shared<AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceNvlsWithCopy->collective(), allreduceNvlsWithCopy->name(),
@@ -70,7 +75,8 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   auto allreduceNvlsWithCopy2 = std::make_shared<AllreduceNvlsWithCopy2>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceNvlsWithCopy2->collective(), allreduceNvlsWithCopy2->name(),
                                allreduceNvlsWithCopy2);
-  auto allreducePkt = std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreducePkt =
+      std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
   auto allreduceNvls = std::make_shared<AllreduceNvls>()->build();
   collection.registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);

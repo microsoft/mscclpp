@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/libmscclpp_nccl.so MSCCLPP_DISABLE_CHANNEL_CACHE=true  torchrun --nnodes=1 --nproc_per_node=8 memory_report.py
+# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/libmscclpp_nccl.so MSCCLPP_NCCL_SYMMETRIC_MEMORY=false  torchrun --nnodes=1 --nproc_per_node=8 memory_report.py
 import os, sys
 import torch
 import torch.distributed as dist
