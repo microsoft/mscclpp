@@ -188,7 +188,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
 
 #if defined(__FP8_TYPES_EXIST__)
   // FP8-specific tuning for 32KB-256KB range
-  if (dtype == DataType::FP8_E4M3 || dtype == DataType::FP8_E5M2) {
+  if (dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2) {
     if (inputSize < (64 << 10)) {
       nThreadsPerBlock = 64;
     } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {

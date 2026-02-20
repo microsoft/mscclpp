@@ -89,9 +89,9 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
       return Adapter<SUM, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
       return Adapter<SUM, __fp8_e4m3>::call;
-    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
       return Adapter<SUM, __fp8_e5m2>::call;
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
@@ -111,9 +111,9 @@ AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
       return Adapter<MIN, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-    } else if (dtype == mscclpp::DataType::FP8_E4M3) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
       return Adapter<MIN, __fp8_e4m3>::call;
-    } else if (dtype == mscclpp::DataType::FP8_E5M2) {
+    } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
       return Adapter<MIN, __fp8_e5m2>::call;
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
