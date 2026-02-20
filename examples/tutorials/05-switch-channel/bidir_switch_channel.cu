@@ -50,9 +50,9 @@ __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
-__global__ void kernelSwitchReduce() {
-  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(0);
-  gConstSwitchChan.broadcast(0, val);
+__global__ void kernelSwitchReduce(int indx) {
+  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(indx);
+  gConstSwitchChan.broadcast(indx, val);
 }
 
 void worker(int myRank, int gpuId, const std::string &ipPort) {
@@ -72,9 +72,13 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   ranks.reserve(nRanks);
   for (int i = 0; i < nRanks; i++) ranks.push_back(i);
 
+  float data[1024];
+  for (int i = 0; i < 1024; ++i) {
+    data[i] = static_cast<float>(myRank) + 1.0f;
+  }
+
   auto buffer = mscclpp::GpuBuffer<float>(1024);
-  float data = static_cast<float>(myRank) + 1.0f;
-  cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice);
+  cudaMemcpy(buffer.data(), data, sizeof(data), cudaMemcpyHostToDevice);
 
   auto nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, 1024);
 
@@ -87,13 +91,19 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
 
   comm->bootstrap()->barrier();
 
-    if (myRank == 0) {
-      kernelSwitchReduce<<<1, 1>>>();
-      cudaGetLastError();
-      cudaDeviceSynchronize();
-    }
+  if (myRank == 0) {
+    kernelSwitchReduce<<<1, 1>>>(myRank*512);
+    cudaGetLastError();
+    cudaDeviceSynchronize();
+  }
 
-    comm->bootstrap()->barrier();
+  comm->bootstrap()->barrier();
+
+  float dataout[1024];
+  for (int i = 0; i < 1024; ++i) {
+    dataout[i] = static_cast<float>(0.0f);
+  }
+  cudaMemcpy(dataout, buffer.data(), sizeof(dataout), cudaMemcpyDeviceToHost);
 
 }
 
