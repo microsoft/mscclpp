@@ -105,6 +105,14 @@ void worker(int myRank, int gpuId, const std::string &ipPort) {
   }
   cudaMemcpy(dataout, buffer.data(), sizeof(dataout), cudaMemcpyDeviceToHost);
 
+  //for (int i = 0; i < 1024; ++i) {
+	  log("result= ", dataout[0]);
+	  /*if(dataout[i]!=3) {
+		  log("Wrong result.");
+		  break;
+	  }*/
+  //}
+
 }
 
 int main(int argc, char **argv) {
