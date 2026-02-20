@@ -169,7 +169,7 @@ steps:
       set -e
       curl -Os https://cli.codecov.io/latest/linux/codecov
       chmod +x codecov
-      ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info
+      ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info --flag ${{ parameters.platform }}-${{ parameters.gpuArch }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
