@@ -54,7 +54,7 @@ __global__ void kernelSwitchReduce(int indx) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int index=tid+indx;
   auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(index);
-  gConstSwitchChan.broadcast(indx, val);
+  gConstSwitchChan.broadcast(index, val);
 }
 
 int worker(int myRank, int gpuId, const std::string &ipPort) {
@@ -93,11 +93,11 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
 
   comm->bootstrap()->barrier();
 
-  if (myRank == 0) {
+  //if (myRank == 0) {
     kernelSwitchReduce<<<1, 512>>>(myRank*512);
     cudaGetLastError();
     cudaDeviceSynchronize();
-  }
+  //}
 
   comm->bootstrap()->barrier();
 
@@ -109,7 +109,7 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
 
   for (int i = 0; i < 1024; ++i) {
 	  if(dataout[i]!=3) {
-		  log("Wrong result at index ", i, "output= ", dataout[i], "expected= ", 3);
+		  log("Wrong result at index ", i, " output= ", dataout[i], " expected= ", 3);
 		  return -1;
 	  }
   }
