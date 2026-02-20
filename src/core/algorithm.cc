@@ -204,18 +204,18 @@ static std::weak_ptr<void> gDefaultFlagBufferWeak;
 static size_t gDefaultFlagCount = 128;
 
 std::pair<std::shared_ptr<void>, size_t> getFlagBuffer() {
-  auto sp = gDefaultFlagBufferWeak.lock();
-  if (!sp) {
+  auto ptr = gDefaultFlagBufferWeak.lock();
+  if (!ptr) {
     if (!gDefaultFlagBuffer) {
       // Intentionally never freed — CUDA driver reclaims GPU memory at process exit.
       gDefaultFlagBuffer = static_cast<uint32_t*>(mscclpp::detail::gpuCalloc(gDefaultFlagCount * sizeof(uint32_t)));
       std::vector<uint32_t> initFlags(gDefaultFlagCount, 1);
       mscclpp::gpuMemcpy(gDefaultFlagBuffer, initFlags.data(), gDefaultFlagCount, cudaMemcpyHostToDevice);
     }
-    sp = std::shared_ptr<void>(gDefaultFlagBuffer, [](void*) {});
-    gDefaultFlagBufferWeak = sp;
+    ptr = std::shared_ptr<void>(gDefaultFlagBuffer, [](void*) {});
+    gDefaultFlagBufferWeak = ptr;
   }
-  return {sp, gDefaultFlagCount * sizeof(uint32_t)};
+  return {ptr, gDefaultFlagCount * sizeof(uint32_t)};
 }
 
 }  // namespace mscclpp
