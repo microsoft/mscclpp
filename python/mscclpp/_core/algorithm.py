@@ -250,6 +250,6 @@ def get_default_flag_buffer() -> cp.ndarray:
     Returns:
         A CuPy array representing the flag buffer on the GPU.
     """
-    buffer_ptr, buffer_size = cpp_get_default_flag_buffer()
-    memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, None), 0)
+    buffer_ptr, buffer_size, owner = cpp_get_default_flag_buffer()
+    memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
     return cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
