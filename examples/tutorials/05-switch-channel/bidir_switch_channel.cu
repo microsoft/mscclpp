@@ -53,8 +53,7 @@ __global__ void kernelSwitchReduce(int rank, int numElements) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   int stride = blockDim.x * gridDim.x;
 
-  // rank0: 0-(numElements/2)-1
-  // rank1: (numElements/2)-(numElements-1)
+  // rank 0 performs on first half of data and rank 1 on second half
   int min = rank * (numElements / 2);
   int max = (rank + 1) * (numElements / 2);
 
@@ -64,7 +63,7 @@ __global__ void kernelSwitchReduce(int rank, int numElements) {
   }
 }
 
-int worker(int myRank, int gpuId, const std::string &ipPort) {
+void worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int nRanks = 2;
   const int iter = 1000;
@@ -130,20 +129,12 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
           gbps, " GB/s");
     }
   }
-
-  return 0;
 }
 
 int main(int argc, char **argv) {
   if (argc == 1) {
-    int pid0 = spawn_process([]() {
-      int rc = worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER);
-      exit(rc);
-    });
-    int pid1 = spawn_process([]() {
-      int rc = worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER);
-      exit(rc);
-    });
+    int pid0 = spawn_process([]() { worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER); });
+    int pid1 = spawn_process([]() { worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER); });
     if (pid0 < 0 || pid1 < 0) {
       log("Failed to spawn processes.");
       return -1;
@@ -174,12 +165,9 @@ int main(int argc, char **argv) {
       log("Error: rank must be between 0 and 1 and gpu_id must be non-negative.");
       return -1;
     }
-    if (worker(rank, gpuId, ipPort) == 0) {
-      log("Rank ", rank, ": Succeed!");
-      return 0;
-    } else {
-      return -1;
-    }
+    worker(rank, gpuId, ipPort);
+    log("Rank ", rank, ": Succeed!");
+    return 0;
   } else {
     std::cerr << "Usage:\n"
               << "  " << argv[0] << "                Run in intra-node mode\n"
