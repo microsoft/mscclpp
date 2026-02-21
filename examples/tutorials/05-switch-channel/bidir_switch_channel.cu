@@ -50,11 +50,20 @@ __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
 
 __device__ mscclpp::DeviceSyncer devSyncer;
 
-__global__ void kernelSwitchReduce(int indx) {
+__global__ void kernelSwitchReduce(int rank, int numElements) {
   const int tid = threadIdx.x + blockIdx.x * blockDim.x;
-  int index=tid+indx;
-  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(index);
-  gConstSwitchChan.broadcast(index, val);
+  int stride = blockDim.x * gridDim.x;
+
+  //rank0: 0-(numElements/2)-1
+  //rank1: (numElements/2)-(numElements-1)
+  int min=rank*(numElements/2);
+  int max=(rank+1)*(numElements/2);
+
+  for(int i=tid+min;i<max;i+=stride) {
+	  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(i);
+	  gConstSwitchChan.broadcast(i, val);
+  }
+
 }
 
 int worker(int myRank, int gpuId, const std::string &ipPort) {
@@ -79,37 +88,55 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
     data[i] = static_cast<float>(myRank) + 1.0f;
   }
 
-  auto buffer = mscclpp::GpuBuffer<float>(1024);
+  auto buffer = mscclpp::GpuBuffer<float>(128 * 1024 * 1024);
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), data, sizeof(data), cudaMemcpyHostToDevice));
 
-  auto nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, 1024);
+  auto nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, 128 * 1024 * 1024);
 
-  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 1024);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 128 * 1024 * 1024);
 
   auto deviceHandle = switchChannel.deviceHandle();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  comm->bootstrap()->barrier();
+  // now call the kernel in a loop for perf evaluation
 
-  kernelSwitchReduce<<<1, 512>>>(myRank*512);
+  for (size_t numElements : {1024 , 1024*1024, 32*1024*1024}) {
+  cudaEvent_t start, end;
+  if (myRank == 0) {
+    MSCCLPP_CUDATHROW(cudaEventCreate(&start));
+    MSCCLPP_CUDATHROW(cudaEventCreate(&end));
+  }
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  bootstrap->barrier();
+
+  if (myRank == 0) {
+        MSCCLPP_CUDATHROW(cudaEventRecord(start, 0));
+      }
+
+  for (int i = 0; i < iter; ++i) {
+  kernelSwitchReduce<<<256, 1024>>>(myRank,numElements);
+  }
+
   MSCCLPP_CUDATHROW(cudaGetLastError());
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
   comm->bootstrap()->barrier();
 
-  float dataout[1024];
-  for (int i = 0; i < 1024; ++i) {
-    dataout[i] = static_cast<float>(0.0f);
-  }
-  MSCCLPP_CUDATHROW(cudaMemcpy(dataout, buffer.data(), sizeof(dataout), cudaMemcpyDeviceToHost));
-
-  for (int i = 0; i < 1024; ++i) {
-	  if(dataout[i]!=3) {
-		  log("Wrong result at index ", i, " output= ", dataout[i], " expected= ", 3);
-		  return -1;
-	  }
+   if (myRank == 0) {
+        MSCCLPP_CUDATHROW(cudaEventRecord(end,0));
+        MSCCLPP_CUDATHROW(cudaEventSynchronize(end));
+        float elapsedTime;
+        float elapsedTimePerIter;
+        float gbps;
+        MSCCLPP_CUDATHROW(cudaEventElapsedTime(&elapsedTime, start, end));
+        elapsedTimePerIter = elapsedTime / iter;
+	float dataSize = numElements*4;
+        gbps = dataSize / elapsedTimePerIter * 1e-6f;
+        log("Rank ", myRank, " (GPU ", gpuId, "): bytes ", dataSize, ", elapsed ", elapsedTimePerIter,
+            " ms/iter, BW ", gbps, " GB/s");
+      }
   }
 
 	  return 0;
