@@ -119,8 +119,8 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
 
 int main(int argc, char **argv) {
   if (argc == 1) {
-    int pid0 = spawn_process([]() { worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER); });
-    int pid1 = spawn_process([]() { worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER); });
+    int pid0 = spawn_process([]() { int rc = worker(0, 0, "lo:127.0.0.1:" PORT_NUMBER); exit(rc); });
+    int pid1 = spawn_process([]() { int rc = worker(1, 1, "lo:127.0.0.1:" PORT_NUMBER); exit(rc); });
     if (pid0 < 0 || pid1 < 0) {
       log("Failed to spawn processes.");
       return -1;
