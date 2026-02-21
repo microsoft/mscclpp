@@ -47,7 +47,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(MSCCLPP_ENABLE_TRACE "Enable tracing" OFF)
-option(MSCCLPP_BUILD_TESTS "Build tests" ON)
+option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
@@ -169,9 +169,11 @@ if(MSCCLPP_USE_IB)
 endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
-
 include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+)
 FetchContent_MakeAvailable(json)
 
 if("${INSTALL_PREFIX}" STREQUAL "")
