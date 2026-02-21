@@ -169,9 +169,11 @@ if(MSCCLPP_USE_IB)
 endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
-
 include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+)
 FetchContent_MakeAvailable(json)
 
 if("${INSTALL_PREFIX}" STREQUAL "")
