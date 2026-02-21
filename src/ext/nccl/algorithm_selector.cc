@@ -71,7 +71,15 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     if (messageSize <= (1 << 21)) {  // <= 2MB
       return algoMap.at("default_allreduce_packet");
     }
-    return nullptr;
+    if (config.inCaptureMode) {
+      // CUDA graph mode: setup new connections each time (zero-copy for graph)
+      return algoMap.at("default_allreduce_rsag_zero_copy");
+    }
+    // Non-graph mode: use non-zero-copy algorithms
+    if (messageSize <= (1 << 23)) {  // <= 8MB
+      return algoMap.at("default_allreduce_rsag");
+    }
+    return algoMap.at("default_allreduce_rsag_pipeline");
   }
 
   // Symmetric memory path: can use cached memory handles
@@ -83,8 +91,7 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     return algoMap.at("default_allreduce_nvls");
   }
 
-  INFO(MSCCLPP_NCCL, "No suitable kernel for Blackwell architecture, fallback to nccl/rccl");
-  return nullptr;
+  return algoMap.at("default_allreduce_rsag_zero_copy");
 }
 
 std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
