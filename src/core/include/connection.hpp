@@ -5,6 +5,7 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 #include <atomic>
+#include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include "communicator.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
+#include "gdr.hpp"
 #include "ib.hpp"
 #include "registered_memory.hpp"
 #include "socket.h"
@@ -38,8 +40,13 @@ class BaseConnection {
   /// Set the local address where remote updateAndSync operations should write.
   /// This is called by the receiver to specify where incoming signals should be written.
   /// Default implementation is a no-op for connections that don't need it.
-  /// @param addr The local address for incoming writes.
-  virtual void setRemoteUpdateDstAddr(uint64_t /*addr*/) {}
+  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
+  virtual void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> /*gpuMem*/) {}
+
+  /// Whether this connection uses a recv thread for signaling (host-no-atomic mode).
+  /// When true, the semaphore must allocate a separate inboundToken_ for the recv thread to write to.
+  /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
+  virtual bool usesRecvThread() const { return false; }
 
   virtual Transport transport() const = 0;
 
@@ -98,6 +105,7 @@ class IBConnection : public BaseConnection {
   // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
   // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
   bool ibNoAtomic_;
+  bool flushSupported_;  // Whether cuFlushGPUDirectRDMAWrites is supported on this GPU
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
   int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
@@ -108,6 +116,10 @@ class IBConnection : public BaseConnection {
   // - Receiver: uses remoteUpdateDstAddr_ (set via setRemoteUpdateDstAddr) to know where to write
   uint64_t remoteUpdateDstAddr_;
 
+#ifdef MSCCLPP_USE_GDRCOPY
+  std::unique_ptr<GdrMap> remoteUpdateDstAddrMap_;
+#endif
+
   void recvThreadFunc();
 
  public:
@@ -116,8 +128,10 @@ class IBConnection : public BaseConnection {
 
   /// Set the local address where remote updateAndSync operations will write.
   /// Must be called before the remote sends any updateAndSync in host-no-atomic mode.
-  /// @param addr The local address for incoming writes.
-  void setRemoteUpdateDstAddr(uint64_t addr) override;
+  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
+  void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) override;
+
+  bool usesRecvThread() const override;
 
   Transport transport() const override;
 

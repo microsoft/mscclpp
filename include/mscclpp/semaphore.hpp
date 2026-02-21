@@ -16,6 +16,7 @@ namespace mscclpp {
 class Host2DeviceSemaphore {
  private:
   Semaphore semaphore_;
+  std::shared_ptr<uint64_t> inboundToken_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   std::unique_ptr<uint64_t> outboundToken_;
 
@@ -28,6 +29,9 @@ class Host2DeviceSemaphore {
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
   Host2DeviceSemaphore(Communicator& communicator, const Connection& connection);
+
+  /// Destructor.
+  ~Host2DeviceSemaphore();
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
