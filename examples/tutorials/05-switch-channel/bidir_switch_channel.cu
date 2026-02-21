@@ -70,7 +70,7 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
   MSCCLPP_CUDATHROW(cudaSetDevice(gpuId));
   const int nRanks = 2;
   const int iter = 1000;
-  const size_t bufferBytes = 256 * 1024 * 1024;
+  const size_t bufferBytes = 128 * 1024 * 1024;
 
   log("Rank ", myRank, " (GPU ", gpuId, "): Preparing for tests ...");
 
@@ -83,24 +83,18 @@ int worker(int myRank, int gpuId, const std::string &ipPort) {
   ranks.reserve(nRanks);
   for (int i = 0; i < nRanks; i++) ranks.push_back(i);
 
-  float data[1024];
-  for (int i = 0; i < 1024; ++i) {
-    data[i] = static_cast<float>(myRank) + 1.0f;
-  }
+  auto buffer = mscclpp::GpuBuffer<float>(bufferBytes);
 
-  auto buffer = mscclpp::GpuBuffer<float>(128 * 1024 * 1024);
-  MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), data, sizeof(data), cudaMemcpyHostToDevice));
+  auto nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, bufferBytes);
 
-  auto nvlsConnection = mscclpp::connectNvlsCollective(comm, ranks, 128 * 1024 * 1024);
-
-  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), 128 * 1024 * 1024);
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), bufferBytes);
 
   auto deviceHandle = switchChannel.deviceHandle();
 
   MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
   MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
 
-  // now call the kernel in a loop for perf evaluation
+  // Call the kernel in a loop for perf evaluation
 
   for (size_t numElements : {1024 , 1024*1024, 32*1024*1024}) {
   cudaEvent_t start, end;
