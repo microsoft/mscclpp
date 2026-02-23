@@ -27,6 +27,7 @@ static size_t* d_sendCounts;
 static size_t* d_sendDispls;
 static size_t* d_recvCounts;
 static size_t* d_recvDispls;
+static size_t* d_remoteRecvDispls;  // peer's recvDispls[rank] for each peer
 
 // Device array for memory channels (used by library kernels)
 static DeviceHandle<mscclpp::MemoryChannel>* d_memoryChannels;
@@ -67,7 +68,8 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   } else if (kernelNum == 1) {
     // Use ring-based kernel for larger world sizes
     mscclpp::collective::alltoallvRingKernel<<<1, nThreads, 0, stream>>>(
@@ -75,7 +77,8 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   } else if (kernelNum == 2) {
     // Use pipelined kernel for imbalanced workloads (MoE)
     mscclpp::collective::alltoallvPipelinedKernel<<<1, nThreads, 0, stream>>>(
@@ -83,7 +86,8 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   }
 }
 
@@ -121,6 +125,13 @@ void AllToAllVTestColl::initData(const TestArgs& args, std::vector<void*> sendBu
   CUDATHROW(cudaMemcpy(d_sendDispls, sendDispls_.data(), worldSize * sizeof(size_t), cudaMemcpyHostToDevice));
   CUDATHROW(cudaMemcpy(d_recvCounts, recvCounts_.data(), worldSize * sizeof(size_t), cudaMemcpyHostToDevice));
   CUDATHROW(cudaMemcpy(d_recvDispls, recvDispls_.data(), worldSize * sizeof(size_t), cudaMemcpyHostToDevice));
+  // remoteRecvDispls[peer] = peer's recvDispls[rank] = where our data goes in peer's output.
+  // For equal splits, all ranks have the same layout, so peer's recvDispls[rank] = our recvDispls[rank].
+  std::vector<size_t> remoteRecvDispls(worldSize);
+  for (int peer = 0; peer < worldSize; peer++) {
+    remoteRecvDispls[peer] = recvDispls_[rank];
+  }
+  CUDATHROW(cudaMemcpy(d_remoteRecvDispls, remoteRecvDispls.data(), worldSize * sizeof(size_t), cudaMemcpyHostToDevice));
 }
 
 void AllToAllVTestColl::getBw(const double deltaSec, double& algBw, double& busBw) {
@@ -214,6 +225,7 @@ void AllToAllVTestEngine::allocateBuffer() {
   CUDATHROW(cudaMalloc(&d_sendDispls, args_.totalRanks * sizeof(size_t)));
   CUDATHROW(cudaMalloc(&d_recvCounts, args_.totalRanks * sizeof(size_t)));
   CUDATHROW(cudaMalloc(&d_recvDispls, args_.totalRanks * sizeof(size_t)));
+  CUDATHROW(cudaMalloc(&d_remoteRecvDispls, args_.totalRanks * sizeof(size_t)));
 
   // Allocate device array for memory channels
   CUDATHROW(cudaMalloc(&d_memoryChannels, args_.totalRanks * sizeof(DeviceHandle<mscclpp::MemoryChannel>)));

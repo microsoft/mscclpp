@@ -147,6 +147,7 @@ class MscclppAlltoAllV:
         self._d_send_displs = torch.zeros(self._world_size, dtype=torch.int64, device='cuda')
         self._d_recv_counts = torch.zeros(self._world_size, dtype=torch.int64, device='cuda')
         self._d_recv_displs = torch.zeros(self._world_size, dtype=torch.int64, device='cuda')
+        self._d_remote_recv_displs = torch.zeros(self._world_size, dtype=torch.int64, device='cuda')
 
     @property
     def rank(self) -> int:
@@ -225,6 +226,12 @@ class MscclppAlltoAllV:
         self._d_recv_counts.copy_(torch.tensor(recv_counts_bytes, dtype=torch.int64))
         self._d_recv_displs.copy_(torch.tensor(recv_displs_bytes, dtype=torch.int64))
         
+        # Exchange recv displacements with all peers so each rank knows where to
+        # write in the remote output buffer. remoteRecvDispls[peer] = peer's
+        # recvDispls[rank], i.e. the offset in peer's output where our data goes.
+        remote_recv_displs = self._exchange_recv_displs(recv_displs_bytes)
+        self._d_remote_recv_displs.copy_(torch.tensor(remote_recv_displs, dtype=torch.int64))
+
         # Get stream
         if stream is None:
             stream = torch.cuda.current_stream()
@@ -236,6 +243,7 @@ class MscclppAlltoAllV:
             "sendDispls": self._d_send_displs.data_ptr(),
             "recvCounts": self._d_recv_counts.data_ptr(),
             "recvDispls": self._d_recv_displs.data_ptr(),
+            "remoteRecvDispls": self._d_remote_recv_displs.data_ptr(),
         }
         
         input_size = sum(send_counts_bytes)
@@ -261,6 +269,57 @@ class MscclppAlltoAllV:
             raise RuntimeError(f"alltoallv execution failed with code {result}")
         
         return output
+
+    def _exchange_recv_displs(self, recv_displs_bytes: list) -> list:
+        """
+        Exchange recv displacement arrays between all ranks via bootstrap send/recv.
+
+        Each rank needs to know where to write in each peer's output buffer.
+        remoteRecvDispls[peer] = peer's recvDispls[rank] — the byte offset in
+        peer's output buffer where data from this rank should be placed.
+
+        Uses a deadlock-free pattern: lower-ranked peer sends first, then receives.
+
+        Args:
+            recv_displs_bytes: This rank's recv displacement array (in bytes)
+
+        Returns:
+            List of remote recv displacements (one per rank, in bytes).
+            remoteRecvDispls[rank] == recv_displs_bytes[rank] (self, unused by kernel)
+        """
+        rank = self._rank
+        world_size = self._world_size
+        bootstrap = self._comm.bootstrap()
+
+        # Use CPU int64 tensors as send/recv buffers (data_ptr() gives uintptr_t)
+        my_displs = torch.tensor(recv_displs_bytes, dtype=torch.int64)  # CPU tensor
+        data_size = world_size * 8  # world_size int64 values = world_size * 8 bytes
+
+        # Collect all ranks' recv_displs via pairwise send/recv
+        all_recv_displs = [None] * world_size
+        all_recv_displs[rank] = list(recv_displs_bytes)
+
+        for peer in range(world_size):
+            if peer == rank:
+                continue
+            peer_buf = torch.zeros(world_size, dtype=torch.int64)  # CPU tensor
+            if rank < peer:
+                # Lower rank sends first to avoid deadlock
+                bootstrap.send(my_displs.data_ptr(), data_size, peer, 0)
+                bootstrap.recv(peer_buf.data_ptr(), data_size, peer, 0)
+            else:
+                # Higher rank receives first
+                bootstrap.recv(peer_buf.data_ptr(), data_size, peer, 0)
+                bootstrap.send(my_displs.data_ptr(), data_size, peer, 0)
+            all_recv_displs[peer] = peer_buf.tolist()
+
+        # Build remoteRecvDispls: for each peer, what offset in peer's output
+        # buffer should this rank's data go to?
+        remote_recv_displs = []
+        for peer in range(world_size):
+            remote_recv_displs.append(int(all_recv_displs[peer][rank]))
+
+        return remote_recv_displs
 
     def __del__(self):
         """Cleanup resources."""

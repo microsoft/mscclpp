@@ -85,9 +85,11 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   auto it_sendDispls = extras.find("sendDispls");
   auto it_recvCounts = extras.find("recvCounts");
   auto it_recvDispls = extras.find("recvDispls");
+  auto it_remoteRecvDispls = extras.find("remoteRecvDispls");
 
   if (it_sendCounts == extras.end() || it_sendDispls == extras.end() ||
-      it_recvCounts == extras.end() || it_recvDispls == extras.end()) {
+      it_recvCounts == extras.end() || it_recvDispls == extras.end() ||
+      it_remoteRecvDispls == extras.end()) {
     return CommResult::CommInternalError;
   }
 
@@ -95,6 +97,7 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   const size_t* d_sendDispls = reinterpret_cast<const size_t*>(it_sendDispls->second);
   const size_t* d_recvCounts = reinterpret_cast<const size_t*>(it_recvCounts->second);
   const size_t* d_recvDispls = reinterpret_cast<const size_t*>(it_recvDispls->second);
+  const size_t* d_remoteRecvDispls = reinterpret_cast<const size_t*>(it_remoteRecvDispls->second);
 
   // Use maximum threads (1024) for best bandwidth utilization
   const int threadsPerBlock = (nThreadsPerBlock > 0 && nThreadsPerBlock <= 1024) ? nThreadsPerBlock : 1024;
@@ -114,7 +117,8 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   } else if (worldSize > WORLD_SIZE_THRESHOLD) {
     // Large messages + large world: use ring kernel to avoid congestion
     alltoallvRingKernel<<<1, threadsPerBlock, 0, stream>>>(
@@ -122,7 +126,8 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   } else {
     // Large messages + small world: use pipelined chunked kernel
     alltoallvPipelinedKernel<<<1, threadsPerBlock, 0, stream>>>(
@@ -130,7 +135,8 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls);
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
   }
 
   if (cudaGetLastError() == cudaSuccess) {

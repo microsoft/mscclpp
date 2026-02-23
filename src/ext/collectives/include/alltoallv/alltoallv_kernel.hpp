@@ -48,7 +48,8 @@ __global__ void __launch_bounds__(1024)
                     const size_t* sendCounts,
                     const size_t* sendDispls,
                     const size_t* recvCounts,
-                    const size_t* recvDispls) {
+                    const size_t* recvDispls,
+                    const size_t* remoteRecvDispls) {
   int tid = threadIdx.x;
   int nThreads = blockDim.x;
   int nPeers = worldSize - 1;
@@ -70,7 +71,7 @@ __global__ void __launch_bounds__(1024)
     if (sendCounts[peer] > 0) {
       // Use all threads for maximum copy throughput
       memoryChannels[chanIdx].put(
-          recvDispls[rank],       // dst offset in peer's buffer
+          remoteRecvDispls[peer], // dst offset in peer's buffer (peer's recvDispls[rank])
           sendDispls[peer],       // src offset in our buffer
           sendCounts[peer],       // size
           tid,                    // thread id
@@ -113,7 +114,8 @@ __global__ void __launch_bounds__(1024)
                              const size_t* sendCounts,
                              const size_t* sendDispls,
                              const size_t* recvCounts,
-                             const size_t* recvDispls) {
+                             const size_t* recvDispls,
+                             const size_t* remoteRecvDispls) {
   int tid = threadIdx.x;
   int nThreads = blockDim.x;
   int nPeers = worldSize - 1;
@@ -133,7 +135,7 @@ __global__ void __launch_bounds__(1024)
 
     size_t sendSize = sendCounts[peer];
     size_t recvSize = recvCounts[peer];
-    size_t dstOffset = recvDispls[rank];
+    size_t dstOffset = remoteRecvDispls[peer]; // peer's recvDispls[rank]
     size_t srcOffset = sendDispls[peer];
 
     // Send data in chunks for better memory access patterns
@@ -182,7 +184,8 @@ __global__ void __launch_bounds__(1024)
                         const size_t* sendCounts,
                         const size_t* sendDispls,
                         const size_t* recvCounts,
-                        const size_t* recvDispls) {
+                        const size_t* recvDispls,
+                        const size_t* remoteRecvDispls) {
   int tid = threadIdx.x;
   int nThreads = blockDim.x;
 
@@ -203,7 +206,7 @@ __global__ void __launch_bounds__(1024)
     // Send data to sendPeer using ALL threads
     if (sendCounts[sendPeer] > 0) {
       memoryChannels[chanIdx].put(
-          recvDispls[rank],
+          remoteRecvDispls[sendPeer], // dst offset in peer's buffer (peer's recvDispls[rank])
           sendDispls[sendPeer],
           sendCounts[sendPeer],
           tid,
