@@ -38,7 +38,11 @@ class CommGroup:
     ):
         if interfaceIpPortTrio == "" and (mpi_comm is not None or torch_group is not None):
             uniq_id = None
-            rank, size = (mpi_comm.Get_rank(), mpi_comm.Get_size()) if mpi_comm is not None else (torch_group.rank(), torch_group.size())
+            rank, size = (
+                (mpi_comm.Get_rank(), mpi_comm.Get_size())
+                if mpi_comm is not None
+                else (torch_group.rank(), torch_group.size())
+            )
             self.bootstrap = CppTcpBootstrap.create(rank, size)
             if rank == 0:
                 uniq_id = self.bootstrap.create_unique_id()
