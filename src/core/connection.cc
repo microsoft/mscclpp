@@ -238,10 +238,12 @@ void IBConnection::recvThreadFunc() {
       // completion appears, but the data may still be in-flight in PCIe / GPU internal fabric.
       // cuFlushGPUDirectRDMAWrites ensures all prior NIC writes are committed to device memory
       // before we update the semaphore token, so the GPU kernel sees data before the flag.
+#if !defined(MSCCLPP_USE_ROCM)
       if (flushSupported_) {
         MSCCLPP_CUTHROW(cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
                                                    CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
       }
+#endif
 
       // Read dstGpuAddr from the local stored address (set by setRemoteUpdateDstAddr)
       uint64_t dstGpuAddr = remoteUpdateDstAddr_;
@@ -308,7 +310,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       if (flushSupported_) {
         INFO(CONN, "cuFlushGPUDirectRDMAWrites is supported on GPU ", localGpuDeviceId_);
       } else {
-        WARN(NET, "cuFlushGPUDirectRDMAWrites is NOT supported on GPU ", localGpuDeviceId_,
+        WARN(CONN, "cuFlushGPUDirectRDMAWrites is NOT supported on GPU ", localGpuDeviceId_,
              ". RDMA write ordering to GPU memory is not guaranteed.");
       }
     }
