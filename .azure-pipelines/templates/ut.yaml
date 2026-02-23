@@ -28,9 +28,9 @@ steps:
       cd ..
       mkdir build_coverage && cd build_coverage
       if [ "${{ parameters.platform }}" == "rocm" ]; then
-        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
+        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
       else
-        cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
+        cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
       fi
       make -j
       cd ..
