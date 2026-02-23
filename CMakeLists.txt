@@ -57,6 +57,7 @@ option(MSCCLPP_USE_IB "Use InfiniBand." ON)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 option(MSCCLPP_ENABLE_COVERAGE "Enable code coverage" OFF)
+option(MSCCLPP_DISABLE_NB_LEAK_WARNINGS "Disable Nanobind leak warnings" ON)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
