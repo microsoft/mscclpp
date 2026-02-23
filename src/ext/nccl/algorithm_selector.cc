@@ -71,10 +71,10 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     if (messageSize <= (1 << 21)) {  // <= 2MB
       return algoMap.at("default_allreduce_packet");
     }
-    if (config.inCaptureMode) {
+    //if (config.inCaptureMode) {
       // CUDA graph mode: setup new connections each time (zero-copy for graph)
       return algoMap.at("default_allreduce_rsag_zero_copy");
-    }
+    //}
     // Non-graph mode: use non-zero-copy algorithms
     if (messageSize <= (1 << 23)) {  // <= 8MB
       return algoMap.at("default_allreduce_rsag");

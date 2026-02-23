@@ -255,9 +255,9 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   const auto& algoMap = algoMapByCollective.at(request.collective);
 
   // Check if this is a multi-node scenario
-  if (request.nRanksPerNode != request.worldSize) {
+  /*if (request.nRanksPerNode != request.worldSize) {
     return mscclpp::nccl::selectMultiNodeAlgorithm(algoMap, request, config);
-  }
+  }*/
 
   // Single-node scenarios
   if (request.collective == "allgather") {

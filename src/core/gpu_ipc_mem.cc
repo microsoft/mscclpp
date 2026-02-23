@@ -178,19 +178,20 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   MSCCLPP_CUTHROW(res);
 
   // POSIX FD handle
-  int fileDesc;
+/*  int fileDesc;
   if (cuMemExportToShareableHandle(&fileDesc, allocHandle, CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR, 0) ==
       CUDA_SUCCESS) {
     handle->posixFd.fd = UnixSocketServer::instance().registerFd(fileDesc);
     handle->posixFd.pid = ::getpid();
     handle->typeFlags |= GpuIpcMemHandle::Type::PosixFd;
-  }
+  }*/
 
   // FABRIC handle
   if (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle, CU_MEM_HANDLE_TYPE_FABRIC, 0) ==
       CUDA_SUCCESS) {
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
   }
+  //printf("cuMemExportToShareableHandle done\n");
 
   MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
@@ -272,6 +273,7 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
         CUDA_SUCCESS) {
       type_ = GpuIpcMemHandle::Type::Fabric;
     }
+    //printf("cuMemImportFromShareableHandle done\n");
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
     int fileDesc = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(handle_.posixFd.pid),
