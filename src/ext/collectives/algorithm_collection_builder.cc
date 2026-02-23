@@ -13,6 +13,7 @@
 #include "allreduce/allreduce_nvls_with_copy.hpp"
 #include "allreduce/allreduce_nvls_with_copy_2.hpp"
 #include "allreduce/allreduce_packet.hpp"
+#include "alltoallv/alltoallv_fullmesh.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -81,6 +82,10 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
   auto allgatherFullmesh2 = std::make_shared<AllgatherFullmesh2>()->build();
   collection.registerAlgorithm(allgatherFullmesh2->collective(), allgatherFullmesh2->name(), allgatherFullmesh2);
+  
+  // AllToAllV collective for MoE patterns
+  auto alltoallvFullmesh = std::make_shared<AlltoallvFullmesh>()->build();
+  collection.registerAlgorithm(alltoallvFullmesh->collective(), alltoallvFullmesh->name(), alltoallvFullmesh);
   return collection;
 }
 

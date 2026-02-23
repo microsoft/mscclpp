@@ -36,10 +36,12 @@ struct AllToAllVContext {
 AlltoallvFullmesh::~AlltoallvFullmesh() = default;
 
 std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
-  auto self = std::shared_ptr<AlltoallvFullmesh>(this, [](AlltoallvFullmesh*) {});
+  // Create a new shared_ptr that owns the object to keep it alive
+  // This ensures the lambdas capturing 'self' have a valid object
+  auto self = std::make_shared<AlltoallvFullmesh>();
 
   std::shared_ptr<Algorithm> alltoallvAlgo = std::make_shared<NativeAlgorithm>(
-      "alltoallv", "alltoallv_fullmesh",
+      "default_alltoallv_fullmesh", "alltoallv",  // name, collective (was swapped before)
       // Initialize function
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       // Kernel execution function
