@@ -307,6 +307,9 @@ void register_core(nb::module_& m) {
 }
 
 NB_MODULE(_mscclpp, m) {
+#ifdef MSCCLPP_DISABLE_NB_LEAK_WARNINGS
+  nb::set_leak_warnings(false);
+#endif
   register_env(m);
   register_error(m);
   register_port_channel(m);
