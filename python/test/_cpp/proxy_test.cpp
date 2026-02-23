@@ -63,7 +63,7 @@ class MyProxyService {
 };
 
 NB_MODULE(_ext, m) {
-#if !defined(DEBUG_BUILD)
+#ifdef MSCCLPP_DISABLE_NB_LEAK_WARNINGS
   nb::set_leak_warnings(false);
 #endif
   nb::class_<MyProxyService>(m, "MyProxyService")
