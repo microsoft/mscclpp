@@ -34,15 +34,15 @@ __global__ void __launch_bounds__(1024, 1)
                   DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int nRanksPerNode,
                   int worldSize, size_t nelems) {
   int blockId = blockIdx.x;
-  uint32_t nPeers = nRanksPerNode - 1;
+  uint32_t nPeers = worldSize - 1;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
-  uint32_t alignedNelems = ((nelems + nRanksPerNode - 1) / nRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
-                           nelemsPerInt4 * nRanksPerNode;
-  uint32_t nelemsPerRank = alignedNelems / nRanksPerNode;
+  uint32_t alignedNelems = ((nelems + worldSize - 1) / worldSize + nelemsPerInt4 - 1) / nelemsPerInt4 *
+                           nelemsPerInt4 * worldSize;
+  uint32_t nelemsPerRank = alignedNelems / worldSize;
   uint32_t nInt4PerRank = nelemsPerRank / nelemsPerInt4;
   uint32_t lastInt4Index = nelems / nelemsPerInt4;
   uint32_t remainder = nelems % nelemsPerInt4;
@@ -59,7 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
     nInt4PerBlock += remainderForBlock;
   }
   if (nInt4PerBlock == 0) return;
-  uint32_t nInt4ForCopy = nInt4PerBlock * nRanksPerNode;
+  uint32_t nInt4ForCopy = nInt4PerBlock * worldSize;
 
   for (uint32_t idx = threadIdx.x; idx < nInt4ForCopy; idx += blockDim.x) {
     int rankIdx = idx / nInt4PerBlock;
@@ -84,13 +84,13 @@ __global__ void __launch_bounds__(1024, 1)
     if (offset > lastInt4Index) continue;
     int4 tmp = scratch4[offset];
     for (uint32_t i = 0; i < nPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % worldSize;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       int4 data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
       tmp = cal_vector<T, OpType>(data, tmp);
     }
     for (uint32_t i = 0; i < nPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % worldSize;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[peerIdx], offset, tmp);
     }
