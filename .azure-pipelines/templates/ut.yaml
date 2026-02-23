@@ -33,6 +33,8 @@ steps:
         cmake -DCMAKE_BUILD_TYPE=Debug -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} -DMSCCLPP_ENABLE_COVERAGE=ON ..
       fi
       make -j
+      cd ..
+      pwd > build_coverage/BUILD_PREFIX
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: DownloadSecureFile@1
@@ -133,6 +135,10 @@ steps:
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
         export PATH=/usr/local/mpi/bin:\$PATH;                        \
         cd /root/mscclpp;                                             \
+        BUILD_PREFIX=\$(cat build_coverage/BUILD_PREFIX);             \
+        STRIP_COUNT=\$(echo \$BUILD_PREFIX | tr -cd / | wc -c);      \
+        export GCOV_PREFIX=/root/mscclpp;                             \
+        export GCOV_PREFIX_STRIP=\$STRIP_COUNT;                      \
         export LD_LIBRARY_PATH=/root/mscclpp/build_coverage/lib:\$LD_LIBRARY_PATH; \
         ./build_coverage/bin/unit_tests;                              \
         mpirun --allow-run-as-root -tag-output -np 2 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
