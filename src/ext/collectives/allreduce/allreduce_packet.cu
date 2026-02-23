@@ -23,7 +23,7 @@ __global__ void __launch_bounds__(1024, 1)
     ) {
 #endif
   // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
+  //if (worldSize != nRanksPerNode) return;
 
 #if defined(ENABLE_NPKIT)
   extern __shared__ int4 NpkitSharedMem[];
@@ -55,7 +55,7 @@ __global__ void __launch_bounds__(1024, 1)
   else
     nelems = nelems / (sizeof(int) / sizeof(T));
 
-  const int nPeers = nRanksPerNode - 1;
+  const int nPeers = worldSize - 1; //nRanksPerNode - 1;
   const size_t nPkts = nelems / 2;
 
   uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
