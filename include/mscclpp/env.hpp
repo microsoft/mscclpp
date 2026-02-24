@@ -110,10 +110,6 @@ class Env {
   /// Default is false.
   const bool forceDisableNvls;
 
-  /// Env name: `MSCCLPP_DISABLE_IB_TESTS`. If set to true, IB-related tests will be skipped.
-  /// Default is false.
-  const bool disableIbTests;
-
  private:
   Env();
 

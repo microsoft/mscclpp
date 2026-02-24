@@ -65,8 +65,7 @@ Env::Env()
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
       forceNcclFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", "")),
       ncclSymmetricMemory(readEnv<bool>("MSCCLPP_NCCL_SYMMETRIC_MEMORY", false)),
-      forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)),
-      disableIbTests(readEnv<bool>("MSCCLPP_DISABLE_IB_TESTS", false)) {}
+      forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)) {}
 
 std::shared_ptr<Env> env() {
   static std::shared_ptr<Env> globalEnv = std::shared_ptr<Env>(new Env());
@@ -94,7 +93,6 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", globalEnv->forceNcclFallbackOperation);
     logEnv("MSCCLPP_NCCL_SYMMETRIC_MEMORY", globalEnv->ncclSymmetricMemory);
     logEnv("MSCCLPP_FORCE_DISABLE_NVLS", globalEnv->forceDisableNvls);
-    logEnv("MSCCLPP_DISABLE_IB_TESTS", globalEnv->disableIbTests);
   }
   return globalEnv;
 }
