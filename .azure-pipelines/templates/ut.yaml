@@ -146,8 +146,8 @@ steps:
         mpirun --allow-run-as-root -tag-output -np 2 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
         mpirun --allow-run-as-root -tag-output -np 4 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
         cd build_coverage;                                            \
-        lcov --directory . --capture --output-file coverage.info;  \
-        lcov --extract coverage.info '*/mscclpp/src/*' '*/mscclpp/include/*' --output-file coverage.info;  \
+        lcov --directory . --capture --output-file coverage.info --ignore-errors inconsistent;  \
+        lcov --extract coverage.info \"\${BUILD_PREFIX}/src/*\" \"\${BUILD_PREFIX}/include/mscclpp/*\" --output-file coverage.info;  \
         lcov --list coverage.info"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
