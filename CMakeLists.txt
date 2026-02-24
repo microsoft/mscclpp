@@ -47,7 +47,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(MSCCLPP_ENABLE_TRACE "Enable tracing" OFF)
-option(MSCCLPP_BUILD_TESTS "Build tests" ON)
+option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
@@ -56,6 +56,7 @@ option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
+option(MSCCLPP_DISABLE_NB_LEAK_WARNINGS "Disable Nanobind leak warnings" ON)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -185,7 +186,10 @@ if(MSCCLPP_USE_GDRCOPY)
 endif()
 
 include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+)
 FetchContent_MakeAvailable(json)
 
 if("${INSTALL_PREFIX}" STREQUAL "")

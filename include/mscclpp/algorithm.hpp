@@ -366,7 +366,7 @@ class AlgorithmCollection {
 
 /// Get a default GPU flag buffer (allocated once and reused).
 /// @return A pair of (shared_ptr to the flag buffer, size in bytes).
-std::pair<std::shared_ptr<void>, size_t> getDefaultFlagBuffer();
+std::pair<std::shared_ptr<void>, size_t> getFlagBuffer();
 
 }  // namespace mscclpp
 

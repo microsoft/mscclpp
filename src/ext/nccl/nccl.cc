@@ -294,7 +294,7 @@ NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueI
   commPtr->scratchBuffer_ = mscclpp::GpuBuffer<char>(commPtr->scratchBufferSize_).memory();
   commPtr->executor = std::make_shared<mscclpp::Executor>(mscclppComm, commPtr->scratchBuffer_);
 
-  auto [buffer, size] = mscclpp::getDefaultFlagBuffer();
+  auto [buffer, size] = mscclpp::getFlagBuffer();
   commPtr->flagBuffer_ = buffer;
   commPtr->flagBufferSize_ = size;
 

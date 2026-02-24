@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 from typing import Union
-from mscclpp._core.algorithm import Algorithm, AlgorithmBuilder, AlgorithmCollection, get_default_flag_buffer
+from mscclpp._core.algorithm import Algorithm, AlgorithmBuilder, AlgorithmCollection, get_flag_buffer
 import atexit
 
 from mscclpp._mscclpp import CppAlgorithmCollectionBuilder
@@ -58,7 +58,7 @@ class AlgorithmCollectionBuilder:
         rank: int,
     ) -> AlgorithmCollection:
         if self._flag_buffer is None:
-            self._flag_buffer = get_default_flag_buffer()
+            self._flag_buffer = get_flag_buffer()
         native_collection = self._builder.build_default_algorithms(
             int(scratch_buffer), scratch_buffer_size, self._flag_buffer.data.ptr, self._flag_buffer.nbytes, rank
         )
