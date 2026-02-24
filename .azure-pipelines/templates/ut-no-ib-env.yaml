@@ -118,7 +118,63 @@ steps:
         export PATH=/usr/local/mpi/bin:\$PATH                          \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         cd /root/mscclpp;                                              \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 -m pytest -x"'
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest -x"'
+      kill $CHILD_PID
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: StopContainer
+  displayName: Stop existing container
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+        "sudo docker stop mscclpp-test || true; sudo docker rm mscclpp-test || true"
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+  
+- task: Bash@3
+  name: BuildWithIb
+  displayName: Rebuild with IB
+  inputs:
+    targetType: 'inline'
+    script: |
+      rm -rf build && mkdir build && cd build
+      cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
+      make -j
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+- task: Bash@3
+  name: DeployTestEnvWithIb
+  displayName: Deploy Test Env (with IB build)
+  inputs:
+    targetType: filePath
+    filePath: test/deploy/deploy.sh
+    arguments: single-node-test false
+    workingDirectory: $(System.DefaultWorkingDirectory)
+
+- task: Bash@3
+  name: PyTestsWithIbBuildDisableIb
+  displayName: Run pytests (IB build, IB tests disabled)
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+      SSH_OPTION="StrictHostKeyChecking=no"
+      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+      : > azureuser@10.0.0.4
+      tail -f azureuser@10.0.0.4 &
+      CHILD_PID=$!
+      parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
+        export PATH=/usr/local/mpi/bin:\$PATH                          \
+        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
+        cd /root/mscclpp;                                              \
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest -x"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

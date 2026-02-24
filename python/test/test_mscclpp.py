@@ -25,7 +25,6 @@ from mscclpp import (
     TcpBootstrap,
     Transport,
     is_nvls_supported,
-    built_with_ib,
     npkit,
     env,
     Device,
@@ -163,8 +162,8 @@ def create_connection(group: CommGroup, connection_type: str):
 def create_group_and_connection(mpi_group: MpiGroup, connection_type: str):
     if (connection_type == "NVLink" or connection_type == "NVLS") and all_ranks_on_the_same_node(mpi_group) is False:
         pytest.skip("cannot use nvlink/nvls for cross node")
-    if connection_type == "IB" and not built_with_ib():
-        pytest.skip("MSCCLPP was built without IB support (MSCCLPP_USE_IB=OFF)")
+    if connection_type == "IB" and env().disable_ib_tests:
+        pytest.skip("IB tests are disabled via MSCCLPP_DISABLE_IB_TESTS=1")
     group = CommGroup(mpi_group.comm)
     connection = create_connection(group, connection_type)
     return group, connection
@@ -279,8 +278,8 @@ def test_connection_write_and_signal(mpi_group: MpiGroup, connection_type: str, 
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores(mpi_group: MpiGroup):
-    if not built_with_ib():
-        pytest.skip("MSCCLPP was built without IB support (MSCCLPP_USE_IB=OFF)")
+    if env().disable_ib_tests:
+        pytest.skip("IB tests are disabled via MSCCLPP_DISABLE_IB_TESTS=1")
     group = CommGroup(mpi_group.comm)
     tran = group.my_ib_device(group.my_rank % 8)
     endpoint = EndpointConfig(tran, Device(DeviceType.CPU))
@@ -301,8 +300,8 @@ def test_h2h_semaphores(mpi_group: MpiGroup):
 
 @parametrize_mpi_groups(2, 4, 8, 16)
 def test_h2h_semaphores_gil_release(mpi_group: MpiGroup):
-    if not built_with_ib():
-        pytest.skip("MSCCLPP was built without IB support (MSCCLPP_USE_IB=OFF)")
+    if env().disable_ib_tests:
+        pytest.skip("IB tests are disabled via MSCCLPP_DISABLE_IB_TESTS=1")
     group = CommGroup(mpi_group.comm)
     tran = group.my_ib_device(group.my_rank % 8)
     endpoint = EndpointConfig(tran, Device(DeviceType.CPU))

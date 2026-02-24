@@ -23,7 +23,8 @@ void register_env(nb::module_& m) {
       .def_ro("ibv_mode", &Env::ibvMode)
       .def_ro("cache_dir", &Env::cacheDir)
       .def_ro("npkit_dump_dir", &Env::npkitDumpDir)
-      .def_ro("cuda_ipc_use_default_stream", &Env::cudaIpcUseDefaultStream);
+      .def_ro("cuda_ipc_use_default_stream", &Env::cudaIpcUseDefaultStream)
+      .def_ro("disable_ib_tests", &Env::disableIbTests);
 
   m.def("env", &env);
 }
