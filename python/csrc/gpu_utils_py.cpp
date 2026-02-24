@@ -98,8 +98,17 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
   return nb::steal<nb::capsule>(dlCapsule);
 }
 
+bool builtWithIb() {
+#if defined(USE_IBVERBS)
+  return true;
+#else
+  return false;
+#endif
+}
+
 void register_gpu_utils(nb::module_& m) {
   m.def("is_nvls_supported", &isNvlsSupported);
+  m.def("built_with_ib", &builtWithIb);
 
   nb::class_<GpuBuffer<char>>(m, "CppRawGpuBuffer")
       .def(nb::init<size_t>(), nb::arg("nelems"))

@@ -53,6 +53,7 @@ from ._mscclpp import (
     CppReduceOp as ReduceOp,
     env,
     is_nvls_supported,
+    built_with_ib,
     cpp_npkit as npkit,
 )
 
@@ -88,6 +89,7 @@ __all__ = [
     "env",
     "version",
     "is_nvls_supported",
+    "built_with_ib",
     "alloc_shared_physical_cuda",
     "npkit",
     # Version information
