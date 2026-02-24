@@ -161,8 +161,8 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::DeviceHandle Host2DeviceSemaphore::deviceH
   // If inboundToken_ is allocated (host-no-atomic mode), the GPU polls it.
   // Otherwise (atomic mode), the GPU polls the SemaphoreStub token directly,
   // which is the same address targeted by the NIC's atomic operation.
-  device.inboundToken = inboundToken_ ? inboundToken_.get()
-                                      : reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
+  device.inboundToken =
+      inboundToken_ ? inboundToken_.get() : reinterpret_cast<uint64_t*>(semaphore_.localMemory().data());
   device.expectedInboundToken = expectedInboundToken_.get();
   return device;
 }
@@ -181,8 +181,8 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphor
   if (connImpl->usesRecvThread()) {
     // Host-no-atomic mode: tell the recv thread where to write the incoming token.
     // Non-owning shared_ptr: Host2HostSemaphore outlives the connection, so the memory stays valid.
-    auto token = std::shared_ptr<uint64_t>(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()),
-                                           [](uint64_t*) {});
+    auto token =
+        std::shared_ptr<uint64_t>(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), [](uint64_t*) {});
     connImpl->setRemoteUpdateDstAddr(std::move(token));
   }
 }

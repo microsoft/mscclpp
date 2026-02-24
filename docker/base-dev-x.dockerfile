@@ -34,8 +34,7 @@ RUN if echo "$TARGET" | grep -q "^cuda"; then \
         curl -L https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -o gdrcopy.tar.gz && \
         tar xzf gdrcopy.tar.gz && \
         cd gdrcopy-${GDRCOPY_VERSION}/packages && \
-        CUDA=$(ls -d /usr/local/cuda-* 2>/dev/null | head -1) && \
-        ./build-deb-packages.sh -k -c "$CUDA" && \
+        ./build-deb-packages.sh -k -t && \
         dpkg -i libgdrapi_*.deb && \
         cd / && rm -rf /tmp/gdrcopy* && \
         apt-get autoremove -y && \
