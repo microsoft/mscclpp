@@ -134,6 +134,7 @@ steps:
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
         "sudo docker stop mscclpp-test || true; sudo docker rm mscclpp-test || true"
+      rm -f $(System.DefaultWorkingDirectory)/sshkey $(System.DefaultWorkingDirectory)/sshkey.pub
     workingDirectory: '$(System.DefaultWorkingDirectory)'
   
 - task: Bash@3
