@@ -28,7 +28,7 @@ namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
 constexpr int NUM_SEMAPHORES = 64;
 
-constexpr int MAX_NRANKS_PER_NODE = 8;
+constexpr int MAX_NRANKS_PER_NODE = 16;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 
