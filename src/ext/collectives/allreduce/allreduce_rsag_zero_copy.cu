@@ -126,7 +126,10 @@ struct AllreduceRsAgZeroCopyAdapter {
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      THROW(ALGO, Error, ErrorCode::InvalidUsage, "Unsupported number of ranks per node: ", nRanksPerNode);
+	    allreduceRsAgZeroCopy<16, OpType, T>
+		    <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
+				     switchChannel, remoteMemories, rank, worldSize, nelems);
+      //THROW(ALGO, Error, ErrorCode::InvalidUsage, "Unsupported number of ranks per node: ", nRanksPerNode);
     }
     return cudaGetLastError();
   }
