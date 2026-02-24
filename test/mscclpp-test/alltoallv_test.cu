@@ -32,6 +32,9 @@ static size_t* d_remoteRecvDispls;  // peer's recvDispls[rank] for each peer
 // Device array for memory channels (used by library kernels)
 static DeviceHandle<mscclpp::MemoryChannel>* d_memoryChannels;
 
+// GPU-allocated DeviceSyncer for multi-block kernel
+static mscclpp::DeviceSyncer* d_deviceSyncer;
+
 class AllToAllVTestColl : public BaseTestColl {
  public:
   AllToAllVTestColl() = default;
@@ -83,6 +86,42 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
     // Use pipelined kernel for imbalanced workloads (MoE)
     mscclpp::collective::alltoallvPipelinedKernel<<<1, nThreads, 0, stream>>>(
         d_memoryChannels,
+        rank, worldSize,
+        localSendBuffV, localRecvBuffV,
+        d_sendCounts, d_sendDispls,
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
+  } else if (kernelNum == 3) {
+    // Use legacy multi-block kernel (sequential peers)
+    const int nBlocks = mscclpp::collective::ALLTOALLV_DEFAULT_NBLOCKS;
+    mscclpp::collective::alltoallvMultiBlockKernel<<<nBlocks, nThreads, 0, stream>>>(
+        d_memoryChannels,
+        d_deviceSyncer,
+        rank, worldSize,
+        localSendBuffV, localRecvBuffV,
+        d_sendCounts, d_sendDispls,
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
+  } else if (kernelNum == 4) {
+    // Peer-parallel kernel: small messages (1 block/peer, no barrier)
+    const int nPeers = worldSize - 1;
+    const int nBlocks = (nPeers > 0) ? nPeers : 1;
+    mscclpp::collective::alltoallvPeerParallelKernel<<<nBlocks, nThreads, 0, stream>>>(
+        d_memoryChannels,
+        d_deviceSyncer,
+        rank, worldSize,
+        localSendBuffV, localRecvBuffV,
+        d_sendCounts, d_sendDispls,
+        d_recvCounts, d_recvDispls,
+        d_remoteRecvDispls);
+  } else if (kernelNum == 5) {
+    // Peer-parallel kernel: large messages (multiple blocks/peer, barrier)
+    const int nPeers = worldSize - 1;
+    const int blocksPerPeer = mscclpp::collective::ALLTOALLV_DEFAULT_BLOCKS_PER_PEER;
+    const int nBlocks = (nPeers > 0) ? nPeers * blocksPerPeer : blocksPerPeer;
+    mscclpp::collective::alltoallvPeerParallelKernel<<<nBlocks, nThreads, 0, stream>>>(
+        d_memoryChannels,
+        d_deviceSyncer,
         rank, worldSize,
         localSendBuffV, localRecvBuffV,
         d_sendCounts, d_sendDispls,
@@ -183,7 +222,10 @@ std::vector<KernelRestriction> AllToAllVTestColl::getKernelRestrictions() {
   return {
       {0, "alltoallvKernel", true, 1, 4 * worldSize_},
       {1, "alltoallvRingKernel", true, 1, 4 * worldSize_},
-      {2, "alltoallvPipelinedKernel", true, 1, 4 * worldSize_}
+      {2, "alltoallvPipelinedKernel", true, 1, 4 * worldSize_},
+      {3, "alltoallvMultiBlockKernel", true, 1, 4 * worldSize_},
+      {4, "alltoallvPeerParallel(small)", true, 1, 4 * worldSize_},
+      {5, "alltoallvPeerParallel(large)", true, 1, 4 * worldSize_}
   };
 }
 
@@ -229,6 +271,10 @@ void AllToAllVTestEngine::allocateBuffer() {
 
   // Allocate device array for memory channels
   CUDATHROW(cudaMalloc(&d_memoryChannels, args_.totalRanks * sizeof(DeviceHandle<mscclpp::MemoryChannel>)));
+
+  // Allocate GPU DeviceSyncer for multi-block kernel (zero-initialized)
+  CUDATHROW(cudaMalloc(&d_deviceSyncer, sizeof(mscclpp::DeviceSyncer)));
+  CUDATHROW(cudaMemset(d_deviceSyncer, 0, sizeof(mscclpp::DeviceSyncer)));
 }
 
 void AllToAllVTestEngine::setupConnections() {

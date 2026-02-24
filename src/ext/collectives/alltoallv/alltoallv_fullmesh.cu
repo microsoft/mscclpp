@@ -31,6 +31,7 @@ struct AllToAllVContext {
   std::vector<MemoryChannel> memoryChannels;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
+  std::shared_ptr<DeviceSyncer> deviceSyncer;  // GPU-allocated, for multi-block grid sync
 };
 
 AlltoallvFullmesh::~AlltoallvFullmesh() = default;
@@ -102,36 +103,39 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   // Use maximum threads (1024) for best bandwidth utilization
   const int threadsPerBlock = (nThreadsPerBlock > 0 && nThreadsPerBlock <= 1024) ? nThreadsPerBlock : 1024;
 
-  // Size-adaptive algorithm selection based on message size and world size:
-  // - Small messages (<1MB avg): use basic kernel (lower latency)
-  // - Large messages (>=1MB avg) with small world (<=16): use pipelined kernel
-  // - Large messages (>=1MB avg) with large world (>16): use ring kernel (avoids congestion)
+  // Peer-parallel algorithm: blocks assigned round-robin to peers so ALL
+  // NVLink connections are active simultaneously. Critical for 4+ GPU systems.
+  //
+  // Small messages (<1MB avg): nPeers blocks (1 per peer, no barrier)
+  // Large messages (>=1MB avg): nPeers * blocksPerPeer (barrier-based)
   constexpr size_t SIZE_THRESHOLD = 1 << 20;  // 1MB
-  constexpr int WORLD_SIZE_THRESHOLD = 16;
   size_t avgMsgSize = inputSize / worldSize;
+  int nPeers = worldSize - 1;
+  if (nPeers < 1) nPeers = 1;
 
   if (avgMsgSize < SIZE_THRESHOLD) {
-    // Small messages: use basic kernel for lower latency
-    alltoallvKernel<<<1, threadsPerBlock, 0, stream>>>(
+    // Small messages: 1 block per peer, parallel signal/wait, no barrier
+    int numBlocks = nPeers;
+    alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
-        rank, worldSize,
-        input, output,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
-  } else if (worldSize > WORLD_SIZE_THRESHOLD) {
-    // Large messages + large world: use ring kernel to avoid congestion
-    alltoallvRingKernel<<<1, threadsPerBlock, 0, stream>>>(
-        algoCtx->memoryChannelDeviceHandles.get(),
+        algoCtx->deviceSyncer.get(),
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls,
         d_remoteRecvDispls);
   } else {
-    // Large messages + small world: use pipelined chunked kernel
-    alltoallvPipelinedKernel<<<1, threadsPerBlock, 0, stream>>>(
+    // Large messages: multiple blocks per peer for maximum put bandwidth.
+    // Cap total blocks to avoid excessive barrier overhead.
+    int blocksPerPeer = (nBlocks > 0 && nBlocks <= 128)
+        ? ((nBlocks + nPeers - 1) / nPeers)  // user-specified total → per-peer
+        : ALLTOALLV_DEFAULT_BLOCKS_PER_PEER;
+    int numBlocks = nPeers * blocksPerPeer;
+    if (numBlocks > 128) numBlocks = (128 / nPeers) * nPeers;  // keep multiple of nPeers
+    if (numBlocks < nPeers) numBlocks = nPeers;
+    alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
+        algoCtx->deviceSyncer.get(),
         rank, worldSize,
         input, output,
         d_sendCounts, d_sendDispls,
@@ -175,6 +179,9 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
 
   // Setup device handles
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
+
+  // Allocate GPU DeviceSyncer for multi-block grid-wide barrier (zero-initialized)
+  ctx->deviceSyncer = mscclpp::detail::gpuCallocShared<DeviceSyncer>();
 
   // Keep registered memory references to prevent deallocation
   ctx->registeredMemories = std::move(remoteOutputMemories);
