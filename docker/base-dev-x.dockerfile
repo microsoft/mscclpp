@@ -24,8 +24,26 @@ RUN OS_ARCH=$(uname -m) && \
     rm -rf ${CMAKE_HOME}.tar.gz && \
     ln -s /usr/local/cmake-${CMAKE_VERSION}-linux-${OS_ARCH}/bin/* /usr/bin/
 
-# Install ROCm-specific packages if building for ROCm
+# Install GDRCopy userspace library for CUDA targets
 ARG TARGET="cuda13.0"
+RUN if echo "$TARGET" | grep -q "^cuda"; then \
+        GDRCOPY_VERSION="2.5.1" && \
+        apt-get update -y && \
+        apt-get install -y --no-install-recommends devscripts debhelper fakeroot pkg-config dkms && \
+        cd /tmp && \
+        curl -L https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -o gdrcopy.tar.gz && \
+        tar xzf gdrcopy.tar.gz && \
+        cd gdrcopy-${GDRCOPY_VERSION}/packages && \
+        CUDA=$(ls -d /usr/local/cuda-* 2>/dev/null | head -1) && \
+        ./build-deb-packages.sh -k -c "$CUDA" && \
+        dpkg -i libgdrapi_*.deb && \
+        cd / && rm -rf /tmp/gdrcopy* && \
+        apt-get autoremove -y && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/* /tmp/*; \
+    fi
+
+# Install ROCm-specific packages if building for ROCm
 RUN if echo "$TARGET" | grep -q "^rocm"; then \
         apt-get update -y && \
         apt-get install -y hipblas hipsparse rocsparse rocrand hiprand rocthrust rocsolver rocfft hipfft hipcub rocprim rccl roctracer-dev && \
