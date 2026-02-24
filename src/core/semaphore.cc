@@ -128,7 +128,11 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
     // Allocate a separate inbound token via plain cudaMalloc (not TokenPool/VMM)
     // so that it is always compatible with GDRCopy pinning (VMM memory cannot be pinned by gdr_pin_buffer).
     CudaDeviceGuard deviceGuard(connection().localDevice().id);
+#if defined(MSCCLPP_USE_ROCM)
+    inboundToken_ = detail::gpuCallocUncachedShared<uint64_t>();
+#else
     inboundToken_ = detail::gpuCallocShared<uint64_t>();
+#endif
     connImpl->setRemoteUpdateDstAddr(inboundToken_);
   }
   // When usesRecvThread() is false (e.g., atomic mode), inboundToken_ stays null

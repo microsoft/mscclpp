@@ -199,14 +199,9 @@ void IBConnection::recvThreadFunc() {
 
   // Host-side buffer to receive newValue from imm_data (need 64-bit for cudaMemcpy)
   bool useGdr = gdrEnabled();
-  uint64_t* newValueHost;
-  if (useGdr) {
-    newValueHost = new uint64_t(0);
-  } else {
-    // Use pinned host memory for reliable cudaMemcpyAsync from a non-default stream
-    MSCCLPP_CUDATHROW(cudaHostAlloc(&newValueHost, sizeof(uint64_t), cudaHostAllocDefault));
-    *newValueHost = 0;
-  }
+  // Use pinned host memory for reliable cudaMemcpyAsync from a non-default stream.
+  auto newValueHostPtr = useGdr ? nullptr : detail::gpuCallocHostShared<uint64_t>();
+  uint64_t* newValueHost = useGdr ? new uint64_t(0) : newValueHostPtr.get();
 
   while (!stopRecvThread_.load(std::memory_order_relaxed)) {
     auto qp = qp_.lock();
@@ -256,11 +251,16 @@ void IBConnection::recvThreadFunc() {
           remoteUpdateDstAddrMap_->copyTo(newValueHost, sizeof(uint64_t));
         } else
 #endif
-        if (signalStream_ != nullptr) {
-          // Fallback: use cudaMemcpyAsync with our dedicated stream
-          MSCCLPP_CUDATHROW(
-              cudaMemcpyAsync(dstPtr, newValueHost, sizeof(uint64_t), cudaMemcpyHostToDevice, signalStream_));
+#if defined(MSCCLPP_USE_ROCM)
+        {
+          *dstPtr = *newValueHost;
         }
+#else
+        if (signalStream_) {
+          // Fallback: use gpuMemcpyAsync with our dedicated stream
+          gpuMemcpyAsync(dstPtr, newValueHost, 1, *signalStream_, cudaMemcpyHostToDevice);
+        }
+#endif
       }
 
       // Post another recv for future messages
@@ -269,11 +269,9 @@ void IBConnection::recvThreadFunc() {
     }
   }
 
-  // Clean up the host-side buffer
+  // Clean up the host-side buffer (non-GDR path is auto-freed by shared_ptr)
   if (useGdr) {
     delete newValueHost;
-  } else {
-    MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaFreeHost(newValueHost));
   }
 }
 
@@ -305,7 +303,6 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       if (cuDeviceGet(&cuDev, localGpuDeviceId_) == CUDA_SUCCESS) {
         cuDeviceGetAttribute(&flushOptions, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS, cuDev);
       }
-#endif
       flushSupported_ = (flushOptions & CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST) != 0;
       if (flushSupported_) {
         INFO(CONN, "cuFlushGPUDirectRDMAWrites is supported on GPU ", localGpuDeviceId_);
@@ -313,12 +310,16 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
         WARN(CONN, "cuFlushGPUDirectRDMAWrites is NOT supported on GPU ", localGpuDeviceId_,
              ". RDMA write ordering to GPU memory is not guaranteed.");
       }
+#endif
     }
 
-    // Create a CUDA stream for async memory copies (not needed when GDRCopy is available)
+    // Create a CUDA stream for async memory copies (not needed when GDRCopy is available,
+    // nor on ROCm where GPU memory is host-accessible and we write directly)
+#if !defined(MSCCLPP_USE_ROCM)
     if (!gdrEnabled()) {
-      MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&signalStream_, cudaStreamNonBlocking));
+      signalStream_ = std::make_unique<CudaStreamWithFlags>(cudaStreamNonBlocking);
     }
+#endif
 
     // Pre-post receive requests for incoming write-with-imm
     auto qp = qp_.lock();
@@ -340,11 +341,6 @@ IBConnection::~IBConnection() {
     stopRecvThread_.store(true, std::memory_order_relaxed);
     if (recvThread_.joinable()) {
       recvThread_.join();
-    }
-    if (signalStream_ != nullptr) {
-      // Synchronize stream to ensure all async copies are complete before destruction
-      (void)cudaStreamSynchronize(signalStream_);
-      (void)cudaStreamDestroy(signalStream_);
     }
   }
 }

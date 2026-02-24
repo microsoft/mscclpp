@@ -109,7 +109,7 @@ class IBConnection : public BaseConnection {
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
   int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
-  cudaStream_t signalStream_;
+  std::unique_ptr<CudaStreamWithFlags> signalStream_;
 
   // Write-with-imm design:
   // - Sender: 0-byte RDMA write-with-imm to dst MR, newValue in imm_data (32-bit)
