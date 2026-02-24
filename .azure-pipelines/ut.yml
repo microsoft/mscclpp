@@ -113,7 +113,7 @@ jobs:
       gpuArch:          '90'
 
 - job: UnitTestNoIBEnv
-  timeoutInMinutes: 40
+  timeoutInMinutes: 60
   displayName: Test No IB Environment
   pool:
     name: msccl-ci-h100
