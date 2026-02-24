@@ -147,7 +147,7 @@ steps:
         mpirun --allow-run-as-root -tag-output -np 4 ./build_coverage/bin/mp_unit_tests --exclude-perf-tests;  \
         cd build_coverage;                                            \
         lcov --directory . --capture --output-file coverage.info;  \
-        lcov --remove coverage.info '/usr/*' '*/test/*' '*/build/*' '*/nlohmann/*' '*/_deps/*' --output-file coverage.info;  \
+        lcov --extract coverage.info '*/mscclpp/src/*' '*/mscclpp/include/*' --output-file coverage.info;  \
         lcov --list coverage.info"'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
