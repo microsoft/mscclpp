@@ -33,6 +33,12 @@ class Host2DeviceSemaphore {
   /// Destructor.
   ~Host2DeviceSemaphore();
 
+  /// Move constructor.
+  Host2DeviceSemaphore(Host2DeviceSemaphore&&) noexcept = default;
+
+  /// Move assignment operator.
+  Host2DeviceSemaphore& operator=(Host2DeviceSemaphore&&) noexcept = default;
+
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
   Connection& connection();
