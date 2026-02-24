@@ -157,8 +157,8 @@ def main():
     # Test 3: Performance benchmark across message sizes (1KB to 128MB)
     if rank == 0:
         print("\n[Test 3] Performance benchmark (1KB to 128MB per rank)")
-        print(f"  {'Msg Size':>10s}  {'Iters':>5s}  {'Total (ms)':>10s}  {'Lat (us)':>10s}  {'BW (GB/s)':>10s}")
-        print(f"  {'-'*10}  {'-'*5}  {'-'*10}  {'-'*10}  {'-'*10}")
+        print(f"  {'Msg Size':>10s}  {'Iters':>5s}  {'Total (ms)':>10s}  {'Lat (us)':>10s}  {'algBW(GB/s)':>12s}")
+        print(f"  {'-'*10}  {'-'*5}  {'-'*10}  {'-'*10}  {'-'*12}")
 
     # Message sizes: 1KB, 4KB, 16KB, 64KB, 256KB, 1MB, 4MB, 16MB, 64MB, 128MB
     msg_sizes = [1 << s for s in range(10, 28) if s % 2 == 0]  # powers of 4 from 1KB to 64MB
@@ -187,7 +187,11 @@ def main():
         torch.cuda.synchronize()
         elapsed = time.perf_counter() - start
 
-        total_bytes = 2 * input_size * n_iters  # read + write
+        # Algorithm bandwidth: total data received per rank / time
+        # Each rank receives msg_size bytes from each of the other (world_size-1) peers
+        # plus msg_size from itself (local copy). Total recv = input_size = msg_size * world_size.
+        # Report unidirectional algBw (same convention as nccl-test).
+        total_bytes = input_size * n_iters
         bandwidth_gbps = total_bytes / elapsed / 1e9
         latency_us = elapsed / n_iters * 1e6
 
@@ -198,7 +202,7 @@ def main():
                 size_str = f"{msg_size // 1024}KB"
             else:
                 size_str = f"{msg_size}B"
-            print(f"  {size_str:>10s}  {n_iters:>5d}  {elapsed*1000:>10.2f}  {latency_us:>10.1f}  {bandwidth_gbps:>10.2f}")
+            print(f"  {size_str:>10s}  {n_iters:>5d}  {elapsed*1000:>10.2f}  {latency_us:>10.1f}  {bandwidth_gbps:>12.2f}")
     
     # Cleanup
     dist.barrier()
