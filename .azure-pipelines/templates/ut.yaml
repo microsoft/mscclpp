@@ -10,6 +10,8 @@ parameters:
   default: 'cuda'
 - name: gpuArch
   type: string
+variables:
+- group: mscclpp
 
 steps:
 - task: Bash@3
@@ -175,10 +177,8 @@ steps:
       set -e
       curl -Os https://cli.codecov.io/latest/linux/codecov
       chmod +x codecov
-      ./codecov upload-process --disable-search -t $CODECOV_TOKEN -f coverage.info --flag ${{ parameters.platform }}-${{ parameters.gpuArch }}
+      ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info --flag ${{ parameters.platform }}-${{ parameters.gpuArch }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
-  env:
-    CODECOV_TOKEN: $(CODECOV_TOKEN)
 
 - task: Bash@3
   name: PyTests
