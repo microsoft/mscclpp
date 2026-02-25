@@ -630,55 +630,6 @@ MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string& ibDevice
 
 #else  // !defined(USE_IBVERBS)
 
-// IbMr stubs
-IbMr::IbMr(ibv_pd*, void*, std::size_t) : mr_(nullptr), buff_(nullptr), size_(0) {}
-IbMr::~IbMr() {}
-IbMrInfo IbMr::getInfo() const { return IbMrInfo{}; }
-const void* IbMr::getBuff() const { return nullptr; }
-uint32_t IbMr::getLkey() const { return 0; }
-
-// IbQp stubs
-IbQp::IbQp(ibv_context*, ibv_pd*, int, int, int, int, int, int, int)
-    : portNum_(0),
-      gidIndex_(0),
-      info_(),
-      qp_(nullptr),
-      sendCq_(nullptr),
-      recvCq_(nullptr),
-      numStagedSend_(0),
-      numStagedRecv_(0),
-      numPostedSignaledSend_(0),
-      numStagedSignaledSend_(0),
-      maxSendCqPollNum_(0),
-      maxSendWr_(0),
-      maxWrPerSend_(0),
-      maxRecvWr_(0) {}
-IbQp::~IbQp() {}
-void IbQp::rtr(const IbQpInfo&) {}
-void IbQp::rts() {}
-void IbQp::stageSendWrite(const IbMr*, const IbMrInfo&, uint32_t, uint64_t, uint64_t, uint64_t, bool) {}
-void IbQp::stageSendAtomicAdd(const IbMr*, const IbMrInfo&, uint64_t, uint64_t, uint64_t, bool) {}
-void IbQp::stageSendWriteWithImm(const IbMr*, const IbMrInfo&, uint32_t, uint64_t, uint64_t, uint64_t, bool,
-                                 unsigned int) {}
-void IbQp::postSend() {}
-void IbQp::stageRecv(uint64_t) {}
-void IbQp::stageRecv(const IbMr*, uint64_t, uint32_t, uint64_t) {}
-void IbQp::postRecv() {}
-int IbQp::pollSendCq() { return 0; }
-int IbQp::pollRecvCq() { return 0; }
-int IbQp::getSendWcStatus(int) const { return 0; }
-std::string IbQp::getSendWcStatusString(int) const { return ""; }
-int IbQp::getNumSendCqItems() const { return 0; }
-int IbQp::getRecvWcStatus(int) const { return 0; }
-std::string IbQp::getRecvWcStatusString(int) const { return ""; }
-unsigned int IbQp::getRecvWcImmData(int) const { return 0; }
-IbQp::SendWrInfo IbQp::getNewSendWrInfo() { return SendWrInfo{nullptr, nullptr}; }
-IbQp::RecvWrInfo IbQp::getNewRecvWrInfo() { return RecvWrInfo{nullptr, nullptr}; }
-
-// IbCtx stubs
-bool IbCtx::isPortUsable(int, int) const { return false; }
-int IbCtx::getAnyUsablePort(int) const { return -1; }
-
 MSCCLPP_API_CPP int getIBDeviceCount() { return 0; }
 
 MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
