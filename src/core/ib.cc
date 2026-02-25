@@ -685,6 +685,34 @@ MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
 
 MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string&) { return Transport::Unknown; }
 
+IbMr::~IbMr() {}
+IbMrInfo IbMr::getInfo() const { return IbMrInfo(); }
+const void* IbMr::getBuff() const { return nullptr; }
+uint32_t IbMr::getLkey() const { return 0; }
+
+IbQp::~IbQp() {}
+void IbQp::rtr(const IbQpInfo& /*info*/) {}
+void IbQp::rts() {}
+void IbQp::stageSendWrite(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint32_t /*size*/, uint64_t /*wrId*/,
+                          uint64_t /*srcOffset*/, uint64_t /*dstOffset*/, bool /*signaled*/) {}
+void IbQp::stageSendAtomicAdd(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint64_t /*wrId*/, uint64_t /*dstOffset*/,
+                              uint64_t /*addVal*/, bool /*signaled*/) {}
+void IbQp::stageSendWriteWithImm(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint32_t /*size*/, uint64_t /*wrId*/,
+                                 uint64_t /*srcOffset*/, uint64_t /*dstOffset*/, bool /*signaled*/,
+                                 unsigned int /*immData*/) {}
+void IbQp::postSend() {}
+void IbQp::stageRecv(uint64_t /*wrId*/) {}
+void IbQp::stageRecv(const IbMr* /*mr*/, uint64_t /*wrId*/, uint32_t /*size*/, uint64_t /*offset*/) {}
+void IbQp::postRecv() {}
+int IbQp::pollSendCq() { return 0; }
+int IbQp::pollRecvCq() { return 0; }
+int IbQp::getSendWcStatus(int /*idx*/) const { return 0; }
+std::string IbQp::getSendWcStatusString(int /*idx*/) const { return ""; }
+int IbQp::getNumSendCqItems() const { return 0; }
+int IbQp::getRecvWcStatus(int /*idx*/) const { return 0; }
+std::string IbQp::getRecvWcStatusString(int /*idx*/) const { return ""; }
+unsigned int IbQp::getRecvWcImmData(int /*idx*/) const { return 0; }
+
 #endif  // !defined(USE_IBVERBS)
 
 }  // namespace mscclpp
