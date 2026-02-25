@@ -293,8 +293,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
         default:
           break;
       }
-      THROW(CONN, Error, ErrorCode::InvalidUsage,
-            "IB host-no-atomic mode on CUDA requires GDRCopy: ", reason);
+      THROW(CONN, Error, ErrorCode::InvalidUsage, "IB host-no-atomic mode on CUDA requires GDRCopy: ", reason);
     }
 #endif
 
