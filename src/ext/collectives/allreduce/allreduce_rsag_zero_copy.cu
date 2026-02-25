@@ -199,17 +199,13 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   ctx->registeredMemories.insert(ctx->registeredMemories.end(), remoteInputMemories.begin(), remoteInputMemories.end());
   ctx->registeredMemories.insert(ctx->registeredMemories.end(), remoteOutputMemories.begin(),
                                  remoteOutputMemories.end());
-  std::vector<void*> remoteMemorieHandles;
+  std::vector<void*> remoteMemoryHandles;
   for (const auto& remoteMemory : ctx->registeredMemories) {
-    remoteMemorieHandles.push_back(remoteMemory.data());
+    remoteMemoryHandles.push_back(remoteMemory.data());
   }
-  ctx->remoteMemoryHandles = detail::gpuCallocShared<void*>(remoteMemorieHandles.size());
-  gpuMemcpy(ctx->remoteMemoryHandles.get(), remoteMemorieHandles.data(), remoteMemorieHandles.size(),
+  ctx->remoteMemoryHandles = detail::gpuCallocShared<void*>(remoteMemoryHandles.size());
+  gpuMemcpy(ctx->remoteMemoryHandles.get(), remoteMemoryHandles.data(), remoteMemoryHandles.size(),
             cudaMemcpyHostToDevice);
-
-  size_t recvBytes;
-  CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // store local registered memories to ctx for lifetime management
   ctx->registeredMemories.push_back(inputMemory);

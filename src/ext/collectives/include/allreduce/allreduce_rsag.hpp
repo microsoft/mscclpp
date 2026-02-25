@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#ifndef MSCCLPP_EXT_ALLREDUCE_RSAG_HPP_
+#define MSCCLPP_EXT_ALLREDUCE_RSAG_HPP_
+
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
@@ -36,3 +39,5 @@ class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
 };
 }  // namespace collective
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EXT_ALLREDUCE_RSAG_HPP_

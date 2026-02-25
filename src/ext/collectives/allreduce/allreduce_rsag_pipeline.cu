@@ -89,7 +89,7 @@ __global__ void __launch_bounds__(1024, 1)
                           int nRanksPerNode, int worldSize, size_t nelems, size_t scratchSize, uint32_t nblocksForPut,
                           uint32_t nblocksForReduce, uint32_t nblocksForRecv) {
   uint32_t bid = blockIdx.x;
-  const uint32_t nStepsPerIter = 4;
+  constexpr uint32_t nStepsPerIter = 4;
   uint32_t nInt4 = (nelems * sizeof(T) + sizeof(int4) - 1) / sizeof(int4);
   uint32_t nInt4PerIter = nblocksForReduce * blockDim.x * nStepsPerIter;
   const uint32_t chunkSize = nInt4PerIter * worldSize;
