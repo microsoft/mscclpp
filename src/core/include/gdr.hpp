@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_GDR_HPP_
 #define MSCCLPP_GDR_HPP_
