@@ -3,7 +3,7 @@
 
 #include "gdr.hpp"
 
-#ifdef MSCCLPP_USE_GDRCOPY
+#if defined(MSCCLPP_USE_GDRCOPY)
 
 #include <unistd.h>
 
@@ -28,12 +28,12 @@ class GdrContext {
   GdrContext(const GdrContext&) = delete;
   GdrContext& operator=(const GdrContext&) = delete;
 
-  bool enabled() const { return enabled_; }
+  GdrStatus status() const { return status_; }
   gdr_t handle() const { return handle_; }
 
  private:
-  bool enabled_ = false;
-  gdr_t handle_ = nullptr;
+  GdrStatus status_;
+  gdr_t handle_;
 };
 
 static std::shared_ptr<GdrContext> gdrContext() {
@@ -41,27 +41,32 @@ static std::shared_ptr<GdrContext> gdrContext() {
   return instance;
 }
 
-bool gdrEnabled() { return gdrContext()->enabled(); }
+GdrStatus gdrStatus() { return gdrContext()->status(); }
 
-GdrContext::GdrContext() {
+bool gdrEnabled() { return gdrStatus() == GdrStatus::Ok; }
+
+GdrContext::GdrContext() : status_(GdrStatus::Disabled), handle_(nullptr) {
   if (env()->forceDisableGdr) {
     INFO(GPU, "GDRCopy disabled via MSCCLPP_FORCE_DISABLE_GDR");
+    status_ = GdrStatus::Disabled;
     return;
   }
 
   // Auto-detect: check if driver is available
   if (access("/dev/gdrdrv", F_OK) != 0) {
     INFO(GPU, "GDRCopy driver not detected, disabling GDRCopy");
+    status_ = GdrStatus::DriverMissing;
     return;
   }
 
   handle_ = gdr_open();
   if (handle_ == nullptr) {
     INFO(GPU, "gdr_open() failed, disabling GDRCopy");
+    status_ = GdrStatus::OpenFailed;
     return;
   }
 
-  enabled_ = true;
+  status_ = GdrStatus::Ok;
   INFO(GPU, "GDRCopy initialized successfully");
 }
 
@@ -74,7 +79,8 @@ GdrContext::~GdrContext() {
 
 // GdrMap
 
-GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId) : ctx_(gdrContext()), gpuMem_(std::move(gpuMem)) {
+GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId)
+    : ctx_(gdrContext()), gpuMem_(std::move(gpuMem)), mh_{}, barPtr_(nullptr), hostDstPtr_(nullptr), mappedSize_(0) {
   // Ensure CUDA device context is active for gdr_pin_buffer
   CudaDeviceGuard deviceGuard(deviceId);
 
@@ -96,7 +102,7 @@ GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId) : ctx_(gdrContext()),
     THROW(GPU, Error, ErrorCode::InternalError, "gdr_map failed (ret=", ret, ") for addr ", (void*)gpuAddr);
   }
 
-  hostDstPtr_ = reinterpret_cast<volatile uint64_t*>(reinterpret_cast<char*>(barPtr_) + pageOffset);
+  hostDstPtr_ = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(barPtr_) + pageOffset);
 
   INFO(GPU, "GDRCopy mapping established: GPU addr ", (void*)gpuAddr, " -> host ptr ", (const void*)hostDstPtr_);
 }
@@ -110,16 +116,20 @@ GdrMap::~GdrMap() {
   }
 }
 
-void GdrMap::copyTo(const void* src, size_t size) { gdr_copy_to_mapping(mh_, (void*)hostDstPtr_, src, size); }
+void GdrMap::copyTo(const void* src, size_t size) { gdr_copy_to_mapping(mh_, hostDstPtr_, src, size); }
+
+void GdrMap::copyFrom(void* dst, size_t size) const { gdr_copy_from_mapping(mh_, dst, hostDstPtr_, size); }
 
 }  // namespace mscclpp
 
-#else  // !MSCCLPP_USE_GDRCOPY
+#else  // !defined(MSCCLPP_USE_GDRCOPY)
 
 namespace mscclpp {
+
+GdrStatus gdrStatus() { return GdrStatus::NotBuilt; }
 
 bool gdrEnabled() { return false; }
 
 }  // namespace mscclpp
 
-#endif  // MSCCLPP_USE_GDRCOPY
+#endif  // !defined(MSCCLPP_USE_GDRCOPY)

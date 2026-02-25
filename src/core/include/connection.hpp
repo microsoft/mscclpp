@@ -98,27 +98,31 @@ class IBConnection : public BaseConnection {
   Transport transport_;
   Transport remoteTransport_;
   std::weak_ptr<IbQp> qp_;
-  std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
-  RegisteredMemory dummyAtomicSourceMem_;
-  mscclpp::TransportInfo dstTransportInfo_;
+  std::unique_ptr<uint64_t> atomicSrc_;
+  RegisteredMemory atomicSrcMem_;
+  mscclpp::TransportInfo atomicSrcTransportInfo_;
 
   // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
   // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
   bool ibNoAtomic_;
-  bool flushSupported_;  // Whether cuFlushGPUDirectRDMAWrites is supported on this GPU
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
-  int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
-  std::unique_ptr<CudaStreamWithFlags> signalStream_;
+  int localGpuDeviceId_;  // Local GPU device ID for CUDA context and GDR mapping
 
   // Write-with-imm design:
-  // - Sender: 0-byte RDMA write-with-imm to dst MR, newValue in imm_data (32-bit)
-  // - Receiver: uses remoteUpdateDstAddr_ (set via setRemoteUpdateDstAddr) to know where to write
+  // - Sender: 8-byte RDMA write-with-imm from local host buffer to remote signal GPU buffer,
+  //   carrying the token value both as RDMA payload and in imm_data (32-bit).
+  // - Receiver: reads the full 64-bit token from the local signal GPU buffer (via BAR1 or
+  //   volatile read), then writes it to remoteUpdateDstAddr_ (the semaphore's inbound token).
   uint64_t remoteUpdateDstAddr_;
 
-#ifdef MSCCLPP_USE_GDRCOPY
+  // Remote endpoint's signal GPU buffer MR info (destination for RDMA write-with-imm).
+  // The local host buffer (atomicSrc_ / atomicSrcTransportInfo_.ibMr) serves as the source.
+  IbMrInfo remoteSignalGpuMrInfo_;
+
   std::unique_ptr<GdrMap> remoteUpdateDstAddrMap_;
-#endif
+  std::unique_ptr<GdrMap> localSignalGpuMap_;
+  uint64_t* localSignalGpuPtr_;
 
   void recvThreadFunc();
 

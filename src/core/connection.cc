@@ -197,11 +197,7 @@ void IBConnection::recvThreadFunc() {
     }
   }
 
-  // Host-side buffer to receive newValue from imm_data (need 64-bit for cudaMemcpy)
-  bool useGdr = gdrEnabled();
-  // Use pinned host memory for reliable cudaMemcpyAsync from a non-default stream.
-  auto newValueHostPtr = useGdr ? nullptr : detail::gpuCallocHostShared<uint64_t>();
-  uint64_t* newValueHost = useGdr ? new uint64_t(0) : newValueHostPtr.get();
+  uint64_t newValueHost = 0;
 
   while (!stopRecvThread_.load(std::memory_order_relaxed)) {
     auto qp = qp_.lock();
@@ -223,21 +219,19 @@ void IBConnection::recvThreadFunc() {
         continue;
       }
 
-      // The imm_data contains newValue (32-bit, extended to 64-bit)
-      // Note: getRecvWcImmData already converts from network byte order via ntohl
-      unsigned int immData = qp->getRecvWcImmData(i);
-      *newValueHost = static_cast<uint64_t>(immData);
-
-      // Flush all in-flight GPUDirect RDMA writes to GPU device memory.
-      // IB guarantees that prior RDMA data writes have been sent before the write-with-imm
-      // completion appears, but the data may still be in-flight in PCIe / GPU internal fabric.
-      // cuFlushGPUDirectRDMAWrites ensures all prior NIC writes are committed to device memory
-      // before we update the semaphore token, so the GPU kernel sees data before the flag.
-#if !defined(MSCCLPP_USE_ROCM)
-      if (flushSupported_) {
-        MSCCLPP_CUTHROW(cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
-                                                   CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
-      }
+      // Read the token value written by the remote sender.
+#if defined(DEBUG_CUFLUSH) && defined(MSCCLPP_USE_CUDA)
+      // cuFlush path: read from imm_data then flush NIC->GPU write pipeline for visibility.
+      newValueHost = static_cast<uint64_t>(qp->getRecvWcImmData(i));
+      MSCCLPP_CUTHROW(cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
+                                                 CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
+#else
+      // Read the 64-bit token from the local signal GPU buffer via volatile load.
+      // localSignalGpuPtr_ points to either a GDRCopy BAR1 mapping (CUDA) or the
+      // GPU buffer directly (ROCm system-coherent/uncached memory). volatile is not
+      // strictly needed here (uncacheable memory and intervening function calls prevent
+      // stale reads), but is kept as a convention for NIC-written memory.
+      newValueHost = *static_cast<volatile uint64_t*>(localSignalGpuPtr_);
 #endif
 
       // Read dstGpuAddr from the local stored address (set by setRemoteUpdateDstAddr)
@@ -245,33 +239,18 @@ void IBConnection::recvThreadFunc() {
       if (dstGpuAddr != 0) {
         uint64_t* dstPtr = reinterpret_cast<uint64_t*>(dstGpuAddr);
 
-#ifdef MSCCLPP_USE_GDRCOPY
-        if (useGdr && remoteUpdateDstAddrMap_ && remoteUpdateDstAddrMap_->valid()) {
+        if (remoteUpdateDstAddrMap_ && remoteUpdateDstAddrMap_->valid()) {
           // Direct host-side write to GPU memory via GDRCopy BAR1 mapping
-          remoteUpdateDstAddrMap_->copyTo(newValueHost, sizeof(uint64_t));
-        } else
-#endif
-#if defined(MSCCLPP_USE_ROCM)
-        {
-          *dstPtr = *newValueHost;
+          remoteUpdateDstAddrMap_->copyTo(&newValueHost, sizeof(uint64_t));
+        } else {
+          *dstPtr = newValueHost;
         }
-#else
-        if (signalStream_) {
-          // Fallback: use gpuMemcpyAsync with our dedicated stream
-          gpuMemcpyAsync(dstPtr, newValueHost, 1, *signalStream_, cudaMemcpyHostToDevice);
-        }
-#endif
       }
 
       // Post another recv for future messages
       qp->stageRecv(/*wrId=*/0);
       qp->postRecv();
     }
-  }
-
-  // Clean up the host-side buffer (non-GDR path is auto-freed by shared_ptr)
-  if (useGdr) {
-    delete newValueHost;
   }
 }
 
@@ -280,46 +259,64 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
     : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      dummyAtomicSource_(std::make_unique<uint64_t>(0)),
+      atomicSrc_(std::make_unique<uint64_t>(0)),
       ibNoAtomic_(getImpl(localEndpoint).ibNoAtomic_),
-      flushSupported_(false),
       stopRecvThread_(false),
       localGpuDeviceId_(localEndpoint.device().id),
-      signalStream_(nullptr),
-      remoteUpdateDstAddr_(0) {
+      remoteUpdateDstAddr_(0),
+      remoteSignalGpuMrInfo_{0, 0},
+      localSignalGpuPtr_(nullptr) {
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
-  dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
-  validateTransport(dummyAtomicSourceMem_, transport_);
-  dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
+  atomicSrcMem_ = context->registerMemory(atomicSrc_.get(), sizeof(uint64_t), transport_);
+  validateTransport(atomicSrcMem_, transport_);
+  atomicSrcTransportInfo_ = getImpl(atomicSrcMem_).getTransportInfo(transport_);
 
   if (ibNoAtomic_) {
-    // Check if cuFlushGPUDirectRDMAWrites is supported on this GPU
-    if (localGpuDeviceId_ >= 0) {
-      int flushOptions = 0;
-#if !defined(MSCCLPP_USE_ROCM)
-      CUdevice cuDev;
-      if (cuDeviceGet(&cuDev, localGpuDeviceId_) == CUDA_SUCCESS) {
-        cuDeviceGetAttribute(&flushOptions, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS, cuDev);
-      }
-      flushSupported_ = (flushOptions & CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST) != 0;
-      if (flushSupported_) {
-        INFO(CONN, "cuFlushGPUDirectRDMAWrites is supported on GPU ", localGpuDeviceId_);
-      } else {
-        WARN(CONN, "cuFlushGPUDirectRDMAWrites is NOT supported on GPU ", localGpuDeviceId_,
-             ". RDMA write ordering to GPU memory is not guaranteed.");
-      }
-#endif
-    }
-
-    // Create a CUDA stream for async memory copies (not needed when GDRCopy is available,
-    // nor on ROCm where GPU memory is host-accessible and we write directly)
-#if !defined(MSCCLPP_USE_ROCM)
+#if defined(MSCCLPP_USE_CUDA)
     if (!gdrEnabled()) {
-      signalStream_ = std::make_unique<CudaStreamWithFlags>(cudaStreamNonBlocking);
+      const char* reason = "unknown";
+      switch (gdrStatus()) {
+        case GdrStatus::NotBuilt:
+          reason = "mscclpp was not built with GDRCopy support (MSCCLPP_USE_GDRCOPY not set)";
+          break;
+        case GdrStatus::Disabled:
+          reason = "GDRCopy is disabled via MSCCLPP_FORCE_DISABLE_GDR environment variable";
+          break;
+        case GdrStatus::DriverMissing:
+          reason = "GDRCopy kernel driver is not loaded (/dev/gdrdrv not found)";
+          break;
+        case GdrStatus::OpenFailed:
+          reason = "gdr_open() failed; GDRCopy driver may be misconfigured";
+          break;
+        default:
+          break;
+      }
+      THROW(CONN, Error, ErrorCode::InvalidUsage,
+            "IB host-no-atomic mode on CUDA requires GDRCopy: ", reason);
     }
 #endif
+
+    // Extract remote endpoint's signal GPU buffer MR info for write-with-imm destination
+    const auto& remoteImpl = getImpl(remoteEndpoint);
+    remoteSignalGpuMrInfo_ = remoteImpl.ibSignalGpuMrInfo_;
+
+    // Create a GDR mapping of the local signal GPU buffer. recvThreadFunc reads the
+    // 64-bit token via localSignalGpuPtr_, which points to the BAR1-mapped host address
+    // (CUDA/GDRCopy) or the GPU buffer directly (ROCm system-coherent memory).
+    const auto& localImpl = getImpl(localEndpoint);
+    if (gdrEnabled() && localImpl.ibSignalGpuBuffer_) {
+      localSignalGpuMap_ =
+          std::make_unique<GdrMap>(std::static_pointer_cast<void>(localImpl.ibSignalGpuBuffer_), localGpuDeviceId_);
+    }
+    if (localSignalGpuMap_ && localSignalGpuMap_->valid()) {
+      // Use the BAR1-mapped host pointer; uncacheable MMIO ensures ordered volatile reads.
+      localSignalGpuPtr_ = localSignalGpuMap_->hostPtr();
+    } else if (localImpl.ibSignalGpuBuffer_) {
+      // ROCm: GPU memory is system-coherent, so direct volatile read is safe.
+      localSignalGpuPtr_ = reinterpret_cast<uint64_t*>(localImpl.ibSignalGpuBuffer_.get());
+    }
 
     // Pre-post receive requests for incoming write-with-imm
     auto qp = qp_.lock();
@@ -353,7 +350,6 @@ bool IBConnection::usesRecvThread() const { return ibNoAtomic_; }
 
 void IBConnection::setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) {
   remoteUpdateDstAddr_ = reinterpret_cast<uint64_t>(gpuMem.get());
-#ifdef MSCCLPP_USE_GDRCOPY
   if (gdrEnabled()) {
     if (gpuMem) {
       remoteUpdateDstAddrMap_ = std::make_unique<GdrMap>(std::move(gpuMem), localGpuDeviceId_);
@@ -361,7 +357,6 @@ void IBConnection::setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) {
       remoteUpdateDstAddrMap_.reset();
     }
   }
-#endif
   INFO(CONN, "IBConnection setRemoteUpdateDstAddr: ", (void*)remoteUpdateDstAddr_);
 }
 
@@ -415,22 +410,24 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   *src = newValue;
 
   if (ibNoAtomic_) {
-    // Use RDMA write-with-imm instead of atomic operation
-    // Send only newValue in imm_data (0-byte write)
-    // The remote's recvThreadFunc will use its stored remoteUpdateDstAddr_ to write
+    // Use RDMA write-with-imm instead of atomic operation.
+    // Write the token value (8 bytes) from the local host buffer to the remote signal GPU buffer,
+    // with newValue also in imm_data (32-bit). The remote's recvThreadFunc reads the token from
+    // the signal GPU buffer and forwards it to the semaphore's inbound token address.
 
     // Put newValue in imm_data (truncated to 32-bit; semaphore counters should fit)
     unsigned int immData = static_cast<unsigned int>(newValue);
 
-    // Send 0-byte write-with-imm; use dstMrInfo as target (we don't actually write anything)
-    qp_.lock()->stageSendWriteWithImm(nullptr, dstMrInfo,
-                                      /*size=*/0, /*wrId=*/0,
+    // Write the real token value into the host buffer, then RDMA write host->remote GPU
+    *atomicSrc_ = newValue;
+    qp_.lock()->stageSendWriteWithImm(atomicSrcTransportInfo_.ibMr, remoteSignalGpuMrInfo_,
+                                      /*size=*/sizeof(uint64_t), /*wrId=*/0,
                                       /*srcOffset=*/0, /*dstOffset=*/0,
                                       /*signaled=*/true, /*immData=*/immData);
     qp_.lock()->postSend();
     INFO(CONN, "IBConnection write-with-imm: value ", oldValue, " -> ", newValue);
   } else {
-    qp_.lock()->stageSendAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
+    qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
                                    /*signaled=*/true);
     qp_.lock()->postSend();
     INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
