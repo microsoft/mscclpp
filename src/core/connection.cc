@@ -199,10 +199,10 @@ void IBConnection::recvThreadFunc() {
 
   uint64_t newValueHost = 0;
 
-  while (!stopRecvThread_.load(std::memory_order_relaxed)) {
-    auto qp = qp_.lock();
-    if (!qp) break;
+  auto qp = qp_.lock();
+  if (!qp) return;
 
+  while (!stopRecvThread_.load(std::memory_order_relaxed)) {
     int wcNum = qp->pollRecvCq();
     if (wcNum < 0) {
       WARN(NET, "IBConnection recvThreadFunc: pollRecvCq failed");
