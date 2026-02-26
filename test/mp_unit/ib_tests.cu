@@ -42,7 +42,8 @@ void IbPeerToPeerTest::SetUp() {
   int ib_gid_index = std::stoi(gEnv->args["ib_gid_index"]);
 
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
-  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64);
+  bool noAtomic = !ibCtx->supportsRdmaAtomics();
+  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64, noAtomic);
 
   qpInfo[gEnv->rank] = qp->getInfo();
   bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
@@ -200,6 +201,9 @@ TEST_F(IbPeerToPeerTest, MemoryConsistency) {
     // This test needs only two ranks
     return;
   }
+  if (!ibCtx->supportsRdmaAtomics()) {
+    GTEST_SKIP() << "This test requires RDMA atomics support.";
+  }
 
   const uint64_t signalPeriod = 1024;
   const uint64_t maxIter = 10000;
@@ -307,6 +311,9 @@ TEST_F(IbPeerToPeerTest, SimpleAtomicAdd) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
+  }
+  if (!ibCtx->supportsRdmaAtomics()) {
+    GTEST_SKIP() << "This test requires RDMA atomics support.";
   }
 
   mscclpp::Timer timeout(3);

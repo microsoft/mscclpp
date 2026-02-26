@@ -131,7 +131,7 @@ const void* IbMr::getBuff() const { return buff_; }
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
-           int maxSendWr, int maxRecvWr, int maxWrPerSend)
+           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
@@ -151,7 +151,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
       maxSendCqPollNum_(maxSendCqPollNum),
       maxSendWr_(maxSendWr),
       maxWrPerSend_(maxWrPerSend),
-      maxRecvWr_(maxRecvWr) {
+      maxRecvWr_(maxRecvWr),
+      noAtomic_(noAtomic) {
   sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
   if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
@@ -211,7 +212,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
   qpAttr.port_num = portNum_;
-  qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
+  qpAttr.qp_access_flags = noAtomic_ ? IBV_ACCESS_REMOTE_WRITE
+                                     : (IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (IBVerbs::ibv_modify_qp(qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
   }
@@ -240,7 +242,7 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.path_mtu = static_cast<ibv_mtu>(info.mtu);
   qp_attr.dest_qp_num = info.qpn;
   qp_attr.rq_psn = 0;
-  qp_attr.max_dest_rd_atomic = 1;
+  qp_attr.max_dest_rd_atomic = noAtomic_ ? 0 : 1;
   qp_attr.min_rnr_timer = 0x12;
   if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.isGrh) {
     qp_attr.ah_attr.is_global = 1;
@@ -272,7 +274,7 @@ void IbQp::rts() {
   qp_attr.retry_cnt = 7;
   qp_attr.rnr_retry = 7;
   qp_attr.sq_psn = 0;
-  qp_attr.max_rd_atomic = 1;
+  qp_attr.max_rd_atomic = noAtomic_ ? 0 : 1;
   int ret = IBVerbs::ibv_modify_qp(
       qp_, &qp_attr,
       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
@@ -512,7 +514,7 @@ int IbCtx::getAnyUsablePort(int gidIndex) const {
 }
 
 std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-                                      int maxRecvWr, int maxWrPerSend) {
+                                      int maxRecvWr, int maxWrPerSend, bool noAtomic) {
   if (port == -1) {
     port = this->getAnyUsablePort(gidIndex);
     if (port == -1) {
@@ -521,8 +523,8 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
   } else if (!this->isPortUsable(port, gidIndex)) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
-  return std::shared_ptr<IbQp>(
-      new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+  return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
+                                        maxRecvWr, maxWrPerSend, noAtomic));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {

@@ -276,7 +276,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
   if (ibNoAtomic_) {
 #if defined(MSCCLPP_USE_CUDA)
     if (!gdrEnabled()) {
-      const char* reason = "unknown";
+      std::string reason = "unknown";
       switch (gdrStatus()) {
         case GdrStatus::NotBuilt:
           reason = "mscclpp was not built with GDRCopy support (MSCCLPP_USE_GDRCOPY not set)";

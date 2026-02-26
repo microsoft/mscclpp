@@ -51,7 +51,7 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
                 ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend);
+                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
 
     // Allocate a 64-bit signal GPU buffer for write-with-imm data payload (ibNoAtomic_ only).
