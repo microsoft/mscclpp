@@ -48,3 +48,26 @@ jobs:
       sshKeySecureFile: mscclpp.pem
       platform:         rocm
       gpuArch:          gfx942
+
+- job: CodeCoverageMI300X
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci-mi300x
+  variables:
+  - group: mscclpp
+  strategy:
+    matrix:
+      rocm6_2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut-codecov.yaml
+    parameters:
+      subscription:     mscclpp-ci-mi300x
+      vmssName:         mscclpp-mi300x-ci
+      sshKeySecureFile: mscclpp.pem
+      platform:         rocm
+      gpuArch:          gfx942
