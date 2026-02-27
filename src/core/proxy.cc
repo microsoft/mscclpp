@@ -59,11 +59,12 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
 MSCCLPP_API_CPP void Proxy::start(bool blocking) {
   pimpl_->running.store(true, std::memory_order_release);
   pimpl_->service = std::thread([this] {
+    pimpl_->threadInit();
+    // Call cuda API after cudaSetDevice from threadInit()
     // never capture in a proxy thread
     auto mode = cudaStreamCaptureModeRelaxed;
     MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
 
-    pimpl_->threadInit();
     pimpl_->threadStarted.store(true, std::memory_order_release);
 
     ProxyHandler handler = this->pimpl_->handler;
