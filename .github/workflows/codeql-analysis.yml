@@ -51,7 +51,7 @@ jobs:
         df -h
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
 
@@ -63,10 +63,10 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=OFF ..
-        make -j
+        make -j4
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v4
       with:
         category: "/language:${{matrix.language}}/version:${{matrix.version}}"
 
@@ -96,7 +96,7 @@ jobs:
         df -h
 
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v3
+      uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
 
@@ -108,9 +108,9 @@ jobs:
       run: |
         rm -rf build && mkdir build && cd build
         CXX=/opt/rocm/bin/hipcc cmake -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_BUILD_TESTS=OFF ..
-        make -j
+        make -j4
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v3
+      uses: github/codeql-action/analyze@v4
       with:
         category: "/language:${{matrix.language}}/version:${{matrix.version}}"
