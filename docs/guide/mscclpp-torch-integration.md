@@ -597,8 +597,3 @@ def all_reduce(self, tensor, op=torch.distributed.ReduceOp.SUM, stream=None):
 MSCCLPP_MASTER_ADDR=<ip> MSCCLPP_MASTER_PORT=<port> \
   torchrun --nnodes=1 --nproc_per_node=8 customized_comm_with_tuning.py
 ```
-
-```{note}
-Tuning adds startup latency (typically 1–5 minutes depending on GPU count and search space). The cost is amortized over the lifetime of the process. Consider caching tuned configurations to a file for repeated runs on the same hardware.
-```
-
