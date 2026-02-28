@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <algorithm>
 #include <mscclpp/switch_channel.hpp>
@@ -10,10 +10,10 @@
 void SwitchChannelTest::SetUp() {
   // Need at least two ranks within a node
   if (gEnv->nRanksPerNode < 2) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   if (!mscclpp::isNvlsSupported()) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   // Use only two ranks
   setNumRanksToUse(2);
@@ -31,7 +31,7 @@ __global__ void kernelSwitchReduce() {
 #endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
-TEST_F(SwitchChannelTest, SimpleAllReduce) {
+TEST(SwitchChannelTest, SimpleAllReduce) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::vector<int> ranks;
@@ -66,5 +66,8 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
   for (int i = 0; i < numRanksToUse; i++) {
     expected += i + 1.0f;
   }
-  ASSERT_EQ(result, expected) << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank;
+  if (result != expected) {
+    std::cerr << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank << std::endl;
+  }
+  ASSERT_EQ(result, expected);
 }

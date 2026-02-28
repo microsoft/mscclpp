@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
-#include <gtest/gtest.h>
+#include "../framework.hpp"
 
 #undef NDEBUG
 #ifndef DEBUG_BUILD

@@ -1,10 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <gtest/gtest.h>
-
 #include <thread>
 
+#include "../framework.hpp"
 #include "utils_internal.hpp"
 
 TEST(UtilsInternalTest, getHostHash) {

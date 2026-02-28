@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <mpi.h>
 
@@ -185,7 +185,7 @@ bool CommunicatorTest::testWriteCorrectness(bool skipLocal) {
   return true;
 }
 
-TEST_F(CommunicatorTest, BasicWrite) {
+TEST(CommunicatorTest, BasicWrite) {
   if (gEnv->rank >= numRanksToUse) return;
 
   deviceBufferInit();
@@ -215,7 +215,7 @@ __global__ void kernelWaitSemaphores(mscclpp::Host2DeviceSemaphore::DeviceHandle
   }
 }
 
-TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
+TEST(CommunicatorTest, WriteWithDeviceSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::unordered_map<int, std::shared_ptr<mscclpp::Host2DeviceSemaphore>> semaphores;
@@ -254,7 +254,7 @@ TEST_F(CommunicatorTest, WriteWithDeviceSemaphores) {
   communicator->bootstrap()->barrier();
 }
 
-TEST_F(CommunicatorTest, WriteWithHostSemaphores) {
+TEST(CommunicatorTest, WriteWithHostSemaphores) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::unordered_map<int, std::shared_ptr<mscclpp::Host2HostSemaphore>> semaphores;

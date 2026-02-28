@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
@@ -178,26 +178,12 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 
   proxyService->stopProxy();
 }
@@ -223,8 +209,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000;
 
   // Warm-up
@@ -247,63 +232,51 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   proxyService->stopProxy();
 }
 
-TEST_F(PortChannelOneToOneTest, PingPong) {
+TEST(PortChannelOneToOneTest, PingPong) {
   testPingPong(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIbHostMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongIbHostMode) {
+  REQUIRE_IBVERBS;
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongEthernet) {
+TEST(PortChannelOneToOneTest, PingPongEthernet) {
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongWithPoll) {
+TEST(PortChannelOneToOneTest, PingPongWithPoll) {
   testPingPong(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
+  REQUIRE_IBVERBS;
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerf) {
+TEST(PortChannelOneToOneTest, PingPongPerf) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
+  REQUIRE_IBVERBS;
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfEthernet) {
+TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
@@ -407,34 +380,14 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
-
   // The least nelem is 2 for packet ping pong
-  kernelProxyLLPingPong<true>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true><<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank,
-                                           1024 * 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true><<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank,
-                                           4 * 1024 * 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelProxyLLPingPong<true>
+        <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 
   communicator->bootstrap()->barrier();
 
@@ -471,8 +424,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
 
   proxyService->startProxy();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000000;
 
   // Warm-up
@@ -497,47 +449,32 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
   proxyService->stopProxy();
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode::Default); }
+TEST(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
+  REQUIRE_IBVERBS;
   testPacketPingPong(true, IbMode::Host);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
+TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
+  REQUIRE_IBVERBS;
   testPacketPingPongPerf(true, IbMode::Host);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
   testPacketPingPongPerf(true, IbMode::HostNoAtomic);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
-#if defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
   testPacketPingPong(true, IbMode::HostNoAtomic);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
 }

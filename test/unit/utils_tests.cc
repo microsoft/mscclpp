@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
-
-#include <gtest/gtest.h>
+// Licensed under the MIT License.
 
 #include <mscclpp/errors.hpp>
 #include <mscclpp/utils.hpp>
 #include <thread>
+
+#include "../framework.hpp"
 
 TEST(UtilsTest, getHostName) {
   std::string hostname1 = mscclpp::getHostName(1024, '.');

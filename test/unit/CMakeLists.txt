@@ -1,11 +1,13 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 target_sources(unit_tests PRIVATE
+    unit_tests_main.cc
     core_tests.cc
     gpu_utils_tests.cc
     errors_tests.cc
     fifo_tests.cu
+    fifo_perf_tests.cu
     numa_tests.cc
     socket_tests.cc
     utils_tests.cc

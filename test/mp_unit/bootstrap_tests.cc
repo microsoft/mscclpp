@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <mpi.h>
 
@@ -48,7 +48,7 @@ void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstr
   bootstrapTestSendRecv(bootstrap);
 }
 
-TEST_F(BootstrapTest, WithId) {
+TEST(BootstrapTest, WithId) {
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   mscclpp::UniqueId id;
   if (bootstrap->getRank() == 0) id = bootstrap->createUniqueId();
@@ -57,13 +57,13 @@ TEST_F(BootstrapTest, WithId) {
   bootstrapTestAll(bootstrap);
 }
 
-TEST_F(BootstrapTest, WithIpPortPair) {
+TEST(BootstrapTest, WithIpPortPair) {
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   bootstrap->initialize(gEnv->args["ip_port"]);
   bootstrapTestAll(bootstrap);
 }
 
-TEST_F(BootstrapTest, ResumeWithId) {
+TEST(BootstrapTest, ResumeWithId) {
   // This test may take a few minutes.
   bootstrapTestTimer.set(300);
 
@@ -76,19 +76,19 @@ TEST_F(BootstrapTest, ResumeWithId) {
   }
 }
 
-TEST_F(BootstrapTest, ResumeWithIpPortPair) {
+TEST(BootstrapTest, ResumeWithIpPortPair) {
   for (int i = 0; i < 5; ++i) {
     auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
     bootstrap->initialize(gEnv->args["ip_port"]);
   }
 }
 
-TEST_F(BootstrapTest, ExitBeforeConnect) {
+TEST(BootstrapTest, ExitBeforeConnect) {
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(gEnv->rank, gEnv->worldSize);
   bootstrap->createUniqueId();
 }
 
-TEST_F(BootstrapTest, TimeoutWithId) {
+TEST(BootstrapTest, TimeoutWithId) {
   mscclpp::Timer timer;
 
   // All ranks initialize a bootstrap with their own id (will hang)
@@ -99,7 +99,7 @@ TEST_F(BootstrapTest, TimeoutWithId) {
     // Set bootstrap timeout to 1 second
     bootstrap->initialize(id, 1);
   } catch (const mscclpp::Error& e) {
-    ASSERT_EQ(e.getErrorCode(), mscclpp::ErrorCode::Timeout);
+    ASSERT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::Timeout);
   }
 
   // Timeout should be sligtly greater than 1 second
@@ -139,7 +139,7 @@ class MPIBootstrap : public mscclpp::Bootstrap {
   }
 };
 
-TEST_F(BootstrapTest, MPIBootstrap) {
+TEST(BootstrapTest, MPIBootstrap) {
   auto bootstrap = std::make_shared<MPIBootstrap>();
   bootstrapTestAll(bootstrap);
 }

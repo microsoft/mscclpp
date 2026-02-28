@@ -133,3 +133,47 @@ jobs:
       vmssName:         mscclpp-h100-ci
       sshKeySecureFile: mscclpp.pem
       gpuArch:          '90'
+
+- job: CodeCoverageA100
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci
+  variables:
+  - group: mscclpp
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut-codecov.yaml
+    parameters:
+      subscription:     mscclpp-ci
+      vmssName:         mscclpp-ci
+      sshKeySecureFile: mscclpp.pem
+      gpuArch:          '80'
+
+- job: CodeCoverageH100
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci-h100
+  variables:
+  - group: mscclpp
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut-codecov.yaml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
+      sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'

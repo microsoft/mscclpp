@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
-
-#include <gmock/gmock.h>
-#include <gtest/gtest.h>
+// Licensed under the MIT License.
 
 #include <mscclpp/core.hpp>
 
-class LocalCommunicatorTest : public ::testing::Test {
+#include "../framework.hpp"
+
+// TODO: TransportFlags needs operator<< for EXPECT_EQ to work
+// Using ASSERT_TRUE with manual comparisons as workaround
+
+class LocalCommunicatorTest : public ::mscclpp::test::TestCase {
  protected:
   void SetUp() override {
     bootstrap = std::make_shared<mscclpp::TcpBootstrap>(0, 1);
@@ -18,15 +20,15 @@ class LocalCommunicatorTest : public ::testing::Test {
   std::shared_ptr<mscclpp::Communicator> comm;
 };
 
-TEST_F(LocalCommunicatorTest, RegisterMemory) {
+TEST(LocalCommunicatorTest, RegisterMemory) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   EXPECT_EQ(memory.data(), &dummy);
   EXPECT_EQ(memory.size(), sizeof(dummy));
-  EXPECT_EQ(memory.transports(), mscclpp::NoTransports);
+  ASSERT_TRUE(memory.transports() == mscclpp::NoTransports);
 }
 
-TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
+TEST(LocalCommunicatorTest, SendMemoryToSelf) {
   int dummy[42];
   auto memory = comm->registerMemory(&dummy, sizeof(dummy), mscclpp::NoTransports);
   comm->sendMemory(memory, 0);
@@ -34,5 +36,5 @@ TEST_F(LocalCommunicatorTest, SendMemoryToSelf) {
   auto sameMemory = memoryFuture.get();
   EXPECT_EQ(sameMemory.data(), memory.data());
   EXPECT_EQ(sameMemory.size(), memory.size());
-  EXPECT_EQ(sameMemory.transports(), memory.transports());
+  ASSERT_TRUE(sameMemory.transports() == memory.transports());
 }
