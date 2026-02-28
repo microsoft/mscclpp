@@ -4,22 +4,21 @@ set -e
 
 declare -A baseImageTable
 baseImageTable=(
-    ["cuda11.8"]="nvidia/cuda:11.8.0-devel-ubuntu20.04"
-    ["cuda12.1"]="nvidia/cuda:12.1.1-devel-ubuntu20.04"
-    ["cuda12.2"]="nvidia/cuda:12.2.2-devel-ubuntu20.04"
-    ["cuda12.3"]="nvidia/cuda:12.3.2-devel-ubuntu20.04"
+    ["cuda11.8"]="nvidia/cuda:11.8.0-devel-ubuntu22.04"
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
-    ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu22.04"
+    ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
 )
 
 declare -A extraLdPathTable
 extraLdPathTable=(
-    ["cuda12.1"]="/usr/local/cuda-12.1/compat:/usr/local/cuda-12.1/lib64"
-    ["cuda12.2"]="/usr/local/cuda-12.2/compat:/usr/local/cuda-12.2/lib64"
-    ["cuda12.3"]="/usr/local/cuda-12.3/compat:/usr/local/cuda-12.3/lib64"
+    ["cuda11.8"]="/usr/local/cuda-11.8/compat"
+    ["cuda12.4"]="/usr/local/cuda-12.4/compat"
+    ["cuda12.8"]="/usr/local/cuda-12.8/compat"
+    ["cuda12.9"]="/usr/local/cuda-12.9/compat"
+    ["cuda13.0"]="/usr/local/cuda-13.0/compat"
     ["rocm6.2"]="/opt/rocm/lib"
 )
 
@@ -36,7 +35,7 @@ TARGET=${1}
 OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
