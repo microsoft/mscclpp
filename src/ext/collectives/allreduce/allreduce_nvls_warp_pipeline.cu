@@ -126,9 +126,9 @@ struct NvlsWarpPipelineAdapter {
 #endif
       {
         using ChannelType = DeviceHandle<BaseMemoryChannel>;
-        allreduceNvlsWarpPipeline<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-            input, scratch, output, (ChannelType*)memoryChannels, nvlsChannels, inputSize, scratchBufferSize, rank,
-            nRanksPerNode);
+        allreduceNvlsWarpPipeline<T>
+            <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                       nvlsChannels, inputSize, scratchBufferSize, rank, nRanksPerNode);
         return cudaGetLastError();
       }
   }
