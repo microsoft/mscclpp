@@ -66,6 +66,11 @@ const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
   return range;
 }
 
+void NativeAlgorithm::setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) {
+  minMessageSize_ = minMessageSize;
+  maxMessageSize_ = maxMessageSize;
+}
+
 const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
@@ -141,6 +146,10 @@ const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
   static std::pair<size_t, size_t> range;
   range = {plan_.minMessageSize(), plan_.maxMessageSize()};
   return range;
+}
+
+void DslAlgorithm::setMessageSizeRange(size_t, size_t) {
+  THROW(EXEC, Error, ErrorCode::InvalidUsage, "setMessageSizeRange is only supported for native algorithms");
 }
 
 const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return tags_; }
