@@ -59,11 +59,15 @@ MSCCLPP_API_CPP Proxy::~Proxy() {
 MSCCLPP_API_CPP void Proxy::start(bool blocking) {
   pimpl_->running.store(true, std::memory_order_release);
   pimpl_->service = std::thread([this] {
+    // threadInit() is responsible for setting up the runtime context for the thread.
+    // The default implementation sets the CUDA device and NUMA affinity to match the main thread (see Proxy ctor).
+    // It should be called before any CUDA API calls to avoid resource allocation on unwanted GPUs.
+    pimpl_->threadInit();
+
     // never capture in a proxy thread
     auto mode = cudaStreamCaptureModeRelaxed;
     MSCCLPP_CUDATHROW(cudaThreadExchangeStreamCaptureMode(&mode));
 
-    pimpl_->threadInit();
     pimpl_->threadStarted.store(true, std::memory_order_release);
 
     ProxyHandler handler = this->pimpl_->handler;
