@@ -84,6 +84,11 @@ class Algorithm {
   /// @return The Constraint struct specifying worldSize and nRanksPerNode requirements.
   virtual Constraint constraint() const = 0;
 
+  /// Set the valid message size range for this algorithm.
+  /// @param minMessageSize Minimum supported message size in bytes.
+  /// @param maxMessageSize Maximum supported message size in bytes.
+  virtual void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) = 0;
+
   /// Execute the algorithm.
   /// @param comm The communicator to use.
   /// @param input Pointer to the input buffer.
@@ -225,11 +230,6 @@ class NativeAlgorithm : public Algorithm {
                   size_t maxMessageSize = UINT64_MAX, CollectiveBufferMode bufferMode = CollectiveBufferMode::Any,
                   std::unordered_map<std::string, uint64_t> tags = {}, Constraint constraint = {});
 
-  /// Set the valid message size range for this algorithm.
-  /// @param minMessageSize Minimum supported message size in bytes.
-  /// @param maxMessageSize Maximum supported message size in bytes.
-  void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize);
-
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
@@ -238,6 +238,7 @@ class NativeAlgorithm : public Algorithm {
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
+  void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   AlgorithmType type() const override { return AlgorithmType::Native; }
@@ -278,6 +279,7 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
+  void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,

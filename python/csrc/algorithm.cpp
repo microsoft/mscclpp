@@ -63,8 +63,7 @@ void register_algorithm(nb::module_& m) {
           .def(
               "set_message_size_range",
               [](Algorithm& self, size_t minMessageSize, size_t maxMessageSize) {
-                auto* native = dynamic_cast<NativeAlgorithm*>(&self);
-                native->setMessageSizeRange(minMessageSize, maxMessageSize);
+                self.setMessageSizeRange(minMessageSize, maxMessageSize);
               },
               nb::arg("min_message_size"), nb::arg("max_message_size"))
           .def_prop_ro("tags", &Algorithm::tags)

@@ -148,6 +148,10 @@ const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
   return range;
 }
 
+void DslAlgorithm::setMessageSizeRange(size_t, size_t) {
+  THROW(EXEC, Error, ErrorCode::InvalidUsage, "setMessageSizeRange is only supported for native algorithms");
+}
+
 const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
