@@ -60,6 +60,12 @@ void register_algorithm(nb::module_& m) {
           .def_prop_ro("name", &Algorithm::name)
           .def_prop_ro("collective", &Algorithm::collective)
           .def_prop_ro("message_range", &Algorithm::messageRange)
+          .def(
+              "set_message_size_range",
+              [](Algorithm& self, size_t minMessageSize, size_t maxMessageSize) {
+                self.setMessageSizeRange(minMessageSize, maxMessageSize);
+              },
+              nb::arg("min_message_size"), nb::arg("max_message_size"))
           .def_prop_ro("tags", &Algorithm::tags)
           .def_prop_ro("buffer_mode", &Algorithm::bufferMode)
           .def_prop_ro("constraint", &Algorithm::constraint)
