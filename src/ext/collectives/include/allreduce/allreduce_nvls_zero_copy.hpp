@@ -1,6 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#ifndef MSCCLPP_ALLREDUCE_NVLS_ZERO_COPY_HPP_
+#define MSCCLPP_ALLREDUCE_NVLS_ZERO_COPY_HPP_
+
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
@@ -22,13 +25,17 @@ class AllreduceNvls : public AlgorithmBuilder {
                                              DataType);
   AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
 
-  const size_t nvlsBufferSize_ = (1 << 30);
+  const size_t nvlsBufferSize_ = (1UL << 34);
   uint32_t nSwitchChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsOutConnections_;
   int computeCapabilityMajor_{0};
 };
 
 }  // namespace collective
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_ALLREDUCE_NVLS_ZERO_COPY_HPP_

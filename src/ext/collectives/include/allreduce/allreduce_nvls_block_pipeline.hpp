@@ -1,14 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#ifndef MSCCLPP_EXT_ALLREDUCE_NVLS_BLOCK_PIPELINE_HPP_
+#define MSCCLPP_EXT_ALLREDUCE_NVLS_BLOCK_PIPELINE_HPP_
+
 #include <mscclpp/algorithm.hpp>
 
 namespace mscclpp {
 namespace collective {
 
-class AllreduceNvlsWithCopy : public AlgorithmBuilder {
+class AllreduceNvlsBlockPipeline : public AlgorithmBuilder {
  public:
-  AllreduceNvlsWithCopy(uintptr_t scratchBuffer, size_t scratchBufferSize)
+  AllreduceNvlsBlockPipeline(uintptr_t scratchBuffer, size_t scratchBufferSize)
       : scratchBuffer_(reinterpret_cast<void*>(scratchBuffer)), scratchBufferSize_(scratchBufferSize){};
   std::shared_ptr<Algorithm> build() override;
 
@@ -29,6 +32,9 @@ class AllreduceNvlsWithCopy : public AlgorithmBuilder {
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;
+  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
 };
 }  // namespace collective
 }  // namespace mscclpp
+
+#endif  // MSCCLPP_EXT_ALLREDUCE_NVLS_BLOCK_PIPELINE_HPP_

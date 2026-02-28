@@ -61,7 +61,7 @@ class CustomizedComm:
         self._algorithm_nvls_nonzero_copy = [
             algo
             for algo in algorithms
-            if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_with_copy"
+            if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_warp_pipeline"
         ][0]
 
     def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):

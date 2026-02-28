@@ -129,7 +129,7 @@ class CustomizedComm:
         self._algo_large = [
             algo for algo in algorithms
             if algo.collective == "allreduce"
-            and algo.name == "default_allreduce_nvls_with_copy"
+            and algo.name == "default_allreduce_nvls_warp_pipeline"
         ][0]
 
     def all_reduce(self, tensor: torch.Tensor, stream=None):

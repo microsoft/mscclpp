@@ -3,7 +3,7 @@
 
 #include <mscclpp/core.hpp>
 
-#include "allreduce/allreduce_nvls.hpp"
+#include "allreduce/allreduce_nvls_zero_copy.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
@@ -105,6 +105,8 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nSwitchChannels_);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
+  this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
+  this->nvlsOutConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
 }
 
 CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
@@ -174,13 +176,11 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // setup channels
-  ctx->nvlsConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
-  ctx->switchChannels = setupNvlsChannels(ctx->nvlsConnections, (void*)sendBasePtr, sendBytes, nSwitchChannels_);
+  ctx->switchChannels = setupNvlsChannels(this->nvlsConnections_, (void*)sendBasePtr, sendBytes, nSwitchChannels_);
   if (input != output) {
-    auto nvlsOutConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
+    auto nvlsOutConnections = this->nvlsOutConnections_;
     std::vector<mscclpp::SwitchChannel> outChannels =
-        setupNvlsChannels(nvlsOutConnections, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
-    ctx->nvlsConnections.insert(ctx->nvlsConnections.end(), nvlsOutConnections.begin(), nvlsOutConnections.end());
+        setupNvlsChannels(this->nvlsOutConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
     ctx->switchChannels.insert(ctx->switchChannels.end(), outChannels.begin(), outChannels.end());
   }
 
@@ -191,7 +191,7 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
 std::shared_ptr<mscclpp::Algorithm> AllreduceNvls::build() {
   auto self = std::make_shared<AllreduceNvls>();
   return std::make_shared<mscclpp::NativeAlgorithm>(
-      "default_allreduce_nvls", "allreduce",
+      "default_allreduce_nvls_zero_copy", "allreduce",
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
