@@ -128,7 +128,9 @@ class Algorithm:
 
         Only supported for native algorithms. Raises TypeError for DSL algorithms.
         """
-        self._algorithm.set_message_range(min_message_size, max_message_size)
+        if self.is_dsl_algorithm():
+            raise TypeError("set_message_size_range is only supported for native algorithms")
+        self._algorithm.set_message_size_range(min_message_size, max_message_size)
 
     @cached_property
     def tags(self) -> Dict[str, int]:

@@ -66,7 +66,7 @@ const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
   return range;
 }
 
-void NativeAlgorithm::setMessageRange(size_t minMessageSize, size_t maxMessageSize) {
+void NativeAlgorithm::setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) {
   minMessageSize_ = minMessageSize;
   maxMessageSize_ = maxMessageSize;
 }
