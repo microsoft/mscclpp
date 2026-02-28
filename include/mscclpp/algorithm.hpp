@@ -233,6 +233,7 @@ class NativeAlgorithm : public Algorithm {
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
+  void setMessageRange(size_t minMessageSize, size_t maxMessageSize);
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   AlgorithmType type() const override { return AlgorithmType::Native; }

@@ -66,6 +66,11 @@ const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
   return range;
 }
 
+void NativeAlgorithm::setMessageRange(size_t minMessageSize, size_t maxMessageSize) {
+  minMessageSize_ = minMessageSize;
+  maxMessageSize_ = maxMessageSize;
+}
+
 const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
