@@ -468,3 +468,132 @@ stream_handle = torch.cuda.current_stream().cuda_stream
 
 All examples are in [`examples/torch-integration/`](../../examples/torch-integration/).
 
+---
+
+## Performance Tuning
+
+The default algorithms use a fixed heuristic to select algorithms based on message size. For production workloads, you can achieve significantly better performance by **auto-tuning** — benchmarking every candidate algorithm, block count, and thread count for each message size at startup, then using the fastest configuration at runtime.
+
+**Full example:** [customized_comm_with_tuning.py](../../examples/torch-integration/customized_comm_with_tuning.py)
+
+### How It Works
+
+1. **Candidate selection** — For each power-of-two message size from 1 KB to 128 MB, the tuner picks the applicable algorithms:
+   - Small messages (≤ 4 MB): `default_allreduce_nvls_packet`, `default_allreduce_packet`
+   - Large messages (≥ 512 KB): `default_allreduce_rsag_zero_copy`
+   - Overlapping sizes get all three candidates.
+
+2. **Grid search** — Each candidate is run with every combination of block counts (`4, 8, 16, … 128`) and thread counts (`512, 768, 1024`). Results are captured in a CUDA graph and timed.
+
+3. **Cross-rank consensus** — Elapsed times are averaged across all ranks with an allreduce so every GPU selects the same configuration.
+
+4. **Runtime dispatch** — `get_tuned_config()` rounds the actual message size up to the next power of two and returns the winning `(algorithm, nblocks, nthreads)` triple.
+
+### Loading Candidate Algorithms
+
+The same `load_algorithms` helper from Approach 1 is reused. The tuner extracts multiple algorithm objects:
+
+```python
+algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
+
+self._algorithm_nvls_packet = [
+    algo for algo in algorithms
+    if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_packet"
+][0]
+
+self._algorithm_rsag_zero_copy = [
+    algo for algo in algorithms
+    if algo.collective == "allreduce" and algo.name == "default_allreduce_rsag_zero_copy"
+][0]
+
+self._algorithm_packet = [
+    algo for algo in algorithms
+    if algo.collective == "allreduce" and algo.name == "default_allreduce_packet"
+][0]
+```
+
+### The Tuning Loop
+
+The tuning loop iterates over message sizes, candidate algorithms, and kernel launch parameters. CUDA graphs are used for accurate timing:
+
+```python
+def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
+    sizes = [1 << i for i in range(10, 28)]
+    self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
+
+    tune_tensor = torch.rand(1 << 27, dtype=torch.float16, device="cuda")
+    candidates_nblocks = [4, 8, 16, 24, 32, 48, 64, 128]
+    candidates_nthreads = [512, 768, 1024]
+
+    for size in sizes:
+        algos = []
+        if size <= 4 * 1024 * 1024:
+            algos.append(self._algorithm_nvls_packet)
+            algos.append(self._algorithm_packet)
+        if size >= 512 * 1024:
+            algos.append(self._algorithm_rsag_zero_copy)
+
+        best_time = float("inf")
+        best_config = None
+
+        for algo in algos:
+            for nb in candidates_nblocks:
+                for nt in candidates_nthreads:
+                    if self._run_algo(algo, tune_tensor, size, nb, nt) != 0:
+                        continue  # skip unsupported configs
+
+                    # Warmup, then time with CUDA graphs
+                    # ... (see full example for graph capture logic)
+
+                    # Average timing across ranks
+                    time_tensor = torch.full(
+                        (self.world_size,), elapsed, dtype=torch.float64, device="cuda"
+                    ).to(dtype=torch.float32)
+                    self.all_reduce(time_tensor, op=torch.distributed.ReduceOp.SUM)
+                    avg_time = time_tensor[self.rank].item() / self.world_size
+
+                    if avg_time < best_time:
+                        best_time = avg_time
+                        best_config = (algo, nb, nt)
+
+        if best_config:
+            self.best_configs[size] = best_config
+```
+
+### Dispatching with Tuned Configuration
+
+At runtime, round the message size to the next power of two and look up the best configuration:
+
+```python
+def get_tuned_config(self, size):
+    if size < 1024:
+        target_size = 1024
+    elif size > 256 * 1024 * 1024:
+        target_size = 256 * 1024 * 1024
+    else:
+        target_size = 1 << (size - 1).bit_length()
+    return self.best_configs.get(target_size)
+
+def all_reduce(self, tensor, op=torch.distributed.ReduceOp.SUM, stream=None):
+    config = self.get_tuned_config(tensor.nbytes)
+    algo, nblocks, nthreads = config if config else (self._algorithm_nvls_packet, 0, 0)
+    algo.execute(
+        comm=self.comm.communicator,
+        input_buffer=tensor.data_ptr(),
+        output_buffer=tensor.data_ptr(),
+        input_size=tensor.nbytes,
+        output_size=tensor.nbytes,
+        dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
+        op=mscclpp.ReduceOp.SUM,
+        stream=stream.cuda_stream if stream else torch.cuda.current_stream().cuda_stream,
+        nblocks=nblocks,
+        nthreads_per_block=nthreads,
+    )
+```
+
+### Running the Tuning Example
+
+```bash
+MSCCLPP_MASTER_ADDR=<ip> MSCCLPP_MASTER_PORT=<port> \
+  torchrun --nnodes=1 --nproc_per_node=8 customized_comm_with_tuning.py
+```
