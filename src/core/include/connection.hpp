@@ -5,6 +5,7 @@
 #define MSCCLPP_CONNECTION_HPP_
 
 #include <atomic>
+#include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mutex>
@@ -15,6 +16,7 @@
 #include "communicator.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
+#include "gdr.hpp"
 #include "ib.hpp"
 #include "registered_memory.hpp"
 #include "socket.h"
@@ -38,8 +40,13 @@ class BaseConnection {
   /// Set the local address where remote updateAndSync operations should write.
   /// This is called by the receiver to specify where incoming signals should be written.
   /// Default implementation is a no-op for connections that don't need it.
-  /// @param addr The local address for incoming writes.
-  virtual void setRemoteUpdateDstAddr(uint64_t /*addr*/) {}
+  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
+  virtual void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> /*gpuMem*/) {}
+
+  /// Whether this connection uses a recv thread for signaling (host-no-atomic mode).
+  /// When true, the semaphore must allocate a separate inboundToken_ for the recv thread to write to.
+  /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
+  virtual bool usesRecvThread() const { return false; }
 
   virtual Transport transport() const = 0;
 
@@ -91,22 +98,31 @@ class IBConnection : public BaseConnection {
   Transport transport_;
   Transport remoteTransport_;
   std::weak_ptr<IbQp> qp_;
-  std::unique_ptr<uint64_t> dummyAtomicSource_;  // not used anywhere but IB needs a source
-  RegisteredMemory dummyAtomicSourceMem_;
-  mscclpp::TransportInfo dstTransportInfo_;
+  std::unique_ptr<uint64_t> atomicSrc_;
+  RegisteredMemory atomicSrcMem_;
+  mscclpp::TransportInfo atomicSrcTransportInfo_;
 
   // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
   // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
   bool ibNoAtomic_;
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
-  int localGpuDeviceId_;  // Local GPU device ID for setting CUDA context in recv thread
-  cudaStream_t signalStream_;
+  int localGpuDeviceId_;  // Local GPU device ID for CUDA context and GDR mapping
 
   // Write-with-imm design:
-  // - Sender: 0-byte RDMA write-with-imm to dst MR, newValue in imm_data (32-bit)
-  // - Receiver: uses remoteUpdateDstAddr_ (set via setRemoteUpdateDstAddr) to know where to write
+  // - Sender: 8-byte RDMA write-with-imm from local host buffer to remote signal GPU buffer,
+  //   carrying the token value both as RDMA payload and in imm_data (32-bit).
+  // - Receiver: reads the full 64-bit token from the local signal GPU buffer (via BAR1 or
+  //   volatile read), then writes it to remoteUpdateDstAddr_ (the semaphore's inbound token).
   uint64_t remoteUpdateDstAddr_;
+
+  // Remote endpoint's signal GPU buffer MR info (destination for RDMA write-with-imm).
+  // The local host buffer (atomicSrc_ / atomicSrcTransportInfo_.ibMr) serves as the source.
+  IbMrInfo remoteSignalGpuMrInfo_;
+
+  std::unique_ptr<GdrMap> remoteUpdateDstAddrMap_;
+  std::unique_ptr<GdrMap> localSignalGpuMap_;
+  uint64_t* localSignalGpuPtr_;
 
   void recvThreadFunc();
 
@@ -116,8 +132,10 @@ class IBConnection : public BaseConnection {
 
   /// Set the local address where remote updateAndSync operations will write.
   /// Must be called before the remote sends any updateAndSync in host-no-atomic mode.
-  /// @param addr The local address for incoming writes.
-  void setRemoteUpdateDstAddr(uint64_t addr) override;
+  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
+  void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) override;
+
+  bool usesRecvThread() const override;
 
   Transport transport() const override;
 

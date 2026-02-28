@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.25)
 project(mscclpp LANGUAGES CXX)
@@ -170,6 +170,21 @@ if(MSCCLPP_USE_IB)
 endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
+
+option(MSCCLPP_USE_GDRCOPY "Use GDRCopy for direct GPU memory access from host." ON)
+if(MSCCLPP_USE_ROCM)
+    set(MSCCLPP_USE_GDRCOPY OFF)
+endif()
+if(MSCCLPP_USE_GDRCOPY)
+    find_package(GDRCopy)
+    if(NOT GDRCOPY_FOUND)
+        message(STATUS "GDRCopy not found, disabling GDRCopy support")
+        set(MSCCLPP_USE_GDRCOPY OFF)
+    else()
+        message(STATUS "GDRCopy found: ${GDRCOPY_LIBRARIES}")
+    endif()
+endif()
+
 include(FetchContent)
 FetchContent_Declare(json
     GIT_REPOSITORY https://github.com/nlohmann/json.git

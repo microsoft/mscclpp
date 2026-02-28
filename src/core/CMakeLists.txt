@@ -30,6 +30,12 @@ if(MSCCLPP_USE_IB)
     target_compile_definitions(mscclpp_obj PUBLIC USE_IBVERBS)
 endif()
 
+if(MSCCLPP_USE_GDRCOPY)
+    target_include_directories(mscclpp_obj SYSTEM PRIVATE ${GDRCOPY_INCLUDE_DIRS})
+    target_link_libraries(mscclpp_obj PRIVATE ${GDRCOPY_LIBRARIES})
+    target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_GDRCOPY)
+endif()
+
 set_target_properties(mscclpp_obj PROPERTIES LINKER_LANGUAGE CXX POSITION_INDEPENDENT_CODE 1 VERSION ${MSCCLPP_VERSION} SOVERSION ${MSCCLPP_SOVERSION})
 
 if(MSCCLPP_USE_CUDA)

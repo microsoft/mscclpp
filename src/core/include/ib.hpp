@@ -101,7 +101,7 @@ class IbQp {
   };
 
   IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-       int maxRecvWr, int maxWrPerSend);
+       int maxRecvWr, int maxWrPerSend, bool noAtomic);
   SendWrInfo getNewSendWrInfo();
   RecvWrInfo getNewRecvWrInfo();
 
@@ -128,6 +128,7 @@ class IbQp {
   const int maxSendWr_;
   const int maxWrPerSend_;
   const int maxRecvWr_;
+  const bool noAtomic_;
 
   friend class IbCtx;
 };
@@ -139,14 +140,14 @@ class IbCtx {
   ~IbCtx();
 
   std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-                                 int maxRecvWr, int maxWrPerSend);
+                                 int maxRecvWr, int maxWrPerSend, bool noAtomic);
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
   bool supportsRdmaAtomics() const;
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
 
-  std::shared_ptr<IbQp> createQp(int, int, int, int, int, int, int) { return nullptr; }
+  std::shared_ptr<IbQp> createQp(int, int, int, int, int, int, int, bool) { return nullptr; }
   std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
     return nullptr;
   }

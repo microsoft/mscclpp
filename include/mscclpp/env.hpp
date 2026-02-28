@@ -110,6 +110,11 @@ class Env {
   /// Default is false.
   const bool forceDisableNvls;
 
+  /// Env name: `MSCCLPP_FORCE_DISABLE_GDR`. If set to true, it will disable the GDRCopy support in MSCCL++.
+  /// When false (default), GDRCopy is auto-detected and enabled if the gdrcopy driver is loaded.
+  /// Default is false.
+  const bool forceDisableGdr;
+
  private:
   Env();
 

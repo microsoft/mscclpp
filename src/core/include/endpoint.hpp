@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <vector>
 
 #include "ib.hpp"
@@ -28,6 +29,13 @@ struct Endpoint::Impl {
   bool ibNoAtomic_;
   std::shared_ptr<IbQp> ibQp_;
   IbQpInfo ibQpInfo_;
+
+  // Signal GPU buffer for write-with-imm data payload (ibNoAtomic_ only).
+  // Each endpoint allocates a 64-bit GPU buffer and registers it as an IB MR.
+  // The MR info is serialized/exchanged so the remote can RDMA-write to it.
+  std::shared_ptr<uint64_t> ibSignalGpuBuffer_;
+  std::unique_ptr<const IbMr> ibSignalGpuMr_;
+  IbMrInfo ibSignalGpuMrInfo_;
 
   // The following are only used for Ethernet and are undefined for other transports.
   std::unique_ptr<Socket> socket_;
