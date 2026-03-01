@@ -11,6 +11,8 @@
 namespace mscclpp {
 namespace collective {
 
+constexpr int MAX_NBLOCKS = 32;
+
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvls([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
@@ -136,11 +138,17 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {::min(ctx->nRanksPerNode, nSwitchChannels_), 1024};
-    // For GB200 devices, using more blocks to improve the performances when nRanksPerNode <= 8
-    if (computeCapabilityMajor_ == 10 && ctx->nRanksPerNode <= 8) {
-      numBlocksAndThreads.first = ::min(32, nSwitchChannels_);
+    numBlocksAndThreads = {::min(ctx->nRanksPerNode, MAX_NBLOCKS), 1024};
+    // For GB200 devices with MNNVLS (Multi-Node NVLink Sharp), scale the number of blocks inversely with
+    // the number of GPUs. Empirically, 32 blocks works well for 4 GPUs and 16 for 8 GPUs, which
+    // follows the formula 128 / nGPUs, clamped to [1, MAX_NBLOCKS].
+    if (computeCapabilityMajor_ == 10) {
+      numBlocksAndThreads.first = ::max(1, ::min(128 / ctx->workSize, MAX_NBLOCKS));
     }
+  }
+  if (numBlocksAndThreads.first > MAX_NBLOCKS) {
+    WARN("Number of blocks exceeds maximum supported value of %d", MAX_NBLOCKS);
+    return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
       allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
