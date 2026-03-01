@@ -129,7 +129,7 @@ class CustomizedComm:
         self._algo_large = [
             algo for algo in algorithms
             if algo.collective == "allreduce"
-            and algo.name == "default_allreduce_nvls_with_copy"
+            and algo.name == "default_allreduce_nvls_warp_pipeline"
         ][0]
 
     def all_reduce(self, tensor: torch.Tensor, stream=None):
@@ -479,15 +479,45 @@ The default algorithms use a fixed heuristic to select algorithms based on messa
 ### How It Works
 
 1. **Candidate selection** — For each power-of-two message size from 1 KB to 128 MB, the tuner picks the applicable algorithms:
+   - All sizes (when NVLS is supported): `default_allreduce_nvls_zero_copy`
    - Small messages (≤ 4 MB): `default_allreduce_nvls_packet`, `default_allreduce_packet`
    - Large messages (≥ 512 KB): `default_allreduce_rsag_zero_copy`
-   - Overlapping sizes get all three candidates.
 
 2. **Grid search** — Each candidate is run with every combination of block counts (`4, 8, 16, … 128`) and thread counts (`512, 768, 1024`). Results are captured in a CUDA graph and timed.
 
 3. **Cross-rank consensus** — Elapsed times are averaged across all ranks with an allreduce so every GPU selects the same configuration.
 
 4. **Runtime dispatch** — `get_tuned_config()` rounds the actual message size up to the next power of two and returns the winning `(algorithm, nblocks, nthreads)` triple.
+
+### Symmetric Memory Allocation
+
+Algorithms like `default_allreduce_nvls_zero_copy` require **symmetric memory** — memory allocated identically across all GPUs via `mscclpp.RawGpuBuffer`. Regular `torch.rand()` or `torch.empty()` allocations cannot be used with these algorithms. Instead, allocate a single large buffer and reuse it for all message sizes:
+
+```python
+# Allocate symmetric memory via RawGpuBuffer and wrap as a PyTorch tensor
+tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
+tune_tensor = torch.utils.dlpack.from_dlpack(tune_tensor)
+tune_tensor.normal_()
+```
+
+When executing an algorithm with symmetric memory, pass `symmetric_memory=True`:
+
+```python
+def _run_algo(self, algo, tensor, size, nblocks, nthreads):
+    return algo.execute(
+        comm=self.comm.communicator,
+        input_buffer=tensor.data_ptr(),
+        output_buffer=tensor.data_ptr(),
+        input_size=size,
+        output_size=size,
+        dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
+        op=mscclpp.ReduceOp.SUM,
+        stream=torch.cuda.current_stream().cuda_stream,
+        nblocks=nblocks,
+        nthreads_per_block=nthreads,
+        symmetric_memory=True,
+    )
+```
 
 ### Loading Candidate Algorithms
 
@@ -510,23 +540,35 @@ self._algorithm_packet = [
     algo for algo in algorithms
     if algo.collective == "allreduce" and algo.name == "default_allreduce_packet"
 ][0]
+
+# NVLS zero-copy is only available on supported hardware
+if mscclpp.is_nvls_supported():
+    self._algorithm_nvls_zero_copy = [
+        algo for algo in algorithms
+        if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_zero_copy"
+    ][0]
 ```
 
 ### The Tuning Loop
 
-The tuning loop iterates over message sizes, candidate algorithms, and kernel launch parameters. CUDA graphs are used for accurate timing:
+The tuning loop iterates over message sizes, candidate algorithms, and kernel launch parameters. CUDA graphs are used for accurate timing. Note the use of `RawGpuBuffer` for symmetric memory:
 
 ```python
 def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
     sizes = [1 << i for i in range(10, 28)]
     self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
 
-    tune_tensor = torch.rand(1 << 27, dtype=torch.float16, device="cuda")
+    # Use RawGpuBuffer for symmetric memory allocation
+    tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
+    tune_tensor = torch.utils.dlpack.from_dlpack(tune_tensor)
+    tune_tensor.normal_()
     candidates_nblocks = [4, 8, 16, 24, 32, 48, 64, 128]
     candidates_nthreads = [512, 768, 1024]
 
     for size in sizes:
         algos = []
+        if mscclpp.is_nvls_supported():
+            algos.append(self._algorithm_nvls_zero_copy)
         if size <= 4 * 1024 * 1024:
             algos.append(self._algorithm_nvls_packet)
             algos.append(self._algorithm_packet)
@@ -588,7 +630,31 @@ def all_reduce(self, tensor, op=torch.distributed.ReduceOp.SUM, stream=None):
         stream=stream.cuda_stream if stream else torch.cuda.current_stream().cuda_stream,
         nblocks=nblocks,
         nthreads_per_block=nthreads,
+        # Pass symmetric_memory=True when the tensor is from RawGpuBuffer
+        # (see Symmetric Memory Allocation section above)
     )
+```
+
+### Benchmarking with Symmetric Memory
+
+When benchmarking tuned configurations, use the same `RawGpuBuffer` allocation pattern. Create one large buffer and slice it for each message size:
+
+```python
+def benchmark(self, n_warmup=10, n_graph_launches=10, n_iter_per_graph=100):
+    # Allocate a single large RawGpuBuffer (symmetric memory) and reuse for all sizes
+    dtype = torch.float16
+    bench_buf = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(dtype))
+    bench_buf = torch.utils.dlpack.from_dlpack(bench_buf)
+    bench_buf.normal_()
+
+    for size in sizes:
+        n_elements = size // bench_buf.element_size()
+        tensor = bench_buf[:n_elements]
+
+        # Capture CUDA graph, warmup, and time...
+        with torch.cuda.graph(g, stream=capture_stream):
+            for _ in range(n_iter_per_graph):
+                self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM)
 ```
 
 ### Running the Tuning Example

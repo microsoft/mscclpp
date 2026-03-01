@@ -3,7 +3,7 @@
 
 #include <mscclpp/algorithm.hpp>
 
-#include "allreduce/allreduce_nvls_with_copy.hpp"
+#include "allreduce/allreduce_nvls_warp_pipeline.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
 #include "debug.h"
@@ -13,11 +13,12 @@ namespace collective {
 
 template <typename T>
 __global__ void __launch_bounds__(1024, 1)
-    allreduce10([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch, [[maybe_unused]] void* dst,
-                [[maybe_unused]] DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                [[maybe_unused]] DeviceHandle<SwitchChannel>* multicast, [[maybe_unused]] size_t size,
-                [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
-                [[maybe_unused]] int nRanksPerNode) {
+    allreduceNvlsWarpPipeline([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch,
+                              [[maybe_unused]] void* dst,
+                              [[maybe_unused]] DeviceHandle<BaseMemoryChannel>* memoryChannels,
+                              [[maybe_unused]] DeviceHandle<SwitchChannel>* multicast, [[maybe_unused]] size_t size,
+                              [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
+                              [[maybe_unused]] int nRanksPerNode) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
   int nPeers = nRanksPerNode - 1;
@@ -109,7 +110,7 @@ __global__ void __launch_bounds__(1024, 1)
 }
 
 template <ReduceOp OpType, typename T>
-struct NvlsWithCopyAdapter {
+struct NvlsWarpPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
@@ -125,15 +126,15 @@ struct NvlsWithCopyAdapter {
 #endif
       {
         using ChannelType = DeviceHandle<BaseMemoryChannel>;
-        allreduce10<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                                 nvlsChannels, inputSize, scratchBufferSize, rank,
-                                                                 nRanksPerNode);
+        allreduceNvlsWarpPipeline<T>
+            <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
+                                                       nvlsChannels, inputSize, scratchBufferSize, rank, nRanksPerNode);
         return cudaGetLastError();
       }
   }
 };
 
-void AllreduceNvlsWithCopy::initialize(std::shared_ptr<Communicator> comm) {
+void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
   int nBaseChannels = 64;
   this->conns_ = setupConnections(comm);
@@ -143,14 +144,15 @@ void AllreduceNvlsWithCopy::initialize(std::shared_ptr<Communicator> comm) {
   // setup base memory channels
   this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
+  this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
 }
 
-CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
-                                                      void* output, size_t inputSize, DataType dtype, ReduceOp op,
-                                                      cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                      const std::unordered_map<std::string, uintptr_t>&) {
+CommResult AllreduceNvlsWarpPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
+                                                          void* output, size_t inputSize, DataType dtype, ReduceOp op,
+                                                          cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+                                                          const std::unordered_map<std::string, uintptr_t>&) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
-  AllreduceFunc allreduce = dispatch<NvlsWithCopyAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<NvlsWarpPipelineAdapter>(op, dtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
@@ -164,35 +166,35 @@ CommResult AllreduceNvlsWithCopy::allreduceKernelFunc(const std::shared_ptr<void
                                 ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0, 0,
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
-    WARN("AllreduceNvlsWithCopy failed with error: %s", cudaGetErrorString(error));
+    WARN("AllreduceNvlsWarpPipeline failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceNvlsWithCopy::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
+AlgorithmCtxKey AllreduceNvlsWarpPipeline::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
 
-std::shared_ptr<void> AllreduceNvlsWithCopy::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                                  void*, size_t, DataType) {
+std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+                                                                      void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup channels
-  ctx->nvlsConnections = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
   ctx->switchChannels =
-      setupNvlsChannels(ctx->nvlsConnections, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
+      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }
 
-std::shared_ptr<Algorithm> AllreduceNvlsWithCopy::build() {
-  auto self = std::make_shared<AllreduceNvlsWithCopy>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
+std::shared_ptr<Algorithm> AllreduceNvlsWarpPipeline::build() {
+  auto self =
+      std::make_shared<AllreduceNvlsWarpPipeline>(reinterpret_cast<uintptr_t>(scratchBuffer_), scratchBufferSize_);
   return std::make_shared<NativeAlgorithm>(
-      "default_allreduce_nvls_with_copy", "allreduce",
+      "default_allreduce_nvls_warp_pipeline", "allreduce",
       [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,

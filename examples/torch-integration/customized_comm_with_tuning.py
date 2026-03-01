@@ -64,6 +64,12 @@ class CustomizedComm:
         self._algorithm_packet = [
             algo for algo in algorithms if algo.collective == "allreduce" and algo.name == "default_allreduce_packet"
         ][0]
+        if mscclpp.is_nvls_supported():
+            self._algorithm_nvls_zero_copy = [
+                algo
+                for algo in algorithms
+                if algo.collective == "allreduce" and algo.name == "default_allreduce_nvls_zero_copy"
+            ][0]
         self._tune(n_warmup=5, n_graph_launches=10, n_ops_per_graph=100)
 
     def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
@@ -71,12 +77,16 @@ class CustomizedComm:
         # Pre-fill with defaults for barrier
         self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
 
-        tune_tensor = torch.rand(1 << 27, dtype=torch.float16, device="cuda")
+        tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
+        tune_tensor = torch.utils.dlpack.from_dlpack(tune_tensor)
+        tune_tensor.normal_()
         candidates_nblocks = [4, 8, 16, 24, 32, 48, 64, 128]
         candidates_nthreads = [512, 768, 1024]
 
         for size in sizes:
             algos = []
+            if mscclpp.is_nvls_supported():
+                algos.append(self._algorithm_nvls_zero_copy)
             if size <= 4 * 1024 * 1024:
                 algos.append(self._algorithm_nvls_packet)
                 algos.append(self._algorithm_packet)
@@ -150,7 +160,7 @@ class CustomizedComm:
         for algo in algos:
             algo.reset()
 
-    def _run_algo(self, algo, tensor, size, nblocks, nthreads):
+    def _run_algo(self, algo: mscclpp.Algorithm, tensor, size, nblocks, nthreads):
         return algo.execute(
             comm=self.comm.communicator,
             input_buffer=tensor.data_ptr(),
@@ -162,6 +172,7 @@ class CustomizedComm:
             stream=torch.cuda.current_stream().cuda_stream,
             nblocks=nblocks,
             nthreads_per_block=nthreads,
+            symmetric_memory=True,
         )
 
     def get_tuned_config(self, size):
@@ -188,6 +199,7 @@ class CustomizedComm:
             stream=stream.cuda_stream if stream is not None else torch.cuda.current_stream().cuda_stream,
             nblocks=nblocks,
             nthreads_per_block=nthreads,
+            symmetric_memory=True,
         )
         if ret != 0:
             print(f"Rank {self.rank}: Algo {algo.name} failed with error {ret}")
@@ -211,8 +223,16 @@ class CustomizedComm:
         dtype = torch.float16
         capture_stream = torch.cuda.Stream()
 
+        # Allocate a single large RawGpuBuffer (symmetric memory) and reuse it for all sizes.
+        # Cannot allocate per-size tensors with symmetric memory.
+        bench_buf = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(dtype))
+        bench_buf = torch.utils.dlpack.from_dlpack(bench_buf)
+        bench_buf.normal_()
+
         for size in sizes:
-            tensor = torch.rand(size // 2, dtype=dtype, device="cuda")
+            n_elements = size // bench_buf.element_size()
+            tensor = bench_buf[:n_elements]
+
             capture_stream.wait_stream(torch.cuda.current_stream())
             # Capture Graph
             g = torch.cuda.CUDAGraph()

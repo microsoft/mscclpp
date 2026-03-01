@@ -88,7 +88,7 @@ static std::shared_ptr<Algorithm> selectSingleNodeAllreduceBlackwell(
     return algoMap.at("default_allreduce_packet");
   }
   if (useNvlsWithZeroCopy) {
-    return algoMap.at("default_allreduce_nvls");
+    return algoMap.at("default_allreduce_nvls_zero_copy");
   }
 
   return algoMap.at("default_allreduce_rsag_zero_copy");
@@ -123,14 +123,14 @@ std::shared_ptr<Algorithm> selectSingleNodeAllreduce(
   }
   // Large messages with NVLS zero-copy support
   if (nvlsSupported && useNvlsWithZeroCopy) {
-    return algoMap.at("default_allreduce_nvls");
+    return algoMap.at("default_allreduce_nvls_zero_copy");
   }
   // Large messages with NVLS but without zero-copy
   if (nvlsSupported) {
     if (messageSize < (1 << 24)) {  // < 16MB
-      return algoMap.at("default_allreduce_nvls_with_copy");
+      return algoMap.at("default_allreduce_nvls_warp_pipeline");
     }
-    return algoMap.at("default_allreduce_nvls_with_copy2");
+    return algoMap.at("default_allreduce_nvls_block_pipeline");
   }
 #if defined(__HIP_PLATFORM_AMD__)
   // AMD platform: use fullmesh algorithm
