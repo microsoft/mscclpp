@@ -100,7 +100,15 @@ static inline int mscclppNcclDlopenInit() {
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
              ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
-  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommFinalize, ncclResult_t(*)(ncclComm_t));
+  {
+    void* sym = dlsym(mscclppNcclDlHandle, "ncclCommFinalize");
+    if (!sym) {
+      WARN(MSCCLPP_NCCL, "Optional NCCL symbol ncclCommFinalize not found; finalize will be treated as a no-op");
+      mscclppNcclOps.CommFinalize = nullptr;
+    } else {
+      mscclppNcclOps.CommFinalize = reinterpret_cast<ncclResult_t (*)(ncclComm_t)>(sym);
+    }
+  }
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
@@ -362,8 +370,11 @@ NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
     return ncclInvalidArgument;
   }
   ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
-  if (mscclppNcclCommPtr != nullptr) {
-    mscclppNcclOps.CommFinalize(*mscclppNcclCommPtr);
+  if (mscclppNcclCommPtr != nullptr && mscclppNcclOps.CommFinalize != nullptr) {
+    ncclResult_t result = mscclppNcclOps.CommFinalize(*mscclppNcclCommPtr);
+    if (result != ncclSuccess) {
+      return result;
+    }
   }
   comm->comm->bootstrap()->barrier();
   return ncclSuccess;
