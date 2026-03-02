@@ -43,6 +43,7 @@ typedef enum mscclppNcclDlopenErr {
 typedef struct _mscclppNcclOps_t {
   ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
   ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+  ncclResult_t (*CommFinalize)(ncclComm_t comm);
   ncclResult_t (*CommDestroy)(ncclComm_t comm);
   ncclResult_t (*CommUserRank)(const ncclComm_t, int* rank);
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
@@ -86,7 +87,7 @@ static inline int mscclppNcclDlopenInit() {
       return dlopenError;
     }
 
-    mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
+    mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE | RTLD_DEEPBIND);
     if (!mscclppNcclDlHandle) {
       WARN(MSCCLPP_NCCL, "Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
       return dlopenError;
@@ -99,6 +100,7 @@ static inline int mscclppNcclDlopenInit() {
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
              ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommFinalize, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
@@ -355,6 +357,14 @@ NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int*) {
 }
 
 NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
+  if (comm == nullptr) {
+    WARN(MSCCLPP_NCCL, "comm is nullptr");
+    return ncclInvalidArgument;
+  }
+  ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
+  if (mscclppNcclCommPtr != nullptr) {
+    mscclppNcclOps.CommFinalize(*mscclppNcclCommPtr);
+  }
   comm->comm->bootstrap()->barrier();
   return ncclSuccess;
 }
@@ -373,11 +383,11 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 #endif
 
   ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
-  delete comm;
   if (mscclppNcclCommPtr != nullptr) {
-    mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(mscclppNcclCommPtr));
-    delete static_cast<ncclComm_t*>(mscclppNcclCommPtr);
+    mscclppNcclOps.CommDestroy(*mscclppNcclCommPtr);
+    delete mscclppNcclCommPtr;
   }
+  delete comm;
   return ncclSuccess;
 }
 
