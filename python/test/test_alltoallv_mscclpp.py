@@ -257,19 +257,30 @@ def main():
     # per rank so every rank has the same total send and each NVLink
     # carries a realistically imbalanced load.
 
+    # 10 workloads picked from 3M dispatch records in a real MoE training run,
+    # covering the full imbalance spectrum from nearly uniform (1.05×) to
+    # extremely skewed (10×).  Each has 32768 total tokens → 167.8MB.
     MOE_WORKLOADS = [
-        {
-            "name": "MoE-A",
-            # input_splits=[3976,3916,4497,4838,2888,3839,4355,4459]
-            # total_send=167,772,160  total_recv=148,316,160
-            "input_tokens": [3976, 3916, 4497, 4838, 2888, 3839, 4355, 4459],
-        },
-        {
-            "name": "MoE-B",
-            # input_splits=[3009,7161,2719,2766,3428,3010,6290,4385]
-            # total_send=167,772,160  total_recv=163,722,240
-            "input_tokens": [3009, 7161, 2719, 2766, 3428, 3010, 6290, 4385],
-        },
+        {"name": "MoE-A",  # imbalance ≈ 1.05×  (near-uniform)
+         "input_tokens": [4122, 4115, 4000, 4200, 4126, 4046, 4035, 4124]},
+        {"name": "MoE-B",  # imbalance ≈ 1.20×
+         "input_tokens": [3770, 4236, 3966, 4046, 4524, 4132, 3825, 4269]},
+        {"name": "MoE-C",  # imbalance ≈ 1.35×
+         "input_tokens": [4142, 4489, 4563, 3380, 3957, 4133, 3958, 4146]},
+        {"name": "MoE-D",  # imbalance ≈ 1.50×  (median)
+         "input_tokens": [4232, 3697, 4619, 4788, 4420, 3192, 3971, 3849]},
+        {"name": "MoE-E",  # imbalance ≈ 1.75×
+         "input_tokens": [4178, 3209, 4678, 5085, 3108, 3365, 5439, 3706]},
+        {"name": "MoE-F",  # imbalance ≈ 2.00×
+         "input_tokens": [4582, 3903, 3949, 3727, 4823, 5106, 2553, 4125]},
+        {"name": "MoE-G",  # imbalance ≈ 2.50×
+         "input_tokens": [4036, 4438, 4804, 6180, 2913, 2472, 4105, 3820]},
+        {"name": "MoE-H",  # imbalance ≈ 3.50×
+         "input_tokens": [3152, 1722, 4406, 4027, 5365, 6027, 4895, 3174]},
+        {"name": "MoE-I",  # imbalance ≈ 5.00×
+         "input_tokens": [4384, 4194, 7840, 3079, 3460, 3506, 1568, 4737]},
+        {"name": "MoE-J",  # imbalance ≈ 10.00× (extreme skew)
+         "input_tokens": [2710, 7661, 3354, 4457, 4609, 766, 3423, 5788]},
     ]
     ELEMS_PER_TOKEN = 2560  # 5120 bytes / 2 bytes-per-bfloat16
 
