@@ -64,7 +64,7 @@ void register_core(nb::module_& m) {
             self->recv(data, size, peer, tag);
           },
           nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
-      .def("all_gather", &Bootstrap::allGather, nb::arg("allData"), nb::arg("size"))
+      .def("all_gather", [](Bootstrap* self, uintptr_t ptr, int size) { void* data = reinterpret_cast<void*>(ptr); self->allGather(data, size); }, nb::arg("allData"), nb::arg("size"))
       .def("barrier", &Bootstrap::barrier)
       .def("send", static_cast<void (Bootstrap::*)(const std::vector<char>&, int, int)>(&Bootstrap::send),
            nb::arg("data"), nb::arg("peer"), nb::arg("tag"))
