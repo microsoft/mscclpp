@@ -124,6 +124,13 @@ class IBConnection : public BaseConnection {
   std::unique_ptr<GdrMap> localSignalGpuMap_;
   uint64_t* localSignalGpuPtr_;
 
+  // When true, recvThreadFunc reads the token from imm_data (from CQE) instead of the
+  // signal GPU buffer via GDRCopy. Enabled when the QP is mlx5 and the signal GPU buffer
+  // MR is a Data Direct DMABUF. Memory consistency is guaranteed because both the RDMA
+  // data write and the semaphore token write (via GDRCopy) go through the Data Direct path,
+  // so all writes are visible in GPU memory when the CQE is polled.
+  bool dataDirectEnabled_;
+
   void recvThreadFunc();
 
  public:

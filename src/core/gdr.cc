@@ -90,9 +90,9 @@ GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId)
   unsigned long pageOffset = gpuAddr - alignedAddr;
   mappedSize_ = GPU_PAGE_SIZE;
 
-  int ret = gdr_pin_buffer(ctx_->handle(), alignedAddr, mappedSize_, 0, 0, &mh_);
+  int ret = gdr_pin_buffer_v2(ctx_->handle(), alignedAddr, mappedSize_, GDR_PIN_FLAG_FORCE_PCIE, &mh_);
   if (ret != 0) {
-    THROW(GPU, Error, ErrorCode::InternalError, "gdr_pin_buffer failed (ret=", ret, ") for addr ", (void*)gpuAddr,
+    THROW(GPU, Error, ErrorCode::InternalError, "gdr_pin_buffer_v2 failed (ret=", ret, ") for addr ", (void*)gpuAddr,
           ". Ensure the GPU memory is allocated with cudaMalloc (not cuMemCreate/cuMemMap).");
   }
 

@@ -219,25 +219,23 @@ void IBConnection::recvThreadFunc() {
         continue;
       }
 
-      // Read the token value written by the remote sender.
-#if defined(DEBUG_CUFLUSH) && defined(MSCCLPP_USE_CUDA)
-      // cuFlush path: read from imm_data then flush NIC->GPU write pipeline for visibility.
-      newValueHost = static_cast<uint64_t>(qp->getRecvWcImmData(i));
-      MSCCLPP_CUTHROW(cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
-                                                 CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER));
-#else
-      // Read the 64-bit token from the local signal GPU buffer via volatile load.
-      // localSignalGpuPtr_ points to either a GDRCopy BAR1 mapping (CUDA) or the
-      // GPU buffer directly (ROCm system-coherent/uncached memory). volatile is not
-      // strictly needed here (uncacheable memory and intervening function calls prevent
-      // stale reads), but is kept as a convention for NIC-written memory.
-      newValueHost = *static_cast<volatile uint64_t*>(localSignalGpuPtr_);
-#endif
+      // Read the token value from the incoming write-with-imm completion.
+      if (dataDirectEnabled_) {
+        // Data Direct path: the signal GPU buffer MR was registered with
+        // MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT, and the semaphore token is also written
+        // through Data Direct (via GDRCopy). Both writes go through the same path, so
+        // all data is visible in GPU memory when the CQE is polled. Read from imm_data.
+        newValueHost = static_cast<uint64_t>(qp->getRecvWcImmData(i));
+      } else {
+        // Slow path: read the 64-bit token from the local signal GPU buffer via volatile load.
+        // localSignalGpuPtr_ points to either a GDRCopy BAR1 mapping (CUDA) or the
+        // GPU buffer directly (ROCm system-coherent/uncached memory).
+        newValueHost = *static_cast<volatile uint64_t*>(localSignalGpuPtr_);
+      }
 
-      // Read dstGpuAddr from the local stored address (set by setRemoteUpdateDstAddr)
-      uint64_t dstGpuAddr = remoteUpdateDstAddr_;
-      if (dstGpuAddr != 0) {
-        uint64_t* dstPtr = reinterpret_cast<uint64_t*>(dstGpuAddr);
+      // Read token address from the local stored address (set by setRemoteUpdateDstAddr)
+      if (remoteUpdateDstAddr_ != 0) {
+        uint64_t* dstPtr = reinterpret_cast<uint64_t*>(remoteUpdateDstAddr_);
 
         if (remoteUpdateDstAddrMap_ && remoteUpdateDstAddrMap_->valid()) {
           // Direct host-side write to GPU memory via GDRCopy BAR1 mapping
@@ -265,7 +263,8 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       localGpuDeviceId_(localEndpoint.device().id),
       remoteUpdateDstAddr_(0),
       remoteSignalGpuMrInfo_{0, 0},
-      localSignalGpuPtr_(nullptr) {
+      localSignalGpuPtr_(nullptr),
+      dataDirectEnabled_(false) {
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
@@ -317,8 +316,18 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       localSignalGpuPtr_ = reinterpret_cast<uint64_t*>(localImpl.ibSignalGpuBuffer_.get());
     }
 
-    // Pre-post receive requests for incoming write-with-imm
+    // When the QP is mlx5 and the signal GPU buffer MR is a Data Direct DMABUF
+    // (registered via mlx5dv_reg_dmabuf_mr with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT),
+    // and the semaphore token write also goes through Data Direct (via GDRCopy to a
+    // Data Direct DMABUF MR), all writes are visible in GPU memory when the CQE is
+    // polled. This allows reading the token from imm_data instead of the signal GPU buffer.
     auto qp = qp_.lock();
+    dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect();
+    if (dataDirectEnabled_) {
+      INFO(CONN, "IBConnection: Data Direct enabled (mlx5 + DMABUF)");
+    }
+
+    // Pre-post receive requests for incoming write-with-imm
     int maxRecvWr = localEndpoint.config().ib.maxRecvWr;
     for (int i = 0; i < maxRecvWr; ++i) {
       qp->stageRecv(/*wrId=*/0);
