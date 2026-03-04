@@ -276,7 +276,8 @@ class SignalOperation(BaseOperation):
             super().__init__(Instruction.relaxed_signal)
         else:
             super().__init__(Instruction.signal)
-        self.channel_ids = set(channels_ids)
+        self.channel_ids = channels_ids
+        self.check_channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
@@ -286,10 +287,10 @@ class SignalOperation(BaseOperation):
             isinstance(other, SignalOperation)
             and self.channel_type == other.channel_type
             and self.name == other.name
-            and not self.channel_ids & other.channel_ids
+            and not self.check_channel_ids & other.check_channel_ids
         ):
             fused_operation = SignalOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                channels_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_signal),
@@ -323,7 +324,8 @@ class WaitOperation(BaseOperation):
             super().__init__(Instruction.relaxed_wait)
         else:
             super().__init__(Instruction.wait)
-        self.channel_ids = set(channels_ids)
+        self.channel_ids = channels_ids
+        self.check_channel_ids = set(channels_ids)
         self.channel_type = channel_type
         self.data_sync = data_sync
 
@@ -332,11 +334,11 @@ class WaitOperation(BaseOperation):
         if (
             isinstance(other, WaitOperation)
             and self.name == other.name
-            and not self.channel_ids & other.channel_ids
+            and not self.check_channel_ids & other.check_channel_ids
             and self.channel_type == other.channel_type
         ):
             fused_operation = WaitOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                channels_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
                 relaxed=(self.name == Instruction.relaxed_wait),
@@ -408,7 +410,7 @@ class BarrierOperation(BaseOperation):
 class FlushOperation(BaseOperation):
     def __init__(self, channels_ids: List[int], channel_type: ChannelType, data_sync: SyncType = SyncType.none):
         super().__init__(Instruction.flush)
-        self.channel_ids = set(channels_ids)
+        self.channel_ids = channels_ids
         self.channel_type = channel_type
         self.data_sync = data_sync
 
@@ -416,7 +418,7 @@ class FlushOperation(BaseOperation):
         fused_operation = None
         if isinstance(other, FlushOperation) and self.channel_type == other.channel_type:
             fused_operation = FlushOperation(
-                channels_ids=self.channel_ids | other.channel_ids,
+                channels_ids=self.channel_ids + other.channel_ids,
                 channel_type=self.channel_type,
                 data_sync=self.data_sync | other.data_sync,
             )
