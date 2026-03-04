@@ -6,6 +6,7 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <mscclpp/semaphore.hpp>
 
 namespace mscclpp {
@@ -50,6 +51,7 @@ class AlltoallvFullmesh : public AlgorithmBuilder {
 
   std::vector<Connection> conns_;
   int worldSize_;
+  bool hasRemotePeers_;  // true if any inter-node connections
 };
 
 }  // namespace collective

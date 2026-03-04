@@ -4,6 +4,7 @@
 #pragma once
 
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/copy_device.hpp>
 
@@ -28,6 +29,117 @@ constexpr int ALLTOALLV_DEFAULT_NBLOCKS = 24;
 // Default blocks per peer for the peer-parallel kernel.
 // Controls how many thread blocks cooperate on each peer's data transfer.
 constexpr int ALLTOALLV_DEFAULT_BLOCKS_PER_PEER = 16;
+
+/**
+ * Hybrid AllToAllV kernel for multi-node: MemoryChannel (intra-node) + PortChannel (inter-node).
+ *
+ * Each block handles one peer (1 block per peer). For intra-node peers, all threads
+ * cooperate on a MemoryChannel put (multi-threaded NVLink copy). For inter-node peers,
+ * thread 0 pushes a PortChannel put descriptor to the CPU proxy FIFO (single-threaded),
+ * which triggers an RDMA transfer.
+ *
+ * Key design points:
+ * - MemoryChannel uses peerIdx-based dense indexing (only intra-node peers have MemoryChannels)
+ *   but we need the SAME peerIdx ordering as the connection array.
+ *   In practice, memoryChannels[] are created only for CudaIpc connections and are dense.
+ *   We use a separate peerToMemChIdx mapping from peerIsLocal.
+ * - PortChannel uses separate dense indexing via peerToPortChannelIdx.
+ * - Signal/wait is done per-peer by thread 0 of each block.
+ *
+ * Launch config: <<<nPeers, 1024>>>
+ */
+__global__ void __launch_bounds__(1024)
+    alltoallvHybridKernel(DeviceHandle<MemoryChannel>* memoryChannels,
+                          PortChannelDeviceHandle* portChannels,
+                          const int* peerIsLocal,
+                          const int* peerToPortChannelIdx,
+                          DeviceSyncer* syncer,
+                          int rank,
+                          int worldSize,
+                          const void* sendBuff,
+                          void* recvBuff,
+                          const size_t* sendCounts,
+                          const size_t* sendDispls,
+                          const size_t* recvCounts,
+                          const size_t* recvDispls,
+                          const size_t* remoteRecvDispls) {
+  const int nPeers = worldSize - 1;
+
+  // Handle trivial case (single rank)
+  if (nPeers == 0) {
+    const int gtid = threadIdx.x + blockIdx.x * blockDim.x;
+    const int nThreads = blockDim.x * gridDim.x;
+    if (sendCounts[rank] > 0) {
+      mscclpp::copy((char*)recvBuff + recvDispls[rank],
+                    (void*)((const char*)sendBuff + sendDispls[rank]),
+                    sendCounts[rank], gtid, nThreads);
+    }
+    return;
+  }
+
+  // Phase 1: Local copy — all blocks cooperate using global thread IDs
+  const int gtid = threadIdx.x + blockIdx.x * blockDim.x;
+  const int nThreads = blockDim.x * gridDim.x;
+  if (sendCounts[rank] > 0) {
+    mscclpp::copy((char*)recvBuff + recvDispls[rank],
+                  (void*)((const char*)sendBuff + sendDispls[rank]),
+                  sendCounts[rank], gtid, nThreads);
+  }
+
+  // Phase 2: Per-peer data transfer.
+  // Each block handles one peer: blockIdx.x == peerIdx
+  const int peerIdx = blockIdx.x;
+  if (peerIdx >= nPeers) return;
+
+  const int peer = peerIdx < rank ? peerIdx : peerIdx + 1;
+
+  if (peerIsLocal[peerIdx]) {
+    // Intra-node: MemoryChannel — all threads cooperate on multi-threaded put
+    // MemoryChannels are densely indexed for CudaIpc connections only.
+    // We need to compute the MemoryChannel index from peerIdx.
+    // Count how many local peers are before this peerIdx.
+    int memChIdx = 0;
+    for (int i = 0; i < peerIdx; i++) {
+      if (peerIsLocal[i]) memChIdx++;
+    }
+
+    if (sendCounts[peer] > 0) {
+      memoryChannels[memChIdx].put(
+          remoteRecvDispls[peer],  // dst offset in peer's buffer
+          sendDispls[peer],        // src offset in our buffer
+          sendCounts[peer],        // size
+          threadIdx.x,             // thread id within block
+          blockDim.x               // total threads for this peer
+      );
+    }
+    __syncthreads();
+
+    // Signal and wait (thread 0 only)
+    if (threadIdx.x == 0) {
+      memoryChannels[memChIdx].signal();
+      if (recvCounts[peer] > 0) {
+        memoryChannels[memChIdx].wait();
+      }
+    }
+  } else {
+    // Inter-node: PortChannel — single-threaded FIFO push
+    int portChIdx = peerToPortChannelIdx[peerIdx];
+
+    if (threadIdx.x == 0 && sendCounts[peer] > 0) {
+      portChannels[portChIdx].putWithSignalAndFlush(
+          remoteRecvDispls[peer],  // dst offset
+          sendDispls[peer],        // src offset
+          sendCounts[peer]         // size
+      );
+    }
+    __syncthreads();
+
+    // Wait for incoming data from remote peer
+    if (threadIdx.x == 0 && recvCounts[peer] > 0) {
+      portChannels[portChIdx].wait();
+    }
+  }
+}
 
 /**
  * Peer-parallel AllToAllV kernel for maximum throughput with multiple GPUs.

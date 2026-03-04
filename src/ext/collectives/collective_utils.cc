@@ -7,7 +7,9 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
+#include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <mscclpp/utils.hpp>
 
 namespace mscclpp {
 namespace collective {
@@ -52,6 +54,80 @@ std::vector<mscclpp::Connection> setupConnections(std::shared_ptr<mscclpp::Commu
   std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
                  [](const auto& future) { return future.get(); });
   return connections;
+}
+
+// IB device array — GPU index maps to its dedicated IB device
+static const mscclpp::Transport IBs[] = {
+    mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2, mscclpp::Transport::IB3,
+    mscclpp::Transport::IB4, mscclpp::Transport::IB5, mscclpp::Transport::IB6, mscclpp::Transport::IB7,
+};
+
+mscclpp::Transport getIBTransportForGpu(int localGpuIdx) {
+  int ibCount = mscclpp::getIBDeviceCount();
+  if (ibCount <= 0) {
+    throw std::runtime_error("No IB devices available for inter-node communication");
+  }
+  int idx = localGpuIdx % ibCount;
+  return IBs[idx];
+}
+
+std::vector<mscclpp::Connection> setupHybridConnections(std::shared_ptr<mscclpp::Communicator> comm,
+                                                        int localGpuIdx) {
+  int rank = comm->bootstrap()->getRank();
+  int worldSize = comm->bootstrap()->getNranks();
+  int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  int thisNode = rank / nRanksPerNode;
+
+  bool hasIB = mscclpp::getIBDeviceCount() > 0;
+  mscclpp::Transport ibTransport = hasIB ? getIBTransportForGpu(localGpuIdx) : mscclpp::Transport::CudaIpc;
+
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) continue;
+    mscclpp::Transport transport;
+    if (r / nRanksPerNode == thisNode) {
+      transport = mscclpp::Transport::CudaIpc;
+    } else {
+      transport = ibTransport;
+    }
+    connectionFutures.push_back(comm->connect(transport, r));
+  }
+
+  std::vector<mscclpp::Connection> connections;
+  std::transform(connectionFutures.begin(), connectionFutures.end(), std::back_inserter(connections),
+                 [](const auto& future) { return future.get(); });
+  return connections;
+}
+
+std::vector<mscclpp::PortChannel> setupPortChannels(
+    std::shared_ptr<mscclpp::ProxyService> proxyService,
+    mscclpp::Communicator& comm,
+    const std::vector<mscclpp::Connection>& connections,
+    const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
+    mscclpp::RegisteredMemory localMemory) {
+  std::vector<mscclpp::PortChannel> channels;
+  mscclpp::MemoryId srcMemId = proxyService->addMemory(localMemory);
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid].transport() != mscclpp::Transport::CudaIpc) {
+      // IB connection → PortChannel
+      mscclpp::SemaphoreId semId = proxyService->buildAndAddSemaphore(comm, connections[cid]);
+      mscclpp::MemoryId dstMemId = proxyService->addMemory(remoteMemories[cid]);
+      channels.emplace_back(proxyService->portChannel(semId, dstMemId, srcMemId));
+    }
+  }
+  return channels;
+}
+
+std::shared_ptr<mscclpp::PortChannelDeviceHandle> setupPortChannelDeviceHandles(
+    const std::vector<mscclpp::PortChannel>& portChannels) {
+  if (portChannels.empty()) return nullptr;
+  std::vector<mscclpp::PortChannelDeviceHandle> handles;
+  std::transform(portChannels.begin(), portChannels.end(), std::back_inserter(handles),
+                 [](const mscclpp::PortChannel& ch) { return ch.deviceHandle(); });
+  auto ptr = mscclpp::detail::gpuCallocShared<mscclpp::PortChannelDeviceHandle>(handles.size());
+  mscclpp::gpuMemcpy<mscclpp::PortChannelDeviceHandle>(
+      ptr.get(), handles.data(), handles.size(), cudaMemcpyHostToDevice);
+  return ptr;
 }
 
 std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(

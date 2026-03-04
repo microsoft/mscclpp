@@ -8,7 +8,10 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/memory_channel_device.hpp>
+#include <mscclpp/port_channel.hpp>
+#include <mscclpp/port_channel_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/utils.hpp>
 
 #include <algorithm>
 
@@ -27,10 +30,25 @@ struct AllToAllVContext {
   int worldSize;
   int nRanksPerNode;
 
+  // Intra-node (CudaIpc) channels — MemoryChannel for direct NVLink copy
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
+
+  // Inter-node (IB) channels — PortChannel via ProxyService
+  std::shared_ptr<ProxyService> proxyService;
+  std::vector<PortChannel> portChannels;
+  std::shared_ptr<PortChannelDeviceHandle> portChannelDeviceHandles;
+
+  // Peer locality map: peerIsLocal[peerIdx] = 1 if intra-node, 0 if inter-node
+  // peerIdx is the index into the channel arrays (0..nPeers-1), NOT the rank
+  std::shared_ptr<int> d_peerIsLocal;           // GPU array [nPeers]
+  // For inter-node peers, maps peerIdx → portChannel index (dense indexing)
+  std::shared_ptr<int> d_peerToPortChannelIdx;  // GPU array [nPeers]
+
+  bool hasRemotePeers;  // true if any inter-node connections exist
+
   std::shared_ptr<DeviceSyncer> deviceSyncer;  // GPU-allocated, for multi-block grid sync
 };
 
@@ -68,12 +86,34 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
 
 void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   worldSize_ = comm->bootstrap()->getNranks();
-  this->conns_ = setupConnections(comm);
+  int rank = comm->bootstrap()->getRank();
+  int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  int localGpuIdx = rank % nRanksPerNode;
+
+  // Use hybrid connections: CudaIpc for intra-node, IB for inter-node
+  bool hasIB = getIBDeviceCount() > 0;
+  bool isMultiNode = (worldSize_ > nRanksPerNode);
+
+  if (hasIB && isMultiNode) {
+    this->conns_ = setupHybridConnections(comm, localGpuIdx);
+    // Check if any connections are actually inter-node
+    hasRemotePeers_ = false;
+    for (const auto& conn : this->conns_) {
+      if (!isIntraNodeConnection(conn)) {
+        hasRemotePeers_ = true;
+        break;
+      }
+    }
+  } else {
+    // Single-node or no IB: use CudaIpc for all
+    this->conns_ = setupConnections(comm);
+    hasRemotePeers_ = false;
+  }
 }
 
 CommResult AlltoallvFullmesh::alltoallvKernelFunc(
     const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
-    size_t outputSize, [[maybe_unused]] DataType dtype, cudaStream_t stream,
+    [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, cudaStream_t stream,
     [[maybe_unused]] int nBlocks, int nThreadsPerBlock,
     const std::unordered_map<std::string, uintptr_t>& extras) {
 
@@ -103,21 +143,20 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   // Use maximum threads (1024) for best bandwidth utilization
   const int threadsPerBlock = (nThreadsPerBlock > 0 && nThreadsPerBlock <= 1024) ? nThreadsPerBlock : 1024;
 
-  // Peer-parallel algorithm: blocks assigned round-robin to peers so ALL
-  // NVLink connections are active simultaneously. Critical for 4+ GPU systems.
-  //
-  // Small messages (<1MB avg): nPeers blocks (1 per peer, no barrier)
-  // Large messages (>=1MB avg): nPeers * blocksPerPeer (barrier-based)
-  constexpr size_t SIZE_THRESHOLD = 1 << 20;  // 1MB
-  size_t avgMsgSize = inputSize / worldSize;
   int nPeers = worldSize - 1;
   if (nPeers < 1) nPeers = 1;
 
-  if (avgMsgSize < SIZE_THRESHOLD) {
-    // Small messages: 1 block per peer, parallel signal/wait, no barrier
+  if (algoCtx->hasRemotePeers) {
+    // Multi-node: use hybrid kernel with MemoryChannel (intra) + PortChannel (inter)
+    // PortChannel put() is single-threaded (FIFO push), so we use 1 block per peer.
+    // For large intra-node messages, multiple blocks per local peer would help,
+    // but keeping it simple for now: 1 block per peer for both local and remote.
     int numBlocks = nPeers;
-    alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+    alltoallvHybridKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
         algoCtx->memoryChannelDeviceHandles.get(),
+        algoCtx->portChannelDeviceHandles.get(),
+        algoCtx->d_peerIsLocal.get(),
+        algoCtx->d_peerToPortChannelIdx.get(),
         algoCtx->deviceSyncer.get(),
         rank, worldSize,
         input, output,
@@ -125,22 +164,38 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         d_recvCounts, d_recvDispls,
         d_remoteRecvDispls);
   } else {
-    // Large messages: multiple blocks per peer for maximum put bandwidth.
-    // Cap total blocks to avoid excessive barrier overhead.
-    int blocksPerPeer = (nBlocks > 0 && nBlocks <= 128)
-        ? ((nBlocks + nPeers - 1) / nPeers)  // user-specified total → per-peer
-        : ALLTOALLV_DEFAULT_BLOCKS_PER_PEER;
-    int numBlocks = nPeers * blocksPerPeer;
-    if (numBlocks > 128) numBlocks = (128 / nPeers) * nPeers;  // keep multiple of nPeers
-    if (numBlocks < nPeers) numBlocks = nPeers;
-    alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
-        algoCtx->memoryChannelDeviceHandles.get(),
-        algoCtx->deviceSyncer.get(),
-        rank, worldSize,
-        input, output,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
+    // Single-node: use the optimized peer-parallel kernel (MemoryChannel only)
+    constexpr size_t SIZE_THRESHOLD = 1 << 20;  // 1MB
+    size_t avgMsgSize = inputSize / worldSize;
+
+    if (avgMsgSize < SIZE_THRESHOLD) {
+      // Small messages: 1 block per peer, parallel signal/wait, no barrier
+      int numBlocks = nPeers;
+      alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+          algoCtx->memoryChannelDeviceHandles.get(),
+          algoCtx->deviceSyncer.get(),
+          rank, worldSize,
+          input, output,
+          d_sendCounts, d_sendDispls,
+          d_recvCounts, d_recvDispls,
+          d_remoteRecvDispls);
+    } else {
+      // Large messages: multiple blocks per peer for maximum put bandwidth.
+      int blocksPerPeer = (nBlocks > 0 && nBlocks <= 128)
+          ? ((nBlocks + nPeers - 1) / nPeers)
+          : ALLTOALLV_DEFAULT_BLOCKS_PER_PEER;
+      int numBlocks = nPeers * blocksPerPeer;
+      if (numBlocks > 128) numBlocks = (128 / nPeers) * nPeers;
+      if (numBlocks < nPeers) numBlocks = nPeers;
+      alltoallvPeerParallelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+          algoCtx->memoryChannelDeviceHandles.get(),
+          algoCtx->deviceSyncer.get(),
+          rank, worldSize,
+          input, output,
+          d_sendCounts, d_sendDispls,
+          d_recvCounts, d_recvDispls,
+          d_remoteRecvDispls);
+    }
   }
 
   if (cudaGetLastError() == cudaSuccess) {
@@ -157,28 +212,64 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
   ctx->rank = comm->bootstrap()->getRank();
   ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->hasRemotePeers = this->hasRemotePeers_;
+
+  int rank = ctx->rank;
+  int nRanksPerNode = ctx->nRanksPerNode;
+  int localGpuIdx = rank % nRanksPerNode;
+
+  // Determine transport flags for memory registration.
+  // If we have remote peers, register with both CudaIpc and IB transports.
+  TransportFlags allTransports = Transport::CudaIpc;
+  if (ctx->hasRemotePeers) {
+    allTransports |= getIBTransportForGpu(localGpuIdx);
+  }
 
   // Register memories for input and output buffers
-  RegisteredMemory inputBufRegMem = comm->registerMemory((void*)input, inputSize, Transport::CudaIpc);
-  RegisteredMemory outputBufRegMem = comm->registerMemory(output, outputSize, Transport::CudaIpc);
+  RegisteredMemory inputBufRegMem = comm->registerMemory((void*)input, inputSize, allTransports);
+  RegisteredMemory outputBufRegMem = comm->registerMemory(output, outputSize, allTransports);
 
   // Exchange output buffer registration with all peers (we write to peer's output buffer)
-  std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, ctx->rank, outputBufRegMem);
+  std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, rank, outputBufRegMem);
 
-  // Setup memory semaphores for synchronization (1 channel per peer)
+  // Build peer locality map and channel index mappings
+  int nPeers = ctx->worldSize - 1;
+  std::vector<int> peerIsLocal(nPeers, 1);
+  std::vector<int> peerToPortChannelIdx(nPeers, -1);
+  int portChannelCount = 0;
+
+  for (size_t cid = 0; cid < this->conns_.size(); ++cid) {
+    if (!isIntraNodeConnection(this->conns_[cid])) {
+      peerIsLocal[cid] = 0;
+      peerToPortChannelIdx[cid] = portChannelCount++;
+    }
+  }
+
+  // Setup intra-node MemoryChannels (CudaIpc connections only)
   constexpr int nChannelsPerConnection = 1;
   ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
-
-  // Setup memory channels: we read from our input buffer, write to peer's output buffer
   ctx->memoryChannels = setupMemoryChannels(
       this->conns_,
       ctx->memorySemaphores,
       remoteOutputMemories,  // remote output buffers (where we write)
       inputBufRegMem,        // local input buffer (where we read from)
       nChannelsPerConnection);
-
-  // Setup device handles
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
+
+  // Setup inter-node PortChannels (IB connections only)
+  if (ctx->hasRemotePeers) {
+    ctx->proxyService = std::make_shared<ProxyService>();
+    ctx->portChannels = setupPortChannels(
+        ctx->proxyService, *comm, this->conns_, remoteOutputMemories, inputBufRegMem);
+    ctx->portChannelDeviceHandles = setupPortChannelDeviceHandles(ctx->portChannels);
+    ctx->proxyService->startProxy(true);
+  }
+
+  // Copy peer locality info to GPU
+  ctx->d_peerIsLocal = mscclpp::detail::gpuCallocShared<int>(nPeers);
+  mscclpp::gpuMemcpy<int>(ctx->d_peerIsLocal.get(), peerIsLocal.data(), nPeers, cudaMemcpyHostToDevice);
+  ctx->d_peerToPortChannelIdx = mscclpp::detail::gpuCallocShared<int>(nPeers);
+  mscclpp::gpuMemcpy<int>(ctx->d_peerToPortChannelIdx.get(), peerToPortChannelIdx.data(), nPeers, cudaMemcpyHostToDevice);
 
   // Allocate GPU DeviceSyncer for multi-block grid-wide barrier (zero-initialized)
   ctx->deviceSyncer = mscclpp::detail::gpuCallocShared<DeviceSyncer>();
