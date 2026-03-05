@@ -278,10 +278,47 @@ void AllToAllVTestEngine::allocateBuffer() {
 }
 
 void AllToAllVTestEngine::setupConnections() {
+  const int worldSize = args_.totalRanks;
+  const int rank = args_.rank;
+
+  // Register memory with CudaIpc transport for all peers.
+  // On NVLink-connected multi-node systems (e.g., GB200 NVL), CudaIpc works
+  // across nodes via NVLink. We force CudaIpc for all peers to avoid the
+  // default setupMeshConnections skipping non-CudaIpc connections when
+  // building MemoryChannels.
+  mscclpp::RegisteredMemory sendBufRegMem =
+      comm_->registerMemory(sendBuff_.get(), args_.maxBytes, mscclpp::Transport::CudaIpc);
+  mscclpp::RegisteredMemory recvBufRegMem =
+      comm_->registerMemory(recvBuff_.get(), args_.maxBytes, mscclpp::Transport::CudaIpc);
+
+  // Exchange recv buffer registration with all peers (PUT semantic: we write to peer's recv buffer)
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteRegMemories;
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) continue;
+    connectionFutures.push_back(comm_->connect(mscclpp::Transport::CudaIpc, r));
+    comm_->sendMemory(recvBufRegMem, r);
+    remoteRegMemories.push_back(comm_->recvMemory(r));
+  }
+
+  std::vector<mscclpp::Connection> connections;
+  for (auto& f : connectionFutures) {
+    connections.push_back(f.get());
+  }
+
+  // Create D2D semaphores and MemoryChannels for all peers
+  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
+  for (size_t cid = 0; cid < connections.size(); cid++) {
+    memorySemaphores.push_back(
+        std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, connections[cid]));
+  }
+
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  // Setup MemoryChannels: we write to peer's recv buffer from our send buffer
-  setupMeshConnections(memoryChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes,
-                       ChannelSemantic::PUT, 1);
+  for (size_t cid = 0; cid < connections.size(); cid++) {
+    // dst = peer's recv buffer (where we write), src = our send buffer (where we read)
+    memoryChannels.emplace_back(memorySemaphores[cid], remoteRegMemories[cid].get(),
+                                sendBufRegMem, recvBuff_.get());
+  }
 
   // Convert to device handles and copy to device memory
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
@@ -291,6 +328,10 @@ void AllToAllVTestEngine::setupConnections() {
   CUDATHROW(cudaMemcpy(d_memoryChannels, memoryChannelHandles.data(),
                        sizeof(DeviceHandle<mscclpp::MemoryChannel>) * memoryChannelHandles.size(),
                        cudaMemcpyHostToDevice));
+
+  // Keep registered memory references alive
+  inputMemories_.push_back(sendBufRegMem);
+  outputMemories_.push_back(recvBufRegMem);
 }
 
 std::vector<void*> AllToAllVTestEngine::getSendBuff() { return {sendBuff_.get()}; }

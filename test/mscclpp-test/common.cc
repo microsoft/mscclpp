@@ -653,8 +653,8 @@ void run(int argc, char* argv[]) {
   MPI_Comm shmcomm;
   MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
   MPI_Comm_size(shmcomm, &nRanksPerNode);
+  MPI_Comm_rank(shmcomm, &localRank);
   MPI_Comm_free(&shmcomm);
-  localRank = rank % nRanksPerNode;
   isMainProc = (rank == 0) ? 1 : 0;
 
   std::stringstream ss;
@@ -671,7 +671,10 @@ void run(int argc, char* argv[]) {
   int len = 0;
   size_t maxMem = ~0;
 
-  int cudaDev = localRank;
+  int cudaDev;
+  int deviceCount;
+  CUDATHROW(cudaGetDeviceCount(&deviceCount));
+  cudaDev = localRank % deviceCount;
   cudaDeviceProp prop;
   char busIdChar[] = "00000000:00:00.0";
   CUDATHROW(cudaGetDeviceProperties(&prop, cudaDev));
