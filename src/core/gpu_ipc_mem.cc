@@ -274,13 +274,21 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
-    int fileDesc = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(handle_.posixFd.pid),
-                                                          static_cast<uint32_t>(handle_.posixFd.fd));
-    if (cuMemImportFromShareableHandle(&allocHandle_, reinterpret_cast<void*>(fileDesc),
-                                       CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == CUDA_SUCCESS) {
-      type_ = GpuIpcMemHandle::Type::PosixFd;
+    // PosixFd uses a host-local unix domain socket to transfer the file descriptor.
+    // On GB200 NVL (cross-node NVLink domain), the peer process may be on a different
+    // host where the unix socket does not exist.  Catch the failure and fall through to
+    // RuntimeIpc which works cross-node via cudaIpcMemHandle.
+    try {
+      int fileDesc = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(handle_.posixFd.pid),
+                                                            static_cast<uint32_t>(handle_.posixFd.fd));
+      if (cuMemImportFromShareableHandle(&allocHandle_, reinterpret_cast<void*>(fileDesc),
+                                         CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR) == CUDA_SUCCESS) {
+        type_ = GpuIpcMemHandle::Type::PosixFd;
+      }
+      ::close(fileDesc);
+    } catch (const SysError&) {
+      // Unix socket unreachable (cross-node) — fall through to RuntimeIpc
     }
-    ::close(fileDesc);
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
     type_ = GpuIpcMemHandle::Type::RuntimeIpc;
