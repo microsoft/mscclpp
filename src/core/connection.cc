@@ -316,15 +316,17 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       localSignalGpuPtr_ = reinterpret_cast<uint64_t*>(localImpl.ibSignalGpuBuffer_.get());
     }
 
-    // When the QP is mlx5 and the signal GPU buffer MR is a Data Direct DMABUF
-    // (registered via mlx5dv_reg_dmabuf_mr with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT),
-    // and the semaphore token write also goes through Data Direct (via GDRCopy to a
-    // Data Direct DMABUF MR), all writes are visible in GPU memory when the CQE is
-    // polled. This allows reading the token from imm_data instead of the signal GPU buffer.
+    // Data Direct requires all three conditions:
+    // 1. Signal GPU buffer MR registered with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT
+    // 2. Local signal GPU GDRCopy mapping pinned with GDR_PIN_FLAG_FORCE_PCIE
+    // 3. (remoteUpdateDstAddr GDRCopy mapping checked at setRemoteUpdateDstAddr time)
+    // When all conditions are met, RDMA data writes and GDRCopy token writes both go
+    // through the Data Direct engine, guaranteeing GPU memory visibility at CQE poll time.
     auto qp = qp_.lock();
-    dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect();
+    dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect() &&
+                          localSignalGpuMap_ && localSignalGpuMap_->valid();
     if (dataDirectEnabled_) {
-      INFO(CONN, "IBConnection: Data Direct enabled (mlx5 + DMABUF)");
+      INFO(CONN, "IBConnection: Data Direct enabled");
     }
 
     // Pre-post receive requests for incoming write-with-imm
@@ -361,6 +363,11 @@ void IBConnection::setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) {
   if (gdrEnabled()) {
     if (gpuMem) {
       remoteUpdateDstAddrMap_ = std::make_unique<GdrMap>(std::move(gpuMem), localGpuDeviceId_);
+      // Data Direct requires the token write mapping to also use FORCE_PCIE
+      if (dataDirectEnabled_ && !(remoteUpdateDstAddrMap_ && remoteUpdateDstAddrMap_->valid())) {
+        dataDirectEnabled_ = false;
+        INFO(CONN, "IBConnection: Data Direct disabled (remoteUpdateDstAddr GDRCopy mapping not available)");
+      }
     } else {
       remoteUpdateDstAddrMap_.reset();
     }

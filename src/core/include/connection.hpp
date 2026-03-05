@@ -125,10 +125,10 @@ class IBConnection : public BaseConnection {
   uint64_t* localSignalGpuPtr_;
 
   // When true, recvThreadFunc reads the token from imm_data (from CQE) instead of the
-  // signal GPU buffer via GDRCopy. Enabled when the QP is mlx5 and the signal GPU buffer
-  // MR is a Data Direct DMABUF. Memory consistency is guaranteed because both the RDMA
-  // data write and the semaphore token write (via GDRCopy) go through the Data Direct path,
-  // so all writes are visible in GPU memory when the CQE is polled.
+  // signal GPU buffer via GDRCopy. Enabled only when all Data Direct conditions are met:
+  // the signal GPU buffer MR is registered with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT,
+  // and all GDRCopy mappings (local signal buffer and remoteUpdateDstAddr) are valid,
+  // so both RDMA data writes and GDRCopy token writes go through the Data Direct engine.
   bool dataDirectEnabled_;
 
   void recvThreadFunc();

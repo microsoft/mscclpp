@@ -80,7 +80,12 @@ GdrContext::~GdrContext() {
 // GdrMap
 
 GdrMap::GdrMap(std::shared_ptr<void> gpuMem, int deviceId)
-    : ctx_(gdrContext()), gpuMem_(std::move(gpuMem)), mh_{}, barPtr_(nullptr), hostDstPtr_(nullptr), mappedSize_(0) {
+    : ctx_(gdrContext()),
+      gpuMem_(std::move(gpuMem)),
+      mh_{},
+      barPtr_(nullptr),
+      hostDstPtr_(nullptr),
+      mappedSize_(0) {
   // Ensure CUDA device context is active for gdr_pin_buffer
   CudaDeviceGuard deviceGuard(deviceId);
 

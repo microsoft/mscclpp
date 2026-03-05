@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# Find the GDRCopy libraries
+# Find the GDRCopy libraries (>= 2.5 required for gdr_pin_buffer_v2 / GDR_PIN_FLAG_FORCE_PCIE)
 #
 # The following variables are optionally searched for defaults
 #  GDRCOPY_ROOT_DIR: Base directory where all GDRCopy components are found
@@ -31,6 +31,17 @@ find_library(GDRCOPY_LIBRARIES
   /usr/local/lib
   /usr/lib
   /usr/lib/x86_64-linux-gnu)
+
+if(GDRCOPY_INCLUDE_DIRS)
+    include(CheckSymbolExists)
+    set(CMAKE_REQUIRED_INCLUDES ${GDRCOPY_INCLUDE_DIRS})
+    check_symbol_exists(gdr_pin_buffer_v2 "gdrapi.h" GDRCOPY_HAS_PIN_BUFFER_V2)
+    unset(CMAKE_REQUIRED_INCLUDES)
+    if(NOT GDRCOPY_HAS_PIN_BUFFER_V2)
+        message(STATUS "GDRCopy found but too old (gdr_pin_buffer_v2 not available). Requires >= 2.5.")
+        set(GDRCOPY_INCLUDE_DIRS GDRCOPY_INCLUDE_DIRS-NOTFOUND)
+    endif()
+endif()
 
 include(FindPackageHandleStandardArgs)
 find_package_handle_standard_args(GDRCopy DEFAULT_MSG GDRCOPY_INCLUDE_DIRS GDRCOPY_LIBRARIES)
