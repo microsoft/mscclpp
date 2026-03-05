@@ -123,8 +123,8 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
     THROW(CONN, Error, ErrorCode::InvalidUsage, "Local endpoint device type of Host2DeviceSemaphore should be GPU");
   }
   auto connImpl = BaseConnection::getImpl(connection());
-  if (connImpl->usesRecvThread()) {
-    // Host-no-atomic mode: the recv thread writes the token to GPU memory.
+  if (connImpl->usesSignalForwarding()) {
+    // Signal forwarding mode: the recv thread writes the token to GPU memory.
     // Allocate a separate inbound token via plain cudaMalloc (not TokenPool/VMM)
     // so that it is always compatible with GDRCopy pinning (VMM memory cannot be pinned by gdr_pin_buffer).
     CudaDeviceGuard deviceGuard(connection().localDevice().id);
@@ -133,9 +133,9 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
 #else
     inboundToken_ = detail::gpuCallocShared<uint64_t>();
 #endif
-    connImpl->setRemoteUpdateDstAddr(inboundToken_);
+    connImpl->setSignalForwardingDst(inboundToken_);
   }
-  // When usesRecvThread() is false (e.g., atomic mode), inboundToken_ stays null
+  // When usesSignalForwarding() is false (e.g., atomic mode), inboundToken_ stays null
   // and the GPU polls the SemaphoreStub token directly (the NIC atomic target).
 }
 
@@ -144,9 +144,9 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communi
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::~Host2DeviceSemaphore() {
   if (inboundToken_) {
-    // Clear the connection's remote update address (and any associated GdrMap)
+    // Clear the connection's signal forwarding destination (and any associated GdrMap)
     // before inboundToken_ is freed, to avoid use-after-free on the pinned GPU memory.
-    BaseConnection::getImpl(connection())->setRemoteUpdateDstAddr(nullptr);
+    BaseConnection::getImpl(connection())->setSignalForwardingDst(nullptr);
   }
 }
 
@@ -178,12 +178,12 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphor
     THROW(CONN, Error, ErrorCode::InvalidUsage, "Local endpoint device type of Host2HostSemaphore should be CPU");
   }
   auto connImpl = BaseConnection::getImpl(connection());
-  if (connImpl->usesRecvThread()) {
-    // Host-no-atomic mode: tell the recv thread where to write the incoming token.
+  if (connImpl->usesSignalForwarding()) {
+    // Signal forwarding mode: tell the recv thread where to write the incoming token.
     // Non-owning shared_ptr: Host2HostSemaphore outlives the connection, so the memory stays valid.
     auto token =
         std::shared_ptr<uint64_t>(reinterpret_cast<uint64_t*>(semaphore_.localMemory().data()), [](uint64_t*) {});
-    connImpl->setRemoteUpdateDstAddr(std::move(token));
+    connImpl->setSignalForwardingDst(std::move(token));
   }
 }
 

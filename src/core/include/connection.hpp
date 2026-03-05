@@ -37,16 +37,16 @@ class BaseConnection {
 
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
-  /// Set the local address where remote updateAndSync operations should write.
-  /// This is called by the receiver to specify where incoming signals should be written.
+  /// Set the local address where forwarded signals should be written.
+  /// This is called by the receiver to specify where incoming signals should be forwarded.
   /// Default implementation is a no-op for connections that don't need it.
-  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
-  virtual void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> /*gpuMem*/) {}
+  /// @param mem Shared pointer to the memory for incoming writes (nullptr to clear).
+  virtual void setSignalForwardingDst(std::shared_ptr<uint64_t> /*mem*/) {}
 
-  /// Whether this connection uses a recv thread for signaling (host-no-atomic mode).
+  /// Whether this connection uses signal forwarding (e.g., IB host-no-atomic mode).
   /// When true, the semaphore must allocate a separate inboundToken_ for the recv thread to write to.
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
-  virtual bool usesRecvThread() const { return false; }
+  virtual bool usesSignalForwarding() const { return false; }
 
   virtual Transport transport() const = 0;
 
@@ -137,12 +137,12 @@ class IBConnection : public BaseConnection {
   IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
   ~IBConnection();
 
-  /// Set the local address where remote updateAndSync operations will write.
+  /// Set the local address where forwarded signals should be written.
   /// Must be called before the remote sends any updateAndSync in host-no-atomic mode.
-  /// @param gpuMem Shared pointer to the GPU/CPU memory for incoming writes (nullptr to clear).
-  void setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) override;
+  /// @param mem Shared pointer to the memory for incoming writes (nullptr to clear).
+  void setSignalForwardingDst(std::shared_ptr<uint64_t> mem) override;
 
-  bool usesRecvThread() const override;
+  bool usesSignalForwarding() const override;
 
   Transport transport() const override;
 

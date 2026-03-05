@@ -233,7 +233,7 @@ void IBConnection::recvThreadFunc() {
         newValueHost = *static_cast<volatile uint64_t*>(localSignalGpuPtr_);
       }
 
-      // Read token address from the local stored address (set by setRemoteUpdateDstAddr)
+      // Read token address from the local stored address (set by setSignalForwardingDst)
       if (remoteUpdateDstAddr_ != 0) {
         uint64_t* dstPtr = reinterpret_cast<uint64_t*>(remoteUpdateDstAddr_);
 
@@ -319,7 +319,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
     // Data Direct requires all three conditions:
     // 1. Signal GPU buffer MR registered with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT
     // 2. Local signal GPU GDRCopy mapping pinned with GDR_PIN_FLAG_FORCE_PCIE
-    // 3. (remoteUpdateDstAddr GDRCopy mapping checked at setRemoteUpdateDstAddr time)
+    // 3. (signal forwarding dst GDRCopy mapping checked at setSignalForwardingDst time)
     // When all conditions are met, RDMA data writes and GDRCopy token writes both go
     // through the Data Direct engine, guaranteeing GPU memory visibility at CQE poll time.
     auto qp = qp_.lock();
@@ -356,23 +356,23 @@ Transport IBConnection::transport() const { return transport_; }
 
 Transport IBConnection::remoteTransport() const { return remoteTransport_; }
 
-bool IBConnection::usesRecvThread() const { return ibNoAtomic_; }
+bool IBConnection::usesSignalForwarding() const { return ibNoAtomic_; }
 
-void IBConnection::setRemoteUpdateDstAddr(std::shared_ptr<uint64_t> gpuMem) {
-  remoteUpdateDstAddr_ = reinterpret_cast<uint64_t>(gpuMem.get());
+void IBConnection::setSignalForwardingDst(std::shared_ptr<uint64_t> mem) {
+  remoteUpdateDstAddr_ = reinterpret_cast<uint64_t>(mem.get());
   if (gdrEnabled()) {
-    if (gpuMem) {
-      remoteUpdateDstAddrMap_ = std::make_unique<GdrMap>(std::move(gpuMem), localGpuDeviceId_);
+    if (mem) {
+      remoteUpdateDstAddrMap_ = std::make_unique<GdrMap>(std::move(mem), localGpuDeviceId_);
       // Data Direct requires the token write mapping to also use FORCE_PCIE
       if (dataDirectEnabled_ && !(remoteUpdateDstAddrMap_ && remoteUpdateDstAddrMap_->valid())) {
         dataDirectEnabled_ = false;
-        INFO(CONN, "IBConnection: Data Direct disabled (remoteUpdateDstAddr GDRCopy mapping not available)");
+        INFO(CONN, "IBConnection: Data Direct disabled (signal forwarding dst GDRCopy mapping not available)");
       }
     } else {
       remoteUpdateDstAddrMap_.reset();
     }
   }
-  INFO(CONN, "IBConnection setRemoteUpdateDstAddr: ", (void*)remoteUpdateDstAddr_);
+  INFO(CONN, "IBConnection setSignalForwardingDst: ", (void*)remoteUpdateDstAddr_);
 }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
