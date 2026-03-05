@@ -220,6 +220,7 @@ void AllToAllVTestColl::setupCollTest(size_t size) {
 
 std::vector<KernelRestriction> AllToAllVTestColl::getKernelRestrictions() {
   return {
+      // MemoryChannel kernels — CudaIpc forced for all peers (GB200 NVL cross-node NVLink)
       {0, "alltoallvKernel", true, 1, 4 * worldSize_},
       {1, "alltoallvRingKernel", true, 1, 4 * worldSize_},
       {2, "alltoallvPipelinedKernel", true, 1, 4 * worldSize_},
@@ -278,10 +279,42 @@ void AllToAllVTestEngine::allocateBuffer() {
 }
 
 void AllToAllVTestEngine::setupConnections() {
+  // On GB200 NVL, all GPUs share an NVLink domain across nodes, so CudaIpc
+  // works cross-node at NVLink bandwidth (~900 GB/s).  Force CudaIpc for ALL
+  // peers — no IB/PortChannel needed.
+  const int worldSize = args_.totalRanks;
+  const int rank = args_.rank;
+
+  mscclpp::TransportFlags transport = mscclpp::Transport::CudaIpc;
+  mscclpp::RegisteredMemory sendBufRegMem = comm_->registerMemory(sendBuff_.get(), args_.maxBytes, transport);
+  mscclpp::RegisteredMemory recvBufRegMem = comm_->registerMemory(recvBuff_.get(), args_.maxBytes, transport);
+
+  // Keep RegisteredMemory alive
+  inputMemories_.push_back(sendBufRegMem);
+  outputMemories_.push_back(recvBufRegMem);
+
+  // Exchange recv buffer with all peers and connect via CudaIpc
+  std::vector<std::shared_future<mscclpp::Connection>> connectionFutures;
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteMemoryFutures;
+  for (int r = 0; r < worldSize; r++) {
+    if (r == rank) continue;
+    connectionFutures.push_back(comm_->connect(mscclpp::Transport::CudaIpc, r));
+    comm_->sendMemory(recvBufRegMem, r);  // PUT: peer writes into our recv buf
+    remoteMemoryFutures.push_back(comm_->recvMemory(r));
+  }
+
+  std::vector<mscclpp::Connection> connections;
+  for (auto& f : connectionFutures) connections.push_back(f.get());
+
+  std::vector<mscclpp::RegisteredMemory> remoteRecvMems;
+  for (auto& f : remoteMemoryFutures) remoteRecvMems.push_back(f.get());
+
+  // Create MemoryChannels: dst = peer's recv buf, src = our send buf
   std::vector<mscclpp::MemoryChannel> memoryChannels;
-  // Setup MemoryChannels: we write to peer's recv buffer from our send buffer
-  setupMeshConnections(memoryChannels, sendBuff_.get(), args_.maxBytes, recvBuff_.get(), args_.maxBytes,
-                       ChannelSemantic::PUT, 1);
+  for (size_t i = 0; i < connections.size(); i++) {
+    auto semaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*comm_, connections[i]);
+    memoryChannels.emplace_back(semaphore, remoteRecvMems[i], sendBufRegMem);
+  }
 
   // Convert to device handles and copy to device memory
   std::vector<DeviceHandle<mscclpp::MemoryChannel>> memoryChannelHandles;
