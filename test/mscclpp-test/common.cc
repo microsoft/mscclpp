@@ -650,11 +650,28 @@ void run(int argc, char* argv[]) {
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &totalRanks);
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-  MPI_Comm shmcomm;
-  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, &shmcomm);
-  MPI_Comm_size(shmcomm, &nRanksPerNode);
-  MPI_Comm_rank(shmcomm, &localRank);
-  MPI_Comm_free(&shmcomm);
+
+  // Determine nRanksPerNode and localRank using hostname matching.
+  // MPI_COMM_TYPE_SHARED is unreliable on GB200 NVL systems where the shared
+  // memory domain can span NVLink-connected nodes across physical boundaries,
+  // causing wrong nRanksPerNode (e.g., 8 instead of 4) and invalid GPU ordinals.
+  {
+    constexpr int MAX_HOSTNAME = 256;
+    char myHost[MAX_HOSTNAME] = {};
+    strncpy(myHost, hostname.c_str(), MAX_HOSTNAME - 1);
+    std::vector<char> allHosts(totalRanks * MAX_HOSTNAME, 0);
+    MPI_Allgather(myHost, MAX_HOSTNAME, MPI_CHAR, allHosts.data(), MAX_HOSTNAME, MPI_CHAR, MPI_COMM_WORLD);
+
+    nRanksPerNode = 0;
+    localRank = 0;
+    for (int r = 0; r < totalRanks; r++) {
+      std::string rHost(&allHosts[r * MAX_HOSTNAME]);
+      if (rHost == hostname) {
+        if (r < rank) localRank++;
+        nRanksPerNode++;
+      }
+    }
+  }
   isMainProc = (rank == 0) ? 1 : 0;
 
   std::stringstream ss;
