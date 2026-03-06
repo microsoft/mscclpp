@@ -389,7 +389,7 @@ struct EndpointConfig {
     };
 
     static constexpr int DefaultPort = -1;
-    static constexpr int DefaultGidIndex = 0;
+    static constexpr int DefaultGidIndex = 3;
     static constexpr int DefaultMaxCqSize = 1024;
     static constexpr int DefaultMaxCqPollNum = 1;
     static constexpr int DefaultMaxSendWr = 8192;

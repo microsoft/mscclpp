@@ -230,6 +230,7 @@ void IBConnection::recvThreadFunc() {
         // Slow path: read the 64-bit token from the local signal GPU buffer via volatile load.
         // localSignalGpuPtr_ points to either a GDRCopy BAR1 mapping (CUDA) or the
         // GPU buffer directly (ROCm system-coherent/uncached memory).
+        INFO(NET, "IBConnection recvThreadFunc: received message with imm_data=", qp->getRecvWcImmData(i));
         newValueHost = *static_cast<volatile uint64_t*>(localSignalGpuPtr_);
       }
 

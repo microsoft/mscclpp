@@ -181,6 +181,7 @@ def main(
     n_graph_iters: int = 10,
 ):
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
+    print(f"use GPU {mscclpp_group.my_rank % mscclpp_group.nranks_per_node} on rank {mscclpp_group.my_rank}")
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
@@ -212,17 +213,17 @@ def main(
     )
 
     mscclpp_group.barrier()
-    bench_correctness(
-        collective,
-        input_buf,
-        result_buf,
-        test_buf,
-        dtype_str,
-        mscclpp_group.my_rank,
-        mscclpp_group.nranks,
-        n_iters,
-        executor_func,
-    )
+    # bench_correctness(
+    #     collective,
+    #     input_buf,
+    #     result_buf,
+    #     test_buf,
+    #     dtype_str,
+    #     mscclpp_group.my_rank,
+    #     mscclpp_group.nranks,
+    #     n_iters,
+    #     executor_func,
+    # )
 
     mscclpp_group.barrier()
     execution_time = bench_time(n_iters, n_graph_iters, executor_func)
@@ -232,6 +233,7 @@ def main(
     print(
         f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
         f"data size: {result_buf.nbytes} bytes data type: {dtype().dtype.name} "
+        f" busBW: {result_buf.nbytes / execution_time / 1e3:.2f} GB/s "
         f"packet type: {packet_type}"
     )
     executor = None

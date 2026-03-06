@@ -30,13 +30,19 @@ find_library(GDRCOPY_LIBRARIES
   ${GDRCOPY_ROOT_DIR}/lib
   /usr/local/lib
   /usr/lib
-  /usr/lib/x86_64-linux-gnu)
+  /usr/lib/x86_64-linux-gnu
+  /usr/lib/aarch64-linux-gnu)
 
 if(GDRCOPY_INCLUDE_DIRS)
-    include(CheckSymbolExists)
+    include(CheckCXXSourceCompiles)
     set(CMAKE_REQUIRED_INCLUDES ${GDRCOPY_INCLUDE_DIRS})
-    check_symbol_exists(gdr_pin_buffer_v2 "gdrapi.h" GDRCOPY_HAS_PIN_BUFFER_V2)
+    set(CMAKE_REQUIRED_LIBRARIES ${GDRCOPY_LIBRARIES})
+    check_cxx_source_compiles("
+      #include <gdrapi.h>
+      int main() { gdr_pin_buffer_v2(0, 0, 0, 0, 0); return 0; }
+    " GDRCOPY_HAS_PIN_BUFFER_V2)
     unset(CMAKE_REQUIRED_INCLUDES)
+    unset(CMAKE_REQUIRED_LIBRARIES)
     if(NOT GDRCOPY_HAS_PIN_BUFFER_V2)
         message(STATUS "GDRCopy found but too old (gdr_pin_buffer_v2 not available). Requires >= 2.5.")
         set(GDRCOPY_INCLUDE_DIRS GDRCOPY_INCLUDE_DIRS-NOTFOUND)

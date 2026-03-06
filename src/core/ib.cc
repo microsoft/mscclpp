@@ -187,29 +187,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
   }
 
   struct ibv_qp* qp = nullptr;
-#if defined(MSCCLPP_USE_MLX5DV)
-  if (isMlx5_) {
-    struct ibv_qp_init_attr_ex qpInitAttrEx = {};
-    qpInitAttrEx.sq_sig_all = 0;
-    qpInitAttrEx.send_cq = sendCq_;
-    qpInitAttrEx.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
-    qpInitAttrEx.qp_type = IBV_QPT_RC;
-    qpInitAttrEx.cap.max_send_wr = maxSendWr;
-    qpInitAttrEx.cap.max_recv_wr = maxRecvWr;
-    qpInitAttrEx.cap.max_send_sge = 1;
-    qpInitAttrEx.cap.max_recv_sge = 1;
-    qpInitAttrEx.cap.max_inline_data = 0;
-    qpInitAttrEx.pd = pd;
-    qpInitAttrEx.comp_mask = IBV_QP_INIT_ATTR_PD;
-
-    struct mlx5dv_qp_init_attr mlx5QpAttr = {};
-
-    qp = MLX5DV::mlx5dv_create_qp(ctx, &qpInitAttrEx, &mlx5QpAttr);
-    if (qp == nullptr) {
-      THROW(NET, IbError, errno, "mlx5dv_create_qp failed (errno ", errno, ")");
-    }
-  } else
-#endif  // defined(MSCCLPP_USE_MLX5DV)
+  // mlx5dv_create_qp is only needed for special QP features (DC, AES XTS, OOO recv, etc.).
+  // For basic RC QPs, standard ibv_create_qp is sufficient even on mlx5 devices.
   {
     struct ibv_qp_init_attr qpInitAttr = {};
     qpInitAttr.sq_sig_all = 0;
