@@ -249,6 +249,13 @@ void* gpuCallocPhysical(size_t bytes, size_t gran, size_t align) {
   CUresult result = cuMemCreate(&memHandle, nbytes, &prop, 0);
   if (requestedHandleTypes & CU_MEM_HANDLE_TYPE_FABRIC &&
       (result == CUDA_ERROR_NOT_PERMITTED || result == CUDA_ERROR_NOT_SUPPORTED)) {
+    const char* errStr = "unknown";
+    (void)cuGetErrorString(result, &errStr);
+    WARN("cuMemCreate with CU_MEM_HANDLE_TYPE_FABRIC failed (%s). "
+         "Falling back to PosixFd-only handles. "
+         "Cross-node CudaIpc on GB200 NVL requires the NVIDIA IMEX daemon "
+         "-- run: sudo systemctl start nvidia-imex",
+         errStr);
     requestedHandleTypes = CU_MEM_HANDLE_TYPE_POSIX_FILE_DESCRIPTOR;
     prop.requestedHandleTypes = (CUmemAllocationHandleType)requestedHandleTypes;
     MSCCLPP_CUTHROW(cuMemCreate(&memHandle, nbytes, &prop, 0));

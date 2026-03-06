@@ -256,22 +256,9 @@ bool AllToAllVTestEngine::isInPlace() const { return false; }
 AllToAllVTestEngine::AllToAllVTestEngine(const TestArgs& args) : BaseTestEngine(args, "alltoallv") { inPlace_ = false; }
 
 void AllToAllVTestEngine::allocateBuffer() {
-  // Use cudaMalloc instead of GpuBuffer for communication buffers.
-  // GpuBuffer uses cuMemCreate (physical alloc) on NVLS-capable GPUs, which only
-  // supports Fabric and PosixFd IPC handles.  Cross-node on GB200 NVL, PosixFd fails
-  // (host-local unix socket) and Fabric requires the IMEX daemon.  cudaMalloc memory
-  // supports RuntimeIpc (cudaIpcGetMemHandle/cudaIpcOpenMemHandle), which works
-  // cross-node over the shared NVLink domain.
-  size_t numElems = args_.maxBytes / sizeof(int);
-  int* sendPtr = nullptr;
-  int* recvPtr = nullptr;
-  CUDATHROW(cudaMalloc(&sendPtr, numElems * sizeof(int)));
-  CUDATHROW(cudaMemset(sendPtr, 0, numElems * sizeof(int)));
-  CUDATHROW(cudaMalloc(&recvPtr, numElems * sizeof(int)));
-  CUDATHROW(cudaMemset(recvPtr, 0, numElems * sizeof(int)));
-  sendBuff_ = std::shared_ptr<int>(sendPtr, [](int* p) { cudaFree(p); });
-  recvBuff_ = std::shared_ptr<int>(recvPtr, [](int* p) { cudaFree(p); });
-  expectedBuff_ = std::shared_ptr<int[]>(new int[numElems]);
+  sendBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  recvBuff_ = mscclpp::GpuBuffer<int>(args_.maxBytes / sizeof(int)).memory();
+  expectedBuff_ = std::shared_ptr<int[]>(new int[args_.maxBytes / sizeof(int)]);
 
   localSendBuffV = sendBuff_.get();
   localRecvBuffV = recvBuff_.get();

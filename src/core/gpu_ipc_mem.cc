@@ -268,16 +268,21 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMemHandle type is None, cannot create GpuIpcMem");
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
-    if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
-        CUDA_SUCCESS) {
+    CUresult res =
+        cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC);
+    if (res == CUDA_SUCCESS) {
       type_ = GpuIpcMemHandle::Type::Fabric;
+    } else {
+      const char* errStr = "unknown";
+      (void)cuGetErrorString(res, &errStr);
+      WARN(GPU, "Fabric handle import failed (", errStr,
+           "). For cross-node GB200 NVL, ensure the NVIDIA IMEX daemon (nvidia-imex) is running.");
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
     // PosixFd uses a host-local unix domain socket to transfer the file descriptor.
     // On GB200 NVL (cross-node NVLink domain), the peer process may be on a different
-    // host where the unix socket does not exist.  Catch the failure and fall through to
-    // RuntimeIpc which works cross-node via cudaIpcMemHandle.
+    // host where the unix socket does not exist.  Catch the failure and fall through.
     try {
       int fileDesc = UnixSocketClient::instance().requestFd(UnixSocketServer::generateSocketPath(handle_.posixFd.pid),
                                                             static_cast<uint32_t>(handle_.posixFd.fd));

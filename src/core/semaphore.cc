@@ -30,12 +30,11 @@ struct SemaphoreStub::Impl {
 };
 
 std::shared_ptr<uint64_t> SemaphoreStub::Impl::gpuCallocToken([[maybe_unused]] std::shared_ptr<Context> context) {
-  // Always use cudaMalloc-based allocation for semaphore tokens.
-  // On GB200 NVL, CudaIpc connections may span nodes that share an NVLink domain.
-  // TokenPool uses cuMemCreate (physical alloc) whose IPC handles require either
-  // Fabric (IMEX daemon) or PosixFd (host-local unix socket) — both can fail
-  // cross-node.  cudaMalloc-based tokens use RuntimeIpc (cudaIpcGetMemHandle /
-  // cudaIpcOpenMemHandle) which works across the shared NVLink domain.
+#if (CUDA_NVLS_API_AVAILABLE)
+  if (isNvlsSupported()) {
+    return context->pimpl_->getToken();
+  }
+#endif  // CUDA_NVLS_API_AVAILABLE
 #if defined(MSCCLPP_USE_ROCM)
   return detail::gpuCallocUncachedShared<uint64_t>();
 #else   // !defined(MSCCLPP_USE_ROCM)
