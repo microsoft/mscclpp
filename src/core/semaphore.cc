@@ -87,10 +87,18 @@ MSCCLPP_API_CPP const RegisteredMemory& SemaphoreStub::memory() const { return p
 
 struct Semaphore::Impl {
   Impl(const SemaphoreStub& localStub, const RegisteredMemory& remoteStubMemory)
-      : localStub_(localStub), remoteStubMemory_(remoteStubMemory) {}
+      : localStub_(std::make_shared<SemaphoreStub>(localStub)),
+        localMemory_(localStub.memory()),
+        remoteMemory_(remoteStubMemory) {}
 
-  SemaphoreStub localStub_;
-  RegisteredMemory remoteStubMemory_;
+  Impl(const RegisteredMemory& localMemory, const RegisteredMemory& remoteMemory)
+      : localMemory_(localMemory), remoteMemory_(remoteMemory) {}
+
+  // Kept for backward compatibility with SemaphoreStub-based construction.
+  // nullptr for the new token-from-endpoint path.
+  std::shared_ptr<SemaphoreStub> localStub_;
+  RegisteredMemory localMemory_;
+  RegisteredMemory remoteMemory_;
 };
 
 Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub) {
@@ -102,11 +110,27 @@ Semaphore::Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remote
   }
 }
 
-MSCCLPP_API_CPP Connection& Semaphore::connection() { return pimpl_->localStub_.pimpl_->connection_; }
+Semaphore::Semaphore(const RegisteredMemory& localTokenMemory, const RegisteredMemory& remoteTokenMemory) {
+  auto remoteMemImpl = remoteTokenMemory.pimpl_;
+  if (remoteMemImpl->hostHash == getHostHash() && remoteMemImpl->pidHash == getPidHash()) {
+    pimpl_ = std::make_shared<Impl>(localTokenMemory,
+                                    RegisteredMemory::deserialize(remoteTokenMemory.serialize()));
+  } else {
+    pimpl_ = std::make_shared<Impl>(localTokenMemory, remoteTokenMemory);
+  }
+}
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localStub_.memory(); }
+MSCCLPP_API_CPP Connection& Semaphore::connection() {
+  if (!pimpl_->localStub_) {
+    throw Error("Semaphore::connection() is not available for semaphores built from RegisteredMemory tokens",
+                ErrorCode::InvalidUsage);
+  }
+  return pimpl_->localStub_->pimpl_->connection_;
+}
 
-MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteStubMemory_; }
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::localMemory() const { return pimpl_->localMemory_; }
+
+MSCCLPP_API_CPP const RegisteredMemory& Semaphore::remoteMemory() const { return pimpl_->remoteMemory_; }
 
 static Semaphore buildSemaphoreFromConnection(Communicator& communicator, const Connection& connection) {
   auto semaphoreFuture =
@@ -126,9 +150,26 @@ MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Semaphore& sema
 }
 
 MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(Communicator& communicator, const Connection& connection)
-    : Host2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
+    : Host2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {
+  connection_ = connection;
+}
 
-MSCCLPP_API_CPP Connection& Host2DeviceSemaphore::connection() { return semaphore_.connection(); }
+MSCCLPP_API_CPP Host2DeviceSemaphore::Host2DeviceSemaphore(const Connection& connection)
+    : semaphore_(connection.semaphore()),
+      connection_(connection),
+      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
+      outboundToken_(std::make_unique<uint64_t>()) {
+  if (this->connection().localDevice().type != DeviceType::GPU) {
+    throw Error("Local endpoint device type of Host2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
+  }
+  BaseConnection::getImpl(this->connection())
+      ->setRemoteUpdateDstAddr(reinterpret_cast<uint64_t>(semaphore_.localMemory().data()));
+}
+
+MSCCLPP_API_CPP Connection& Host2DeviceSemaphore::connection() {
+  if (connection_) return connection_;
+  return semaphore_.connection();
+}
 
 MSCCLPP_API_CPP void Host2DeviceSemaphore::signal() {
   connection().updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
@@ -156,9 +197,29 @@ MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Semaphore& semaphor
 }
 
 MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(Communicator& communicator, const Connection& connection)
-    : Host2HostSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
+    : Host2HostSemaphore(buildSemaphoreFromConnection(communicator, connection)) {
+  connection_ = connection;
+}
 
-MSCCLPP_API_CPP Connection& Host2HostSemaphore::connection() { return semaphore_.connection(); }
+MSCCLPP_API_CPP Host2HostSemaphore::Host2HostSemaphore(const Connection& connection)
+    : semaphore_(connection.semaphore()),
+      connection_(connection),
+      expectedInboundToken_(std::make_unique<uint64_t>()),
+      outboundToken_(std::make_unique<uint64_t>()) {
+  if (this->connection().transport() == Transport::CudaIpc) {
+    throw Error("Host2HostSemaphore cannot be used with CudaIpc transport", ErrorCode::InvalidUsage);
+  }
+  if (this->connection().localDevice().type != DeviceType::CPU) {
+    throw Error("Local endpoint device type of Host2HostSemaphore should be CPU", ErrorCode::InvalidUsage);
+  }
+  BaseConnection::getImpl(this->connection())
+      ->setRemoteUpdateDstAddr(reinterpret_cast<uint64_t>(semaphore_.localMemory().data()));
+}
+
+MSCCLPP_API_CPP Connection& Host2HostSemaphore::connection() {
+  if (connection_) return connection_;
+  return semaphore_.connection();
+}
 
 MSCCLPP_API_CPP void Host2HostSemaphore::signal() {
   connection().updateAndSync(semaphore_.remoteMemory(), 0, outboundToken_.get(), *outboundToken_ + 1);
@@ -186,16 +247,25 @@ MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const
     : semaphore_(semaphore),
       expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
       outboundToken_(detail::gpuCallocUnique<uint64_t>()) {
-  if (connection().localDevice().type != DeviceType::GPU) {
-    throw Error("Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
-  }
 }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(Communicator& communicator,
                                                                            const Connection& connection)
-    : MemoryDevice2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {}
+    : MemoryDevice2DeviceSemaphore(buildSemaphoreFromConnection(communicator, connection)) {
+  connection_ = connection;
+}
 
-MSCCLPP_API_CPP Connection& MemoryDevice2DeviceSemaphore::connection() { return semaphore_.connection(); }
+MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const Connection& connection)
+    : semaphore_(connection.semaphore()),
+      connection_(connection),
+      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()),
+      outboundToken_(detail::gpuCallocUnique<uint64_t>()) {
+}
+
+MSCCLPP_API_CPP Connection& MemoryDevice2DeviceSemaphore::connection() {
+  if (connection_) return connection_;
+  return semaphore_.connection();
+}
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::DeviceHandle MemoryDevice2DeviceSemaphore::deviceHandle() const {
   MemoryDevice2DeviceSemaphore::DeviceHandle device;

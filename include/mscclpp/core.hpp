@@ -504,6 +504,10 @@ class Endpoint {
   /// @return A deserialized Endpoint object.
   static Endpoint deserialize(const std::vector<char>& data);
 
+  /// Get the token memory associated with this endpoint's semaphore slot.
+  /// @return A reference to the registered memory for the semaphore token.
+  const RegisteredMemory& tokenMemory() const;
+
  private:
   struct Impl;
   Endpoint(std::shared_ptr<Impl> pimpl);
@@ -615,6 +619,7 @@ class RegisteredMemory {
 
   friend class Context;
   friend class BaseConnection;
+  friend class Endpoint;
   friend class SemaphoreStub;
   friend class Semaphore;
 };
@@ -624,6 +629,10 @@ class Connection {
  public:
   /// Constructor.
   Connection() = default;
+
+  /// Check if the connection is valid (non-default-constructed).
+  /// @return True if the connection has been established.
+  explicit operator bool() const { return impl_ != nullptr; }
 
   /// Write data from a source RegisteredMemory to a destination RegisteredMemory.
   ///
@@ -665,6 +674,15 @@ class Connection {
   /// Get the maximum write queue size.
   /// @return The maximum number of write requests that can be queued.
   int getMaxWriteQueueSize() const;
+
+  /// Get the semaphore associated with this connection. The semaphore is automatically
+  /// created when the connection is established from the endpoint tokens.
+  /// @return The semaphore.
+  Semaphore& semaphore();
+
+  /// Get the semaphore associated with this connection (const version).
+  /// @return The semaphore.
+  const Semaphore& semaphore() const;
 
  private:
   Connection(std::shared_ptr<BaseConnection> impl);
@@ -717,7 +735,12 @@ class Semaphore {
   /// @param remoteStub SemaphoreStub allocated on the remote process.
   Semaphore(const SemaphoreStub& localStub, const SemaphoreStub& remoteStub);
 
-  /// Get the connection associated with this semaphore.
+  /// Constructor from registered memory token pairs (used internally by Connection).
+  /// @param localTokenMemory Registered memory for the local semaphore token.
+  /// @param remoteTokenMemory Registered memory for the remote semaphore token.
+  Semaphore(const RegisteredMemory& localTokenMemory, const RegisteredMemory& remoteTokenMemory);
+
+  /// Get the connection associated with this semaphore (only available for SemaphoreStub-based construction).
   /// @return The connection.
   Connection& connection();
 

@@ -70,33 +70,29 @@ int main() {
   mscclpp::Endpoint ep0 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 0}});
   mscclpp::Endpoint ep1 = ctx->createEndpoint({transport, {mscclpp::DeviceType::GPU, 1}});
 
-  log("GPU 0: Creating a connection and a semaphore stub ...");
+  log("GPU 0: Creating a connection ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
   mscclpp::Connection conn0 = ctx->connect(/*localEndpoint*/ ep0, /*remoteEndpoint*/ ep1);
-  mscclpp::SemaphoreStub semaStub0(conn0);
 
-  log("GPU 1: Creating a connection and a semaphore stub ...");
+  log("GPU 1: Creating a connection ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(1));
   mscclpp::Connection conn1 = ctx->connect(/*localEndpoint*/ ep1, /*remoteEndpoint*/ ep0);
-  mscclpp::SemaphoreStub semaStub1(conn1);
 
-  log("GPU 0: Creating a semaphore and a memory channel ...");
+  log("GPU 0: Creating a memory channel ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(0));
-  mscclpp::Semaphore sema0(/*localSemaphoreStub*/ semaStub0, /*remoteSemaphoreStub*/ semaStub1);
-  mscclpp::BaseMemoryChannel memChan0(sema0);
+  mscclpp::BaseMemoryChannel memChan0(conn0);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle0 = memChan0.deviceHandle();
   void* devHandle0;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle0, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
   MSCCLPP_CUDATHROW(cudaMemcpy(devHandle0, &memChanHandle0, sizeof(memChanHandle0), cudaMemcpyHostToDevice));
 
-  log("GPU 1: Creating a semaphore and a memory channel ...");
+  log("GPU 1: Creating a memory channel ...");
 
   MSCCLPP_CUDATHROW(cudaSetDevice(1));
-  mscclpp::Semaphore sema1(/*localSemaphoreStub*/ semaStub1, /*remoteSemaphoreStub*/ semaStub0);
-  mscclpp::BaseMemoryChannel memChan1(sema1);
+  mscclpp::BaseMemoryChannel memChan1(conn1);
   mscclpp::BaseMemoryChannelDeviceHandle memChanHandle1 = memChan1.deviceHandle();
   void* devHandle1;
   MSCCLPP_CUDATHROW(cudaMalloc(&devHandle1, sizeof(mscclpp::BaseMemoryChannelDeviceHandle)));
@@ -129,8 +125,7 @@ int main() {
   float msPerIter = elapsedMs / iter;
   log("Elapsed ", msPerIter, " ms per iteration (", iter, ")");
   if (msPerIter < 1.0f) {
-    log("Failed: the elapsed time per iteration is less than 1 ms, which may indicate that the relaxedSignal "
-        "and relaxedWait are not working as expected.");
+    log("Failed: elapsed time per iteration < 1 ms, relaxedSignal/relaxedWait may not work correctly.");
     return 1;
   }
   log("Succeed!");

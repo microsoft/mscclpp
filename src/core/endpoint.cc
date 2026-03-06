@@ -17,6 +17,28 @@
 
 namespace mscclpp {
 
+void Endpoint::Impl::allocateToken(Context::Impl& contextImpl) {
+  const Device& localDevice = config_.device;
+  if (localDevice.type == DeviceType::CPU) {
+    token_ = std::make_shared<uint64_t>(0);
+  } else if (localDevice.type == DeviceType::GPU) {
+    if (localDevice.id < 0) {
+      throw Error("Local GPU ID is not provided", ErrorCode::InvalidUsage);
+    }
+    CudaDeviceGuard deviceGuard(localDevice.id);
+#if defined(MSCCLPP_USE_ROCM)
+    token_ = detail::gpuCallocUncachedShared<uint64_t>();
+#else   // !defined(MSCCLPP_USE_ROCM)
+    token_ = detail::gpuCallocShared<uint64_t>();
+#endif  // !defined(MSCCLPP_USE_ROCM)
+  } else {
+    throw Error("Unsupported local device type", ErrorCode::InvalidUsage);
+  }
+  TransportFlags tokenTransport(config_.transport);
+  tokenMemory_ = RegisteredMemory(
+      std::make_shared<RegisteredMemory::Impl>(token_.get(), sizeof(uint64_t), tokenTransport, contextImpl));
+}
+
 Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     : config_(config), hostHash_(getHostHash()), pidHash_(getPidHash()) {
   if (config_.device.type == DeviceType::GPU && config_.device.id < 0) {
@@ -64,6 +86,9 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     socket_->bindAndListen();
     socketAddress_ = socket_->getAddr();
   }
+
+  // Allocate a semaphore token on the endpoint's local device
+  allocateToken(contextImpl);
 }
 
 Endpoint::Impl::Impl(const std::vector<char>& serialization) {
@@ -76,6 +101,16 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
     it = detail::deserialize(it, ibQpInfo_);
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
+  }
+  // Deserialize token memory if present
+  if (it != serialization.end()) {
+    uint32_t tokenMemorySize = 0;
+    it = detail::deserialize(it, tokenMemorySize);
+    if (tokenMemorySize > 0) {
+      tokenMemory_ = RegisteredMemory(
+          std::make_shared<RegisteredMemory::Impl>(it, it + tokenMemorySize));
+      it += tokenMemorySize;
+    }
   }
   if (it != serialization.end()) {
     throw Error("Endpoint deserialization failed", ErrorCode::Aborted);
@@ -106,11 +141,23 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }
+  // Serialize token memory
+  if (pimpl_->tokenMemory_.data() != nullptr) {
+    auto tokenData = pimpl_->tokenMemory_.serialize();
+    uint32_t tokenMemorySize = static_cast<uint32_t>(tokenData.size());
+    detail::serialize(data, tokenMemorySize);
+    data.insert(data.end(), tokenData.begin(), tokenData.end());
+  } else {
+    uint32_t tokenMemorySize = 0;
+    detail::serialize(data, tokenMemorySize);
+  }
   return data;
 }
 
 MSCCLPP_API_CPP Endpoint Endpoint::deserialize(const std::vector<char>& data) {
   return Endpoint(std::make_shared<Impl>(data));
 }
+
+MSCCLPP_API_CPP const RegisteredMemory& Endpoint::tokenMemory() const { return pimpl_->tokenMemory_; }
 
 }  // namespace mscclpp

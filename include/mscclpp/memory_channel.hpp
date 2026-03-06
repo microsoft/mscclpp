@@ -29,6 +29,10 @@ struct BaseMemoryChannel {
   /// @param semaphore Semaphore used to synchronize the communication.
   BaseMemoryChannel(const Semaphore& semaphore);
 
+  /// Constructor. Uses the connection's built-in semaphore.
+  /// @param connection The connection whose semaphore will be used.
+  BaseMemoryChannel(const Connection& connection);
+
   /// Constructor.
   /// @param other Other BaseMemoryChannel to copy from.
   BaseMemoryChannel(const BaseMemoryChannel& other) = default;
@@ -71,6 +75,14 @@ struct MemoryChannel : public BaseMemoryChannel {
   /// @param packetBuffer A buffer used to store packets. @p packetBuffer is optional and if it is nullptr,
   /// unpackPacket() and unpackPackets() methods are not available.
   MemoryChannel(const Semaphore& semaphore, RegisteredMemory dst, RegisteredMemory src, void* packetBuffer = nullptr);
+
+  /// Constructor. Uses the connection's built-in semaphore.
+  /// @param connection The connection whose semaphore will be used.
+  /// @param dst Registered memory of the destination.
+  /// @param src Registered memory of the source.
+  /// @param packetBuffer A buffer used to store packets.
+  MemoryChannel(const Connection& connection, RegisteredMemory dst, RegisteredMemory src,
+                void* packetBuffer = nullptr);
 
   /// Device-side handle for MemoryChannel.
   using DeviceHandle = MemoryChannelDeviceHandle;

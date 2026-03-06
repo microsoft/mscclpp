@@ -41,14 +41,22 @@ const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& me
 
 Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
-MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-    : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
+                                               const Endpoint& remoteEndpoint)
+    : context_(context),
+      localEndpoint_(localEndpoint),
+      maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()),
+      semaphore_(localEndpoint.tokenMemory(), remoteEndpoint.tokenMemory()) {}
 
 MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
 MSCCLPP_API_CPP const Device& BaseConnection::localDevice() const { return localEndpoint_.device(); }
 
 MSCCLPP_API_CPP int BaseConnection::getMaxWriteQueueSize() const { return maxWriteQueueSize_; }
+
+MSCCLPP_API_CPP Semaphore& BaseConnection::semaphore() { return semaphore_; }
+
+MSCCLPP_API_CPP const Semaphore& BaseConnection::semaphore() const { return semaphore_; }
 
 // Connection wrapper
 
@@ -76,11 +84,15 @@ MSCCLPP_API_CPP const Device& Connection::localDevice() const { return impl_->lo
 
 MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->getMaxWriteQueueSize(); }
 
+MSCCLPP_API_CPP Semaphore& Connection::semaphore() { return impl_->semaphore(); }
+
+MSCCLPP_API_CPP const Semaphore& Connection::semaphore() const { return impl_->semaphore(); }
+
 // CudaIpcConnection
 
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
-    : BaseConnection(context, localEndpoint) {
+    : BaseConnection(context, localEndpoint, remoteEndpoint) {
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
     THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
@@ -247,7 +259,7 @@ void IBConnection::recvThreadFunc() {
 
 IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                            const Endpoint& remoteEndpoint)
-    : BaseConnection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint, remoteEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
       dummyAtomicSource_(std::make_unique<uint64_t>(0)),
@@ -418,7 +430,7 @@ void IBConnection::flush(int64_t timeoutUsec) {
 
 EthernetConnection::EthernetConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                        const Endpoint& remoteEndpoint, uint64_t sendBufferSize, uint64_t recvBufferSize)
-    : BaseConnection(context, localEndpoint),
+    : BaseConnection(context, localEndpoint, remoteEndpoint),
       abortFlag_(0),
       sendBufferSize_(sendBufferSize),
       recvBufferSize_(recvBufferSize) {

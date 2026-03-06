@@ -24,7 +24,7 @@ namespace mscclpp {
 /// Internal base class for connection implementations between two processes.
 class BaseConnection {
  public:
-  BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint);
+  BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
 
   virtual ~BaseConnection() = default;
 
@@ -51,6 +51,10 @@ class BaseConnection {
 
   int getMaxWriteQueueSize() const;
 
+  /// Get the semaphore built from the endpoint tokens.
+  Semaphore& semaphore();
+  const Semaphore& semaphore() const;
+
   static std::shared_ptr<BaseConnection>& getImpl(Connection& conn) { return conn.impl_; }
 
  protected:
@@ -66,6 +70,7 @@ class BaseConnection {
   std::shared_ptr<Context> context_;
   Endpoint localEndpoint_;
   int maxWriteQueueSize_;
+  Semaphore semaphore_;
 };
 
 class CudaIpcConnection : public BaseConnection {

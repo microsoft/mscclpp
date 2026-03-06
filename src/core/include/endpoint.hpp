@@ -19,9 +19,16 @@ struct Endpoint::Impl {
   Impl(const EndpointConfig& config, Context::Impl& contextImpl);
   Impl(const std::vector<char>& serialization);
 
+  /// Allocate a semaphore token on the endpoint's local device.
+  void allocateToken(Context::Impl& contextImpl);
+
   EndpointConfig config_;
   uint64_t hostHash_;
   uint64_t pidHash_;
+
+  // Semaphore token allocated on the local device for signaling.
+  std::shared_ptr<uint64_t> token_;
+  RegisteredMemory tokenMemory_;
 
   // The following are only used for IB and are undefined for other transports.
   bool ibLocal_;

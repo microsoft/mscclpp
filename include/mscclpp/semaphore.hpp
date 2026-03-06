@@ -16,6 +16,7 @@ namespace mscclpp {
 class Host2DeviceSemaphore {
  private:
   Semaphore semaphore_;
+  Connection connection_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   std::unique_ptr<uint64_t> outboundToken_;
 
@@ -28,6 +29,10 @@ class Host2DeviceSemaphore {
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
   Host2DeviceSemaphore(Communicator& communicator, const Connection& connection);
+
+  /// Constructor. Uses the connection's built-in semaphore.
+  /// @param connection The connection whose semaphore will be used.
+  Host2DeviceSemaphore(const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
@@ -47,6 +52,7 @@ class Host2DeviceSemaphore {
 class Host2HostSemaphore {
  private:
   Semaphore semaphore_;
+  Connection connection_;
   std::unique_ptr<uint64_t> expectedInboundToken_;
   std::unique_ptr<uint64_t> outboundToken_;
 
@@ -60,6 +66,10 @@ class Host2HostSemaphore {
   /// @param connection The connection associated with this semaphore. Transport::CudaIpc is not allowed for
   /// Host2HostSemaphore.
   Host2HostSemaphore(Communicator& communicator, const Connection& connection);
+
+  /// Constructor. Uses the connection's built-in semaphore.
+  /// @param connection The connection whose semaphore will be used.
+  Host2HostSemaphore(const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
@@ -81,6 +91,7 @@ class Host2HostSemaphore {
 class MemoryDevice2DeviceSemaphore {
  private:
   Semaphore semaphore_;
+  Connection connection_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
   detail::UniqueGpuPtr<uint64_t> outboundToken_;
 
@@ -93,6 +104,10 @@ class MemoryDevice2DeviceSemaphore {
   /// @param communicator The communicator.
   /// @param connection The connection associated with this semaphore.
   MemoryDevice2DeviceSemaphore(Communicator& communicator, const Connection& connection);
+
+  /// Constructor. Uses the connection's built-in semaphore.
+  /// @param connection The connection whose semaphore will be used.
+  MemoryDevice2DeviceSemaphore(const Connection& connection);
 
   /// Returns the connection.
   /// @return The connection associated with this semaphore.
