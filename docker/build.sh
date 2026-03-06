@@ -24,6 +24,7 @@ extraLdPathTable=(
 
 declare -A ofedVersionTable
 ofedVersionTable=(
+    ["cuda11.8"]="23.07-0.5.1.2"
     ["cuda12.4"]="23.07-0.5.1.2"
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
