@@ -304,11 +304,16 @@ class BaseBuffer:
         self.size = offset + size
 
     def __getitem__(self, key):
-        if self.offset + key.stop > self.size:
-            raise RuntimeError(
-                f"Index range from {self.offset + key.start} - {self.offset + key.stop} is out of bounds for buffer {self.buffer_type}. Buffer size: {self.size}"
-            )
-        return Chunk(self.rank, self.buffer_type, self.offset + key.start, key.stop - key.start)
+        if isinstance(key, slice):
+            start = key.start if key.start is not None else 0
+            stop = key.stop if key.stop is not None else (self.size - self.offset)
+            if self.offset + stop > self.size:
+                raise RuntimeError(
+                    f"Index range from {self.offset + start} - {self.offset + stop} is out of bounds for buffer {self.buffer_type}. Buffer size: {self.size}"
+                )
+            return Chunk(self.rank, self.buffer_type, self.offset + start, stop - start)
+        else:
+            raise TypeError(f"Buffer indices must be slices, not {type(key).__name__}")
 
 
 class Buffer(BaseBuffer):
