@@ -42,7 +42,7 @@ We provide docker images which package all prerequisites for MSCCL++. You can se
 
 ```bash
 # For NVIDIA platforms
-$ docker run -it --privileged --net=host --ipc=host --gpus all --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.8 bash
+$ docker run -it --privileged --net=host --ipc=host --gpus all --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9 bash
 # For AMD platforms
 $ docker run -it --privileged --net=host --ipc=host --security-opt=seccomp=unconfined --group-add=video --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2 bash
 ```
