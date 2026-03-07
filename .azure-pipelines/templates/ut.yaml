@@ -3,8 +3,6 @@ parameters:
   type: string
 - name: vmssName
   type: string
-- name: sshKeySecureFile
-  type: string
 - name: platform
   type: string
   default: 'cuda'
@@ -12,55 +10,13 @@ parameters:
   type: string
 
 steps:
-- task: Bash@3
-  name: Build
-  displayName: Build
-  inputs:
-    targetType: 'inline'
-    script: |
-      mkdir build && cd build
-      if [ "${{ parameters.platform }}" == "rocm" ]; then
-        CXX=/opt/rocm/bin/hipcc cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_ROCM=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
-      else
-        cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
-      fi
-      make -j
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-- task: DownloadSecureFile@1
-  name: SshKeyFile
-  displayName: Download key file
-  inputs:
-    secureFile: ${{ parameters.sshKeySecureFile }}
-
-- task: Bash@3
-  name: InstallPackages
-  displayName: Install Packages
-  inputs:
-    targetType: 'inline'
-    script: |
-      sudo apt-get update -y
-      sudo apt-get install pssh -y
-      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
-- task: AzureCLI@2
-  name: StartVMSS
-  displayName: Start VMSS
-  inputs:
-    azureSubscription: ${{ parameters.subscription }} 
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az vmss start --name ${{ parameters.vmssName }}  --resource-group mscclpp
-
-- task: Bash@3
-  name: DeployTestEnv
-  displayName: Deploy Test Env
-  inputs:
-    targetType: filePath
-    filePath: test/deploy/deploy.sh
-    arguments: "single-node-test true ${{ parameters.platform }}"
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: templates/deploy.yaml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    platform:         ${{ parameters.platform }}
+    gpuArch:          ${{ parameters.gpuArch }}
+    deployArgs:       'single-node-test true ${{ parameters.platform }}'
 
 
 - task: Bash@3
@@ -69,19 +25,8 @@ steps:
   inputs:
     targetType: inline
     script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      : > azureuser@10.0.0.4
-      tail -f azureuser@10.0.0.4 &
-      CHILD_PID=$!
-      parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-        cd /root/mscclpp;                                             \
-        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
-        ./build/bin/unit_tests"'
-      kill $CHILD_PID
+      test/deploy/run-remote.sh '\
+        ./build/bin/unit_tests'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -90,22 +35,10 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      : > azureuser@10.0.0.4
-      tail -f azureuser@10.0.0.4 &
-      CHILD_PID=$!
-      parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .    \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "    \
-        export PATH=/usr/local/mpi/bin:\$PATH;                        \
-        cd /root/mscclpp;                                             \
-        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH; \
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests;  \
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests"'
-      kill $CHILD_PID
+      test/deploy/run-remote.sh '\
+        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests; \
+        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests; \
+        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -114,29 +47,11 @@ steps:
   inputs:
     targetType: inline
     script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      : > azureuser@10.0.0.4
-      tail -f azureuser@10.0.0.4 &
-      CHILD_PID=$!
-      parallel-ssh -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -o .     \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c "     \
-        export PATH=/usr/local/mpi/bin:\$PATH                          \
-        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
-        cd /root/mscclpp;                                              \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x"'
-      kill $CHILD_PID
+      test/deploy/run-remote.sh '\
+        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- task: AzureCLI@2
-  name: StopVMSS
-  displayName: Deallocate VMSS
-  condition: always()
-  inputs:
-    azureSubscription: ${{ parameters.subscription }}
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group mscclpp
+- template: templates/stop.yaml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName:     ${{ parameters.vmssName }}
