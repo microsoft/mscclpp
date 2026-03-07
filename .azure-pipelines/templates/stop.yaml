@@ -8,19 +8,6 @@ parameters:
   default: mscclpp
 
 steps:
-- task: Bash@3
-  name: EnsureAzureCLI
-  displayName: Ensure Azure CLI Installed
-  inputs:
-    targetType: inline
-    script: |
-      set -e
-      if command -v az >/dev/null 2>&1; then
-        az version >/dev/null
-        exit 0
-      fi
-      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
-
 - task: AzureCLI@2
   name: StopVMSS
   displayName: Deallocate VMSS
