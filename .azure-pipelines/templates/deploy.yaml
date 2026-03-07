@@ -67,23 +67,34 @@ steps:
       set -e
       rm -rf build
       mkdir -p build && cd build
-      ${{ if eq(parameters.platform, 'rocm') }}
-      CXX=/opt/rocm/bin/hipcc cmake \
-        -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
-        -DMSCCLPP_BYPASS_GPU_CHECK=ON \
-        -DMSCCLPP_USE_ROCM=ON \
-        ${{ if parameters.buildTests }}-DMSCCLPP_BUILD_TESTS=ON${{ endif }} \
-        ${{ if ne(parameters.gpuArch, '') }}-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}${{ endif }} \
-        ${{ parameters.cmakeArgs }} ..
-      ${{ else }}
-      cmake \
-        -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
-        -DMSCCLPP_BYPASS_GPU_CHECK=ON \
-        -DMSCCLPP_USE_CUDA=ON \
-        ${{ if parameters.buildTests }}-DMSCCLPP_BUILD_TESTS=ON${{ endif }} \
-        ${{ if ne(parameters.gpuArch, '') }}-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}${{ endif }} \
-        ${{ parameters.cmakeArgs }} ..
-      ${{ endif }}
+      BUILD_TESTS_ARG=""
+      if [ "${{ parameters.buildTests }}" = "true" ]; then
+        BUILD_TESTS_ARG="-DMSCCLPP_BUILD_TESTS=ON"
+      fi
+
+      GPU_ARCH_ARG=""
+      if [ -n "${{ parameters.gpuArch }}" ]; then
+        GPU_ARCH_ARG="-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}"
+      fi
+
+      CMAKE_EXTRA_ARGS='${{ parameters.cmakeArgs }}'
+      if [ "${{ parameters.platform }}" = "rocm" ]; then
+        CXX=/opt/rocm/bin/hipcc cmake \
+          -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
+          -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+          -DMSCCLPP_USE_ROCM=ON \
+          ${BUILD_TESTS_ARG} \
+          ${GPU_ARCH_ARG} \
+          ${CMAKE_EXTRA_ARGS} ..
+      else
+        cmake \
+          -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
+          -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+          -DMSCCLPP_USE_CUDA=ON \
+          ${BUILD_TESTS_ARG} \
+          ${GPU_ARCH_ARG} \
+          ${CMAKE_EXTRA_ARGS} ..
+      fi
       make -j
       cd ..
       pwd > build/BUILD_PREFIX
