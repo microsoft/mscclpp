@@ -491,7 +491,7 @@ The default algorithms use a fixed heuristic to select algorithms based on messa
 
 ### Symmetric Memory Allocation
 
-Algorithms like `default_allreduce_nvls_zero_copy` require **symmetric memory** — memory allocated identically across all GPUs via `mscclpp.RawGpuBuffer`. Regular `torch.rand()` or `torch.empty()` allocations cannot be used with these algorithms. Instead, allocate a single large buffer and reuse it for all message sizes:
+Algorithms like `default_allreduce_nvls_zero_copy` require **symmetric memory** — memory where the buffer offset is the same for each rank, allocated via `mscclpp.RawGpuBuffer` (`cuMemAlloc`). Regular `torch.rand()` or `torch.empty()` allocations cannot be used with these algorithms because they do not guarantee the same offset across ranks. Instead, allocate a single large buffer and reuse it for all message sizes:
 
 ```python
 # Allocate symmetric memory via RawGpuBuffer and wrap as a PyTorch tensor
@@ -604,7 +604,7 @@ def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
 
 ### Dispatching with Tuned Configuration
 
-At runtime, round the message size to the next power of two and look up the best configuration:
+At runtime, round the message size to the next power of two and look up the best configuration. When the tensor is allocated from `RawGpuBuffer` (`cuMemAlloc`) and the buffer offset is the same for each rank, pass `symmetric_memory=True` to the `execute()` call (see the [Symmetric Memory Allocation](#symmetric-memory-allocation) section above):
 
 ```python
 def get_tuned_config(self, size):
@@ -630,8 +630,6 @@ def all_reduce(self, tensor, op=torch.distributed.ReduceOp.SUM, stream=None):
         stream=stream.cuda_stream if stream else torch.cuda.current_stream().cuda_stream,
         nblocks=nblocks,
         nthreads_per_block=nthreads,
-        # Pass symmetric_memory=True when the tensor is from RawGpuBuffer
-        # (see Symmetric Memory Allocation section above)
     )
 ```
 
