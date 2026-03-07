@@ -8,7 +8,7 @@ parameters:
 
 
 steps:
-- template: templates/deploy.yaml
+- template: deploy.yaml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -57,7 +57,7 @@ steps:
         grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- template: templates/stop.yaml
+- template: stop.yaml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

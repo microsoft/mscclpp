@@ -17,7 +17,7 @@ parameters:
   default: "gfx942"
 
 steps:
-- template: templates/deploy.yaml
+- template: deploy.yaml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -66,7 +66,7 @@ steps:
         mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- template: templates/stop.yaml
+- template: stop.yaml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

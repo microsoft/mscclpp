@@ -15,7 +15,7 @@ parameters:
   default: "-gencode=arch=compute_80,code=sm_80"
 
 steps:
-- template: templates/deploy.yaml
+- template: deploy.yaml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -80,7 +80,7 @@ steps:
         mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20'
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- template: templates/stop.yaml
+- template: stop.yaml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

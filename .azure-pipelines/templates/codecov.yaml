@@ -10,7 +10,7 @@ parameters:
   type: string
 
 steps:
-- template: templates/deploy.yaml
+- template: deploy.yaml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -78,7 +78,7 @@ steps:
       ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info --flag ${{ parameters.platform }}-${{ parameters.gpuArch }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- template: templates/stop.yaml
+- template: stop.yaml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}
