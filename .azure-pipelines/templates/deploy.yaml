@@ -48,30 +48,7 @@ steps:
       fi
       curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-# 1. Check VMSS availability (fast, fail-fast)
-- task: AzureCLI@2
-  name: CheckVMSS
-  displayName: Check VMSS Availability
-  inputs:
-    azureSubscription: ${{ parameters.subscription }}
-    scriptType: bash
-    scriptLocation: inlineScript
-    inlineScript: |
-      set -e
-      INSTANCES=$(az vmss list-instances --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }} -o json)
-      COUNT=$(echo "$INSTANCES" | jq 'length')
-      if [ "$COUNT" -eq 0 ]; then
-        echo "##vso[task.logissue type=error]No VMSS instances found for ${{ parameters.vmssName }}"
-        exit 1
-      fi
-      FAILED=$(echo "$INSTANCES" | jq '[.[] | select(.provisioningState == "Failed")] | length')
-      if [ "$FAILED" -gt 0 ]; then
-        echo "##vso[task.logissue type=error]$FAILED VMSS instance(s) in Failed state"
-        exit 1
-      fi
-      echo "VMSS ${{ parameters.vmssName }}: $COUNT instance(s) available"
-
-# 2. Build
+# 1. Build
 - task: Bash@3
   name: ${{ parameters.buildName }}
   displayName: ${{ parameters.buildDisplayName }}
@@ -114,7 +91,7 @@ steps:
       pwd > build/BUILD_PREFIX
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-# 3. Download SSH key + install packages + start VMSS
+# 2. Download SSH key + install packages + start VMSS
 - task: DownloadSecureFile@1
   name: SshKeyFile
   displayName: Download key file
@@ -140,7 +117,7 @@ steps:
     inlineScript: |
       az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
 
-# 4. Deploy test environment
+# 3. Deploy test environment
 - task: Bash@3
   name: DeployTestEnv
   displayName: Deploy Test Env
