@@ -84,24 +84,40 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
   bool isGpuBuff = (gpuId != -1);
   if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
 #if !defined(MSCCLPP_USE_ROCM)
-    int fd;
-    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
-
+    int fd = -1;
     size_t offsetInDmaBuf = buffIntPtr % pageSize;
     int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
 #if defined(MSCCLPP_USE_MLX5DV)
     if (isMlx5 && MLX5DV::isAvailable()) {
-      mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
-      if (mr_ != nullptr) {
-        isDataDirect_ = true;
+      // DATA_DIRECT requires a PCIe BAR1-mapped DMA-BUF fd (CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE).
+      // This matches the perftest approach for achieving full bandwidth with DATA_DIRECT.
+      CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize,
+                                                     CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+                                                     CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
+      if (cuRes == CUDA_SUCCESS && fd >= 0) {
+        mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+        if (mr_ != nullptr) {
+          isDataDirect_ = true;
+        } else {
+          INFO(NET, "mlx5dv_reg_dmabuf_mr failed with PCIe DMA-BUF, falling back to regular DMA-BUF");
+          ::close(fd);
+          fd = -1;
+        }
+      } else {
+        INFO(NET, "cuMemGetHandleForAddressRange with PCIE flag failed (", cuRes, "), falling back");
+        if (fd >= 0) { ::close(fd); fd = -1; }
       }
     }
 #endif
     if (mr_ == nullptr) {
+      if (fd < 0) {
+        MSCCLPP_CUTHROW(
+            cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+      }
       mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
-    ::close(fd);
+    if (fd >= 0) ::close(fd);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }

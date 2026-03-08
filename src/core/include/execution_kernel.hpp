@@ -173,11 +173,11 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
       uint32_t dstOffset =
           dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
       uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
-      if constexpr (PutWithSignal) {
-        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
-      } else if constexpr (PutWithSignalAndFlush) {
+      if constexpr (PutWithSignalAndFlush) {
         portChannels_[channelIndexes[tid]].putWithSignalAndFlush(dstMemoryId, (uint64_t)dstOffset, srcMemoryId,
-                                                                 (uint64_t)srcOffsets, size);
+                                                                 (uint64_t)srcOffset, size);
+      } else if constexpr (PutWithSignal) {
+        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       } else {
         portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       }
