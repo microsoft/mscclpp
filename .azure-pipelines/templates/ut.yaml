@@ -19,37 +19,28 @@ steps:
     deployArgs:       'single-node-test true ${{ parameters.platform }}'
 
 
-- task: Bash@3
-  name: UnitTests
-  displayName: Run mscclpp unit tests
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        ./build/bin/unit_tests'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: UnitTests
+    displayName: Run mscclpp unit tests
+    remoteScript: |
+      ./build/bin/unit_tests
 
-- task: Bash@3
-  name: MpUnitTests
-  displayName: Run mscclpp multi-process unit tests
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests; \
-        mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests; \
-        mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: MpUnitTests
+    displayName: Run mscclpp multi-process unit tests
+    remoteScript: |
+      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests
+      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
+      mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
 
-- task: Bash@3
-  name: PyTests
-  displayName: Run pytests
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: PyTests
+    displayName: Run pytests
+    remoteScript: |
+      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
 
 - template: stop.yaml
   parameters:

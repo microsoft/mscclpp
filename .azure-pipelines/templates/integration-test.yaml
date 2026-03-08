@@ -17,82 +17,58 @@ steps:
     gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'single-node-test'
 
-- task: Bash@3
-  name: AllGatherTest
-  displayName: Run mscclpp AllGather test
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: AllGatherTest
+    displayName: Run mscclpp AllGather test
+    remoteScript: |
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
 
-- task: Bash@3
-  name: SendRecvTest
-  displayName: Run mscclpp SendRecv test
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: SendRecvTest
+    displayName: Run mscclpp SendRecv test
+    remoteScript: |
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/sendrecv_test_perf -b 1K -e 1G -f 2 -o output.jsonl
 
-- task: Bash@3
-  name: AllReduceTest
-  displayName: Run mscclpp AllReduce test
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: AllReduceTest
+    displayName: Run mscclpp AllReduce test
+    remoteScript: |
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 4 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 12M -e 48M -i 3145728 2 -k 5 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allreduce_test_perf -b 24K -e 768K -i 24576 -k 6 -w 100 -n 100 -o output.jsonl
 
-- task: Bash@3
-  name: AllToAll
-  displayName: Run mscclpp AllToAll test
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl; \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: AllToAll
+    displayName: Run mscclpp AllToAll test
+    remoteScript: |
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -o output.jsonl
+      mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl
 
-- task: Bash@3
-  name: CheckPerfNumber
-  displayName: Check collective primitives performance
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file ${{ parameters.perfBaselineFile }}'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: CheckPerfNumber
+    displayName: Check collective primitives performance
+    remoteScript: |
+      python3 test/mscclpp-test/check_perf_result.py --perf-file output.jsonl --baseline-file ${{ parameters.perfBaselineFile }}
 
-- task: Bash@3
-  name: PythonAllReduceBenchmark
-  displayName: Python Allreduce Benchmark
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        set -e; \
-        python3 -m pip install .; \
-        mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: PythonAllReduceBenchmark
+    displayName: Python Allreduce Benchmark
+    remoteScript: |
+      python3 -m pip install .
+      mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 
 - template: stop.yaml
   parameters:

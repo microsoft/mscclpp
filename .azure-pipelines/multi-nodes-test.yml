@@ -56,41 +56,37 @@ jobs:
       vmssName:      mscclit-vmss
       resourceGroup: msccl-IT
 
-  - task: Bash@3
-    name: RunMscclppTest
-    displayName: Run multi-nodes mscclpp-test
-    inputs:
-      targetType: 'inline'
-      script: |
-        test/deploy/run-remote.sh --hostfile "$(System.DefaultWorkingDirectory)/test/deploy/hostfile" --host mscclit-000000 --user azureuser \
-          "bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test"
+  - template: templates/run-remote-task.yaml
+    parameters:
+      name: RunMscclppTest
+      displayName: Run multi-nodes mscclpp-test
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
-  - task: Bash@3
-    name: RunMultiNodeUnitTest
-    displayName: Run multi-nodes unit tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        test/deploy/run-remote.sh --hostfile "$(System.DefaultWorkingDirectory)/test/deploy/hostfile" --host mscclit-000000 --user azureuser \
-          "bash /root/mscclpp/test/deploy/run_tests.sh mp-ut"
+  - template: templates/run-remote-task.yaml
+    parameters:
+      name: RunMultiNodeUnitTest
+      displayName: Run multi-nodes unit tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
-  - task: Bash@3
-    name: RunMultiNodePythonTests
-    displayName: Run multi-nodes python tests
-    inputs:
-      targetType: 'inline'
-      script: |
-        test/deploy/run-remote.sh --hostfile "$(System.DefaultWorkingDirectory)/test/deploy/hostfile" --host mscclit-000000 --user azureuser \
-          "bash /root/mscclpp/test/deploy/run_tests.sh pytests"
+  - template: templates/run-remote-task.yaml
+    parameters:
+      name: RunMultiNodePythonTests
+      displayName: Run multi-nodes python tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
-  - task: Bash@3
-    name: RunMultiNodePythonBenchmark
-    displayName: Run multi-nodes python benchmark
-    inputs:
-      targetType: 'inline'
-      script: |
-        test/deploy/run-remote.sh --hostfile "$(System.DefaultWorkingDirectory)/test/deploy/hostfile" --host mscclit-000000 --user azureuser \
-          "bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark"
+  - template: templates/run-remote-task.yaml
+    parameters:
+      name: RunMultiNodePythonBenchmark
+      displayName: Run multi-nodes python benchmark
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
   - template: templates/stop.yaml
     parameters:

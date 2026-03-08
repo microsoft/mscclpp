@@ -21,64 +21,54 @@ steps:
     vmssName:         ${{ parameters.vmssName }}
     deployArgs:       'nccltest-single-node'
 
-- task: Bash@3
-  name: InstallNcclTests
-  displayName: Install NCCL Tests
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        cd; git clone https://github.com/NVIDIA/nccl-tests.git; \
-        cd nccl-tests; \
-        MPI=1 MPI_HOME=/usr/local/mpi make -j'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: InstallNcclTests
+    displayName: Install NCCL Tests
+    remoteScript: |
+      cd
+      git clone https://github.com/NVIDIA/nccl-tests.git
+      cd nccl-tests
+      MPI=1 MPI_HOME=/usr/local/mpi make -j
 
-- task: Bash@3
-  name: InstallNccl
-  displayName: Install NCCL
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        LATEST_TAG=\$(curl -fsSL https://api.github.com/repos/NVIDIA/nccl/releases/latest | grep tag_name | cut -d\\\" -f4); \
-        if [ -z \"\$LATEST_TAG\" ]; then echo \"Failed to fetch latest NCCL tag\"; exit 1; fi; \
-        cd; git clone --branch \$LATEST_TAG --depth 1 https://github.com/NVIDIA/nccl.git; \
-        cd nccl; \
-        make -j src.build NVCC_GENCODE=${{ parameters.nvccGencode }}'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: InstallNccl
+    displayName: Install NCCL
+    remoteScript: |
+      LATEST_TAG=$(curl -fsSL https://api.github.com/repos/NVIDIA/nccl/releases/latest | grep tag_name | cut -d\" -f4)
+      if [ -z "$LATEST_TAG" ]; then
+        echo "Failed to fetch latest NCCL tag"
+        exit 1
+      fi
+      cd
+      git clone --branch $LATEST_TAG --depth 1 https://github.com/NVIDIA/nccl.git
+      cd nccl
+      make -j src.build NVCC_GENCODE=${{ parameters.nvccGencode }}
 
-- task: Bash@3
-  name: RunNcclAllGatherFallbaclkToNcclTest
-  displayName: Run NCCL AllGather Test with or without Fallback to NCCL operation
-  inputs:
-    targetType: inline
-    script: |
-      test/deploy/run-remote.sh '\
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20; \
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: RunNcclAllGatherFallbaclkToNcclTest
+    displayName: Run NCCL AllGather Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
 
-- task: Bash@3
-  name: RunNcclAllReduceFallbaclkToNcclTest
-  displayName: Run NCCL AllReduce Test with or without Fallback to NCCL operation
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20; \
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: RunNcclAllReduceFallbaclkToNcclTest
+    displayName: Run NCCL AllReduce Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
 
-- task: Bash@3
-  name: RunNcclBroadcastFallbaclkToNcclTest
-  displayName: Run NCCL Broadcast Test with or without Fallback to NCCL operation
-  inputs:
-    targetType: 'inline'
-    script: |
-      test/deploy/run-remote.sh '\
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20; \
-        mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yaml
+  parameters:
+    name: RunNcclBroadcastFallbaclkToNcclTest
+    displayName: Run NCCL Broadcast Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
 
 - template: stop.yaml
   parameters:
