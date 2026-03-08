@@ -61,6 +61,7 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 CMD="$*"
+CMD_B64=$(printf '%s' "$CMD" | base64 | tr -d '\n')
 
 PSSH_TARGET_ARGS=()
 if [ -n "$TARGET_HOST" ]; then
@@ -89,8 +90,8 @@ fi
 
 if $USE_DOCKER; then
     parallel-ssh -t 0 "${PSSH_TARGET_ARGS[@]}" "${PSSH_USER_ARGS[@]}" -x "-i ${KeyFilePath}" -o . \
-        -O "$SSH_OPTION" "sudo docker exec -t mscclpp-test bash -c \"set -ex; pushd /root/mscclpp >/dev/null; trap 'popd >/dev/null' EXIT; ${CMD}\""
+        -O "$SSH_OPTION" "sudo docker exec -t mscclpp-test bash -c \"set -ex; pushd /root/mscclpp >/dev/null; trap 'popd >/dev/null' EXIT; CMD_B64='${CMD_B64}'; eval \\\"\\\$(printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d)\\\"\""
 else
     parallel-ssh -i -t 0 "${PSSH_TARGET_ARGS[@]}" "${PSSH_USER_ARGS[@]}" -x "-i ${KeyFilePath}" \
-        -O "$SSH_OPTION" "set -ex; ${CMD}"
+        -O "$SSH_OPTION" "set -ex; CMD_B64='${CMD_B64}'; eval \"\$(printf '%s' \"\$CMD_B64\" | base64 -d)\""
 fi
