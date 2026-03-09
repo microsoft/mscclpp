@@ -57,7 +57,7 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
                 dst_rank = Rank(next_global_rank_id)
                 dst_buffer = dst_rank.get_output_buffer()
 
-                port_channels[(next_global_rank_id, global_rank_id)].put_with_signal_and_flush(dst_buffer[:], src_buffer[:], tb=0)
+                port_channels[(next_global_rank_id, global_rank_id)].put_with_signal(dst_buffer[:], src_buffer[:], tb=0)
                 port_channels[(prev_global_rank_id, global_rank_id)].wait(tb=0, data_sync=SyncType.none)
                 
         print(JSON())
