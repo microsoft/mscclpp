@@ -93,10 +93,24 @@ if $USE_LOG; then
     trap "kill $CHILD_PID 2>/dev/null" EXIT
 fi
 
+PSSH_COMMON=(
+    -t 0
+    "${PSSH_TARGET_ARGS[@]}"
+    "${PSSH_USER_ARGS[@]}"
+    -x "-i ${KeyFilePath}"
+    -O "$SSH_OPTION"
+)
+
 if $USE_DOCKER; then
-    parallel-ssh -t 0 "${PSSH_TARGET_ARGS[@]}" "${PSSH_USER_ARGS[@]}" -x "-i ${KeyFilePath}" -o . \
-    -O "$SSH_OPTION" "sudo docker exec -t mscclpp-test bash -c \"set -euxo pipefail; pushd /root/mscclpp >/dev/null; trap 'popd >/dev/null' EXIT; CMD_B64='${CMD_B64}'; printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail\""
+    INNER="set -euxo pipefail;"
+    INNER+=" cd /root/mscclpp;"
+    INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
+    INNER+=" CMD_B64='${CMD_B64}';"
+    INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
+
+    parallel-ssh "${PSSH_COMMON[@]}" -o . \
+        "sudo docker exec -t mscclpp-test bash -c \"${INNER}\""
 else
-    parallel-ssh -i -t 0 "${PSSH_TARGET_ARGS[@]}" "${PSSH_USER_ARGS[@]}" -x "-i ${KeyFilePath}" \
-        -O "$SSH_OPTION" "set -euxo pipefail; CMD_B64='${CMD_B64}'; printf '%s' \"\$CMD_B64\" | base64 -d | bash -euxo pipefail"
+    parallel-ssh -i "${PSSH_COMMON[@]}" \
+        "set -euxo pipefail; CMD_B64='${CMD_B64}'; printf '%s' \"\$CMD_B64\" | base64 -d | bash -euxo pipefail"
 fi
