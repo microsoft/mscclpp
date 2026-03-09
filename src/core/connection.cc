@@ -309,6 +309,14 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
     // Pre-post receive requests for incoming WRITE_WITH_IMM notifications.
     // The recv CQE guarantees the preceding data WRITE has been committed to GPU memory.
     auto qp = qp_.lock();
+    // dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect() &&
+    //                       localSignalGpuMap_ && localSignalGpuMap_->valid();
+    dataDirectEnabled_ = true;
+    if (dataDirectEnabled_) {
+      INFO(CONN, "IBConnection: Data Direct enabled");
+    }
+
+    // Pre-post receive requests for incoming write-with-imm
     int maxRecvWr = localEndpoint.config().ib.maxRecvWr;
     for (int i = 0; i < maxRecvWr; ++i) {
       qp->stageRecv(/*wrId=*/0);

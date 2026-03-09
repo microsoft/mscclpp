@@ -21,7 +21,7 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
         use_double_scratch_buffer=False,
         min_message_size=0,
         max_message_size=2**64 - 1,
-        instances=1
+        instances=4
     ):
         # Creating separate port channels for next and prev directions.
         # When prev and next are the same peer (e.g., 2-node ring), both channels go to the same peer
