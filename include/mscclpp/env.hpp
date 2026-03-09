@@ -111,7 +111,8 @@ class Env {
   const bool forceDisableNvls;
 
   /// Env name: `MSCCLPP_IB_GID_INDEX`. The GID index to use for IB transport.
-  /// Default is 0 (`EndpointConfig::Ib::DefaultGidIndex`).
+  /// When set to a non-negative value, overrides the `gidIndex` parameter passed to `EndpointConfig::Ib`.
+  /// Default is -1 (unset, uses the constructor argument which defaults to `EndpointConfig::Ib::DefaultGidIndex`).
   const int ibGidIndex;
 
  private:

@@ -431,7 +431,7 @@ struct EndpointConfig {
        int maxWrPerSend = DefaultMaxWrPerSend, Mode mode = Mode::Default)
         : deviceIndex(deviceIndex),
           port(port),
-          gidIndex(env()->ibGidIndex > 0 ? env()->ibGidIndex : gidIndex),
+          gidIndex(env()->ibGidIndex >= 0 ? env()->ibGidIndex : gidIndex),
           maxCqSize(maxCqSize),
           maxCqPollNum(maxCqPollNum),
           maxSendWr(maxSendWr),
