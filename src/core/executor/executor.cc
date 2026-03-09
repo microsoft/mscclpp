@@ -109,7 +109,7 @@ namespace mscclpp {
 
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
-  std::vector<Connection> connections;  // one connection (unique QP) per channel
+  std::vector<Connection> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   MemoryId localMemoryIdBegin = MemoryId(0);
 
@@ -121,8 +121,6 @@ struct ExecutionContext {
   // local registered memories to keep resources alive
   std::vector<mscclpp::RegisteredMemory> localRegisteredMemories;
 
-  std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
-  std::vector<mscclpp::SemaphoreId> proxySemaphores;
   std::vector<mscclpp::BaseMemoryChannel> memoryChannels;
   std::vector<mscclpp::BasePortChannel> portChannels;
   std::vector<mscclpp::SwitchChannel> nvlsChannels;
@@ -266,10 +264,7 @@ struct Executor::Impl {
       }
     };
 
-    // Create one connection (unique QP) per channel entry. Each channel gets its own
-    // QP — no shared connections. This is required for HostNoAtomic IB mode where each
-    // connection can only forward signals to one semaphore via setSignalForwardingDst.
-    int tag = 0;
+    std::unordered_map<int, int> peerTags;
     Transport ibTransport = IBs[rank % this->nranksPerNode];
     std::vector<std::shared_future<Connection>> connFutures;
     for (ChannelType channelType : {ChannelType::MEMORY, ChannelType::PORT}) {
@@ -277,14 +272,14 @@ struct Executor::Impl {
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
           Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
-          connFutures.push_back(this->comm->connect(transport, peer, tag++));
+          connFutures.push_back(this->comm->connect(transport, peer, peerTags[peer]++));
         }
       }
       channelInfos = plan.impl_->getUnpairedChannelInfos(nranks, channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
           Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
-          connFutures.push_back(this->comm->connect(transport, peer, tag++));
+          connFutures.push_back(this->comm->connect(transport, peer, peerTags[peer]++));
         }
       }
     }
@@ -377,18 +372,15 @@ struct Executor::Impl {
       proxySemaphores.push_back(context.proxyService->addSemaphore(sem.get()));
     }
 
-    context.memorySemaphores = std::move(memorySemaphores);
-    context.proxySemaphores = std::move(proxySemaphores);
-
     for (ChannelType channelType : channelTypes) {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(channelType);
       int index = 0;
       for (ChannelInfo& info : channelInfos) {
         for (size_t i = 0; i < info.connectedPeers.size(); i++) {
           if (channelType == ChannelType::MEMORY) {
-            context.memoryChannels.emplace_back(context.memorySemaphores[index++]);
+            context.memoryChannels.emplace_back(memorySemaphores[index++]);
           } else if (channelType == ChannelType::PORT) {
-            context.portChannels.emplace_back(context.proxyService->basePortChannel(context.proxySemaphores[index++]));
+            context.portChannels.emplace_back(context.proxyService->basePortChannel(proxySemaphores[index++]));
           }
         }
       }
