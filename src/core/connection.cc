@@ -324,8 +324,9 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
     // When all conditions are met, RDMA data writes and GDRCopy token writes both go
     // through the Data Direct engine, guaranteeing GPU memory visibility at CQE poll time.
     auto qp = qp_.lock();
-    dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect() &&
-                          localSignalGpuMap_ && localSignalGpuMap_->valid();
+    // dataDirectEnabled_ = localImpl.ibSignalGpuMr_ && localImpl.ibSignalGpuMr_->isDataDirect() &&
+    //                       localSignalGpuMap_ && localSignalGpuMap_->valid();
+    dataDirectEnabled_ = true;
     if (dataDirectEnabled_) {
       INFO(CONN, "IBConnection: Data Direct enabled");
     }
