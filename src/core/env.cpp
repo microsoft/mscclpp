@@ -96,6 +96,7 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_NCCL_SYMMETRIC_MEMORY", globalEnv->ncclSymmetricMemory);
     logEnv("MSCCLPP_FORCE_DISABLE_NVLS", globalEnv->forceDisableNvls);
     logEnv("MSCCLPP_FORCE_DISABLE_GDR", globalEnv->forceDisableGdr);
+    logEnv("MSCCLPP_IB_GID_INDEX", globalEnv->ibGidIndex);
   }
   return globalEnv;
 }

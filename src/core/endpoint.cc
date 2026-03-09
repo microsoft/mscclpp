@@ -49,8 +49,14 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
 
     int maxRecvWr = ibNoAtomic_ ? config_.ib.maxRecvWr : 0;
 
+    // Override GID index from environment variable if set
+    int gidIndex = config_.ib.gidIndex;
+    if (env()->ibGidIndex >= 0) {
+      gidIndex = env()->ibGidIndex;
+    }
+
     ibQp_ = contextImpl.getIbContext(config_.transport)
-                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
+                ->createQp(config_.ib.port, gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
                            config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
   } else if (config_.transport == Transport::Ethernet) {
