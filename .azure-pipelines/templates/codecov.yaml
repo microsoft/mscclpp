@@ -27,6 +27,11 @@ steps:
     name: TestsCoverageNonPerf
     displayName: Run unit_tests + mp_unit_tests (non-perf) with coverage
     remoteScript: |
+      echo "=== build/bin/ contents ==="
+      ls -la build/bin/ 2>&1 || echo "ERROR: build/bin/ not found"
+      echo "=== build/ top-level ==="
+      ls build/ 2>&1 || echo "ERROR: build/ not found"
+
       BUILD_PREFIX=$(cat build/BUILD_PREFIX)
       STRIP_COUNT=$(echo $BUILD_PREFIX | tr -cd / | wc -c)
       export GCOV_PREFIX=/root/mscclpp

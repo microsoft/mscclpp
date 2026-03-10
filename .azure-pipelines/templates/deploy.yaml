@@ -89,6 +89,9 @@ steps:
       make -j
       cd ..
       pwd > build/BUILD_PREFIX
+      echo "=== Build artifacts ==="
+      ls -la build/bin/ || echo "ERROR: build/bin/ missing after build"
+      du -sh build/bin/* 2>/dev/null || true
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 # 2. Download SSH key + install packages + start VMSS

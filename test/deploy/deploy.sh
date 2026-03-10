@@ -1,4 +1,4 @@
-set -e
+set -ex
 
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"
@@ -32,8 +32,21 @@ while true; do
 done
 
 set -e
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
-parallel-scp -t 0 -r -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION ${ROOT_DIR} ${DST_DIR}
+# Transfer workspace to remote hosts via tar+ssh (more reliable than parallel-scp for large files)
+while IFS= read -r HOST; do
+  HOST_ADDR="${HOST##*@}"
+  HOST_USER="${HOST%%@*}"
+  if [ "${HOST_USER}" = "${HOST_ADDR}" ]; then
+    HOST_USER=""
+  fi
+  SSH_DEST="${HOST}"
+  echo "Deploying to ${SSH_DEST}..."
+  ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${SSH_DEST} "sudo rm -rf ${DST_DIR} && mkdir -p ${DST_DIR}"
+  tar cf - -C "$(dirname "${ROOT_DIR}")" "$(basename "${ROOT_DIR}")" | \
+    ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${SSH_DEST} "tar xf - -C ${DST_DIR} --strip-components=1"
+  echo "Verifying transfer to ${SSH_DEST}..."
+  ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${SSH_DEST} "ls ${DST_DIR}/build/bin/ 2>&1 || echo 'ERROR: build/bin/ missing after transfer'"
+done < ${HOSTFILE}
 
 if [ "${PLATFORM}" == "rocm" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
