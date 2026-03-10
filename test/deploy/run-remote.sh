@@ -108,6 +108,9 @@ if $USE_DOCKER; then
     INNER+=" CMD_B64='${CMD_B64}';"
     INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
 
+    FULL_CMD="sudo docker exec -t mscclpp-test bash -c \"${INNER}\""
+    echo "[run-remote.sh] executing: ${FULL_CMD}" >&2
+
     parallel-ssh "${PSSH_COMMON[@]}" -o . \
         "sudo docker exec -t mscclpp-test bash -c \"${INNER}\""
 else
