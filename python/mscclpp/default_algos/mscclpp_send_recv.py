@@ -23,10 +23,20 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
         max_message_size=2**64 - 1,
         instances=4
     ):
-        # Creating port channels
+        # Creating separate port channels for next and prev directions.
+        # When prev and next are the same peer (e.g., 2-node ring), both channels go to the same peer
+        # and get distinct tags. To ensure cross-rank tag matching (rank A's prev_channel signal
+        # arrives at rank B's next_channel wait), we create channels in opposite order for the
+        # "higher" rank so that tags cross-match:
+        #   Lower rank:  [next(tag0), prev(tag1)]
+        #   Higher rank:  [prev(tag0), next(tag1)]
+        # Then lower.prev(tag1) == higher.next(tag1) ✓ and higher.prev(tag0) == lower.next(tag0) ✓
+        # When prev != next (3+ nodes), each channel targets a different peer so each gets tag 0
+        # and this ordering doesn't matter.
         group_size = split_mask + 1
         num_groups = gpu_size // group_size
-        port_channels = {}
+        next_channels = {}  # channel for sending to next rank
+        prev_channels = {}  # channel for receiving from prev rank
         prev_next_ids = {}
         for node in range(nnodes):
             for gpu in range(gpus_per_node):
@@ -37,11 +47,14 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
                 next_global_rank_id = next_group_id * group_size + position_in_group
                 prev_group_id = (group_id - 1 + num_groups) % num_groups
                 prev_global_rank_id = prev_group_id * group_size + position_in_group
-                if (next_global_rank_id, global_rank_id) not in port_channels:
-                    port_channels[(next_global_rank_id, global_rank_id)] = PortChannel(next_global_rank_id, global_rank_id)
-                if (prev_global_rank_id, global_rank_id) not in port_channels:
-                    port_channels[(prev_global_rank_id, global_rank_id)] = PortChannel(prev_global_rank_id, global_rank_id)
-                # print(f"Global Rank {global_rank_id}: position_in_group={position_in_group}, group_id={group_id}, next_global_rank_id={next_global_rank_id}, prev_global_rank_id={prev_global_rank_id}")
+                if prev_global_rank_id == next_global_rank_id and global_rank_id > prev_global_rank_id:
+                    # Higher rank: create prev first, then next (swapped order)
+                    prev_channels[global_rank_id] = PortChannel(prev_global_rank_id, global_rank_id)
+                    next_channels[global_rank_id] = PortChannel(next_global_rank_id, global_rank_id)
+                else:
+                    # Lower rank or different peers: create next first, then prev
+                    next_channels[global_rank_id] = PortChannel(next_global_rank_id, global_rank_id)
+                    prev_channels[global_rank_id] = PortChannel(prev_global_rank_id, global_rank_id)
                 prev_next_ids[global_rank_id] = (prev_global_rank_id, next_global_rank_id)
 
         # sync with the next rank and the previous rank in the group
@@ -49,16 +62,16 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
             for gpu in range(gpus_per_node):
                 global_rank_id = gpu + gpus_per_node * node
                 prev_global_rank_id, next_global_rank_id = prev_next_ids[global_rank_id]
-                port_channels[((prev_global_rank_id, global_rank_id))].signal(tb=0, data_sync= SyncType.none)
-                port_channels[(next_global_rank_id, global_rank_id)].wait(tb=0, data_sync=SyncType.after)
+                prev_channels[global_rank_id].signal(tb=0, data_sync=SyncType.none)
+                next_channels[global_rank_id].wait(tb=0, data_sync=SyncType.after)
                 
                 src_rank = Rank(global_rank_id)
                 src_buffer = src_rank.get_input_buffer()
                 dst_rank = Rank(next_global_rank_id)
                 dst_buffer = dst_rank.get_output_buffer()
 
-                port_channels[(next_global_rank_id, global_rank_id)].put_with_signal(dst_buffer[:], src_buffer[:], tb=0)
-                port_channels[(prev_global_rank_id, global_rank_id)].wait(tb=0, data_sync=SyncType.none)
+                next_channels[global_rank_id].put_with_signal(dst_buffer[:], src_buffer[:], tb=0)
+                prev_channels[global_rank_id].wait(tb=0, data_sync=SyncType.none)
                 
         print(JSON())
 
