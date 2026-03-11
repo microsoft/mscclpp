@@ -17,8 +17,8 @@ parameters:
   type: string
   default: 'Release'
 - name: buildTests
-  type: boolean
-  default: true
+  type: string
+  default: 'true'
 - name: cmakeArgs
   type: string
   default: ''
