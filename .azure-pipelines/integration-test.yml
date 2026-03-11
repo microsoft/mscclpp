@@ -45,7 +45,6 @@ jobs:
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          '80'
 
 - job: IntegrationTestH100
@@ -65,6 +64,5 @@ jobs:
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
-      sshKeySecureFile: mscclpp.pem
       perfBaselineFile: test/deploy/perf_ndmv5.jsonl
       gpuArch:          '90'

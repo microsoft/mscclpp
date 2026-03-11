@@ -44,5 +44,4 @@ jobs:
     parameters:
       subscription:     mscclpp-ci-mi300x
       vmssName:         mscclpp-mi300x-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          gfx942

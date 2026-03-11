@@ -93,11 +93,8 @@ double benchTime(int rank, std::shared_ptr<mscclpp::Bootstrap> bootstrap, std::s
 
 int main(int argc, char* argv[]) {
   if (argc != 5 && argc != 6) {
-    std::cerr << "Usage: " << argv[0] << " <buffer size>"
-              << " <execution plan path>"
-              << " <number of iterations>"
-              << " <number of graph iterations>"
-              << " (optional) <packet type>" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <buffer size> <execution plan path>"
+              << " <number of iterations> <number of graph iterations> (optional) <packet type>" << std::endl;
     return 1;
   }
 
@@ -142,7 +139,8 @@ int main(int argc, char* argv[]) {
     NpKit::Shutdown();
   }
 
-  std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << deltaSec * 1.e6 << " us" << std::endl;
+  double latencyUs = deltaSec * 1.e6;
+  std::cout << "Rank " << rank << ": " << bufferSize << " bytes " << latencyUs << " us" << std::endl;
   MPI_Finalize();
   return 0;
 }

@@ -1,0 +1,131 @@
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: resourceGroup
+  type: string
+  default: mscclpp
+# Build parameters
+- name: platform
+  type: string
+  default: 'cuda'
+- name: gpuArch
+  type: string
+  default: ''
+- name: buildType
+  type: string
+  default: 'Release'
+- name: buildTests
+  type: string
+  default: 'true'
+- name: cmakeArgs
+  type: string
+  default: ''
+- name: buildName
+  type: string
+  default: 'Build'
+- name: buildDisplayName
+  type: string
+  default: 'Build'
+# Deploy parameters
+- name: deployArgs
+  type: string
+  default: ''
+
+steps:
+# 0. Ensure Azure CLI exists before running AzureCLI@2 tasks.
+- task: Bash@3
+  name: EnsureAzureCLI
+  displayName: Ensure Azure CLI Installed
+  inputs:
+    targetType: inline
+    script: |
+      set -e
+      if command -v az >/dev/null 2>&1; then
+        az version >/dev/null
+        exit 0
+      fi
+      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+# 1. Build
+- task: Bash@3
+  name: ${{ parameters.buildName }}
+  displayName: ${{ parameters.buildDisplayName }}
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      rm -rf build
+      mkdir -p build && cd build
+      BUILD_TESTS_ARG=""
+      if [ "${{ parameters.buildTests }}" = "true" ]; then
+        BUILD_TESTS_ARG="-DMSCCLPP_BUILD_TESTS=ON"
+      fi
+
+      GPU_ARCH_ARG=""
+      if [ -n "${{ parameters.gpuArch }}" ]; then
+        GPU_ARCH_ARG="-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}"
+      fi
+
+      CMAKE_EXTRA_ARGS='${{ parameters.cmakeArgs }}'
+      if [ "${{ parameters.platform }}" = "rocm" ]; then
+        CXX=/opt/rocm/bin/hipcc cmake \
+          -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
+          -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+          -DMSCCLPP_USE_ROCM=ON \
+          ${BUILD_TESTS_ARG} \
+          ${GPU_ARCH_ARG} \
+          ${CMAKE_EXTRA_ARGS} ..
+      else
+        cmake \
+          -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
+          -DMSCCLPP_BYPASS_GPU_CHECK=ON \
+          -DMSCCLPP_USE_CUDA=ON \
+          ${BUILD_TESTS_ARG} \
+          ${GPU_ARCH_ARG} \
+          ${CMAKE_EXTRA_ARGS} ..
+      fi
+      make -j
+      cd ..
+      pwd > build/BUILD_PREFIX
+      echo "=== Build artifacts ==="
+      ls -la build/bin/ || echo "ERROR: build/bin/ missing after build"
+      du -sh build/bin/* 2>/dev/null || true
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+# 2. Download SSH key + install packages + start VMSS
+- task: DownloadSecureFile@1
+  name: SshKeyFile
+  displayName: Download key file
+  inputs:
+    secureFile: mscclpp.pem
+
+- task: Bash@3
+  name: InstallPackages
+  displayName: Install Packages
+  inputs:
+    targetType: 'inline'
+    script: |
+      sudo apt-get update -y
+      sudo apt-get install pssh -y
+
+- task: AzureCLI@2
+  name: StartVMSS
+  displayName: Start VMSS
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
+
+# 3. Deploy test environment
+- task: Bash@3
+  name: DeployTestEnv
+  displayName: Deploy Test Env
+  inputs:
+    targetType: filePath
+    filePath: test/deploy/deploy.sh
+    arguments: ${{ parameters.deployArgs }}
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
