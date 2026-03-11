@@ -33,7 +33,7 @@ done
 
 set -e
 # Transfer workspace to remote hosts via tar+ssh (more reliable than parallel-scp for large files)
-while IFS= read -r HOST; do
+while IFS= read -r HOST || [ -n "$HOST" ]; do
   HOST_ADDR="${HOST##*@}"
   HOST_USER="${HOST%%@*}"
   if [ "${HOST_USER}" = "${HOST_ADDR}" ]; then
