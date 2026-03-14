@@ -140,6 +140,9 @@ void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
       UnixSocketServer::instance().unregisterFd(handle->posixFd.fd);
       ::close(handle->posixFd.fd);
     }
+    if (handle->typeFlags & GpuIpcMemHandle::Type::Fabric) {
+      cuMemRelease(handle->fabric.allocHandle);
+    }
     delete handle;
   }
 }
@@ -148,6 +151,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
   handle->typeFlags = GpuIpcMemHandle::Type::None;
   handle->posixFd.fd = -1;
+  handle->fabric.allocHandle = 0;
 
   CUdeviceptr basePtr;
   size_t sz;
@@ -190,6 +194,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   if (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle, CU_MEM_HANDLE_TYPE_FABRIC, 0) ==
       CUDA_SUCCESS) {
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
+    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&(handle->fabric.allocHandle), (void*)basePtr));
   }
 
   MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
@@ -232,6 +237,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   handle->offsetFromBase = 0;
   handle->typeFlags = GpuIpcMemHandle::Type::None;
   handle->posixFd.fd = -1;
+  handle->fabric.allocHandle = 0;
 
   // POSIX FD handle
   int fileDesc;
@@ -246,6 +252,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   if (isFabricAvailable && (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle,
                                                          CU_MEM_HANDLE_TYPE_FABRIC, 0) == CUDA_SUCCESS)) {
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
+    handle->fabric.allocHandle = allocHandle;
   }
 
   if (handle->typeFlags == GpuIpcMemHandle::Type::None) {
@@ -253,9 +260,10 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
     THROW(GPU, Error, ErrorCode::SystemError, "createMulticast failed: neither POSIX FD nor FABRIC handle was created");
   }
 
-  // Release the local allocation handle. The exported POSIX FD / Fabric handle keeps the
-  // multicast object alive. Each importer will get its own handle via cuMemImportFromShareableHandle.
-  MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
+  // Only release allocHandle if it is not stored in fabric.allocHandle.
+  if (!(handle->typeFlags & GpuIpcMemHandle::Type::Fabric)) {
+    MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
+  }
   return handle;
 #else   // !(CUDA_NVLS_API_AVAILABLE)
   THROW(GPU, Error, ErrorCode::InvalidUsage,
@@ -275,6 +283,7 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
     if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
         CUDA_SUCCESS) {
+      handle_.fabric.allocHandle = {};
       type_ = GpuIpcMemHandle::Type::Fabric;
     }
   }
