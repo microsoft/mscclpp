@@ -323,6 +323,196 @@ def main():
         if rank == 0:
             print("\n[Test 4] Skipped (real MoE workloads require exactly 8 ranks)")
 
+    # ── Test 5: NCCL EP Low-Latency equivalent workload ──────────────────
+    # Matches the data volume of:
+    #   mpirun -np 8 ep_bench -a ll -t 128 -d 7168
+    #
+    # ep_bench LL config: 128 tokens/rank, 256 experts (32/rank), top_k=8,
+    # hidden=7168, bf16.
+    #
+    # Expert assignment: for each token, generate 256 scores = abs(N(0,1))+1,
+    # pick top-8 expert indices. Then mask ~10 random (token,k) slots with -1.
+    # Seed: mt19937(1 + rank).
+    #
+    # Since Python's numpy MT19937 differs from C++ std::mt19937 in the
+    # normal distribution transform, we reproduce the *structure* (uniform
+    # top-8 from 256 experts) with numpy, giving statistically equivalent
+    # non-uniform splits. Each token sends its hidden vector to ~8 experts
+    # across ranks → ~1014 valid selections per rank → ~14.5 MB per rank.
+
+    LL_NUM_TOKENS = 128      # tokens per rank
+    LL_NUM_EXPERTS = 256
+    LL_TOP_K = 8
+    LL_HIDDEN = 7168         # bf16 elements per token
+    LL_NUM_MASKED = 10       # random slots set to -1
+
+    if world_size == 8:
+        num_local_experts = LL_NUM_EXPERTS // world_size  # 32
+
+        # Replicate LL expert assignment with numpy mt19937
+        import numpy as np
+        rng = np.random.RandomState(1 + rank)
+
+        # For each token: generate 256 scores, pick top-8 expert indices
+        topk_idx = np.zeros((LL_NUM_TOKENS, LL_TOP_K), dtype=np.int64)
+        for i in range(LL_NUM_TOKENS):
+            scores = np.abs(rng.randn(LL_NUM_EXPERTS)) + 1.0
+            top_experts = np.argpartition(scores, -LL_TOP_K)[-LL_TOP_K:]
+            topk_idx[i] = top_experts
+
+        # Mask ~10 random positions with -1
+        for _ in range(LL_NUM_MASKED):
+            ti = rng.randint(0, LL_NUM_TOKENS)
+            ki = rng.randint(0, LL_TOP_K)
+            topk_idx[ti, ki] = -1
+
+        # Count tokens sent from this rank to each target rank
+        send_counts = [0] * world_size
+        for i in range(LL_NUM_TOKENS):
+            target_ranks_seen = set()
+            for k in range(LL_TOP_K):
+                eid = topk_idx[i, k]
+                if eid >= 0:
+                    target_rank = int(eid) // num_local_experts
+                    target_ranks_seen.add(target_rank)
+            for tr in target_ranks_seen:
+                send_counts[tr] += 1
+
+        # Gather 8×8 send matrix
+        send_tensor = torch.tensor(send_counts, dtype=torch.int32, device='cuda')
+        all_sends = [torch.zeros(world_size, dtype=torch.int32, device='cuda')
+                     for _ in range(world_size)]
+        dist.all_gather(all_sends, send_tensor)
+        send_matrix = [t.cpu().tolist() for t in all_sends]
+
+        in_splits_tokens = send_matrix[rank]
+        out_splits_tokens = [send_matrix[j][rank] for j in range(world_size)]
+
+        in_splits = [t * LL_HIDDEN for t in in_splits_tokens]
+        out_splits = [t * LL_HIDDEN for t in out_splits_tokens]
+
+        total_send_tokens = sum(in_splits_tokens)
+        total_recv_tokens = sum(out_splits_tokens)
+        total_send_bytes = sum(in_splits) * 2
+        total_recv_bytes = sum(out_splits) * 2
+
+        if rank == 0:
+            print(f"\n[Test 5] NCCL EP LL-equivalent workload "
+                  f"(tokens={LL_NUM_TOKENS}, experts={LL_NUM_EXPERTS}, "
+                  f"top_k={LL_TOP_K}, hidden={LL_HIDDEN}, bf16)")
+            print(f"  Rank 0 send tokens: {in_splits_tokens} (total {total_send_tokens})")
+            print(f"  Rank 0 recv tokens: {out_splits_tokens} (total {total_recv_tokens})")
+            print(f"  Send {total_send_bytes / 1e6:.1f}MB, "
+                  f"Recv {total_recv_bytes / 1e6:.1f}MB")
+            max_out = max(out_splits_tokens)
+            min_out = min(out_splits_tokens)
+            print(f"  Recv imbalance: {max_out/min_out:.2f}x "
+                  f"(min={min_out}, max={max_out})")
+            print_header()
+
+        inp = torch.randn(sum(in_splits), dtype=torch.bfloat16, device='cuda')
+        out = torch.empty(sum(out_splits), dtype=torch.bfloat16, device='cuda')
+
+        n_warmup, n_iters = 10, 50
+
+        m_lat, m_bw = bench_alltoallv(mscclpp_fn, inp, out, in_splits, out_splits, n_warmup, n_iters)
+        t_lat, t_bw = bench_alltoallv(torch_fn, inp, out, in_splits, out_splits, n_warmup, n_iters)
+
+        print_row(fmt_size(total_recv_bytes), m_lat, m_bw, t_lat, t_bw)
+    else:
+        if rank == 0:
+            print("\n[Test 5] Skipped (NCCL EP LL-equivalent requires exactly 8 ranks)")
+
+    # ── Test 6: NCCL EP High-Throughput equivalent workload ──────────────
+    # Matches the data volume of:
+    #   mpirun -np 8 ep_bench -a ht -t 4096 -d 7168
+    #
+    # ep_bench config: 4096 tokens/rank, 256 experts (32/rank), top_k=8,
+    # hidden=7168, bf16.  Each token is dispatched to top_k=8 experts,
+    # so each rank receives 4096 × 8 = 32768 token-expert pairs.
+    #
+    # We replicate the ep_bench expert assignment logic:
+    #   srand(rank + 42), for each of 4096 tokens pick a random first_expert
+    #   in [0,256), then assign top_k=8 consecutive experts.
+    #   target_rank = expert_id // 32.
+    # This produces a non-uniform send matrix (most tokens go to 1-2 ranks).
+    # Total recv per rank ≈ 32768 tokens (≈ 469.76 MB), matching ep_bench.
+
+    EP_NUM_TOKENS = 4096    # tokens per rank (input)
+    EP_NUM_EXPERTS = 256
+    EP_TOP_K = 8
+    EP_HIDDEN = 7168        # bf16 elements per token
+
+    if world_size == 8:
+        num_local_experts = EP_NUM_EXPERTS // world_size  # 32
+
+        # Use C's srand/rand to replicate ep_bench's exact token distribution
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.srand(rank + 42)
+
+        # Count tokens sent from this rank to each target rank.
+        # ep_bench dispatches each token to all ranks hosting its top_k experts.
+        # A token with experts spanning 2 ranks sends a copy to each.
+        send_counts = [0] * world_size
+        for i in range(EP_NUM_TOKENS):
+            first_expert = libc.rand() % EP_NUM_EXPERTS
+            target_ranks_seen = set()
+            for k in range(EP_TOP_K):
+                expert_id = (first_expert + k) % EP_NUM_EXPERTS
+                target_rank = expert_id // num_local_experts
+                target_ranks_seen.add(target_rank)
+            for tr in target_ranks_seen:
+                send_counts[tr] += 1
+
+        # Gather 8×8 send matrix via allgather
+        send_tensor = torch.tensor(send_counts, dtype=torch.int32, device='cuda')
+        all_sends = [torch.zeros(world_size, dtype=torch.int32, device='cuda')
+                     for _ in range(world_size)]
+        dist.all_gather(all_sends, send_tensor)
+        send_matrix = [t.cpu().tolist() for t in all_sends]
+
+        in_splits_tokens = send_matrix[rank]
+        out_splits_tokens = [send_matrix[j][rank] for j in range(world_size)]
+
+        # Convert tokens to bf16 elements
+        in_splits = [t * EP_HIDDEN for t in in_splits_tokens]
+        out_splits = [t * EP_HIDDEN for t in out_splits_tokens]
+
+        total_send_tokens = sum(in_splits_tokens)
+        total_recv_tokens = sum(out_splits_tokens)
+        total_send_bytes = sum(in_splits) * 2
+        total_recv_bytes = sum(out_splits) * 2
+
+        if rank == 0:
+            print(f"\n[Test 6] NCCL EP HT-equivalent workload "
+                  f"(tokens={EP_NUM_TOKENS}, experts={EP_NUM_EXPERTS}, "
+                  f"top_k={EP_TOP_K}, hidden={EP_HIDDEN}, bf16)")
+            print(f"  Rank 0 send tokens: {in_splits_tokens} (total {total_send_tokens})")
+            print(f"  Rank 0 recv tokens: {out_splits_tokens} (total {total_recv_tokens})")
+            print(f"  Send {total_send_bytes / 1e6:.1f}MB, "
+                  f"Recv {total_recv_bytes / 1e6:.1f}MB")
+            # Show imbalance
+            max_out = max(out_splits_tokens)
+            min_out = min(out_splits_tokens)
+            print(f"  Recv imbalance: {max_out/min_out:.2f}x "
+                  f"(min={min_out}, max={max_out})")
+            print_header()
+
+        inp = torch.randn(sum(in_splits), dtype=torch.bfloat16, device='cuda')
+        out = torch.empty(sum(out_splits), dtype=torch.bfloat16, device='cuda')
+
+        n_warmup, n_iters = 10, 50  # match ep_bench defaults
+
+        m_lat, m_bw = bench_alltoallv(mscclpp_fn, inp, out, in_splits, out_splits, n_warmup, n_iters)
+        t_lat, t_bw = bench_alltoallv(torch_fn, inp, out, in_splits, out_splits, n_warmup, n_iters)
+
+        avg_bytes = total_recv_bytes
+        print_row(fmt_size(avg_bytes), m_lat, m_bw, t_lat, t_bw)
+    else:
+        if rank == 0:
+            print("\n[Test 6] Skipped (NCCL EP HT-equivalent requires exactly 8 ranks)")
+
     # Cleanup
     dist.barrier()
     if rank == 0:
