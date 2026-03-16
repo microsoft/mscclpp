@@ -68,7 +68,7 @@ steps:
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       HOST=$(head -1 ${HOSTFILE})
       ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST} \
-        'sudo docker cp mscclpp-test:/root/mscclpp/build/coverage.info /tmp/coverage.info'
+        'sudo docker cp mscclpp-test:/root/mscclpp/coverage.info /tmp/coverage.info'
       scp -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST}:/tmp/coverage.info $(System.DefaultWorkingDirectory)/coverage.info
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 

@@ -16,6 +16,7 @@ if(MSCCLPP_USE_ROCM)
     foreach(arch ${MSCCLPP_GPU_ARCHS})
         add_compile_options(--offload-arch=${arch})
     endforeach()
+    add_compile_definitions(__HIP_PLATFORM_AMD__)
 endif()
 
 function(add_test_executable name sources)
