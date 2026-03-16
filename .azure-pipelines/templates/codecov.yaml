@@ -55,6 +55,8 @@ steps:
 
       lcov --extract coverage.info "${BUILD_PREFIX}/src/*" "${BUILD_PREFIX}/include/mscclpp/*" --output-file coverage.info
       lcov --list coverage.info
+      echo "=== coverage.info location ==="
+      ls -la $(pwd)/coverage.info
 
 - task: Bash@3
   name: FetchCoverage
@@ -67,6 +69,8 @@ steps:
       SSH_OPTION="StrictHostKeyChecking=no"
       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
       HOST=$(head -1 ${HOSTFILE})
+      ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST} \
+        'sudo docker exec mscclpp-test ls -la /root/mscclpp/coverage.info 2>&1 || echo "NOT FOUND in container"; sudo docker exec mscclpp-test find /root/mscclpp -name coverage.info 2>/dev/null || true'
       ssh -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST} \
         'sudo docker cp mscclpp-test:/root/mscclpp/coverage.info /tmp/coverage.info'
       scp -i ${KeyFilePath} -o ${SSH_OPTION} ${HOST}:/tmp/coverage.info $(System.DefaultWorkingDirectory)/coverage.info
