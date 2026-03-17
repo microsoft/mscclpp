@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
 
-# Check if the number of arguments is exactly 1
+# Check if the number of arguments is exactly 3
 if [ "$#" -ne 3 ]; then
     echo "Usage: $0 <hostfile> <nnodes> <ppn>"
     exit 1
