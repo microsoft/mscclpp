@@ -26,14 +26,13 @@ pr:
       - '**/*.md'
 
 jobs:
-- job: IntegrationTestA100
-  displayName: Integration test A100
+- job: sglangtest
+  displayName: SGLANG Test
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      sglang:
+        containerImage: lmsysorg/sglang:latest
+
 
   pool:
     name: msccl-ci
@@ -47,13 +46,6 @@ jobs:
       vmssName:         mscclpp-ci
       sshKeySecureFile: mscclpp.pem
       gpuArch:          '80'
-
-- job: IntegrationTestH100
-  displayName: Integration test H100
-  strategy:
-    matrix:
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   pool:
     name: msccl-ci-h100
