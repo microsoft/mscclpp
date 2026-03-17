@@ -408,11 +408,16 @@ def main(
     if npkit_dump_dir != "":
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
-    print(
-        f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
-        f"data size: {result_buf.nbytes} bytes data type: {dtype().dtype.name} "
-        f"packet type: {packet_type}"
-    )
+    # Only rank 0 reports output
+    if mscclpp_group.my_rank == 0:
+        msg_size = result_buf.nbytes
+        bw = result_buf.nbytes / execution_time / 1e3   # GB/s
+        latency = execution_time                        # us
+
+        # Print header once
+        print(f"{'Message Size (B)':>18} {'BW (GB/s)':>12} {'Latency (us)':>14}     {'Packet Type':>12}")
+        print(f"{msg_size:18d} {bw:12.2f} {latency:14.2f}       {str(packet_type):>12}")
+
     executor = None
     mscclpp_group = None
 
