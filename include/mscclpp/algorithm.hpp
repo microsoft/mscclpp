@@ -288,6 +288,7 @@ class NativeAlgorithm : public Algorithm {
   std::unordered_map<std::string, uint64_t> tags_;
   Constraint constraint_;
   std::unordered_map<AlgorithmCtxKey, std::shared_ptr<void>> contexts_;
+  std::unordered_map<int32_t, AlgorithmCtxKey> customKeyMap_;
 
   bool initialized_ = false;
 };
