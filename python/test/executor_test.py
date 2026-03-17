@@ -181,6 +181,7 @@ def main(
     n_graph_iters: int = 10,
 ):
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
+    nranks = mscclpp_group.nranks
     #print(f"use GPU {mscclpp_group.my_rank % mscclpp_group.nranks_per_node} on rank {mscclpp_group.my_rank}")
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
@@ -237,8 +238,8 @@ def main(
         latency = execution_time                        # us
 
         # Print header once
-        print(f"{'Message Size (B)':>18} {'BW (GB/s)':>12} {'Latency (us)':>14}     {'Packet Type':>12}")
-        print(f"{msg_size:18d} {bw:12.2f} {latency:14.2f}       {str(packet_type):>12}")
+        print(f"{'NRanks':>8}  {'Message Size (B)':>18} {'BW (GB/s)':>12} {'Latency (us)':>14}     {'Packet Type':>12}")
+        print(f"{nranks:8d}  {msg_size:18d} {bw:12.2f} {latency:14.2f}       {str(packet_type):>12}")
 
     executor = None
     mscclpp_group = None
