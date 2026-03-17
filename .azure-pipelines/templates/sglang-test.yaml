@@ -13,31 +13,15 @@ parameters:
 
 steps:
 - task: Bash@3
-  name: BuildMSCCLPP
-  displayName: Build MSCCL++
+  name: Build
+  displayName: Build
   inputs:
     targetType: inline
     script: |
       mkdir build && cd build
       cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
       make -j
-      cd ..
-      echo "Running: python3 -m pip install ."
-      python3 -m pip install .
-      echo "Running: python3 -m pip install ."
-      python3 -m pip install ./python/requirements_cuda12.txt
     workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-- task: Bash@3
-  name: SGLangSetup
-  displayName: SGLang Setup
-  inputs:
-    targetType: inline
-    script: |
-      git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git  
-      cd sglang
-      pip install --upgrade pip
-      pip install -e "python"
 
 - task: Bash@3
   name: InstallPackages
@@ -91,14 +75,10 @@ steps:
         -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
         export PATH=/usr/local/mpi/bin:\$PATH;                     \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
-        cd /root/mscclpp;                                         \
-        set -e;                                                   \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -o output.jsonl;       \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 1 -o output.jsonl;  \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 2 -o output.jsonl;  \
-        mpirun --allow-run-as-root -np 8 --bind-to numa -x MSCCLPP_DEBUG=WARN ./build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o output.jsonl"'
+        echo Running on \$(hostname -i);                            \
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
+
 
 - task: AzureCLI@2
   name: StopVMSS
