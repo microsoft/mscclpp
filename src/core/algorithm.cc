@@ -41,12 +41,15 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras) {
+                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory,
+                                    int32_t contextKey) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
+  AlgorithmCtxKey ctxKey = (contextKey >= 0)
+                               ? AlgorithmCtxKey(contextKey)
+                               : contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
@@ -77,9 +80,15 @@ const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferM
 
 Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
 
-void NativeAlgorithm::reset() {
-  contexts_.clear();
-  initialized_ = false;
+void NativeAlgorithm::reset(int32_t contextKey) {
+  if (contextKey >= 0) {
+    // Remove only the context associated with the given custom key
+    AlgorithmCtxKey key(contextKey);
+    contexts_.erase(key);
+  } else {
+    contexts_.clear();
+    initialized_ = false;
+  }
 }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
@@ -165,8 +174,8 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
-                                 std::shared_ptr<Executor> executor, int, int, bool,
-                                 const std::unordered_map<std::string, uintptr_t>&) {
+                                 std::shared_ptr<Executor> executor, int, int,
+                                 const std::unordered_map<std::string, uintptr_t>&, bool, int32_t) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
@@ -206,7 +215,7 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
 // TODO: implement this
-void DslAlgorithm::reset() {}
+void DslAlgorithm::reset(int32_t /*contextKey*/) {}
 
 static uint32_t* gDefaultFlagBuffer = nullptr;
 static std::weak_ptr<void> gDefaultFlagBufferWeak;

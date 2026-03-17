@@ -587,8 +587,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
-                                                   symmetricMemory, extras));
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0, extras,
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -643,7 +643,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
                                                    ncclRedOpToMscclpp(reductionOperation), stream, comm->executor, 0, 0,
-                                                   symmetricMemory));
+                                                   {}, symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -698,7 +698,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
-                                                   ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0,
+                                                   ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0, {},
                                                    symmetricMemory));
   }
 
@@ -754,7 +754,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   auto algo = comm->algorithmCollection.selectAlgorithm(request);
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
-                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
+                                                   mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0, {},
                                                    symmetricMemory));
   }
 

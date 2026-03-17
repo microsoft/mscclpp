@@ -175,8 +175,9 @@ class Algorithm:
         executor: Optional[CppExecutor] = None,
         nblocks=0,
         nthreads_per_block=0,
-        symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
+        symmetric_memory: bool = False,
+        context_key: int = -1,
     ) -> int:
         """Execute the collective algorithm.
 
@@ -192,8 +193,9 @@ class Algorithm:
             executor: The executor for DSL algorithms (required for DSL, optional for native).
             nblocks: Number of CUDA blocks (0 for auto-selection).
             nthreads_per_block: Number of threads per block (0 for auto-selection).
-            symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
+            symmetric_memory: Whether to use symmetric memory optimization (default: False).
+            context_key: The context key for caching algorithm contexts (default: -1).
 
         Returns:
             The result code (0 for success).
@@ -210,13 +212,19 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
-            symmetric_memory,
             extras if extras is not None else {},
+            symmetric_memory,
+            context_key,
         )
 
-    def reset(self):
-        """Reset the internal state of the algorithm, if applicable."""
-        self._algorithm.reset()
+    def reset(self, context_key: int = -1):
+        """Reset the internal state of the algorithm, if applicable.
+
+        Args:
+            context_key: If specified (>= 0), only reset the context associated with this key.
+                         If -1 (default), reset all contexts.
+        """
+        self._algorithm.reset(context_key)
 
 
 class AlgorithmBuilder:
