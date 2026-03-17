@@ -327,8 +327,9 @@ def main(
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
 
-    mscclpp_group.barrier()
-    print("size= ", size, "nelem= ", nelem)
+        # Print header once
+        print(f"{'NRanks':>8}  {'Message Size (B)':>18} {'BW (GB/s)':>12} {'Latency (us)':>14}     {'Packet Type':>12}")
+        print(f"{nranks:8d}  {msg_size:18d} {bw:12.2f} {latency:14.2f}       {str(packet_type):>12}")
 
     # Sentinel fill: choose something unlikely in your pattern
     result_buf.fill(cp.float16(123.0))
