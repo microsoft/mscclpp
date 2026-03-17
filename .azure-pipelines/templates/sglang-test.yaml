@@ -22,8 +22,10 @@ steps:
       cmake -DCMAKE_BUILD_TYPE=Release -DMSCCLPP_BYPASS_GPU_CHECK=ON -DMSCCLPP_USE_CUDA=ON -DMSCCLPP_BUILD_TESTS=ON -DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }} ..
       make -j
       cd ..
-      pip install .
-      pip install ./python/requirements_cuda12.txt
+      echo "Running: python3 -m pip install ."
+      python3 -m pip install .
+      echo "Running: python3 -m pip install ."
+      python3 -m pip install ./python/requirements_cuda12.txt
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
@@ -34,7 +36,7 @@ steps:
     script: |
       git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git  
       cd sglang
-      pip install --uprade pip
+      pip install --upgrade pip
       pip install -e "python"
 
 - task: Bash@3
