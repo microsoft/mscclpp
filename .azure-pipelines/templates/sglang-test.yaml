@@ -32,7 +32,7 @@ steps:
       echo "installing pssh..."
       pip install --break-system-packages pssh
       echo "installing Azure CLI..."
-      pip install --break-system-packages azure-cli
+      curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 - task: DownloadSecureFile@1
   name: SshKeyFile
