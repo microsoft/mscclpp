@@ -32,10 +32,17 @@ steps:
       export GCOV_PREFIX=/root/mscclpp
       export GCOV_PREFIX_STRIP=$STRIP_COUNT
 
+      echo "Running unit_tests..."
       ./build/bin/unit_tests
+      echo "unit_tests: PASSED"
+
+      echo "Running mp_unit_tests -np 2..."
       mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --exclude-perf-tests
+      echo "mp_unit_tests -np 2: PASSED"
+
+      echo "Running mp_unit_tests -np 4..."
       mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests
-      echo "Done"
+      echo "mp_unit_tests -np 4: PASSED"
 
 - template: run-remote-task.yaml
   parameters:
@@ -44,10 +51,9 @@ steps:
     remoteScript: |
       BUILD_PREFIX=$(cat build/BUILD_PREFIX)
 
-      # On ROCm, hipcc (Clang) generates coverage data incompatible with GCC's gcov.
-      # Use llvm-cov gcov via a wrapper so lcov can read the data.
       GCOV_TOOL_ARG=""
-      if command -v llvm-cov >/dev/null 2>&1; then
+      if [ "${{ parameters.platform }}" = "rocm" ]; then
+        apt-get update -qq && apt-get install -y -qq llvm 2>/dev/null | tail -1
         GCOV_WRAPPER=$(mktemp)
         printf '#!/bin/sh\nexec llvm-cov gcov "$@"\n' > "$GCOV_WRAPPER"
         chmod +x "$GCOV_WRAPPER"
