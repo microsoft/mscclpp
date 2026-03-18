@@ -78,6 +78,8 @@ struct AllreduceNvlsPacketAdapter {
 void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator> comm) {
   int nSwitchChannels = 1;
   this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels);
+  this->switchChannels_ =
+      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, this->scratchBufferSize_, nSwitchChannels);
 }
 
 AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {
@@ -92,9 +94,7 @@ std::shared_ptr<void> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<
   ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
 
   // setup channels
-  int nSwitchChannels = 1;
-  ctx->switchChannels =
-      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, this->scratchBufferSize_, nSwitchChannels);
+  ctx->switchChannels = this->switchChannels_;
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }

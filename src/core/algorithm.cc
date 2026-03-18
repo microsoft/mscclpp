@@ -102,7 +102,6 @@ void NativeAlgorithm::reset(int32_t contextKey) {
   } else {
     contexts_.clear();
     customKeyMap_.clear();
-    initialized_ = false;
   }
 }
 

@@ -34,6 +34,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
+  std::vector<SwitchChannel> switchChannels_;
 };
 }  // namespace collective
 }  // namespace mscclpp
