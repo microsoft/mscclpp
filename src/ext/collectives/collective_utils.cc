@@ -33,11 +33,17 @@ std::vector<mscclpp::MemoryChannel> setupMemoryChannels(
     const std::vector<mscclpp::RegisteredMemory>& remoteMemories, mscclpp::RegisteredMemory localMemory,
     int nChannelsPerConnection) {
   std::vector<mscclpp::MemoryChannel> channels;
-  size_t nConnections = connections.size();
+  // Count number of CudaIpc connections for proper dense indexing into memorySemaphores
+  size_t nCudaIpcConns = 0;
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    if (connections[cid].transport() == mscclpp::Transport::CudaIpc) nCudaIpcConns++;
+  }
   for (int idx = 0; idx < nChannelsPerConnection; ++idx) {
-    for (size_t cid = 0; cid < nConnections; ++cid) {
+    size_t semIdx = 0;
+    for (size_t cid = 0; cid < connections.size(); ++cid) {
       if (connections[cid].transport() == mscclpp::Transport::CudaIpc) {
-        channels.emplace_back(memorySemaphores[idx * nConnections + cid], remoteMemories[cid], localMemory, nullptr);
+        channels.emplace_back(memorySemaphores[idx * nCudaIpcConns + semIdx], remoteMemories[cid], localMemory, nullptr);
+        semIdx++;
       }
     }
   }

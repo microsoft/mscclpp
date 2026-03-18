@@ -157,12 +157,15 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         }
       }
     }
-  } else if (transports.has(Transport::CudaIpc)) {
+  } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
     // Create a memory map for the remote GPU memory. The memory map will keep the GpuIpcMem instance alive.
     this->remoteMemMap = gpuIpcMem->map();
     this->data = this->remoteMemMap.get();
+  } else if (transports.has(Transport::CudaIpc) && getHostHash() != this->hostHash) {
+    WARN(GPU, "Skipping CudaIpc map for cross-node peer (local hostHash=", getHostHash(),
+         ", remote hostHash=", this->hostHash, ")");
   }
   if (this->data != nullptr) {
     INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);

@@ -137,6 +137,33 @@ def main():
         unique_id = pickle.loads(uid_bytes)
     
     bootstrap.initialize(unique_id)
+    
+    # ── Multi-node diagnostics ─────────────────────────────────────────
+    import subprocess, platform
+    hostname = platform.node()
+    n_ranks_per_node = bootstrap.get_n_ranks_per_node()
+    is_multi_node = (world_size > n_ranks_per_node)
+    
+    # Check IB device availability
+    try:
+        ib_out = subprocess.check_output(["ibv_devinfo", "-l"], stderr=subprocess.DEVNULL, timeout=5).decode().strip()
+        ib_devices = [l.strip() for l in ib_out.splitlines() if l.strip() and "device" not in l.lower()]
+    except Exception:
+        ib_devices = []
+    
+    if rank == 0:
+        print(f"  Hostname: {hostname}")
+        print(f"  nRanksPerNode: {n_ranks_per_node}, isMultiNode: {is_multi_node}")
+        print(f"  IB devices: {ib_devices if ib_devices else 'NONE FOUND'}")
+        print(f"  MSCCLPP_SOCKET_IFNAME: {os.environ.get('MSCCLPP_SOCKET_IFNAME', '<not set>')}")
+        if is_multi_node and not ib_devices:
+            print(f"  WARNING: Multi-node detected but no IB devices! Cross-node will fail.")
+    # Also print from rank n_ranks_per_node (first rank on node 1) for comparison
+    if is_multi_node and rank == n_ranks_per_node:
+        print(f"  [Node 1] Hostname: {hostname}, rank={rank}")
+        print(f"  [Node 1] IB devices: {ib_devices if ib_devices else 'NONE FOUND'}")
+    # ── End diagnostics ────────────────────────────────────────────────
+    
     comm = Communicator(bootstrap)
     
     # Create MscclppAlltoAllV with existing communicator
