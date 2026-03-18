@@ -37,7 +37,6 @@ jobs:
     name: msccl-ci
   container:
     image: $(containerImage)
-    options: '--user 0:0'
 
   steps:
   - template: templates/sglang-test.yaml

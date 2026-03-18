@@ -29,12 +29,10 @@ steps:
   inputs:
     targetType: inline
     script: |
-      echo "apt update..."
-      apt-get update -y
       echo "installing pssh..."
-      apt-get install -y pssh
+      pip install pssh
       echo "installing Azure CLI..."
-      curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+      pip install azure-cli
 
 - task: DownloadSecureFile@1
   name: SshKeyFile
