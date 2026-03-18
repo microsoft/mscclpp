@@ -8,7 +8,7 @@ parameters:
 
 
 steps:
-- template: deploy.yaml
+- template: deploy.yml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -16,7 +16,7 @@ steps:
     cmakeArgs:        '-DMSCCLPP_NPKIT_FLAGS="-DENABLE_NPKIT -DENABLE_NPKIT_EVENT_TIME_SYNC_CPU -DENABLE_NPKIT_EVENT_TIME_SYNC_GPU -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_INIT_EXIT -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_ENTRY -DENABLE_NPKIT_EVENT_EXECUTOR_OP_BASE_EXIT"'
     deployArgs:       'single-node-test'
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: MpUnitTests
     displayName: Run mscclpp multi-process unit tests
@@ -30,7 +30,7 @@ steps:
       grep -q NPKIT_EVENT_EXECUTOR_WAIT_ENTRY ./npkit_output/npkit_event_trace.json
       grep -q NPKIT_EVENT_EXECUTOR_READ_REDUCE_COPY_SEND_ENTRY ./npkit_output/npkit_event_trace.json
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: PyTests
     displayName: Run pytests
@@ -51,7 +51,7 @@ steps:
       grep -q NPKIT_EVENT_EXECUTOR_PUT_PACKET_ENTRY ./npkit_output/npkit_event_trace.json
       grep -q NPKIT_EVENT_EXECUTOR_REDUCE_SEND_PACKET_ENTRY ./npkit_output/npkit_event_trace.json
 
-- template: stop.yaml
+- template: stop.yml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

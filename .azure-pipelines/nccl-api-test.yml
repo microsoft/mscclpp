@@ -40,7 +40,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/nccl-test.yaml
+  - template: templates/nccl-test.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
@@ -60,7 +60,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/nccl-test.yaml
+  - template: templates/nccl-test.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci

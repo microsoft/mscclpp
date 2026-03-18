@@ -43,7 +43,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut.yaml
+  - template: templates/ut.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
@@ -64,7 +64,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-npkit.yaml
+  - template: templates/ut-npkit.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
@@ -83,7 +83,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut.yaml
+  - template: templates/ut.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
@@ -102,7 +102,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-npkit.yaml
+  - template: templates/ut-npkit.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
@@ -123,7 +123,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-no-ib-env.yaml
+  - template: templates/ut-no-ib-env.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
@@ -142,7 +142,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut.yaml
+  - template: templates/ut.yml
     parameters:
       subscription:     mscclpp-ci-mi300x
       vmssName:         mscclpp-mi300x-ci

@@ -7,7 +7,7 @@ parameters:
   type: string
 
 steps:
-- template: deploy.yaml
+- template: deploy.yml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -15,14 +15,14 @@ steps:
     cmakeArgs:        '-DMSCCLPP_USE_IB=OFF'
     deployArgs:       'single-node-test false'
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: UnitTests
     displayName: Run mscclpp unit tests
     remoteScript: |
       ./build/bin/unit_tests
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: MpUnitTests
     displayName: Run mscclpp multi-process unit tests
@@ -31,14 +31,14 @@ steps:
       mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests
       mpirun --allow-run-as-root -tag-output -np 8 ./build/bin/mp_unit_tests
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: PyTests
     displayName: Run pytests
     remoteScript: |
       mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: StopContainer
     displayName: Stop existing container
@@ -82,14 +82,14 @@ steps:
     arguments: single-node-test false
     workingDirectory: $(System.DefaultWorkingDirectory)
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: PyTestsWithIbBuildDisableIb
     displayName: Run pytests (IB build, IB tests disabled)
     remoteScript: |
       mpirun --allow-run-as-root -tag-output -x MSCCLPP_HOME=/root/mscclpp -x MSCCLPP_DISABLE_IB_TESTS=1 -np 8 python3 -m pytest ./python/test/test_mscclpp.py -x
 
-- template: stop.yaml
+- template: stop.yml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

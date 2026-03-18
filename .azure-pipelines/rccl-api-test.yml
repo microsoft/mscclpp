@@ -40,7 +40,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/rccl-test.yaml
+  - template: templates/rccl-test.yml
     parameters:
       subscription:     mscclpp-ci-mi300x
       vmssName:         mscclpp-mi300x-ci

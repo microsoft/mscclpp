@@ -10,7 +10,7 @@ parameters:
   type: string
 
 steps:
-- template: deploy.yaml
+- template: deploy.yml
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
@@ -22,7 +22,7 @@ steps:
     buildName:        BuildCoverage
     deployArgs:       'single-node-test true ${{ parameters.platform }}'
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: TestsCoverageNonPerf
     displayName: Run unit_tests + mp_unit_tests (non-perf) with coverage
@@ -44,7 +44,7 @@ steps:
       mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests
       echo "mp_unit_tests -np 4: PASSED"
 
-- template: run-remote-task.yaml
+- template: run-remote-task.yml
   parameters:
     name: CaptureCoverage
     displayName: Capture coverage data with lcov
@@ -104,7 +104,7 @@ steps:
       ./codecov upload-process --disable-search -t $(CODECOV_TOKEN) -f coverage.info --flag ${{ parameters.platform }}-${{ parameters.gpuArch }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- template: stop.yaml
+- template: stop.yml
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}

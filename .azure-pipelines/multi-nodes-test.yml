@@ -50,13 +50,13 @@ jobs:
           echo "Entry already exists, nothing to do."
         fi
 
-  - template: templates/deploy.yaml
+  - template: templates/deploy.yml
     parameters:
       subscription:  msccl-it
       vmssName:      mscclit-vmss
       resourceGroup: msccl-IT
 
-  - template: templates/run-remote-task.yaml
+  - template: templates/run-remote-task.yml
     parameters:
       name: RunMscclppTest
       displayName: Run multi-nodes mscclpp-test
@@ -64,7 +64,7 @@ jobs:
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
-  - template: templates/run-remote-task.yaml
+  - template: templates/run-remote-task.yml
     parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
@@ -72,7 +72,7 @@ jobs:
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
-  - template: templates/run-remote-task.yaml
+  - template: templates/run-remote-task.yml
     parameters:
       name: RunMultiNodePythonTests
       displayName: Run multi-nodes python tests
@@ -80,7 +80,7 @@ jobs:
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
-  - template: templates/run-remote-task.yaml
+  - template: templates/run-remote-task.yml
     parameters:
       name: RunMultiNodePythonBenchmark
       displayName: Run multi-nodes python benchmark
@@ -88,7 +88,7 @@ jobs:
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
-  - template: templates/stop.yaml
+  - template: templates/stop.yml
     parameters:
       subscription:  msccl-it
       vmssName:      mscclit-vmss
