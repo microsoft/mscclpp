@@ -29,9 +29,12 @@ steps:
   inputs:
     targetType: inline
     script: |
-      sudo apt-get update -y
-      sudo apt-get install pssh -y
-      curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+      echo "apt update..."
+      apt-get update -y
+      echo "installing pssh..."
+      apt-get install -y pssh
+      echo "installing Azure CLI..."
+      curl -sL https://aka.ms/InstallAzureCLIDeb | bash
 
 - task: DownloadSecureFile@1
   name: SshKeyFile
