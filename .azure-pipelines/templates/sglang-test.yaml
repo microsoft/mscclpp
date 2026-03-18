@@ -30,9 +30,9 @@ steps:
     targetType: inline
     script: |
       echo "installing pssh..."
-      pip install pssh
+      pip install --break-system-packages pssh
       echo "installing Azure CLI..."
-      pip install azure-cli
+      pip install --break-system-packages azure-cli
 
 - task: DownloadSecureFile@1
   name: SshKeyFile
