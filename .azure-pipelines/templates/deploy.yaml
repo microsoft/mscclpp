@@ -70,7 +70,7 @@ steps:
 
       CMAKE_EXTRA_ARGS='${{ parameters.cmakeArgs }}'
       if [ "${{ parameters.platform }}" = "rocm" ]; then
-        CXX=/opt/rocm/bin/hipcc cmake \
+        eval CXX=/opt/rocm/bin/hipcc cmake \
           -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
           -DMSCCLPP_BYPASS_GPU_CHECK=ON \
           -DMSCCLPP_USE_ROCM=ON \
@@ -78,7 +78,7 @@ steps:
           ${GPU_ARCH_ARG} \
           ${CMAKE_EXTRA_ARGS} ..
       else
-        cmake \
+        eval cmake \
           -DCMAKE_BUILD_TYPE=${{ parameters.buildType }} \
           -DMSCCLPP_BYPASS_GPU_CHECK=ON \
           -DMSCCLPP_USE_CUDA=ON \
