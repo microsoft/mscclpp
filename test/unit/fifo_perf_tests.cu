@@ -45,7 +45,9 @@ static bool consumePerfTriggers(std::unique_ptr<mscclpp::Fifo>& hostFifo, int nu
 
     trigger.snd ^= ((uint64_t)1 << (uint64_t)63);
     trigger.snd = trigger.snd ^ trigger.fst;
-    assert(triggerCounts[trigger.snd] + 1 == trigger.fst);
+    if (triggerCounts[trigger.snd] + 1 != trigger.fst) {
+      return false;  // Validation failed
+    }
     triggerCounts[trigger.snd]++;
     hostFifo->pop();
   }

@@ -220,11 +220,12 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
 
     TestCase* testCase = nullptr;
     bool testSkipped = false;
+    bool setUpSucceeded = false;
     try {
       testCase = entry.factory();
       testCase->SetUp();
+      setUpSucceeded = true;
       testCase->TestBody();
-      testCase->TearDown();
     } catch (const SkipException& e) {
       gCurrentTestPassed = true;
       testSkipped = true;
@@ -240,6 +241,24 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       gCurrentTestPassed = false;
       if (gCurrentTestFailureMessage.empty()) {
         gCurrentTestFailureMessage = "Unknown exception";
+      }
+    }
+
+    // Always call TearDown() if SetUp() succeeded, even if TestBody() threw
+    if (setUpSucceeded && testCase != nullptr) {
+      try {
+        testCase->TearDown();
+      } catch (const std::exception& e) {
+        // If test already failed, keep original failure message
+        if (gCurrentTestPassed) {
+          gCurrentTestPassed = false;
+          gCurrentTestFailureMessage = std::string("TearDown() failed: ") + e.what();
+        }
+      } catch (...) {
+        if (gCurrentTestPassed) {
+          gCurrentTestPassed = false;
+          gCurrentTestFailureMessage = "TearDown() failed with unknown exception";
+        }
       }
     }
 
