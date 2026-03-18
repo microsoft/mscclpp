@@ -8,10 +8,10 @@
 #include "allgather/allgather_fullmesh_2.hpp"
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/allreduce_fullmesh.hpp"
-#include "allreduce/allreduce_nvls.hpp"
+#include "allreduce/allreduce_nvls_block_pipeline.hpp"
 #include "allreduce/allreduce_nvls_packet.hpp"
-#include "allreduce/allreduce_nvls_with_copy.hpp"
-#include "allreduce/allreduce_nvls_with_copy_2.hpp"
+#include "allreduce/allreduce_nvls_warp_pipeline.hpp"
+#include "allreduce/allreduce_nvls_zero_copy.hpp"
 #include "allreduce/allreduce_packet.hpp"
 #include "allreduce/allreduce_rsag.hpp"
 #include "allreduce/allreduce_rsag_pipeline.hpp"
@@ -72,12 +72,14 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uin
   auto allreduceNvlsPacket =
       std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreduceNvlsPacket->collective(), allreduceNvlsPacket->name(), allreduceNvlsPacket);
-  auto allreduceNvlsWithCopy = std::make_shared<AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize)->build();
-  collection.registerAlgorithm(allreduceNvlsWithCopy->collective(), allreduceNvlsWithCopy->name(),
-                               allreduceNvlsWithCopy);
-  auto allreduceNvlsWithCopy2 = std::make_shared<AllreduceNvlsWithCopy2>(scratchBuffer, scratchBufferSize)->build();
-  collection.registerAlgorithm(allreduceNvlsWithCopy2->collective(), allreduceNvlsWithCopy2->name(),
-                               allreduceNvlsWithCopy2);
+  auto allreduceNvlsWarpPipeline =
+      std::make_shared<AllreduceNvlsWarpPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceNvlsWarpPipeline->collective(), allreduceNvlsWarpPipeline->name(),
+                               allreduceNvlsWarpPipeline);
+  auto allreduceNvlsBlockPipeline =
+      std::make_shared<AllreduceNvlsBlockPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceNvlsBlockPipeline->collective(), allreduceNvlsBlockPipeline->name(),
+                               allreduceNvlsBlockPipeline);
   auto allreducePkt =
       std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);

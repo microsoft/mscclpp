@@ -1,0 +1,63 @@
+# .azure-pipelines/templates/rccl-test.yml
+# ------------------------------------------------
+# A step-template that runs the entire MSCCLPP→RCCL test suite on one pool/container.
+#
+# Parameters:
+#   subscription     – Azure subscription to use for VMSS start/stop
+#   vmssName         – VMSS name to start/stop
+#   gpuArch          – GPU architecture (e.g. gfx942)
+
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: gpuArch
+  type: string
+  default: "gfx942"
+
+steps:
+- template: deploy.yml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    platform:         rocm
+    gpuArch:          ${{ parameters.gpuArch }}
+    buildTests:       false
+    deployArgs:       'single-node-test true rocm'
+
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallRcclTests
+    displayName: Install RCCL Tests
+    remoteScript: |
+      cd
+      git clone --filter=blob:none --no-checkout https://github.com/ROCm/rocm-systems.git
+      cd rocm-systems
+      git sparse-checkout init --cone
+      git sparse-checkout set projects/rccl-tests
+      git checkout
+      cd projects/rccl-tests
+      MPI=1 MPI_HOME=/usr/local/mpi make -j
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunRcclAllGatherTest
+    displayName: Run RCCL AllGather Test with or without MSCCLPP Lib
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunRcclAllReduceTest
+    displayName: Run RCCL AllReduce Test with or without MSCCLPP Lib
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: stop.yml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName:     ${{ parameters.vmssName }}

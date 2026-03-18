@@ -1,7 +1,8 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <mpi.h>
+#include <unistd.h>
 
 #include <filesystem>
 #include <mscclpp/env.hpp>
@@ -22,7 +23,7 @@ std::string getExecutablePath() {
 
 void ExecutorTest::SetUp() {
   if (gEnv->worldSize != 2 || gEnv->nRanksPerNode != 2) {
-    GTEST_SKIP() << "This test requires world size to be 2 and ranks per node to be 2";
+    SKIP_TEST() << "This test requires world size to be 2 and ranks per node to be 2";
   }
   MultiProcessTest::SetUp();
 
@@ -49,7 +50,7 @@ void ExecutorTest::TearDown() {
   MultiProcessTest::TearDown();
 }
 
-TEST_F(ExecutorTest, TwoNodesAllreduce) {
+TEST(ExecutorTest, TwoNodesAllreduce) {
   std::string executablePath = getExecutablePath();
   std::filesystem::path path = executablePath;
   std::filesystem::path executionFilesPath =
