@@ -100,7 +100,7 @@ if $USE_DOCKER; then
     INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
 
     parallel-ssh -i "${PSSH_COMMON[@]}" \
-        "sudo docker exec -t mscclpp-test bash -c \"${INNER}\""
+        "sudo docker exec mscclpp-test bash -c \"${INNER}\""
 else
     parallel-ssh -i "${PSSH_COMMON[@]}" \
         "set -euxo pipefail; CMD_B64='${CMD_B64}'; printf '%s' \"\$CMD_B64\" | base64 -d | bash -euxo pipefail"
