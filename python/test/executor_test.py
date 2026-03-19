@@ -202,17 +202,74 @@ def main(
         mscclpp_group.nranks,
     )
 
-    executor_func = lambda stream: executor.execute(
-        mscclpp_group.my_rank,
-        input_buf.data.ptr,
-        result_buf.data.ptr,
-        input_buf.nbytes,
-        result_buf.nbytes,
-        dtype_to_mscclpp_dtype(dtype),
-        execution_plan,
-        stream.ptr,
-        packet_type,
-    )
+    # Print header once
+    if my_rank == 0:
+        print(
+            f"{'NRanks':>8} {'Message Size (B)':>18} {'BW (GB/s)':>12} "
+            f"{'Latency (us)':>14}      {'Packet Type':>12}"
+        )
+
+    for size in sizes:
+        input_buf, result_buf, test_buf = build_bufs(
+            collective,
+            size,
+            in_place,
+            dtype,
+            my_rank,
+            nranks,
+        )
+
+        executor_func = lambda stream, in_buf=input_buf, out_buf=result_buf: executor.execute(
+            my_rank,
+            in_buf.data.ptr,
+            out_buf.data.ptr,
+            in_buf.nbytes,
+            out_buf.nbytes,
+            dtype_to_mscclpp_dtype(dtype),
+            execution_plan,
+            stream.ptr,
+            packet_type,
+        )
+
+        #mscclpp_group.barrier()
+
+        # Optional correctness check
+        # bench_correctness(
+        #     collective,
+        #     input_buf,
+        #     result_buf,
+        #     test_buf,
+        #     dtype_str,
+        #     my_rank,
+        #     nranks,
+        #     n_iters,
+        #     executor_func,
+        # )
+
+        mscclpp_group.barrier()
+        execution_time = bench_time(n_iters, n_graph_iters, executor_func)
+        #mscclpp_group.barrier()
+
+        if my_rank == 0:
+            msg_size = size
+            bw = result_buf.nbytes / execution_time / 1e3  # GB/s
+            latency = execution_time  # us
+
+            print(
+                f"{nranks:8d} {msg_size:18d} {bw:12.2f} "
+                f"{latency:14.2f}       {str(packet_type):>12}"
+            )
+
+        # Release buffers for this size
+        input_buf = None
+        result_buf = None
+        test_buf = None
+
+        #mscclpp_group.barrier()
+
+    if npkit_dump_dir != "":
+        npkit.dump(npkit_dump_dir)
+        npkit.shutdown()
 
     mscclpp_group.barrier()
     print("size= ", size, "nelem= ", nelem)
