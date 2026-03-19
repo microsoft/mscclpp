@@ -116,6 +116,34 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
     return *this;
   }
 
+  /// Converting constructor from a different element type with the same vector size.
+  /// Enables e.g. `f32x2 a = some_f8_e4m3x2_value;`
+  /// Uses element-wise static_cast. For the optimized path (e.g. hardware FP8->F32 intrinsics),
+  /// use mscclpp::to<TargetType>(value) explicitly.
+  template <typename OtherT, typename OtherStorageT,
+            typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#pragma unroll
+#endif
+    for (int i = 0; i < N; ++i) {
+      data[i] = static_cast<T>(other.data[i]);
+    }
+  }
+
+  /// Converting assignment from a different element type with the same vector size.
+  template <typename OtherT, typename OtherStorageT,
+            typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#pragma unroll
+#endif
+    for (int i = 0; i < N; ++i) {
+      data[i] = static_cast<T>(other.data[i]);
+    }
+    return *this;
+  }
+
   MSCCLPP_HOST_DEVICE_INLINE operator StorageT() const { return storage; }
 
   MSCCLPP_HOST_DEVICE_INLINE operator T*() { return data; }
@@ -550,6 +578,232 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 min(const f8_e5m2x4& a, const f8_e5m2x4& b) {
   result_ptr[1] = mscclpp::min(a_ptr[1], b_ptr[1]);
 
   return result;
+}
+
+/// Convert a vector type From to vector type To.
+/// Primary template: element-wise conversion via static_cast.
+/// Specialized below for optimized FP8 conversion paths.
+template <typename To, typename From>
+MSCCLPP_DEVICE_INLINE To to(const From& v) {
+  static_assert(To::Size == From::Size, "to<To, From>: vector sizes must match");
+  To result;
+#pragma unroll
+  for (int i = 0; i < From::Size; ++i) {
+    result.data[i] = static_cast<typename To::ElementType>(v.data[i]);
+  }
+  return result;
+}
+
+// --- f8_e4m3 -> f32 specializations ---
+
+/// f8_e4m3x2 -> f32x2.
+/// NVIDIA: fp8 -> half (via __nv_cvt_fp8x2_to_halfraw2) -> float.
+/// HIP gfx942: fp8 -> float (via __builtin_amdgcn_cvt_pk_f32_fp8).
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3x2>(const f8_e4m3x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  float2 f = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, 0);
+  return f;
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(bit_cast<__nv_fp8x2_storage_t>(v.storage), __NV_E4M3);
+  f32x2 result;
+  result.data[0] = __half2float(bit_cast<__half>(h2.x));
+  result.data[1] = __half2float(bit_cast<__half>(h2.y));
+  return result;
+#else
+  f32x2 result;
+  result.data[0] = float(v.data[0]);
+  result.data[1] = float(v.data[1]);
+  return result;
+#endif
+}
+
+/// f8_e4m3x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3x4>(const f8_e4m3x4& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  float2 lo = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, false);
+  float2 hi = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, true);
+  f32x4 result;
+  result.data[0] = lo.x;
+  result.data[1] = lo.y;
+  result.data[2] = hi.x;
+  result.data[3] = hi.y;
+  return result;
+#else
+  const f8_e4m3x2* pair = reinterpret_cast<const f8_e4m3x2*>(&v);
+  f32x2 lo = to<f32x2>(pair[0]);
+  f32x2 hi = to<f32x2>(pair[1]);
+  f32x4 result;
+  result.data[0] = lo.data[0];
+  result.data[1] = lo.data[1];
+  result.data[2] = hi.data[0];
+  result.data[3] = hi.data[1];
+  return result;
+#endif
+}
+
+// --- f8_e5m2 -> f32 specializations ---
+
+/// f8_e5m2x2 -> f32x2.
+/// NVIDIA: fp8 -> half (via __nv_cvt_fp8x2_to_halfraw2) -> float.
+/// HIP gfx942: bf8 -> float (via __builtin_amdgcn_cvt_pk_f32_bf8).
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e5m2x2>(const f8_e5m2x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  float2 f = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, 0);
+  return f;
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(bit_cast<__nv_fp8x2_storage_t>(v.storage), __NV_E5M2);
+  f32x2 result;
+  result.data[0] = __half2float(bit_cast<__half>(h2.x));
+  result.data[1] = __half2float(bit_cast<__half>(h2.y));
+  return result;
+#else
+  f32x2 result;
+  result.data[0] = float(v.data[0]);
+  result.data[1] = float(v.data[1]);
+  return result;
+#endif
+}
+
+/// f8_e5m2x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e5m2x4>(const f8_e5m2x4& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  float2 lo = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, false);
+  float2 hi = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, true);
+  f32x4 result;
+  result.data[0] = lo.x;
+  result.data[1] = lo.y;
+  result.data[2] = hi.x;
+  result.data[3] = hi.y;
+  return result;
+#else
+  const f8_e5m2x2* pair = reinterpret_cast<const f8_e5m2x2*>(&v);
+  f32x2 lo = to<f32x2>(pair[0]);
+  f32x2 hi = to<f32x2>(pair[1]);
+  f32x4 result;
+  result.data[0] = lo.data[0];
+  result.data[1] = lo.data[1];
+  result.data[2] = hi.data[0];
+  result.data[3] = hi.data[1];
+  return result;
+#endif
+}
+
+// --- f32 -> f8_e4m3 specializations (downcast) ---
+
+/// f32x2 -> f8_e4m3x2.
+/// HIP gfx942: float -> fp8 (via __builtin_amdgcn_cvt_pk_fp8_f32).
+/// NVIDIA SM90+: float -> half -> fp8 (via __nv_cvt_halfraw2_to_fp8x2).
+/// NVIDIA pre-SM90: float -> half -> fp8 (via __nv_cvt_halfraw_to_fp8, element-wise).
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f32x2>(const f32x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[0], v.data[1], 0, false);
+  return bit_cast<f8_e4m3x2>(static_cast<__hip_fp8x2_storage_t>(packed));
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2;
+  h2.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
+  h2.y = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E4M3);
+  return bit_cast<f8_e4m3x2>(fp8x2);
+#elif defined(MSCCLPP_DEVICE_CUDA)
+  __half_raw h0, h1;
+  h0.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
+  h1.x = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
+  f8_e4m3x2 result;
+  result.data[0] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h0, __NV_SATFINITE, __NV_E4M3));
+  result.data[1] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h1, __NV_SATFINITE, __NV_E4M3));
+  return result;
+#else
+  f8_e4m3x2 result;
+  result.data[0] = static_cast<__fp8_e4m3>(v.data[0]);
+  result.data[1] = static_cast<__fp8_e4m3>(v.data[1]);
+  return result;
+#endif
+}
+
+/// f32x4 -> f8_e4m3x4.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3x4 to<f8_e4m3x4, f32x4>(const f32x4& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[0], v.data[1], 0, false);
+  packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[2], v.data[3], packed, true);
+  return bit_cast<f8_e4m3x4>(packed);
+#else
+  f32x2 lo, hi;
+  lo.data[0] = v.data[0];
+  lo.data[1] = v.data[1];
+  hi.data[0] = v.data[2];
+  hi.data[1] = v.data[3];
+  f8_e4m3x2 lo_fp8 = to<f8_e4m3x2>(lo);
+  f8_e4m3x2 hi_fp8 = to<f8_e4m3x2>(hi);
+  f8_e4m3x4 result;
+  result.data[0] = lo_fp8.data[0];
+  result.data[1] = lo_fp8.data[1];
+  result.data[2] = hi_fp8.data[0];
+  result.data[3] = hi_fp8.data[1];
+  return result;
+#endif
+}
+
+// --- f32 -> f8_e5m2 specializations (downcast) ---
+
+/// f32x2 -> f8_e5m2x2.
+/// HIP gfx942: float -> bf8 (via __builtin_amdgcn_cvt_pk_bf8_f32).
+/// NVIDIA SM90+: float -> half -> fp8 (via __nv_cvt_halfraw2_to_fp8x2 with __NV_E5M2).
+/// NVIDIA pre-SM90: float -> half -> fp8 (via __nv_cvt_halfraw_to_fp8, element-wise).
+template <>
+MSCCLPP_DEVICE_INLINE f8_e5m2x2 to<f8_e5m2x2, f32x2>(const f32x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t packed = __builtin_amdgcn_cvt_pk_bf8_f32(v.data[0], v.data[1], 0, false);
+  return bit_cast<f8_e5m2x2>(static_cast<__hip_fp8x2_storage_t>(packed));
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2;
+  h2.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
+  h2.y = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E5M2);
+  return bit_cast<f8_e5m2x2>(fp8x2);
+#elif defined(MSCCLPP_DEVICE_CUDA)
+  __half_raw h0, h1;
+  h0.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
+  h1.x = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
+  f8_e5m2x2 result;
+  result.data[0] = bit_cast<__fp8_e5m2>(__nv_cvt_halfraw_to_fp8(h0, __NV_SATFINITE, __NV_E5M2));
+  result.data[1] = bit_cast<__fp8_e5m2>(__nv_cvt_halfraw_to_fp8(h1, __NV_SATFINITE, __NV_E5M2));
+  return result;
+#else
+  f8_e5m2x2 result;
+  result.data[0] = static_cast<__fp8_e5m2>(v.data[0]);
+  result.data[1] = static_cast<__fp8_e5m2>(v.data[1]);
+  return result;
+#endif
+}
+
+/// f32x4 -> f8_e5m2x4.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e5m2x4 to<f8_e5m2x4, f32x4>(const f32x4& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  uint32_t packed = __builtin_amdgcn_cvt_pk_bf8_f32(v.data[0], v.data[1], 0, false);
+  packed = __builtin_amdgcn_cvt_pk_bf8_f32(v.data[2], v.data[3], packed, true);
+  return bit_cast<f8_e5m2x4>(packed);
+#else
+  f32x2 lo, hi;
+  lo.data[0] = v.data[0];
+  lo.data[1] = v.data[1];
+  hi.data[0] = v.data[2];
+  hi.data[1] = v.data[3];
+  f8_e5m2x2 lo_fp8 = to<f8_e5m2x2>(lo);
+  f8_e5m2x2 hi_fp8 = to<f8_e5m2x2>(hi);
+  f8_e5m2x4 result;
+  result.data[0] = lo_fp8.data[0];
+  result.data[1] = lo_fp8.data[1];
+  result.data[2] = hi_fp8.data[0];
+  result.data[3] = hi_fp8.data[1];
+  return result;
+#endif
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
 #endif  // MSCCLPP_DEVICE_COMPILE

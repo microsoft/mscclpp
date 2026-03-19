@@ -146,7 +146,7 @@ __global__ void __launch_bounds__(1024, 1)
 #endif
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct NvlsBlockPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
@@ -187,9 +187,10 @@ void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) 
 CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                            void* output, size_t inputSize, DataType dtype, ReduceOp op,
                                                            cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                           const std::unordered_map<std::string, uintptr_t>&) {
+                                                           const std::unordered_map<std::string, uintptr_t>& extras) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
-  AllreduceFunc allreduce = dispatch<NvlsBlockPipelineAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<NvlsBlockPipelineAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;

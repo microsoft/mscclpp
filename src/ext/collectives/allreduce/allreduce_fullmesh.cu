@@ -144,7 +144,7 @@ __global__ void __launch_bounds__(512, 1)
   }
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t,
@@ -177,7 +177,7 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                   size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                                                   int nBlocks, int nThreadsPerBlock,
-                                                  const std::unordered_map<std::string, uintptr_t>&) {
+                                                  const std::unordered_map<std::string, uintptr_t>& extras) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
@@ -198,7 +198,8 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
 
-  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));

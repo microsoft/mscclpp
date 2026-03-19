@@ -178,6 +178,7 @@ class Algorithm:
         extras: Optional[Dict[str, int]] = None,
         symmetric_memory: bool = False,
         context_key: int = -1,
+        accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
 
@@ -196,10 +197,16 @@ class Algorithm:
             extras: Additional algorithm-specific parameters.
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
             context_key: The context key for caching algorithm contexts (default: -1).
+            accum_dtype: Data type for accumulation during reduction. If None, defaults to
+                         float32 for FP8 types, or same as dtype for other types.
+                         Use DataType.float32 for high-precision FP8 accumulation.
 
         Returns:
             The result code (0 for success).
         """
+        merged_extras = dict(extras) if extras is not None else {}
+        if accum_dtype is not None:
+            merged_extras["accum_dtype"] = int(accum_dtype)
         return self._algorithm.execute(
             comm,
             int(input_buffer),
@@ -212,7 +219,7 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
-            extras if extras is not None else {},
+            merged_extras,
             symmetric_memory,
             context_key,
         )

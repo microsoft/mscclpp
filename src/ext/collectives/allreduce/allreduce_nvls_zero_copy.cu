@@ -67,7 +67,7 @@ __global__ void __launch_bounds__(1024, 1)
 #endif
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct NvlsAdapter {
   static cudaError_t call(const void*, void*, void*, void* memoryChannels, void*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
@@ -114,13 +114,14 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                               size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
                                               cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                              const std::unordered_map<std::string, uintptr_t>&) {
+                                              const std::unordered_map<std::string, uintptr_t>& extras) {
   if (!symmetricMemory_) {
     WARN("AllreduceNvls requires symmetric memory for now.");
     return CommResult::CommInvalidArgument;
   }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
-  AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;

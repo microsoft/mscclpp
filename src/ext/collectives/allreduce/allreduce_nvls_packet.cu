@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <type_traits>
+
 #include "allreduce/allreduce_nvls_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
@@ -9,7 +11,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsPacket([[maybe_unused]] const T* input, [[maybe_unused]] T* scratch, [[maybe_unused]] T* output,
                         [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
@@ -31,15 +33,16 @@ __global__ void __launch_bounds__(1024, 1)
     mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x2*)(&pkt), multiPkt + i);
   }
   for (uint32_t i = tid; i < nPktPerRank * worldSize; i += blockDim.x * gridDim.x) {
-    uint data = src[i];
+    // When T == AccumT, stay with raw uint to avoid type mismatch in identity path.
+    using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint,
+                                      mscclpp::VectorType<AccumT, sizeof(uint) / sizeof(T)>>;
+    AccRaw acc = mscclpp::upcast_vector<T, AccumT, AccRaw>(src[i]);
     for (int peer = 0; peer < worldSize; peer++) {
-      if (peer == rank) {
-        continue;
-      }
+      if (peer == rank) continue;
       uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
-      data = cal_vector<T, OpType>(data, val);
+      acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc, val);
     }
-    dst[i] = data;
+    dst[i] = mscclpp::downcast_vector<T, AccumT, uint, AccRaw>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {
@@ -62,13 +65,13 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize) {
   return {blockNum, threadNum};
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceNvlsPacketAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void*, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
                           size_t scratchBufferSize, int rank, int, int worldSize, size_t inputSize, cudaStream_t stream,
                           void* flags, uint32_t flagBufferSize, uint32_t, int nBlocks, int nThreadsPerBlock) {
-    allreduceNvlsPacket<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreduceNvlsPacket<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (const T*)input, (T*)scratch, (T*)output, nvlsChannels, inputSize / sizeof(T), scratchBufferSize, rank,
         worldSize, flags, flagBufferSize);
     return cudaGetLastError();
@@ -102,7 +105,7 @@ std::shared_ptr<void> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<
 CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                     void* output, size_t inputSize, mscclpp::DataType dtype,
                                                     ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                    const std::unordered_map<std::string, uintptr_t>&) {
+                                                    const std::unordered_map<std::string, uintptr_t>& extras) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -112,7 +115,8 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
     WARN("Block number %d exceeds the maximum limit %d", blockAndThreadNum.first, maxBlockNum_);
     return CommResult::CommInvalidArgument;
   }
-  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;

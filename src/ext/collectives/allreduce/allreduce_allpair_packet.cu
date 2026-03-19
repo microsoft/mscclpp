@@ -67,7 +67,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
   return {(worldSize - 1) * 4, 512};
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllpairAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
@@ -94,7 +94,7 @@ void AllreduceAllpairPacket::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                                        size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
                                                        cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                       const std::unordered_map<std::string, uintptr_t>&) {
+                                                       const std::unordered_map<std::string, uintptr_t>& extras) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -105,7 +105,8 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
-  AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;

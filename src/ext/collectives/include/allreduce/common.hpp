@@ -77,49 +77,81 @@ using AllreduceFunc =
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
                               size_t, cudaStream_t, void*, uint32_t, uint32_t, int, int)>;
 
-template <template <ReduceOp, typename> class Adapter>
-AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype) {
+/// Helper to extract the accumulation DataType from the extras map.
+/// If "accum_dtype" key is present, returns that DataType; otherwise returns the default.
+/// For FP8 data types the default accumulation type is FLOAT32 (high-precision accumulation).
+/// For all other types the default is identity (same as dtype).
+inline mscclpp::DataType getAccumDtype(mscclpp::DataType dtype,
+                                       const std::unordered_map<std::string, uintptr_t>& extras) {
+  auto it = extras.find("accum_dtype");
+  if (it != extras.end()) {
+    return static_cast<mscclpp::DataType>(it->second);
+  }
+  // Default: FLOAT32 for FP8, identity for everything else
+  if (dtype == mscclpp::DataType::FLOAT8_E4M3 || dtype == mscclpp::DataType::FLOAT8_E5M2) {
+    return mscclpp::DataType::FLOAT32;
+  }
+  return dtype;
+}
+
+#if defined(__FP8_TYPES_EXIST__)
+/// Dispatch helper for FP8 types with a configurable accumulation type.
+template <ReduceOp Op, typename FP8T, template <ReduceOp, typename, typename> class Adapter>
+AllreduceFunc dispatchFp8Accum(mscclpp::DataType accumDtype, mscclpp::DataType dtype) {
+  if (accumDtype == mscclpp::DataType::FLOAT32) {
+    return Adapter<Op, FP8T, float>::call;
+  } else if (accumDtype == mscclpp::DataType::FLOAT16) {
+    return Adapter<Op, FP8T, half>::call;
+  } else if (accumDtype == dtype) {
+    return Adapter<Op, FP8T, FP8T>::call;
+  }
+  return nullptr;
+}
+#endif
+
+template <template <ReduceOp, typename, typename> class Adapter>
+AllreduceFunc dispatch(ReduceOp op, mscclpp::DataType dtype, mscclpp::DataType accumDtype) {
   if (op == SUM) {
     if (dtype == mscclpp::DataType::FLOAT16) {
-      return Adapter<SUM, half>::call;
+      return Adapter<SUM, half, half>::call;
     } else if (dtype == mscclpp::DataType::FLOAT32) {
-      return Adapter<SUM, float>::call;
+      return Adapter<SUM, float, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == mscclpp::DataType::BFLOAT16) {
-      return Adapter<SUM, __bfloat16>::call;
+      return Adapter<SUM, __bfloat16, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
     } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
-      return Adapter<SUM, __fp8_e4m3>::call;
+      return dispatchFp8Accum<SUM, __fp8_e4m3, Adapter>(accumDtype, dtype);
     } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
-      return Adapter<SUM, __fp8_e5m2>::call;
+      return dispatchFp8Accum<SUM, __fp8_e5m2, Adapter>(accumDtype, dtype);
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
-      return Adapter<SUM, int>::call;
+      return Adapter<SUM, int, int>::call;
     } else if (dtype == mscclpp::DataType::UINT8) {
-      return Adapter<SUM, uint8_t>::call;
+      return Adapter<SUM, uint8_t, uint8_t>::call;
     } else {
       return nullptr;
     }
   } else if (op == MIN) {
     if (dtype == mscclpp::DataType::FLOAT16) {
-      return Adapter<MIN, half>::call;
+      return Adapter<MIN, half, half>::call;
     } else if (dtype == mscclpp::DataType::FLOAT32) {
-      return Adapter<MIN, float>::call;
+      return Adapter<MIN, float, float>::call;
 #if defined(__CUDA_BF16_TYPES_EXIST__)
     } else if (dtype == mscclpp::DataType::BFLOAT16) {
-      return Adapter<MIN, __bfloat16>::call;
+      return Adapter<MIN, __bfloat16, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
     } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
-      return Adapter<MIN, __fp8_e4m3>::call;
+      return dispatchFp8Accum<MIN, __fp8_e4m3, Adapter>(accumDtype, dtype);
     } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
-      return Adapter<MIN, __fp8_e5m2>::call;
+      return dispatchFp8Accum<MIN, __fp8_e5m2, Adapter>(accumDtype, dtype);
 #endif
     } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
-      return Adapter<MIN, int>::call;
+      return Adapter<MIN, int, int>::call;
     } else if (dtype == mscclpp::DataType::UINT8) {
-      return Adapter<MIN, uint8_t>::call;
+      return Adapter<MIN, uint8_t, uint8_t>::call;
     } else {
       return nullptr;
     }

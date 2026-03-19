@@ -123,7 +123,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
@@ -166,9 +166,10 @@ void AllreduceRsAg::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                               size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                                               int nBlocks, int nThreadsPerBlock,
-                                              const std::unordered_map<std::string, uintptr_t>&) {
+                                              const std::unordered_map<std::string, uintptr_t>& extras) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
-  AllreduceFunc allreduce = dispatch<AllreduceRsAgAdapter>(op, dtype);
+  auto accumDtype = getAccumDtype(dtype, extras);
+  AllreduceFunc allreduce = dispatch<AllreduceRsAgAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
          ", dtype=", static_cast<int>(dtype));

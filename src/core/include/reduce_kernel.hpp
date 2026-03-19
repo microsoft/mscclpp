@@ -76,6 +76,61 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) 
   return cal_vector_helper<CompType, OpType>(a, b);
 }
 
+/// Upcast a packed DataType (containing T elements) to a packed AccDataType (containing AccumT elements).
+/// Uses the optimized to<>() specializations when available (e.g. FP8 -> float hardware intrinsics).
+/// When AccumT == T, this is a no-op identity.
+template <typename T, typename AccumT, typename AccDataType, typename DataType>
+MSCCLPP_DEVICE_INLINE AccDataType upcast_vector(const DataType& val) {
+  if constexpr (std::is_same_v<T, AccumT>) {
+    return val;
+  } else {
+    constexpr int nElems = sizeof(DataType) / sizeof(T);
+    using FromVec = VectorType<T, nElems>;
+    using ToVec = VectorType<AccumT, nElems>;
+    ToVec result = mscclpp::to<ToVec>(reinterpret_cast<const FromVec&>(val));
+    return reinterpret_cast<const AccDataType&>(result);
+  }
+}
+
+/// Downcast a packed AccDataType (containing AccumT elements) back to DataType (containing T elements).
+/// Uses the optimized to<>() specializations when available.
+/// When AccumT == T, this is a no-op identity.
+template <typename T, typename AccumT, typename DataType, typename AccDataType>
+MSCCLPP_DEVICE_INLINE DataType downcast_vector(const AccDataType& val) {
+  if constexpr (std::is_same_v<T, AccumT>) {
+    return val;
+  } else {
+    constexpr int nElems = sizeof(DataType) / sizeof(T);
+    using FromVec = VectorType<T, nElems>;
+    using ToVec = VectorType<AccumT, nElems>;
+    FromVec result = mscclpp::to<FromVec>(reinterpret_cast<const ToVec&>(val));
+    return reinterpret_cast<const DataType&>(result);
+  }
+}
+
+/// Accumulate `val` (packed T elements in DataType) into `acc` (packed AccumT elements in AccDataType).
+/// When AccumT == T, falls back to the standard cal_vector.
+/// Otherwise, upcasts val to AccumT, reduces element-wise, and returns the AccumT accumulator.
+template <typename T, typename AccumT, ReduceOp OpType, typename AccDataType, typename DataType>
+MSCCLPP_DEVICE_INLINE AccDataType cal_vector_accum(const AccDataType& acc, const DataType& val) {
+  if constexpr (std::is_same_v<T, AccumT>) {
+    return cal_vector<T, OpType>(acc, val);
+  } else {
+    constexpr int nElems = sizeof(DataType) / sizeof(T);
+    using FromVec = VectorType<T, nElems>;
+    using ToVec = VectorType<AccumT, nElems>;
+
+    ToVec fv = mscclpp::to<ToVec>(reinterpret_cast<const FromVec&>(val));
+    const ToVec& fa = reinterpret_cast<const ToVec&>(acc);
+    ToVec fr;
+#pragma unroll
+    for (int i = 0; i < nElems; ++i) {
+      fr.data[i] = cal_elements<AccumT, OpType>(fa.data[i], fv.data[i]);
+    }
+    return reinterpret_cast<const AccDataType&>(fr);
+  }
+}
+
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 }  // namespace mscclpp
