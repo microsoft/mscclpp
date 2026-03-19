@@ -276,7 +276,7 @@ def main(
             packet_type,
         )
 
-        mscclpp_group.barrier()
+        #mscclpp_group.barrier()
 
         # Optional correctness check
         # bench_correctness(
@@ -293,7 +293,7 @@ def main(
 
         mscclpp_group.barrier()
         execution_time = bench_time(n_iters, n_graph_iters, executor_func)
-        mscclpp_group.barrier()
+        #mscclpp_group.barrier()
 
         if my_rank == 0:
             msg_size = size
@@ -310,7 +310,7 @@ def main(
         result_buf = None
         test_buf = None
 
-        mscclpp_group.barrier()
+        #mscclpp_group.barrier()
 
     if npkit_dump_dir != "":
         npkit.dump(npkit_dump_dir)
