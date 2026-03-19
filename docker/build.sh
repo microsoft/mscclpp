@@ -13,6 +13,7 @@ baseImageTable=(
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu22.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
+    ["sglang"]="lmsysorg/sglang:latest"
 )
 
 declare -A extraLdPathTable
@@ -21,6 +22,7 @@ extraLdPathTable=(
     ["cuda12.2"]="/usr/local/cuda-12.2/compat:/usr/local/cuda-12.2/lib64"
     ["cuda12.3"]="/usr/local/cuda-12.3/compat:/usr/local/cuda-12.3/lib64"
     ["rocm6.2"]="/opt/rocm/lib"
+    ["sglang"]=""
 )
 
 declare -A ofedVersionTable
@@ -30,13 +32,14 @@ ofedVersionTable=(
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
     ["rocm6.2"]="24.10-1.1.4.0"
+    ["sglang"]="24.10-3.2.5.0"
 )
 
 TARGET=${1}
 OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.1|cuda12.2|cuda12.3|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2|sglang]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
@@ -60,25 +63,36 @@ TAG_TMP="tmp-${TARGET}-${OS_ARCH}"
 TAG_BASE="base-${TARGET}-${OS_ARCH}"
 TAG_BASE_DEV="base-dev-${TARGET}-${OS_ARCH}"
 
-docker build -t ${TAG_TMP} \
-    -f docker/base-x.dockerfile \
-    --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
-    --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
-    --build-arg TARGET=${TARGET} \
-    --build-arg OFED_VERSION=${OFED_VERSION} .
-
-if [[ ${TARGET} == rocm* ]]; then
-    echo "Building ROCm base image..."
+if [[ ${TARGET} == "sglang" ]]; then
+    docker build -t ${TAG_BASE} \
+        -f docker/sglang.dockerfile \
+        --build-arg EXTRA_LD_PATH="${extraLdPathTable[${TARGET}]}" \
+        --build-arg OFED_VERSION=${OFED_VERSION} .
 else
-    echo "Building CUDA base image..."
-fi
-docker tag ${TAG_TMP} ${TAG_BASE}
-docker rmi --no-prune ${TAG_TMP}
+    docker build -t ${TAG_TMP} \
+        -f docker/base-x.dockerfile \
+        --build-arg BASE_IMAGE=${baseImageTable[${TARGET}]} \
+        --build-arg EXTRA_LD_PATH=${extraLdPathTable[${TARGET}]} \
+        --build-arg TARGET=${TARGET} \
+        --build-arg OFED_VERSION=${OFED_VERSION} .
 
-docker build -t ${TAG_BASE_DEV} \
-    -f docker/base-dev-x.dockerfile \
-    --build-arg BASE_IMAGE=${TAG_BASE} \
-    --build-arg TARGET=${TARGET} .
+    if [[ ${TARGET} == rocm* ]]; then
+        echo "Building ROCm base image..."
+    else
+        echo "Building CUDA base image..."
+    fi
+    docker tag ${TAG_TMP} ${TAG_BASE}
+    docker rmi --no-prune ${TAG_TMP}
+fi
+
+if [[ ${TARGET} == "sglang" ]]; then
+    echo "Base image for SGLang does not require a separate dev image. Skipping base-dev build."
+else
+    docker build -t ${TAG_BASE_DEV} \
+        -f docker/base-dev-x.dockerfile \
+        --build-arg BASE_IMAGE=${TAG_BASE} \
+        --build-arg TARGET=${TARGET} .
+fi
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 GHCR_TAG_BASE_DEV=${GHCR}:base-dev-${TARGET}
