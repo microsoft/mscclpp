@@ -215,6 +215,10 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         plan_, stream);
       break;
 #endif
+    case DataType::FLOAT8_E4B15:
+      executor->execute(rank, (__fp8_e4m3b15*)input, (__fp8_e4m3b15*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E4B15, plan_, stream);
+      break;
     case DataType::INT32:
     case DataType::UINT32:
       executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);

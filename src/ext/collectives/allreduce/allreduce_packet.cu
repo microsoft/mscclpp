@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/algorithm.hpp>
-
 #include <type_traits>
 
 #include "allreduce/allreduce_packet.hpp"
@@ -197,18 +196,22 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
     }
   }
 
-#if defined(__FP8_TYPES_EXIST__)
   // FP8-specific tuning for 32KB-256KB range
-  if (dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2) {
-    if (inputSize < (64 << 10)) {
-      nThreadsPerBlock = 64;
-    } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
-      nThreadsPerBlock = 128;
-    } else if (inputSize >= (128 << 10) && inputSize <= (256 << 10)) {
-      nThreadsPerBlock = 256;
+  {
+    bool isFp8 = dtype == DataType::FLOAT8_E4B15;
+#if defined(__FP8_TYPES_EXIST__)
+    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2;
+#endif
+    if (isFp8) {
+      if (inputSize < (64 << 10)) {
+        nThreadsPerBlock = 64;
+      } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
+        nThreadsPerBlock = 128;
+      } else if (inputSize >= (128 << 10) && inputSize <= (256 << 10)) {
+        nThreadsPerBlock = 256;
+      }
     }
   }
-#endif
 #endif
   return {nBlocks, nThreadsPerBlock};
 }

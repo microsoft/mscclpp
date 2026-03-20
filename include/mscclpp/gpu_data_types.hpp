@@ -64,18 +64,166 @@ using __bfloat162 = __nv_bfloat162;
 
 #endif
 
+/// Software float8 with 4 exponent bits, 3 mantissa bits, exponent bias = 15.
+/// Format (MSB first): [sign:1][exponent:4][mantissa:3]
+/// No infinities; exp=15 is NaN. Negative zero is NaN (fnuz convention).
+/// Max finite value: 0.9375, min normal: ~6.1e-5, min subnormal: ~7.6e-6.
+struct alignas(1) __fp8_e4m3b15 {
+  uint8_t __x;
+
+  __fp8_e4m3b15() = default;
+
+  /// Construct from raw bits (use __fp8_e4m3b15::fromRaw() for clarity).
+  MSCCLPP_HOST_DEVICE_INLINE explicit __fp8_e4m3b15(uint8_t raw) : __x(raw) {}
+
+  /// Construct from float32 (explicit to avoid ambiguous conversion chains).
+  MSCCLPP_HOST_DEVICE_INLINE explicit __fp8_e4m3b15(float val) : __x(fromFloat(val)) {}
+
+  /// Convert to float32.
+  MSCCLPP_HOST_DEVICE_INLINE operator float() const { return toFloat(__x); }
+
+  /// Construct from a raw bit pattern without conversion.
+  static MSCCLPP_HOST_DEVICE_INLINE __fp8_e4m3b15 fromRaw(uint8_t bits) {
+    __fp8_e4m3b15 r;
+    r.__x = bits;
+    return r;
+  }
+
+ private:
+  /// Decode fp8_e4m3b15 bits → float32.
+  ///
+  /// Uses bit manipulation through fp16 as intermediate, adapted from the Triton compiler.
+  /// fp8_e4m3b15 is identical to fp8_e4m3fn (NVIDIA) except exponent bias is 15 vs 7.
+  /// Algorithm: reinterpret fp8 bits into an fp16 bit pattern with exponent shifted by -8,
+  /// then convert fp16 → float32.
+  static MSCCLPP_HOST_DEVICE_INLINE float toFloat(uint8_t bits) {
+    // Handle special values: negative zero (0x80) → NaN, exponent=15 → NaN.
+    uint32_t exp = (bits >> 3) & 0xFu;
+    if (bits == 0x80 || exp == 15) {
+      union {
+        uint32_t u;
+        float f;
+      } nan_val = {0x7FC00000u};
+      return nan_val.f;
+    }
+    if (bits == 0 || bits == 0x80) return 0.0f;
+
+    // Triton-style bit manipulation: fp8 → fp16 → fp32.
+    // fp8 layout: [S:1][E:4][M:3]  (bias=15)
+    // fp16 layout: [S:1][E:5][M:10] (bias=15)
+    //
+    // Step 1: Place 8-bit fp8 value into bits [15:8] of a 16-bit word
+    //         via left-shift by 8: h = bits << 8.
+    // Step 2: The fp8 sign is now at bit 15 (fp16 sign position). Good.
+    //         The fp8 E4 field [14:11] needs to map to fp16 E5 [14:10].
+    //         Split: b0 = h & 0x7F00 (exponent + upper bits), shift right 1 → moves exponent.
+    //                The sign bit is recovered separately.
+    // Step 3: The lower mantissa byte is adjusted for subnormal renormalization.
+    //
+    // This exactly follows Triton's PTX:
+    //   prmt.b32 a0, 0, $2, 0x5746;  →  spread 4 fp8 values into 2×uint16 packed in uint32
+    //   and.b32 b0, a0, 0x7f007f00;  →  extract sign+exponent+upper mantissa
+    //   and.b32 b1, a0, 0x00ff00ff;  →  extract the full 8-bit value for mantissa work
+    //   and.b32 a1, a0, 0x00800080;  →  extract sign bit (shifted to bit 7)
+    //   shr.b32 b0, b0, 1;           →  shift exponent right: E4 bias15 → E5 bias15
+    //   add.u32 b1, b1, a1;          →  add sign bit to propagate into high byte for subnormals
+    //   lop3.b32 $0, b0, 0x80008000, a0, 0xf8;  →  combine: b0 | (0x8000 & a0)
+    //   shl.b32 $1, b1, 7;           →  shift mantissa part for second output
+    //
+    // Refer: https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
+    uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
+    uint16_t sign16 = h & 0x8000u;                // extract sign at fp16 position
+    uint16_t nosign = h & 0x7F00u;                // exponent + mantissa (no sign)
+    uint16_t fp16_bits = sign16 | (nosign >> 1);  // shift exponent right by 1
+
+    // For subnormals: when fp8 exponent=0, the above gives fp16 exponent=0
+    // and fp16 mantissa = (fp8_mantissa << 7), which correctly represents
+    // the subnormal fp16 value since both share bias=15.
+
+    // Convert fp16 bits to float via __half (works on host and device, CUDA and HIP).
+    union {
+      uint16_t u;
+      __half h;
+    } cvt = {fp16_bits};
+    return __half2float(cvt.h);
+  }
+
+  /// Encode float32 → fp8_e4m3b15 bits.
+  ///
+  /// Algorithm adapted from Triton: float32 → fp16 → bit-manipulate → fp8.
+  /// The key insight is to convert to fp16 first (which shares bias=15 with e4m3b15),
+  /// then pack the fp16 bits back into 8 bits by shifting the exponent left by 1.
+  static MSCCLPP_HOST_DEVICE_INLINE uint8_t fromFloat(float val) {
+    union {
+      float f;
+      uint32_t u;
+    } in = {val};
+
+    // NaN → 0x80 (negative-zero bit pattern = NaN in fnuz).
+    if ((in.u & 0x7F800000u) == 0x7F800000u && (in.u & 0x007FFFFFu) != 0) return 0x80u;
+
+    // Convert float32 → fp16 bits via __half (works on host and device, CUDA and HIP).
+    __half h_val = __float2half_rn(val);
+    union {
+      __half h;
+      uint16_t u;
+    } cvt = {h_val};
+    uint16_t fp16_bits = cvt.u;
+
+    // Clamp absolute value to max finite e4m3b15: 0.9375 → fp16 = 0x3B80.
+    // max_val_f16 = 0x3F00 in Triton (which is 0.9375 in fp16).
+    uint16_t abs_fp16 = fp16_bits & 0x7FFFu;
+    if (abs_fp16 > 0x3F00u) abs_fp16 = 0x3F00u;
+
+    // Reconstruct with sign.
+    uint16_t sign16 = fp16_bits & 0x8000u;
+
+    // Triton-style: fp16 → fp8.
+    // fp16 layout: [S:1][E:5][M:10] (bias=15)
+    // fp8 layout:  [S:1][E:4][M:3]  (bias=15)
+    //
+    // mad.lo.u32 a0, a0, 2, 0x00800080  →  (abs_fp16 * 2 + 0x0080)
+    // This shifts left by 1 (undoing the right-shift in decode) and adds rounding bias.
+    // Then: lop3.b32 b0, $1, 0x80008000, a0, 0xea  →  (sign & 0x8000) | a0
+    // Finally: prmt for byte extraction.
+    //
+    // Simplified for scalar: shift abs_fp16 left by 1, add rounding bias, take upper byte.
+    uint16_t adjusted = (uint16_t)(abs_fp16 * 2u + 0x0080u);
+    // The upper byte now contains [E:4][M:3][round_bit].
+    // Combine with sign and extract.
+    uint16_t with_sign = sign16 | adjusted;
+    uint8_t result = (uint8_t)(with_sign >> 8);
+
+    // Zero → 0x00 (ensure positive zero, not negative zero which is NaN).
+    if ((result & 0x7Fu) == 0) result = 0x00u;
+
+    return result;
+  }
+};
+
+/// Packed 2x fp8_e4m3b15 storage.
+struct alignas(2) __fp8x2_e4m3b15 {
+  uint16_t __x;
+};
+
+/// Packed 4x fp8_e4m3b15 storage.
+struct alignas(4) __fp8x4_e4m3b15 {
+  uint32_t __x;
+};
+
 namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,        // 32-bit signed integer.
-  UINT32,       // 32-bit unsigned integer.
-  FLOAT16,      // IEEE 754 half precision.
-  FLOAT32,      // IEEE 754 single precision.
-  BFLOAT16,     // bfloat16 precision.
-  FLOAT8_E4M3,  // float8 with E4M3 layout.
-  FLOAT8_E5M2,  // float8 with E5M2 layout.
-  UINT8,        // 8-bit unsigned integer.
+  INT32,         // 32-bit signed integer.
+  UINT32,        // 32-bit unsigned integer.
+  FLOAT16,       // IEEE 754 half precision.
+  FLOAT32,       // IEEE 754 single precision.
+  BFLOAT16,      // bfloat16 precision.
+  FLOAT8_E4M3,   // float8 with E4M3 layout.
+  FLOAT8_E5M2,   // float8 with E5M2 layout.
+  UINT8,         // 8-bit unsigned integer.
+  FLOAT8_E4B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
 };
 
 /// Word array.
@@ -120,8 +268,7 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
   /// Enables e.g. `f32x2 a = some_f8_e4m3x2_value;`
   /// Uses element-wise static_cast. For the optimized path (e.g. hardware FP8->F32 intrinsics),
   /// use mscclpp::to<TargetType>(value) explicitly.
-  template <typename OtherT, typename OtherStorageT,
-            typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
+  template <typename OtherT, typename OtherStorageT, typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #pragma unroll
@@ -132,8 +279,7 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
   }
 
   /// Converting assignment from a different element type with the same vector size.
-  template <typename OtherT, typename OtherStorageT,
-            typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
+  template <typename OtherT, typename OtherStorageT, typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
 #if defined(MSCCLPP_DEVICE_COMPILE)
 #pragma unroll
@@ -209,6 +355,12 @@ DEFINE_VEC(f8_e5m2x4, __fp8_e5m2, 4, __fp8x4_e5m2);
 DEFINE_VEC(f8_e5m2x8, __fp8_e5m2, 8, uint2);
 DEFINE_VEC(f8_e5m2x16, __fp8_e5m2, 16, uint4);
 #endif
+
+// fp8_e4m3b15 vectors (always available — software type, no HW dependency)
+DEFINE_VEC(f8_e4m3b15x2, __fp8_e4m3b15, 2, __fp8x2_e4m3b15);
+DEFINE_VEC(f8_e4m3b15x4, __fp8_e4m3b15, 4, __fp8x4_e4m3b15);
+DEFINE_VEC(f8_e4m3b15x8, __fp8_e4m3b15, 8, uint2);
+DEFINE_VEC(f8_e4m3b15x16, __fp8_e4m3b15, 16, uint4);
 #undef DEFINE_VEC
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -458,6 +610,31 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 operator+(const f8_e5m2x4& a, const f8_e5m2x4& b
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
 
+// --- fp8_e4m3b15 arithmetic (software, always available) ---
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE __fp8_e4m3b15 operator+(const __fp8_e4m3b15& a, const __fp8_e4m3b15& b) {
+  return __fp8_e4m3b15(float(a) + float(b));
+}
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 operator+(const f8_e4m3b15x2& a, const f8_e4m3b15x2& b) {
+  f8_e4m3b15x2 result;
+  result.data[0] = __fp8_e4m3b15(float(a.data[0]) + float(b.data[0]));
+  result.data[1] = __fp8_e4m3b15(float(a.data[1]) + float(b.data[1]));
+  return result;
+}
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 operator+(const f8_e4m3b15x4& a, const f8_e4m3b15x4& b) {
+  f8_e4m3b15x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __fp8_e4m3b15(float(a.data[i]) + float(b.data[i]));
+  }
+  return result;
+}
+
 MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
 #if defined(MSCCLPP_DEVICE_HIP)
   // Optimized uint8_t x 4 sum using byte permute to avoid overflow between adjacent bytes
@@ -515,6 +692,29 @@ MSCCLPP_DEVICE_INLINE u8x4 min(const u8x4& a, const u8x4& b) {
 #else
   return __vminu4(a.storage, b.storage);
 #endif
+}
+
+// --- fp8_e4m3b15 min (software) ---
+
+template <>
+MSCCLPP_DEVICE_INLINE __fp8_e4m3b15 min(const __fp8_e4m3b15& a, const __fp8_e4m3b15& b) {
+  return __fp8_e4m3b15(fminf(float(a), float(b)));
+}
+
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 min(const f8_e4m3b15x2& a, const f8_e4m3b15x2& b) {
+  f8_e4m3b15x2 result;
+  result.data[0] = mscclpp::min(a.data[0], b.data[0]);
+  result.data[1] = mscclpp::min(a.data[1], b.data[1]);
+  return result;
+}
+
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 min(const f8_e4m3b15x4& a, const f8_e4m3b15x4& b) {
+  f8_e4m3b15x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = mscclpp::min(a.data[i], b.data[i]);
+  }
+  return result;
 }
 
 #if defined(__FP8_TYPES_EXIST__)
@@ -806,6 +1006,158 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 to<f8_e5m2x4, f32x4>(const f32x4& v) {
 #endif
 }
 #endif  // defined(__FP8_TYPES_EXIST__)
+
+// --- fp8_e4m3b15 <-> f32 conversion specializations (software, always available) ---
+
+/// f8_e4m3b15x2 -> f32x2.
+/// NVIDIA CUDA: place 2 fp8 bytes into a packed fp16 pair, adjust exponent (E4→E5),
+/// convert to float32 via hardware __half2float.
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint16_t in = v.storage.__x;
+  // Spread 2 fp8 bytes into a packed fp16 pair: byte[0]→upper byte of lo16, byte[1]→upper byte of hi16.
+  uint32_t a0 = ((uint32_t)(in & 0xFFu) << 8) | ((uint32_t)(in >> 8) << 24);
+  uint32_t b0 = (a0 & 0x7f007f00u) >> 1;
+  uint32_t out0 = b0 | (a0 & 0x80008000u);  // 2 packed fp16
+  __half2 h;
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h)) : "r"(out0));
+  f32x2 result;
+  result.data[0] = __low2float(h);
+  result.data[1] = __high2float(h);
+  return result;
+#else
+  f32x2 result;
+  result.data[0] = float(v.data[0]);
+  result.data[1] = float(v.data[1]);
+  return result;
+#endif
+}
+
+/// f8_e4m3b15x4 -> f32x4.
+/// NVIDIA CUDA: Triton-style vectorized bit manipulation (fp8x4 → fp16x4 → fp32x4).
+/// Uses __byte_perm to spread 4 fp8 bytes into 2 packed fp16 pairs, then
+/// adjusts the exponent with a right-shift (E4 bias=15 → E5 bias=15) and
+/// converts to float32 via hardware __half2float.
+template <>
+MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint32_t in = v.storage.__x;
+
+  // Byte permute: spread 4 fp8 bytes into 2 pairs of (upper-byte, lower-byte).
+  // a0 = {fp8[1], fp8[3], fp8[0], fp8[2]} arranged so each 16-bit half has
+  // one fp8 in its upper byte and another in its lower byte.
+  uint32_t a0 = __byte_perm(0u, in, 0x5746u);
+
+  // Upper-byte path (fp8[0] in lower half, fp8[1] in upper half):
+  // Shift exponent+mantissa right by 1 to convert E4→E5, then OR sign.
+  uint32_t b0 = (a0 & 0x7f007f00u) >> 1;
+  uint32_t out0 = b0 | (a0 & 0x80008000u);  // 2 packed fp16
+
+  // Lower-byte path (fp8[2] in lower half, fp8[3] in upper half):
+  // Add sign bit (carry trick) then shift left 7 to position as fp16.
+  uint32_t b1 = a0 & 0x00ff00ffu;
+  uint32_t a1 = a0 & 0x00800080u;
+  uint32_t out1 = (b1 + a1) << 7;  // 2 packed fp16
+
+  // Convert 4 packed fp16 values to 4 float32.
+  __half2 h0, h1;
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h0)) : "r"(out0));
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h1)) : "r"(out1));
+  f32x4 result;
+  result.data[0] = __low2float(h0);
+  result.data[1] = __high2float(h0);
+  result.data[2] = __low2float(h1);
+  result.data[3] = __high2float(h1);
+  return result;
+#else
+  f32x4 result;
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = float(v.data[i]);
+  }
+  return result;
+#endif
+}
+
+/// f32x2 -> f8_e4m3b15x2.
+/// NVIDIA CUDA: convert to packed fp16 pair, clamp, shift exponent (E5→E4), pack bytes.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  __half2 h = __halves2half2(__float2half_rn(v.data[0]), __float2half_rn(v.data[1]));
+  uint32_t in0;
+  asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h)));
+  // Clamp abs to max finite e4m3b15 (0x3F00 = 0.9375 in fp16).
+  uint32_t lo = in0 & 0xFFFFu, hi = in0 >> 16;
+  uint32_t alo = lo & 0x7FFFu, ahi = hi & 0x7FFFu;
+  alo = alo < 0x3F00u ? alo : 0x3F00u;
+  ahi = ahi < 0x3F00u ? ahi : 0x3F00u;
+  uint32_t a0 = alo | (ahi << 16);
+  // Shift left by 1 + rounding bias → fp16 E5 to fp8 E4.
+  a0 = a0 * 2u + 0x00800080u;
+  // Restore sign bits.
+  uint32_t b0 = a0 | (in0 & 0x80008000u);
+  // Extract upper byte of each 16-bit half → 2 fp8 bytes.
+  uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
+  return bit_cast<f8_e4m3b15x2>(packed);
+#else
+  f8_e4m3b15x2 result;
+  result.data[0] = __fp8_e4m3b15(v.data[0]);
+  result.data[1] = __fp8_e4m3b15(v.data[1]);
+  return result;
+#endif
+}
+
+/// f32x4 -> f8_e4m3b15x4.
+/// NVIDIA CUDA: Triton-style vectorized bit manipulation (fp32x4 → fp16x4 → fp8x4).
+/// Converts to fp16 via hardware __float2half_rn, clamps to max finite (0.9375),
+/// shifts exponent left by 1 (E5→E4) with rounding, then packs via __byte_perm.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  // Convert 4 float32 → 2 packed fp16 pairs.
+  __half2 h01 = __halves2half2(__float2half_rn(v.data[0]), __float2half_rn(v.data[1]));
+  __half2 h23 = __halves2half2(__float2half_rn(v.data[2]), __float2half_rn(v.data[3]));
+  uint32_t in0, in1;
+  asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h01)));
+  asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
+
+  // Strip sign and clamp abs to max finite e4m3b15: 0x3F00 = 0.9375 in fp16.
+  // For positive fp16, unsigned integer comparison gives correct ordering.
+  uint32_t abs0 = in0 & 0x7fff7fffu;
+  uint32_t abs1 = in1 & 0x7fff7fffu;
+
+  // Packed 16-bit min via unsigned compare (correct for positive fp16).
+  uint32_t max_packed = 0x3F003F00u;
+  uint32_t lo0 = (abs0 & 0xFFFFu), hi0 = (abs0 >> 16);
+  uint32_t lo1 = (abs1 & 0xFFFFu), hi1 = (abs1 >> 16);
+  lo0 = (lo0 < (max_packed & 0xFFFFu)) ? lo0 : (max_packed & 0xFFFFu);
+  hi0 = (hi0 < (max_packed >> 16)) ? hi0 : (max_packed >> 16);
+  lo1 = (lo1 < (max_packed & 0xFFFFu)) ? lo1 : (max_packed & 0xFFFFu);
+  hi1 = (hi1 < (max_packed >> 16)) ? hi1 : (max_packed >> 16);
+  uint32_t a0 = lo0 | (hi0 << 16);
+  uint32_t a1 = lo1 | (hi1 << 16);
+
+  // Shift left by 1, add rounding bias: fp16 E5→fp8 E4 exponent adjustment.
+  a0 = a0 * 2u + 0x00800080u;
+  a1 = a1 * 2u + 0x00800080u;
+
+  // Add sign bits back from original fp16 values.
+  uint32_t b0 = a0 | (in0 & 0x80008000u);
+  uint32_t b1 = a1 | (in1 & 0x80008000u);
+
+  // Pack upper byte of each 16-bit half → 4 fp8 bytes.
+  uint32_t packed = __byte_perm(b0, b1, 0x7531u);
+  return bit_cast<f8_e4m3b15x4>(packed);
+#else
+  f8_e4m3b15x4 result;
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __fp8_e4m3b15(v.data[i]);
+  }
+  return result;
+#endif
+}
+
 #endif  // MSCCLPP_DEVICE_COMPILE
 }  // namespace mscclpp
 

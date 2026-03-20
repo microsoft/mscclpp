@@ -44,6 +44,9 @@ static DLDataType getDlType(std::string type) {
     return DLDataType{kDLFloat8_e5m2fnuz, 8, 1};
   } else if (type == "torch.uint8") {
     return DLDataType{kDLUInt, 8, 1};
+  } else if (type == "fp8_e4m3b15") {
+    // No standard DLPack code for fp8_e4m3b15; store as raw uint8 bytes.
+    return DLDataType{kDLUInt, 8, 1};
   } else {
     throw Error("Unsupported type: " + type, ErrorCode::InvalidUsage);
   }

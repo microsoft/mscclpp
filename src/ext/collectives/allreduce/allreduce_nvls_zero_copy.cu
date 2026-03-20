@@ -77,6 +77,9 @@ struct NvlsAdapter {
     // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
     if constexpr (std::is_same_v<T, uint8_t>) {
       return cudaErrorNotSupported;
+    } else if constexpr (std::is_same_v<T, __fp8_e4m3b15>) {
+      // fp8_e4m3b15 is a software-only type with no hardware NVLS support.
+      return cudaErrorNotSupported;
     } else
 #if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
         if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {

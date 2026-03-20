@@ -43,6 +43,7 @@ inline size_t getDataTypeSize(mscclpp::DataType dtype) {
     case mscclpp::DataType::UINT8:
     case mscclpp::DataType::FLOAT8_E4M3:
     case mscclpp::DataType::FLOAT8_E5M2:
+    case mscclpp::DataType::FLOAT8_E4B15:
       return 1;
     case mscclpp::DataType::FLOAT16:
     case mscclpp::DataType::BFLOAT16:
@@ -76,6 +77,9 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
     case mscclpp::DataType::FLOAT8_E5M2:
       return ncclFloat8e5m2;
 #endif
+    case mscclpp::DataType::FLOAT8_E4B15:
+      // float8_e4m3b15 has no NCCL equivalent; fall back to uint8 for raw byte transfer.
+      return ncclUint8;
     default:
       THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
             "Unsupported mscclpp::DataType: " + std::to_string(static_cast<int>(dtype)));

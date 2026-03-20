@@ -79,8 +79,7 @@ __global__ void __launch_bounds__(1024, 1)
   // For AccumT == T, this is just int4 (no-op conversion).
   constexpr int nElemsPerInt4 = sizeof(int4) / sizeof(T);
   // When T == AccumT, stay with raw int4 to avoid type mismatch in identity path.
-  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4,
-                                      mscclpp::VectorType<AccumT, nElemsPerInt4>>;
+  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nElemsPerInt4>>;
   for (uint32_t idx = threadIdx.x; idx < nInt4PerBlock; idx += blockDim.x) {
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset >= nInt4Total) continue;
