@@ -90,11 +90,14 @@ void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
   int localGpuIdx = rank % nRanksPerNode;
 
-  // Use hybrid connections: CudaIpc for intra-node, IB for inter-node
-  bool hasIB = getIBDeviceCount() > 0;
+  // Use hybrid connections: CudaIpc for intra-node, IB for inter-node.
+  // On systems where CudaIpc works across nodes (e.g. GB200 NVSwitch),
+  // set MSCCLPP_FORCE_CUDAIPC=1 to skip IB and use CudaIpc for all peers.
+  const char* forceCudaIpc = std::getenv("MSCCLPP_FORCE_CUDAIPC");
+  bool useIB = (getIBDeviceCount() > 0) && !(forceCudaIpc && std::string(forceCudaIpc) == "1");
   bool isMultiNode = (worldSize_ > nRanksPerNode);
 
-  if (hasIB && isMultiNode) {
+  if (useIB && isMultiNode) {
     this->conns_ = setupHybridConnections(comm, localGpuIdx);
     // Check if any connections are actually inter-node
     hasRemotePeers_ = false;

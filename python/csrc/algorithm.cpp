@@ -62,6 +62,7 @@ void register_algorithm(nb::module_& m) {
           .def_prop_ro("buffer_mode", &Algorithm::bufferMode)
           .def_prop_ro("constraint", &Algorithm::constraint)
           .def_prop_ro("type", &Algorithm::type)
+          .def("reset", &Algorithm::reset)
           .def(
               "execute",
               [](Algorithm& self, std::shared_ptr<Communicator> comm, uintptr_t input, uintptr_t output,
