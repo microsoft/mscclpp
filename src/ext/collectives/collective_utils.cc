@@ -124,6 +124,26 @@ std::vector<mscclpp::PortChannel> setupPortChannels(
   return channels;
 }
 
+std::vector<mscclpp::PortChannel> setupAllPortChannels(
+    std::shared_ptr<mscclpp::ProxyService> proxyService,
+    mscclpp::Communicator& comm,
+    const std::vector<mscclpp::Connection>& connections,
+    const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
+    mscclpp::RegisteredMemory localMemory) {
+  std::vector<mscclpp::PortChannel> channels;
+  mscclpp::MemoryId srcMemId = proxyService->addMemory(localMemory);
+  for (size_t cid = 0; cid < connections.size(); ++cid) {
+    // Create PortChannel for EVERY connection (CudaIpc and IB alike).
+    // The ProxyService proxy thread handles both connection types:
+    //   - CudaIpc: cudaMemcpyD2D via IPC-mapped pointer
+    //   - IB: RDMA write via ibv_post_send
+    mscclpp::SemaphoreId semId = proxyService->buildAndAddSemaphore(comm, connections[cid]);
+    mscclpp::MemoryId dstMemId = proxyService->addMemory(remoteMemories[cid]);
+    channels.emplace_back(proxyService->portChannel(semId, dstMemId, srcMemId));
+  }
+  return channels;
+}
+
 std::shared_ptr<mscclpp::PortChannelDeviceHandle> setupPortChannelDeviceHandles(
     const std::vector<mscclpp::PortChannel>& portChannels) {
   if (portChannels.empty()) return nullptr;

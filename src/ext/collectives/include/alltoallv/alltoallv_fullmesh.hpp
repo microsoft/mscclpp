@@ -5,6 +5,7 @@
 
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/semaphore.hpp>
@@ -34,6 +35,9 @@ class AlltoallvFullmesh : public AlgorithmBuilder {
 
   std::shared_ptr<Algorithm> build() override;
 
+  // Multi-node transport mode, decided at initialize() time
+  enum class MultiNodeMode { SingleNode, NVSwitch, IB };
+
  private:
   void initialize(std::shared_ptr<Communicator> comm);
 
@@ -51,7 +55,7 @@ class AlltoallvFullmesh : public AlgorithmBuilder {
 
   std::vector<Connection> conns_;
   int worldSize_;
-  bool hasRemotePeers_;  // true if any inter-node connections
+  MultiNodeMode multiNodeMode_ = MultiNodeMode::SingleNode;
 };
 
 }  // namespace collective
