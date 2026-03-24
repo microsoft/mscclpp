@@ -1192,6 +1192,174 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
 #endif
 }
 
+// --- fp8_e4m3b15 <-> fp16 direct conversion specializations ---
+// These avoid the fp32 detour: fp8_b15 <-> fp16 is just a 1-bit exponent shift
+// (E4 bias=15 <-> E5 bias=15), no precision loss since fp16 has 10 mantissa bits
+// vs fp8's 3. Enables fp16 accumulation for allreduce.
+
+/// f8_e4m3b15x2 -> f16x2.
+/// Direct fp8 -> fp16 via branch-free bit manipulation (same as the to<f32x2> path
+/// but stops at fp16 instead of converting further to fp32).
+template <>
+MSCCLPP_DEVICE_INLINE f16x2 to<f16x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint16_t in = v.storage.__x;
+  // Spread 2 fp8 bytes into packed fp16 pair, adjust exponent E4->E5.
+  uint32_t a0 = ((uint32_t)(in & 0xFFu) << 8) | ((uint32_t)(in >> 8) << 24);
+  uint32_t b0 = (a0 & 0x7f007f00u) >> 1;
+  uint32_t out0 = b0 | (a0 & 0x80008000u);
+  __half2 h;
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h)) : "r"(out0));
+  return h;
+#else
+  f16x2 result;
+  result.data[0] = __float2half(float(v.data[0]));
+  result.data[1] = __float2half(float(v.data[1]));
+  return result;
+#endif
+}
+
+/// f8_e4m3b15x4 -> f16x4.
+/// Uses __byte_perm + lop3 for branch-free vectorized conversion.
+template <>
+MSCCLPP_DEVICE_INLINE f16x4 to<f16x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint32_t in = v.storage.__x;
+  uint32_t a0 = __byte_perm(0u, in, 0x5746u);
+  uint32_t a0_shr = a0 >> 1;
+  uint32_t a0_sign = a0 & 0x80008000u;
+  uint32_t out0;
+  asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(out0) : "r"(a0_shr), "r"(0x3f803f80u), "r"(a0_sign));
+  uint32_t a1 = __byte_perm(a0, 0u, 0x2301u);
+  uint32_t a1_shr = a1 >> 1;
+  uint32_t a1_sign = a1 & 0x80008000u;
+  uint32_t out1;
+  asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(out1) : "r"(a1_shr), "r"(0x3f803f80u), "r"(a1_sign));
+  f16x4 result;
+  asm("mov.b32 %0, %1;" : "=r"(result.words[0]) : "r"(out0));
+  asm("mov.b32 %0, %1;" : "=r"(result.words[1]) : "r"(out1));
+  return result;
+#else
+  f16x4 result;
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __float2half(float(v.data[i]));
+  }
+  return result;
+#endif
+}
+
+/// f16x2 -> f8_e4m3b15x2.
+/// Direct fp16 -> fp8 via clamp + exponent shift E5->E4 + pack.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint32_t in0;
+  asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<const uint32_t*>(&v)));
+  // Clamp abs to max finite e4m3b15 (0x3B80 = 0.9375 in fp16).
+  uint32_t lo = in0 & 0xFFFFu, hi = in0 >> 16;
+  uint32_t alo = lo & 0x7FFFu, ahi = hi & 0x7FFFu;
+  alo = alo < 0x3B80u ? alo : 0x3B80u;
+  ahi = ahi < 0x3B80u ? ahi : 0x3B80u;
+  uint32_t a0 = alo | (ahi << 16);
+  a0 = a0 * 2u + 0x00800080u;
+  uint32_t b0 = a0 | (in0 & 0x80008000u);
+  uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
+  return bit_cast<f8_e4m3b15x2>(packed);
+#else
+  f8_e4m3b15x2 result;
+  result.data[0] = __fp8_e4m3b15(__half2float(v.data[0]));
+  result.data[1] = __fp8_e4m3b15(__half2float(v.data[1]));
+  return result;
+#endif
+}
+
+/// f16x4 -> f8_e4m3b15x4.
+/// Uses __vminu2 + lop3 + __byte_perm for branch-free vectorized conversion.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  uint32_t in0, in1;
+  asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(v.words[0]));
+  asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(v.words[1]));
+  uint32_t abs0 = in0 & 0x7fff7fffu;
+  uint32_t abs1 = in1 & 0x7fff7fffu;
+  uint32_t a0 = __vminu2(abs0, 0x3B803B80u);
+  uint32_t a1 = __vminu2(abs1, 0x3B803B80u);
+  a0 = a0 * 2u + 0x00800080u;
+  a1 = a1 * 2u + 0x00800080u;
+  uint32_t b0, b1;
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(b0) : "r"(a0), "r"(in0), "r"(0x80008000u));
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(b1) : "r"(a1), "r"(in1), "r"(0x80008000u));
+  uint32_t packed = __byte_perm(b0, b1, 0x7531u);
+  return bit_cast<f8_e4m3b15x4>(packed);
+#else
+  f8_e4m3b15x4 result;
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __fp8_e4m3b15(__half2float(v.data[i]));
+  }
+  return result;
+#endif
+}
+
+/// f8_e4m3b15x8 -> f16x8: decompose into 2x f8_e4m3b15x4 -> f16x4.
+template <>
+MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, VectorType<__fp8_e4m3b15, 8>>(const VectorType<__fp8_e4m3b15, 8>& v) {
+  const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
+  f16x4 lo = to<f16x4>(pair[0]);
+  f16x4 hi = to<f16x4>(pair[1]);
+  f16x8 result;
+  result.words[0] = lo.words[0];
+  result.words[1] = lo.words[1];
+  result.words[2] = hi.words[0];
+  result.words[3] = hi.words[1];
+  return result;
+}
+
+/// f16x8 -> f8_e4m3b15x8: decompose into 2x f16x4 -> f8_e4m3b15x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8>
+to<VectorType<__fp8_e4m3b15, 8>, f16x8>(const f16x8& v) {
+  f16x4 lo, hi;
+  lo.words[0] = v.words[0];
+  lo.words[1] = v.words[1];
+  hi.words[0] = v.words[2];
+  hi.words[1] = v.words[3];
+  f8_e4m3b15x4 lo_fp8 = to<f8_e4m3b15x4>(lo);
+  f8_e4m3b15x4 hi_fp8 = to<f8_e4m3b15x4>(hi);
+  VectorType<__fp8_e4m3b15, 8> result;
+  result.words[0] = lo_fp8.words[0];
+  result.words[1] = hi_fp8.words[0];
+  return result;
+}
+
+/// f8_e4m3b15x16 -> VectorType<__half, 16>: decompose into 4x f8_e4m3b15x4 -> f16x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<__half, 16>
+to<VectorType<__half, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8_e4m3b15, 16>& v) {
+  const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
+  VectorType<__half, 16> result;
+  f16x4* out = reinterpret_cast<f16x4*>(&result);
+  out[0] = to<f16x4>(quads[0]);
+  out[1] = to<f16x4>(quads[1]);
+  out[2] = to<f16x4>(quads[2]);
+  out[3] = to<f16x4>(quads[3]);
+  return result;
+}
+
+/// VectorType<__half, 16> -> f8_e4m3b15x16: decompose into 4x f16x4 -> f8_e4m3b15x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16>
+to<VectorType<__fp8_e4m3b15, 16>, VectorType<__half, 16>>(const VectorType<__half, 16>& v) {
+  const f16x4* quads = reinterpret_cast<const f16x4*>(&v);
+  VectorType<__fp8_e4m3b15, 16> result;
+  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
+  out[0] = to<f8_e4m3b15x4>(quads[0]);
+  out[1] = to<f8_e4m3b15x4>(quads[1]);
+  out[2] = to<f8_e4m3b15x4>(quads[2]);
+  out[3] = to<f8_e4m3b15x4>(quads[3]);
+  return result;
+}
+
 #endif  // MSCCLPP_DEVICE_COMPILE
 }  // namespace mscclpp
 

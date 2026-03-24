@@ -111,11 +111,14 @@ AllreduceFunc dispatchFp8Accum(mscclpp::DataType accumDtype, mscclpp::DataType d
 #endif
 
 /// Dispatch helper for fp8_e4m3b15 (software type, always available).
-/// Only float32 and native accumulation are supported (no half — software type).
+/// Supports float32, float16 (precision-safe: max sum of 8×0.9375=7.5 is well within fp16 range),
+/// and native accumulation.
 template <ReduceOp Op, template <ReduceOp, typename, typename> class Adapter>
 AllreduceFunc dispatchFp8E4b15Accum(mscclpp::DataType accumDtype, mscclpp::DataType dtype) {
   if (accumDtype == mscclpp::DataType::FLOAT32) {
     return Adapter<Op, __fp8_e4m3b15, float>::call;
+  } else if (accumDtype == mscclpp::DataType::FLOAT16) {
+    return Adapter<Op, __fp8_e4m3b15, half>::call;
   } else if (accumDtype == dtype) {
     return Adapter<Op, __fp8_e4m3b15, __fp8_e4m3b15>::call;
   }
