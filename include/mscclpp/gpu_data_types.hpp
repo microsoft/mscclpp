@@ -171,9 +171,8 @@ struct alignas(1) __fp8_e4m3b15 {
     uint16_t fp16_bits = cvt.u;
 
     // Clamp absolute value to max finite e4m3b15: 0.9375 → fp16 = 0x3B80.
-    // max_val_f16 = 0x3F00 in Triton (which is 0.9375 in fp16).
     uint16_t abs_fp16 = fp16_bits & 0x7FFFu;
-    if (abs_fp16 > 0x3F00u) abs_fp16 = 0x3F00u;
+    if (abs_fp16 > 0x3B80u) abs_fp16 = 0x3B80u;
 
     // Reconstruct with sign.
     uint16_t sign16 = fp16_bits & 0x8000u;
@@ -1055,11 +1054,11 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
 
   // Upper-byte path: fp8[0] and fp8[1] in upper-byte positions of each 16-bit lane.
   // Right-shift by 1 converts E4→E5 exponent, lop3 merges masked shift with sign.
-  // out0 = ((a0 >> 1) & 0x3f803f80) | (a0 & 0x80008000)   [lop3 truth table 0xf8 = (A&B)|C]
+  // out0 = ((a0 >> 1) & 0x3f803f80) | (a0 & 0x80008000)   [lop3 truth table 0xEA = (A&B)|C]
   uint32_t a0_shr = a0 >> 1;
   uint32_t a0_sign = a0 & 0x80008000u;
   uint32_t out0;
-  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(out0) : "r"(a0_shr), "r"(0x3f803f80u), "r"(a0_sign));
+  asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(out0) : "r"(a0_shr), "r"(0x3f803f80u), "r"(a0_sign));
 
   // Lower-byte path: swap bytes within each 16-bit lane so fp8[2] and fp8[3]
   // move to upper-byte positions, then apply identical conversion.
@@ -1068,7 +1067,7 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   uint32_t a1_shr = a1 >> 1;
   uint32_t a1_sign = a1 & 0x80008000u;
   uint32_t out1;
-  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(out1) : "r"(a1_shr), "r"(0x3f803f80u), "r"(a1_sign));
+  asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(out1) : "r"(a1_shr), "r"(0x3f803f80u), "r"(a1_sign));
 
   // Convert 4 packed fp16 values to 4 float32.
   __half2 h0, h1;
@@ -1097,11 +1096,11 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
   __half2 h = __halves2half2(__float2half_rn(v.data[0]), __float2half_rn(v.data[1]));
   uint32_t in0;
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h)));
-  // Clamp abs to max finite e4m3b15 (0x3F00 = 0.9375 in fp16).
+  // Clamp abs to max finite e4m3b15 (0x3B80 = 0.9375 in fp16).
   uint32_t lo = in0 & 0xFFFFu, hi = in0 >> 16;
   uint32_t alo = lo & 0x7FFFu, ahi = hi & 0x7FFFu;
-  alo = alo < 0x3F00u ? alo : 0x3F00u;
-  ahi = ahi < 0x3F00u ? ahi : 0x3F00u;
+  alo = alo < 0x3B80u ? alo : 0x3B80u;
+  ahi = ahi < 0x3B80u ? ahi : 0x3B80u;
   uint32_t a0 = alo | (ahi << 16);
   // Shift left by 1 + rounding bias → fp16 E5 to fp8 E4.
   a0 = a0 * 2u + 0x00800080u;
@@ -1120,7 +1119,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
 
 /// f32x4 -> f8_e4m3b15x4.
 /// NVIDIA CUDA: Triton-style vectorized bit manipulation (fp32x4 → fp16x4 → fp8x4).
-/// Converts to fp16 via hardware __float2half_rn, clamps to max finite (0.9375),
+/// Converts to fp16 via hardware __float2half_rn, clamps abs to max finite 0.9375 (fp16 = 0x3B80),
 /// shifts exponent left by 1 (E5→E4) with rounding, then packs via __byte_perm.
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
@@ -1132,13 +1131,13 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h01)));
   asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
 
-  // Strip sign and clamp abs to max finite e4m3b15: 0x3F00 = 0.9375 in fp16.
+  // Strip sign and clamp abs to max finite e4m3b15: 0x3B80 = 0.9375 in fp16.
   // __vminu2 does packed 2×16-bit unsigned min in one instruction, replacing
   // the split-compare-repack sequence (saves ~14 instructions).
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t abs1 = in1 & 0x7fff7fffu;
-  uint32_t a0 = __vminu2(abs0, 0x3F003F00u);
-  uint32_t a1 = __vminu2(abs1, 0x3F003F00u);
+  uint32_t a0 = __vminu2(abs0, 0x3B803B80u);
+  uint32_t a1 = __vminu2(abs1, 0x3B803B80u);
 
   // Shift left by 1, add rounding bias: fp16 E5→fp8 E4 exponent adjustment.
   // Compiler emits mad.lo.u32 (1 instruction).
