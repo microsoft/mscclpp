@@ -460,6 +460,18 @@ MSCCLPP_DEVICE_INLINE f16x2 operator+(const f16x2& a, const f16x2& b) {
 }
 
 template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f16x4 operator+(const f16x4& a, const f16x4& b) {
+  // Decompose into 2× packed __hadd2 (2 instructions instead of 4 scalar __hadd).
+  const f16x2* a2 = reinterpret_cast<const f16x2*>(&a);
+  const f16x2* b2 = reinterpret_cast<const f16x2*>(&b);
+  f16x4 result;
+  f16x2* r2 = reinterpret_cast<f16x2*>(&result);
+  r2[0] = a2[0] + b2[0];
+  r2[1] = a2[1] + b2[1];
+  return result;
+}
+
+template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE bf16x2 operator+(const bf16x2& a, const bf16x2& b) {
   __bfloat162 result;
   if constexpr (UseClip) {
