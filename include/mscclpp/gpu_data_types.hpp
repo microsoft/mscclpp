@@ -1036,29 +1036,39 @@ MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
 
 /// f8_e4m3b15x4 -> f32x4.
 /// NVIDIA CUDA: Triton-style vectorized bit manipulation (fp8x4 → fp16x4 → fp32x4).
-/// Uses __byte_perm to spread 4 fp8 bytes into 2 packed fp16 pairs, then
-/// adjusts the exponent with a right-shift (E4 bias=15 → E5 bias=15) and
-/// converts to float32 via hardware __half2float.
+/// Uses __byte_perm to spread 4 fp8 bytes into 2 packed fp16 pairs with each fp8
+/// in the upper byte of its 16-bit lane, then adjusts the exponent with a right-shift
+/// (E4 bias=15 → E5 bias=15) and converts to float32 via hardware __half2float.
+/// Optimized: uses lop3.b32 to fuse (shift & mask) | sign into one instruction per path,
+/// and a second prmt to move lower-byte fp8 values into upper-byte positions so both
+/// paths share identical conversion logic (saves 1 instruction vs add+shift approach).
 template <>
 MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   uint32_t in = v.storage.__x;
 
   // Byte permute: spread 4 fp8 bytes into 2 pairs of (upper-byte, lower-byte).
-  // a0 = {fp8[1], fp8[3], fp8[0], fp8[2]} arranged so each 16-bit half has
-  // one fp8 in its upper byte and another in its lower byte.
+  // Source: {in, 0} bytes: 0-3=0, 4-7=in[0..3]=fp8[0..3].
+  // 0x5746: byte0=fp8[2], byte1=fp8[0], byte2=fp8[3], byte3=fp8[1]
+  // → fp8[0] at byte1 (lo16 upper), fp8[1] at byte3 (hi16 upper).
   uint32_t a0 = __byte_perm(0u, in, 0x5746u);
 
-  // Upper-byte path (fp8[0] in lower half, fp8[1] in upper half):
-  // Shift exponent+mantissa right by 1 to convert E4→E5, then OR sign.
-  uint32_t b0 = (a0 & 0x7f007f00u) >> 1;
-  uint32_t out0 = b0 | (a0 & 0x80008000u);  // 2 packed fp16
+  // Upper-byte path: fp8[0] and fp8[1] in upper-byte positions of each 16-bit lane.
+  // Right-shift by 1 converts E4→E5 exponent, lop3 merges masked shift with sign.
+  // out0 = ((a0 >> 1) & 0x3f803f80) | (a0 & 0x80008000)   [lop3 truth table 0xf8 = (A&B)|C]
+  uint32_t a0_shr = a0 >> 1;
+  uint32_t a0_sign = a0 & 0x80008000u;
+  uint32_t out0;
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(out0) : "r"(a0_shr), "r"(0x3f803f80u), "r"(a0_sign));
 
-  // Lower-byte path (fp8[2] in lower half, fp8[3] in upper half):
-  // Add sign bit (carry trick) then shift left 7 to position as fp16.
-  uint32_t b1 = a0 & 0x00ff00ffu;
-  uint32_t a1 = a0 & 0x00800080u;
-  uint32_t out1 = (b1 + a1) << 7;  // 2 packed fp16
+  // Lower-byte path: swap bytes within each 16-bit lane so fp8[2] and fp8[3]
+  // move to upper-byte positions, then apply identical conversion.
+  // 0x2301: {byte2,byte3,byte0,byte1} → fp8[2] at byte1 (lo16 upper), fp8[3] at byte3 (hi16 upper).
+  uint32_t a1 = __byte_perm(a0, 0u, 0x2301u);
+  uint32_t a1_shr = a1 >> 1;
+  uint32_t a1_sign = a1 & 0x80008000u;
+  uint32_t out1;
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(out1) : "r"(a1_shr), "r"(0x3f803f80u), "r"(a1_sign));
 
   // Convert 4 packed fp16 values to 4 float32.
   __half2 h0, h1;
@@ -1123,28 +1133,23 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
 
   // Strip sign and clamp abs to max finite e4m3b15: 0x3F00 = 0.9375 in fp16.
-  // For positive fp16, unsigned integer comparison gives correct ordering.
+  // __vminu2 does packed 2×16-bit unsigned min in one instruction, replacing
+  // the split-compare-repack sequence (saves ~14 instructions).
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t abs1 = in1 & 0x7fff7fffu;
-
-  // Packed 16-bit min via unsigned compare (correct for positive fp16).
-  uint32_t max_packed = 0x3F003F00u;
-  uint32_t lo0 = (abs0 & 0xFFFFu), hi0 = (abs0 >> 16);
-  uint32_t lo1 = (abs1 & 0xFFFFu), hi1 = (abs1 >> 16);
-  lo0 = (lo0 < (max_packed & 0xFFFFu)) ? lo0 : (max_packed & 0xFFFFu);
-  hi0 = (hi0 < (max_packed >> 16)) ? hi0 : (max_packed >> 16);
-  lo1 = (lo1 < (max_packed & 0xFFFFu)) ? lo1 : (max_packed & 0xFFFFu);
-  hi1 = (hi1 < (max_packed >> 16)) ? hi1 : (max_packed >> 16);
-  uint32_t a0 = lo0 | (hi0 << 16);
-  uint32_t a1 = lo1 | (hi1 << 16);
+  uint32_t a0 = __vminu2(abs0, 0x3F003F00u);
+  uint32_t a1 = __vminu2(abs1, 0x3F003F00u);
 
   // Shift left by 1, add rounding bias: fp16 E5→fp8 E4 exponent adjustment.
+  // Compiler emits mad.lo.u32 (1 instruction).
   a0 = a0 * 2u + 0x00800080u;
   a1 = a1 * 2u + 0x00800080u;
 
-  // Add sign bits back from original fp16 values.
-  uint32_t b0 = a0 | (in0 & 0x80008000u);
-  uint32_t b1 = a1 | (in1 & 0x80008000u);
+  // Restore sign bits using lop3: b = a | (in & 0x80008000).
+  // lop3 truth table 0xf8 = A | (B & C), fuses AND+OR into 1 instruction.
+  uint32_t b0, b1;
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(b0) : "r"(a0), "r"(in0), "r"(0x80008000u));
+  asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(b1) : "r"(a1), "r"(in1), "r"(0x80008000u));
 
   // Pack upper byte of each 16-bit half → 4 fp8 bytes.
   uint32_t packed = __byte_perm(b0, b1, 0x7531u);
