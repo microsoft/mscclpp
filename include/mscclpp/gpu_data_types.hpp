@@ -1033,7 +1033,7 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 to<f8_e5m2x4, f32x4>(const f32x4& v) {
 
 /// f8_e4m3b15x2 -> f32x2.
 /// NVIDIA CUDA: place 2 fp8 bytes into a packed fp16 pair, adjust exponent (E4→E5),
-/// convert to float32 via hardware __half2float.
+/// convert to float32 via __half22float2 (packed half2 → float2).
 template <>
 MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -1044,10 +1044,9 @@ MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
   uint32_t out0 = b0 | (a0 & 0x80008000u);  // 2 packed fp16
   __half2 h;
   asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h)) : "r"(out0));
-  f32x2 result;
-  result.data[0] = __low2float(h);
-  result.data[1] = __high2float(h);
-  return result;
+  // Packed half2 → float2 conversion (single cvt.f32x2.f16x2 on Blackwell).
+  float2 f2 = __half22float2(h);
+  return bit_cast<f32x2>(f2);
 #else
   f32x2 result;
   result.data[0] = float(v.data[0]);
@@ -1092,15 +1091,18 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   uint32_t out1;
   asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(out1) : "r"(a1_shr), "r"(0x3f803f80u), "r"(a1_sign));
 
-  // Convert 4 packed fp16 values to 4 float32.
+  // Convert 4 packed fp16 values to 4 float32 via __half22float2
+  // (single cvt.f32x2.f16x2 per pair on Blackwell, 2× cvt.f32.f16 on older).
   __half2 h0, h1;
   asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h0)) : "r"(out0));
   asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h1)) : "r"(out1));
+  float2 f0 = __half22float2(h0);
+  float2 f1 = __half22float2(h1);
   f32x4 result;
-  result.data[0] = __low2float(h0);
-  result.data[1] = __high2float(h0);
-  result.data[2] = __low2float(h1);
-  result.data[3] = __high2float(h1);
+  result.data[0] = f0.x;
+  result.data[1] = f0.y;
+  result.data[2] = f1.x;
+  result.data[3] = f1.y;
   return result;
 #else
   f32x4 result;
@@ -1116,7 +1118,9 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
-  __half2 h = __halves2half2(__float2half_rn(v.data[0]), __float2half_rn(v.data[1]));
+  // Packed float2 → half2 conversion (single cvt.rn.f16x2.f32 on Blackwell).
+  float2 f2 = {v.data[0], v.data[1]};
+  __half2 h = __float22half2_rn(f2);
   uint32_t in0;
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h)));
   // Clamp abs to max finite e4m3b15 (0x3B80 = 0.9375 in fp16).
@@ -1147,9 +1151,12 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
-  // Convert 4 float32 → 2 packed fp16 pairs.
-  __half2 h01 = __halves2half2(__float2half_rn(v.data[0]), __float2half_rn(v.data[1]));
-  __half2 h23 = __halves2half2(__float2half_rn(v.data[2]), __float2half_rn(v.data[3]));
+  // Convert 4 float32 → 2 packed fp16 pairs via __float22half2_rn
+  // (single cvt.rn.f16x2.f32 per pair on Blackwell, 2× cvt.rn.f16.f32 on older).
+  float2 f01 = {v.data[0], v.data[1]};
+  float2 f23 = {v.data[2], v.data[3]};
+  __half2 h01 = __float22half2_rn(f01);
+  __half2 h23 = __float22half2_rn(f23);
   uint32_t in0, in1;
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<uint32_t*>(&h01)));
   asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
