@@ -256,10 +256,21 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const StorageT& value) : storage(value) {}
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl& other) { storage = other.storage; }
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl& other) {
+    // Use words (which covers the full sizeof(T)*N bytes) when storage is smaller.
+    if constexpr (sizeof(StorageT) >= sizeof(T) * N) {
+      storage = other.storage;
+    } else {
+      words = other.words;
+    }
+  }
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl& other) {
-    storage = other.storage;
+    if constexpr (sizeof(StorageT) >= sizeof(T) * N) {
+      storage = other.storage;
+    } else {
+      words = other.words;
+    }
     return *this;
   }
 
@@ -1202,6 +1213,76 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   }
   return result;
 #endif
+}
+
+// --- fp8_e4m3b15 <-> f32 decomposed x8/x16 specializations ---
+// Decompose into x4 chunks to use the optimized bit-manipulation specializations
+// instead of the generic template (which has issues with large VectorType sizes > 16 bytes).
+
+/// f8_e4m3b15x8 -> f32 (8 elements): decompose into 2x f8_e4m3b15x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<float, 8>
+to<VectorType<float, 8>, VectorType<__fp8_e4m3b15, 8>>(const VectorType<__fp8_e4m3b15, 8>& v) {
+  const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
+  f32x4 lo = to<f32x4>(pair[0]);
+  f32x4 hi = to<f32x4>(pair[1]);
+  VectorType<float, 8> result;
+  for (int i = 0; i < 4; ++i) result.data[i] = lo.data[i];
+  for (int i = 0; i < 4; ++i) result.data[4 + i] = hi.data[i];
+  return result;
+}
+
+/// f32 (8 elements) -> f8_e4m3b15x8: decompose into 2x f32x4 -> f8_e4m3b15x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8>
+to<VectorType<__fp8_e4m3b15, 8>, VectorType<float, 8>>(const VectorType<float, 8>& v) {
+  f32x4 lo, hi;
+  for (int i = 0; i < 4; ++i) lo.data[i] = v.data[i];
+  for (int i = 0; i < 4; ++i) hi.data[i] = v.data[4 + i];
+  f8_e4m3b15x4 lo_fp8 = to<f8_e4m3b15x4>(lo);
+  f8_e4m3b15x4 hi_fp8 = to<f8_e4m3b15x4>(hi);
+  VectorType<__fp8_e4m3b15, 8> result;
+  result.words[0] = lo_fp8.words[0];
+  result.words[1] = hi_fp8.words[0];
+  return result;
+}
+
+/// f8_e4m3b15x16 -> f32 (16 elements): decompose into 4x f8_e4m3b15x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<float, 16>
+to<VectorType<float, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8_e4m3b15, 16>& v) {
+  const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
+  VectorType<float, 16> result;
+  f32x4 q0 = to<f32x4>(quads[0]);
+  f32x4 q1 = to<f32x4>(quads[1]);
+  f32x4 q2 = to<f32x4>(quads[2]);
+  f32x4 q3 = to<f32x4>(quads[3]);
+  for (int i = 0; i < 4; ++i) result.data[i] = q0.data[i];
+  for (int i = 0; i < 4; ++i) result.data[4 + i] = q1.data[i];
+  for (int i = 0; i < 4; ++i) result.data[8 + i] = q2.data[i];
+  for (int i = 0; i < 4; ++i) result.data[12 + i] = q3.data[i];
+  return result;
+}
+
+/// f32 (16 elements) -> f8_e4m3b15x16: decompose into 4x f32x4 -> f8_e4m3b15x4.
+template <>
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16>
+to<VectorType<__fp8_e4m3b15, 16>, VectorType<float, 16>>(const VectorType<float, 16>& v) {
+  f32x4 q0, q1, q2, q3;
+  for (int i = 0; i < 4; ++i) q0.data[i] = v.data[i];
+  for (int i = 0; i < 4; ++i) q1.data[i] = v.data[4 + i];
+  for (int i = 0; i < 4; ++i) q2.data[i] = v.data[8 + i];
+  for (int i = 0; i < 4; ++i) q3.data[i] = v.data[12 + i];
+  f8_e4m3b15x4 r0 = to<f8_e4m3b15x4>(q0);
+  f8_e4m3b15x4 r1 = to<f8_e4m3b15x4>(q1);
+  f8_e4m3b15x4 r2 = to<f8_e4m3b15x4>(q2);
+  f8_e4m3b15x4 r3 = to<f8_e4m3b15x4>(q3);
+  VectorType<__fp8_e4m3b15, 16> result;
+  result.words[0] = r0.words[0];
+  result.words[1] = r1.words[0];
+  result.words[2] = r2.words[0];
+  result.words[3] = r3.words[0];
+  return result;
 }
 
 // --- fp8_e4m3b15 <-> fp16 direct conversion specializations ---

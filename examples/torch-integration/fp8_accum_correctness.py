@@ -44,7 +44,7 @@ def init_dist() -> mscclpp.CommGroup:
     return mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
 
 
-def run_allreduce(algo, comm, tensor, dtype_override=None, accum_dtype=None):
+def run_allreduce(algo, comm, tensor, dtype_override=None, accum_dtype=None, nblocks=0, nthreads_per_block=0):
     """Run a single allreduce on the tensor (in-place) and return a clone of the result."""
     dtype = dtype_override if dtype_override is not None else mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype)
     ret = algo.execute(
@@ -56,8 +56,8 @@ def run_allreduce(algo, comm, tensor, dtype_override=None, accum_dtype=None):
         dtype=dtype,
         op=mscclpp.ReduceOp.SUM,
         stream=torch.cuda.current_stream().cuda_stream,
-        nblocks=32,
-        nthreads_per_block=1024,
+        nblocks=nblocks,
+        nthreads_per_block=nthreads_per_block,
         symmetric_memory=True,
         accum_dtype=accum_dtype,
     )
@@ -102,7 +102,7 @@ def main():
 
     accum_configs = [
         ("fp8 (native)", mscclpp.DataType.float8_e4m3),
-        ("float32", mscclpp.DataType.float32),
+        ("float16", mscclpp.DataType.float16),
     ]
 
     for size in test_sizes:
@@ -154,7 +154,7 @@ def main():
         # Compare and print verdict
         if rank == 0:
             fp8_err = results["fp8 (native)"][1]  # mean abs error
-            f32_err = results["float32"][1]
+            f32_err = results["float16"][1]
             if f32_err < fp8_err:
                 improvement = (fp8_err - f32_err) / fp8_err * 100
                 print(f"{'':>10} >> float32 accum is {improvement:.1f}% more accurate (mean abs err)")
@@ -234,10 +234,8 @@ def main():
 
     if rank == 0:
         print(f"\n{'='*90}")
-        print(f"FP8 E4M3B15 Accumulation Correctness Test ({world_size} GPUs, packet algorithm)")
+        print(f"FP8 E4M3B15 Accumulation Correctness Test ({world_size} GPUs)")
         print(f"{'='*90}")
-        print(f"{'Size':>10} {'AccumType':>12} " f"{'MaxAbsErr':>12} {'MeanAbsErr':>12} {'MaxRelErr':>12}")
-        print(f"{'-'*90}")
 
     # Allocate symmetric uint8 buffer for fp8_e4m3b15 data.
     buf_b15_dlpack = mscclpp.RawGpuBuffer(max_bytes).to_dlpack(data_type=str(torch.uint8))
@@ -245,83 +243,136 @@ def main():
 
     e4m3b15_accum_configs = [
         ("e4m3b15 (native)", mscclpp.DataType.float8_e4m3b15),
+        ("float16", mscclpp.DataType.float16),
         ("float32", mscclpp.DataType.float32),
     ]
 
-    e4m3b15_test_sizes = [1024, 4096]
+    e4m3b15_test_sizes = [1024, 4096, 65536]
 
-    for size in e4m3b15_test_sizes:
-        n_elements = size
-        tensor_view = buf_b15[:n_elements]
+    # Gather algorithms to test: packet, nvls_packet, and rsag_zero_copy.
+    algo_names_to_test = [
+        "default_allreduce_packet",
+        "default_allreduce_nvls_packet",
+        "default_allreduce_rsag_zero_copy",
+    ]
+    algo_map = {a.name: a for a in algorithms}
 
-        results = {}
-        for accum_label, accum_dtype in e4m3b15_accum_configs:
-            # Generate deterministic per-rank random uint8 values in the valid
-            # e4m3b15 range. Avoid exp==15 (NaN) and 0x80 (negative zero = NaN).
-            torch.manual_seed(42 + rank)
-            # Generate random bytes, mask off exp==15 rows
-            raw = torch.randint(0, 0x78, (n_elements,), dtype=torch.uint8, device="cuda")
-            # Randomly add sign bit
-            signs = torch.randint(0, 2, (n_elements,), dtype=torch.uint8, device="cuda") << 7
-            src_uint8 = raw | signs
-            # Fix negative zero → positive zero
-            src_uint8 = torch.where(src_uint8 == 0x80, torch.zeros_like(src_uint8), src_uint8)
+    # rsag_zero_copy needs larger sizes for proper work division
+    rsag_min_size = world_size * 16 * 16  # at least 16 int4s per rank
 
-            # Copy into symmetric buffer
-            tensor_view.copy_(src_uint8)
-            torch.cuda.synchronize()
-
-            # Run allreduce with explicit dtype override
-            result = run_allreduce(
-                algo_packet,
-                comm,
-                tensor_view,
-                dtype_override=mscclpp.DataType.float8_e4m3b15,
-                accum_dtype=accum_dtype,
-            )
-
-            # Decode result (uint8 → float32 via e4m3b15 interpretation)
-            result_f32 = e4m3b15_to_float(result)
-
-            # Compute float32 reference: decode each rank's e4m3b15 bits → float32, sum
-            ref_f32 = torch.zeros(n_elements, dtype=torch.float32, device="cuda")
-            for r in range(world_size):
-                torch.manual_seed(42 + r)
-                raw_r = torch.randint(0, 0x78, (n_elements,), dtype=torch.uint8, device="cuda")
-                signs_r = torch.randint(0, 2, (n_elements,), dtype=torch.uint8, device="cuda") << 7
-                bits_r = raw_r | signs_r
-                bits_r = torch.where(bits_r == 0x80, torch.zeros_like(bits_r), bits_r)
-                ref_f32 += e4m3b15_to_float(bits_r)
-
-            # Compute errors
-            valid = ~result_f32.isnan() & ~ref_f32.isnan()
-            abs_err = (result_f32[valid] - ref_f32[valid]).abs()
-            max_abs_err = abs_err.max().item() if abs_err.numel() > 0 else 0.0
-            mean_abs_err = abs_err.mean().item() if abs_err.numel() > 0 else 0.0
-            denom = ref_f32[valid].abs().clamp(min=1e-8)
-            max_rel_err = (abs_err / denom).max().item() if abs_err.numel() > 0 else 0.0
-
-            results[accum_label] = (max_abs_err, mean_abs_err, max_rel_err)
-
+    for algo_name in algo_names_to_test:
+        if algo_name not in algo_map:
             if rank == 0:
-                print(
-                    f"{size:>10} {accum_label:>12} " f"{max_abs_err:>12.6f} {mean_abs_err:>12.8f} {max_rel_err:>12.6f}"
-                )
-
-            algo_packet.reset()
+                print(f"\n  Skipping {algo_name} (not available)")
+            continue
+        algo = algo_map[algo_name]
 
         if rank == 0:
-            if len(results) >= 2:
-                native_err = results["e4m3b15 (native)"][1]
-                f32_err = results["float32"][1]
-                if f32_err < native_err:
-                    improvement = (native_err - f32_err) / native_err * 100
-                    print(f"{'':>10} >> float32 accum is {improvement:.1f}% more accurate (mean abs err)")
-                elif f32_err == native_err:
-                    print(f"{'':>10} >> identical results")
-                else:
-                    print(f"{'':>10} >> WARNING: float32 accum is worse (unexpected)")
-            print()
+            print(f"\n  Algorithm: {algo_name}")
+            print(f"  {'Size':>10} {'AccumType':>16} "
+                  f"{'MaxAbsErr':>12} {'MeanAbsErr':>12} {'MaxRelErr':>12}")
+            print(f"  {'-'*80}")
+
+        for size in e4m3b15_test_sizes:
+            # rsag_zero_copy needs larger buffers for proper work division
+            if "rsag" in algo_name and size < rsag_min_size:
+                continue
+            n_elements = size
+            tensor_view = buf_b15[:n_elements]
+
+            results = {}
+            for accum_label, accum_dtype in e4m3b15_accum_configs:
+                # Generate deterministic per-rank random uint8 values in the valid
+                # e4m3b15 range. Avoid exp==15 (NaN) and 0x80 (negative zero = NaN).
+                torch.manual_seed(42 + rank)
+                # Generate random bytes, mask off exp==15 rows
+                raw = torch.randint(0, 0x78, (n_elements,), dtype=torch.uint8, device="cuda")
+                # Randomly add sign bit
+                signs = torch.randint(0, 2, (n_elements,), dtype=torch.uint8, device="cuda") << 7
+                src_uint8 = raw | signs
+                # Fix negative zero → positive zero
+                src_uint8 = torch.where(src_uint8 == 0x80, torch.zeros_like(src_uint8), src_uint8)
+
+                # Copy into symmetric buffer
+                tensor_view.copy_(src_uint8)
+                torch.cuda.synchronize()
+
+                # Run allreduce with explicit dtype override
+                # rsag_zero_copy doesn't auto-select block/thread counts (unlike packet/nvls_packet),
+                # so we must provide explicit values to avoid launching 0-block kernels that hang.
+                nb = 32 if "rsag" in algo_name else 0
+                nt = 1024 if "rsag" in algo_name else 0
+                result = run_allreduce(
+                    algo,
+                    comm,
+                    tensor_view,
+                    dtype_override=mscclpp.DataType.float8_e4m3b15,
+                    accum_dtype=accum_dtype,
+                    nblocks=nb,
+                    nthreads_per_block=nt,
+                )
+
+                # Decode result (uint8 → float32 via e4m3b15 interpretation)
+                result_f32 = e4m3b15_to_float(result)
+
+                # Compute float32 reference: decode each rank's e4m3b15 bits → float32, sum
+                ref_f32 = torch.zeros(n_elements, dtype=torch.float32, device="cuda")
+                for r in range(world_size):
+                    torch.manual_seed(42 + r)
+                    raw_r = torch.randint(0, 0x78, (n_elements,), dtype=torch.uint8, device="cuda")
+                    signs_r = torch.randint(0, 2, (n_elements,), dtype=torch.uint8, device="cuda") << 7
+                    bits_r = raw_r | signs_r
+                    bits_r = torch.where(bits_r == 0x80, torch.zeros_like(bits_r), bits_r)
+                    ref_f32 += e4m3b15_to_float(bits_r)
+
+                # Clamp reference to e4m3b15 representable range before comparing.
+                ref_f32 = ref_f32.clamp(-0.9375, 0.9375)
+
+                # Compute errors
+                valid = ~result_f32.isnan() & ~ref_f32.isnan()
+                abs_err = (result_f32[valid] - ref_f32[valid]).abs()
+                max_abs_err = abs_err.max().item() if abs_err.numel() > 0 else 0.0
+                mean_abs_err = abs_err.mean().item() if abs_err.numel() > 0 else 0.0
+                denom = ref_f32[valid].abs().clamp(min=1e-8)
+                max_rel_err = (abs_err / denom).max().item() if abs_err.numel() > 0 else 0.0
+
+                results[accum_label] = (max_abs_err, mean_abs_err, max_rel_err)
+
+                if rank == 0:
+                    print(
+                        f"  {size:>10} {accum_label:>16} "
+                        f"{max_abs_err:>12.6f} {mean_abs_err:>12.8f} {max_rel_err:>12.6f}"
+                    )
+
+                algo.reset()
+
+            if rank == 0:
+                if len(results) >= 3:
+                    native_err = results["e4m3b15 (native)"][1]
+                    f16_err = results["float16"][1]
+                    f32_err = results["float32"][1]
+                    if f16_err < native_err:
+                        improvement = (native_err - f16_err) / native_err * 100
+                        print(f"  {'':>10} >> float16 accum is {improvement:.1f}% more accurate than native")
+                    elif f16_err == native_err:
+                        print(f"  {'':>10} >> float16 vs native: identical results")
+                    else:
+                        print(f"  {'':>10} >> WARNING: float16 accum is worse than native (unexpected)")
+                    if f32_err < native_err:
+                        improvement = (native_err - f32_err) / native_err * 100
+                        print(f"  {'':>10} >> float32 accum is {improvement:.1f}% more accurate than native")
+                    elif f32_err == native_err:
+                        print(f"  {'':>10} >> float32 vs native: identical results")
+                    else:
+                        print(f"  {'':>10} >> WARNING: float32 accum is worse than native (unexpected)")
+                    if f16_err == f32_err:
+                        print(f"  {'':>10} >> float16 and float32 accum produce identical results")
+                    elif f16_err < f32_err:
+                        print(f"  {'':>10} >> float16 accum is slightly better than float32 (rounding)")
+                    else:
+                        diff_pct = (f16_err - f32_err) / f32_err * 100
+                        print(f"  {'':>10} >> float32 accum is {diff_pct:.2f}% better than float16")
+                print()
 
     torch.cuda.synchronize()
 
