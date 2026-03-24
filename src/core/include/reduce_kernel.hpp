@@ -24,6 +24,32 @@ MSCCLPP_DEVICE_INLINE T cal_elements(const T& a, const T& b) {
 }
 
 // Generic vector reduction helpers
+
+template <typename T, ReduceOp OpType>
+MSCCLPP_DEVICE_INLINE uint2 cal_vector_helper(const uint2& a, const uint2& b) {
+  uint2 ret;
+  ret.x = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.x), bit_cast<T, uint32_t>(b.x)));
+  ret.y = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.y), bit_cast<T, uint32_t>(b.y)));
+  return ret;
+}
+
+/// f32x2 specialization for uint2: uses packed f32x2 operator+ (Blackwell __fadd2_rn when available).
+template <>
+MSCCLPP_DEVICE_INLINE uint2 cal_vector_helper<f32x2, SUM>(const uint2& a, const uint2& b) {
+  f32x2 fa = bit_cast<f32x2, uint2>(a);
+  f32x2 fb = bit_cast<f32x2, uint2>(b);
+  f32x2 fr = fa + fb;
+  return bit_cast<uint2, f32x2>(fr);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint2 cal_vector_helper<f32x2, MIN>(const uint2& a, const uint2& b) {
+  f32x2 fa = bit_cast<f32x2, uint2>(a);
+  f32x2 fb = bit_cast<f32x2, uint2>(b);
+  f32x2 fr = mscclpp::min(fa, fb);
+  return bit_cast<uint2, f32x2>(fr);
+}
+
 template <typename T, ReduceOp OpType>
 MSCCLPP_DEVICE_INLINE int4 cal_vector_helper(const int4& a, const int4& b) {
   int4 ret;
@@ -34,12 +60,27 @@ MSCCLPP_DEVICE_INLINE int4 cal_vector_helper(const int4& a, const int4& b) {
   return ret;
 }
 
-template <typename T, ReduceOp OpType>
-MSCCLPP_DEVICE_INLINE uint2 cal_vector_helper(const uint2& a, const uint2& b) {
-  uint2 ret;
-  ret.x = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.x), bit_cast<T, uint32_t>(b.x)));
-  ret.y = bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a.y), bit_cast<T, uint32_t>(b.y)));
-  return ret;
+/// f32x2 specialization for int4: process as two uint2 pairs using packed f32x2 arithmetic.
+template <>
+MSCCLPP_DEVICE_INLINE int4 cal_vector_helper<f32x2, SUM>(const int4& a, const int4& b) {
+  uint2 lo_a = {(uint32_t)a.x, (uint32_t)a.y};
+  uint2 hi_a = {(uint32_t)a.z, (uint32_t)a.w};
+  uint2 lo_b = {(uint32_t)b.x, (uint32_t)b.y};
+  uint2 hi_b = {(uint32_t)b.z, (uint32_t)b.w};
+  uint2 lo_r = cal_vector_helper<f32x2, SUM>(lo_a, lo_b);
+  uint2 hi_r = cal_vector_helper<f32x2, SUM>(hi_a, hi_b);
+  return {(int)lo_r.x, (int)lo_r.y, (int)hi_r.x, (int)hi_r.y};
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE int4 cal_vector_helper<f32x2, MIN>(const int4& a, const int4& b) {
+  uint2 lo_a = {(uint32_t)a.x, (uint32_t)a.y};
+  uint2 hi_a = {(uint32_t)a.z, (uint32_t)a.w};
+  uint2 lo_b = {(uint32_t)b.x, (uint32_t)b.y};
+  uint2 hi_b = {(uint32_t)b.z, (uint32_t)b.w};
+  uint2 lo_r = cal_vector_helper<f32x2, MIN>(lo_a, lo_b);
+  uint2 hi_r = cal_vector_helper<f32x2, MIN>(hi_a, hi_b);
+  return {(int)lo_r.x, (int)lo_r.y, (int)hi_r.x, (int)hi_r.y};
 }
 
 template <typename T, ReduceOp OpType>
@@ -52,6 +93,21 @@ MSCCLPP_DEVICE_INLINE uint32_t cal_vector_helper(const uint32_t& a, const uint32
   return bit_cast<uint32_t, T>(cal_elements<T, OpType>(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
 }
 
+/// f32x2 specialization for uint32_t: a single float packed in 32 bits (scalar fallback).
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t cal_vector_helper<f32x2, SUM>(const uint32_t& a, const uint32_t& b) {
+  float fa = bit_cast<float, uint32_t>(a);
+  float fb = bit_cast<float, uint32_t>(b);
+  return bit_cast<uint32_t, float>(fa + fb);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE uint32_t cal_vector_helper<f32x2, MIN>(const uint32_t& a, const uint32_t& b) {
+  float fa = bit_cast<float, uint32_t>(a);
+  float fb = bit_cast<float, uint32_t>(b);
+  return bit_cast<uint32_t, float>(fminf(fa, fb));
+}
+
 // cal_vector wrapper - converts scalar types to vector types and calls cal_vector_helper
 template <typename T, ReduceOp OpType, typename DataType>
 MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) {
@@ -59,19 +115,22 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) 
   static_assert(sizeof(DataType) % sizeof(T) == 0, "DataType size must be multiple of T size");
   static_assert(sizeof(DataType) >= 4, "DataType size must be at least 4 bytes");
   using CompType = typename std::conditional_t<
-      std::is_same_v<T, __half>, f16x2,
+      std::is_same_v<T, float>, f32x2,
       std::conditional_t<
-          std::is_same_v<T, __bfloat16>, bf16x2,
+          std::is_same_v<T, __half>, f16x2,
           std::conditional_t<
-              std::is_same_v<T, uint8_t>, u8x4,
-              std::conditional_t<std::is_same_v<T, __fp8_e4m3b15>, f8_e4m3b15x4,
+              std::is_same_v<T, __bfloat16>, bf16x2,
+              std::conditional_t<
+                  std::is_same_v<T, uint8_t>, u8x4,
+                  std::conditional_t<std::is_same_v<T, __fp8_e4m3b15>, f8_e4m3b15x4,
 #if defined(__FP8_TYPES_EXIST__)
-                                 std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
-                                                    std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4, T>>
+                                     std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
+                                                        std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4,
+                                                                           T>>
 #else
-                                 T
+                                     T
 #endif
-                                 >>>>;
+                                     >>>>>;
   return cal_vector_helper<CompType, OpType>(a, b);
 }
 

@@ -433,6 +433,21 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 clip(__fp8_e5m2 val) {
 }
 #endif
 
+// --- f32x2 arithmetic ---
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f32x2 operator+(const f32x2& a, const f32x2& b) {
+#if defined(MSCCLPP_DEVICE_CUDA) && (__CUDA_ARCH__ >= 1000)
+  // Blackwell (SM 10.0+): packed float2 add in a single instruction.
+  return __fadd2_rn(a.storage, b.storage);
+#else
+  f32x2 result;
+  result.data[0] = a.data[0] + b.data[0];
+  result.data[1] = a.data[1] + b.data[1];
+  return result;
+#endif
+}
+
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE f16x2 operator+(const f16x2& a, const f16x2& b) {
   __half2 result;
@@ -651,6 +666,14 @@ MSCCLPP_DEVICE_INLINE u8x4 operator+(const u8x4& a, const u8x4& b) {
 template <typename T>
 MSCCLPP_DEVICE_INLINE T min(const T& a, const T& b) {
   return (a < b ? a : b);
+}
+
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 min(const f32x2& a, const f32x2& b) {
+  f32x2 result;
+  result.data[0] = fminf(a.data[0], b.data[0]);
+  result.data[1] = fminf(a.data[1], b.data[1]);
+  return result;
 }
 
 template <>
