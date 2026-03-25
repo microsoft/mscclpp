@@ -177,7 +177,6 @@ class Algorithm:
         nthreads_per_block=0,
         extras: Optional[Dict[str, int]] = None,
         symmetric_memory: bool = False,
-        context_key: int = -1,
         accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
@@ -196,7 +195,6 @@ class Algorithm:
             nthreads_per_block: Number of threads per block (0 for auto-selection).
             extras: Additional algorithm-specific parameters.
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
-            context_key: The context key for caching algorithm contexts (default: -1).
             accum_dtype: Data type for accumulation during reduction. If None, defaults to
                          float32 for FP8 types, or same as dtype for other types.
                          Use DataType.float32 for high-precision FP8 accumulation.
@@ -221,17 +219,11 @@ class Algorithm:
             nthreads_per_block,
             merged_extras,
             symmetric_memory,
-            context_key,
         )
 
-    def reset(self, context_key: int = -1):
-        """Reset the internal state of the algorithm, if applicable.
-
-        Args:
-            context_key: If specified (>= 0), only reset the context associated with this key.
-                         If -1 (default), reset all contexts.
-        """
-        self._algorithm.reset(context_key)
+    def reset(self):
+        """Reset the internal state of the algorithm, if applicable."""
+        self._algorithm.reset()
 
 
 class AlgorithmBuilder:

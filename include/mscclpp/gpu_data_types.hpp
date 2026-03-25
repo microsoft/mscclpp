@@ -130,7 +130,8 @@ struct alignas(1) __fp8_e4m3b15 {
     //   lop3.b32 $0, b0, 0x80008000, a0, 0xf8;  →  combine: b0 | (0x8000 & a0)
     //   shl.b32 $1, b1, 7;           →  shift mantissa part for second output
     //
-    // Refer: https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
+    // Refer:
+    // https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
     uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
     uint16_t sign16 = h & 0x8000u;                // extract sign at fp16 position
     uint16_t nosign = h & 0x7F00u;                // exponent + mantissa (no sign)
@@ -1221,8 +1222,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
 
 /// f8_e4m3b15x8 -> f32 (8 elements): decompose into 2x f8_e4m3b15x4 -> f32x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<float, 8>
-to<VectorType<float, 8>, VectorType<__fp8_e4m3b15, 8>>(const VectorType<__fp8_e4m3b15, 8>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<float, 8> to<VectorType<float, 8>, VectorType<__fp8_e4m3b15, 8>>(
+    const VectorType<__fp8_e4m3b15, 8>& v) {
   const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
   f32x4 lo = to<f32x4>(pair[0]);
   f32x4 hi = to<f32x4>(pair[1]);
@@ -1234,8 +1235,8 @@ to<VectorType<float, 8>, VectorType<__fp8_e4m3b15, 8>>(const VectorType<__fp8_e4
 
 /// f32 (8 elements) -> f8_e4m3b15x8: decompose into 2x f32x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8>
-to<VectorType<__fp8_e4m3b15, 8>, VectorType<float, 8>>(const VectorType<float, 8>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8> to<VectorType<__fp8_e4m3b15, 8>, VectorType<float, 8>>(
+    const VectorType<float, 8>& v) {
   f32x4 lo, hi;
   for (int i = 0; i < 4; ++i) lo.data[i] = v.data[i];
   for (int i = 0; i < 4; ++i) hi.data[i] = v.data[4 + i];
@@ -1249,8 +1250,8 @@ to<VectorType<__fp8_e4m3b15, 8>, VectorType<float, 8>>(const VectorType<float, 8
 
 /// f8_e4m3b15x16 -> f32 (16 elements): decompose into 4x f8_e4m3b15x4 -> f32x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<float, 16>
-to<VectorType<float, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8_e4m3b15, 16>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<float, 16> to<VectorType<float, 16>, VectorType<__fp8_e4m3b15, 16>>(
+    const VectorType<__fp8_e4m3b15, 16>& v) {
   const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
   VectorType<float, 16> result;
   f32x4 q0 = to<f32x4>(quads[0]);
@@ -1266,8 +1267,8 @@ to<VectorType<float, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8_
 
 /// f32 (16 elements) -> f8_e4m3b15x16: decompose into 4x f32x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16>
-to<VectorType<__fp8_e4m3b15, 16>, VectorType<float, 16>>(const VectorType<float, 16>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16> to<VectorType<__fp8_e4m3b15, 16>, VectorType<float, 16>>(
+    const VectorType<float, 16>& v) {
   f32x4 q0, q1, q2, q3;
   for (int i = 0; i < 4; ++i) q0.data[i] = v.data[i];
   for (int i = 0; i < 4; ++i) q1.data[i] = v.data[4 + i];
@@ -1410,8 +1411,7 @@ MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, VectorType<__fp8_e4m3b15, 8>>(const Vector
 
 /// f16x8 -> f8_e4m3b15x8: decompose into 2x f16x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8>
-to<VectorType<__fp8_e4m3b15, 8>, f16x8>(const f16x8& v) {
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8> to<VectorType<__fp8_e4m3b15, 8>, f16x8>(const f16x8& v) {
   f16x4 lo, hi;
   lo.words[0] = v.words[0];
   lo.words[1] = v.words[1];
@@ -1427,8 +1427,8 @@ to<VectorType<__fp8_e4m3b15, 8>, f16x8>(const f16x8& v) {
 
 /// f8_e4m3b15x16 -> VectorType<__half, 16>: decompose into 4x f8_e4m3b15x4 -> f16x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__half, 16>
-to<VectorType<__half, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8_e4m3b15, 16>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<__half, 16> to<VectorType<__half, 16>, VectorType<__fp8_e4m3b15, 16>>(
+    const VectorType<__fp8_e4m3b15, 16>& v) {
   const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
   VectorType<__half, 16> result;
   f16x4* out = reinterpret_cast<f16x4*>(&result);
@@ -1441,8 +1441,8 @@ to<VectorType<__half, 16>, VectorType<__fp8_e4m3b15, 16>>(const VectorType<__fp8
 
 /// VectorType<__half, 16> -> f8_e4m3b15x16: decompose into 4x f16x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16>
-to<VectorType<__fp8_e4m3b15, 16>, VectorType<__half, 16>>(const VectorType<__half, 16>& v) {
+MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16> to<VectorType<__fp8_e4m3b15, 16>, VectorType<__half, 16>>(
+    const VectorType<__half, 16>& v) {
   const f16x4* quads = reinterpret_cast<const f16x4*>(&v);
   VectorType<__fp8_e4m3b15, 16> result;
   f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);

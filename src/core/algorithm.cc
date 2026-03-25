@@ -41,32 +41,18 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory,
-                                    int32_t contextKey) {
+                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory) {
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey bufferKey;
-  if (contextKey >= 0) {
-    auto mapIt = customKeyMap_.find(contextKey);
-    if (mapIt != customKeyMap_.end()) {
-      // Fast path: reuse the previously cached buffer key for this custom key.
-      bufferKey = mapIt->second;
-    } else {
-      // First time seeing this custom key — generate and cache the buffer key.
-      bufferKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
-      customKeyMap_[contextKey] = bufferKey;
-    }
-  } else {
-    bufferKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
-  }
-  auto it = contexts_.find(bufferKey);
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
+  auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
-    contexts_[bufferKey] = ctx;
+    contexts_[ctxKey] = ctx;
   }
-  return kernelLaunchFunc_(contexts_[bufferKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
+  return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
                            nThreadsPerBlock, extras);
 }
 
@@ -91,19 +77,7 @@ const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferM
 
 Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
 
-void NativeAlgorithm::reset(int32_t contextKey) {
-  if (contextKey >= 0) {
-    // Remove the context associated with the given custom key
-    auto it = customKeyMap_.find(contextKey);
-    if (it != customKeyMap_.end()) {
-      contexts_.erase(it->second);
-      customKeyMap_.erase(it);
-    }
-  } else {
-    contexts_.clear();
-    customKeyMap_.clear();
-  }
-}
+void NativeAlgorithm::reset() { contexts_.clear(); }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
                                             std::shared_ptr<Algorithm> algorithm) {
@@ -189,7 +163,7 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
                                  std::shared_ptr<Executor> executor, int, int,
-                                 const std::unordered_map<std::string, uintptr_t>&, bool, int32_t) {
+                                 const std::unordered_map<std::string, uintptr_t>&, bool) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
@@ -233,7 +207,7 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
 std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
 // TODO: implement this
-void DslAlgorithm::reset(int32_t /*contextKey*/) {}
+void DslAlgorithm::reset() {}
 
 static uint32_t* gDefaultFlagBuffer = nullptr;
 static std::weak_ptr<void> gDefaultFlagBufferWeak;

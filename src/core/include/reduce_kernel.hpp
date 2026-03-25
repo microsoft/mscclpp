@@ -125,8 +125,7 @@ MSCCLPP_DEVICE_INLINE DataType cal_vector(const DataType& a, const DataType& b) 
                   std::conditional_t<std::is_same_v<T, __fp8_e4m3b15>, f8_e4m3b15x4,
 #if defined(__FP8_TYPES_EXIST__)
                                      std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
-                                                        std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4,
-                                                                           T>>
+                                                        std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4, T>>
 #else
                                      T
 #endif
