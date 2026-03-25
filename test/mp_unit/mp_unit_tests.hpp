@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_MP_UNIT_TESTS_HPP_
 #define MSCCLPP_MP_UNIT_TESTS_HPP_
 
-#include <gtest/gtest.h>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
@@ -13,10 +11,18 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "../framework.hpp"
 #include "ib.hpp"
 #include "utils_internal.hpp"
 
-class MultiProcessTestEnv : public ::testing::Environment {
+// Skip the current test if IBVerbs is not available in this build
+#if defined(USE_IBVERBS)
+#define REQUIRE_IBVERBS
+#else
+#define REQUIRE_IBVERBS SKIP_TEST() << "This test requires IBVerbs that the current build does not support."
+#endif
+
+class MultiProcessTestEnv : public ::mscclpp::test::Environment {
  public:
   MultiProcessTestEnv(int argc, const char** argv);
 
@@ -37,7 +43,7 @@ mscclpp::Transport ibIdToTransport(int id);
 int rankToLocalRank(int rank);
 int rankToNode(int rank);
 
-class MultiProcessTest : public ::testing::Test {
+class MultiProcessTest : public ::mscclpp::test::TestCase {
  protected:
   void TearDown() override;
 };

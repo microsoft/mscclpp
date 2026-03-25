@@ -1,5 +1,5 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <algorithm>
 #include <mscclpp/switch_channel.hpp>
@@ -10,10 +10,10 @@
 void SwitchChannelTest::SetUp() {
   // Need at least two ranks within a node
   if (gEnv->nRanksPerNode < 2) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   if (!mscclpp::isNvlsSupported()) {
-    GTEST_SKIP();
+    SKIP_TEST();
   }
   // Use only two ranks
   setNumRanksToUse(2);
@@ -23,6 +23,8 @@ void SwitchChannelTest::SetUp() {
 void SwitchChannelTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
+__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan1;
+__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan2;
 
 __global__ void kernelSwitchReduce() {
 #if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
@@ -31,7 +33,16 @@ __global__ void kernelSwitchReduce() {
 #endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
 }
 
-TEST_F(SwitchChannelTest, SimpleAllReduce) {
+__global__ void kernelSwitchReduceTwo() {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  auto val1 = gConstSwitchChan1.reduce<mscclpp::f32x1>(0);
+  gConstSwitchChan1.broadcast(0, val1);
+  auto val2 = gConstSwitchChan2.reduce<mscclpp::f32x1>(0);
+  gConstSwitchChan2.broadcast(0, val2);
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
+TEST(SwitchChannelTest, SimpleAllReduce) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::vector<int> ranks;
@@ -66,22 +77,13 @@ TEST_F(SwitchChannelTest, SimpleAllReduce) {
   for (int i = 0; i < numRanksToUse; i++) {
     expected += i + 1.0f;
   }
-  ASSERT_EQ(result, expected) << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank;
+  if (result != expected) {
+    std::cerr << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank << std::endl;
+  }
+  ASSERT_EQ(result, expected);
 }
 
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan1;
-__constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan2;
-
-__global__ void kernelSwitchReduceTwo() {
-#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
-  auto val1 = gConstSwitchChan1.reduce<mscclpp::f32x1>(0);
-  gConstSwitchChan1.broadcast(0, val1);
-  auto val2 = gConstSwitchChan2.reduce<mscclpp::f32x1>(0);
-  gConstSwitchChan2.broadcast(0, val2);
-#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
-}
-
-TEST_F(SwitchChannelTest, TwoChannelsSameConnection) {
+TEST(SwitchChannelTest, TwoChannelsSameConnection) {
   if (gEnv->rank >= numRanksToUse) return;
 
   std::vector<int> ranks;
@@ -97,12 +99,9 @@ TEST_F(SwitchChannelTest, TwoChannelsSameConnection) {
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer1.data(), &data1, sizeof(data1), cudaMemcpyHostToDevice));
   MSCCLPP_CUDATHROW(cudaMemcpy(buffer2.data(), &data2, sizeof(data2), cudaMemcpyHostToDevice));
 
-  // Connection size must be large enough for two granularity-aligned buffers.
-  // The multicast granularity is typically 2MB, so we need at least 2 * 2MB.
   const size_t connSize = buffer1.bytes() + buffer2.bytes();
   auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, connSize);
 
-  // Bind two separate buffers to the same connection
   auto switchChannel1 = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer1.data()), bufSize);
   auto switchChannel2 = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer2.data()), bufSize);
 
@@ -132,6 +131,6 @@ TEST_F(SwitchChannelTest, TwoChannelsSameConnection) {
     expected1 += (i + 1.0f) * 1.0f;
     expected2 += (i + 1.0f) * 10.0f;
   }
-  ASSERT_EQ(result1, expected1) << "Channel1: expected " << expected1 << " but got " << result1;
-  ASSERT_EQ(result2, expected2) << "Channel2: expected " << expected2 << " but got " << result2;
+  ASSERT_EQ(result1, expected1);
+  ASSERT_EQ(result2, expected2);
 }
