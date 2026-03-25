@@ -31,7 +31,7 @@ jobs:
   strategy:
     matrix:
       sglang:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
 
   pool:
     name: msccl-ci
