@@ -14,6 +14,7 @@
 #include <mscclpp/utils.hpp>
 
 #include <algorithm>
+#include "debug.h"
 
 namespace mscclpp {
 namespace collective {
@@ -96,26 +97,36 @@ void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
   int localGpuIdx = rank % nRanksPerNode;
   bool isMultiNode = (worldSize_ > nRanksPerNode);
+  bool nvlsSupported = isNvlsSupported();
+  int ibDevCount = getIBDeviceCount();
+
+  INFO(MSCCLPP_COLL, "[alltoallv][rank %d] initialize: worldSize=%d, nRanksPerNode=%d, "
+       "isMultiNode=%d, isNvlsSupported=%d, ibDevCount=%d, localGpuIdx=%d",
+       rank, worldSize_, nRanksPerNode, isMultiNode, nvlsSupported, ibDevCount, localGpuIdx);
 
   if (!isMultiNode) {
-    // ── Single-node: CudaIpc for all peers ─────────────────────────────
     multiNodeMode_ = MultiNodeMode::SingleNode;
     this->conns_ = setupConnections(comm);
-  } else if (isNvlsSupported()) {
-    // ── GB200 NVSwitch: CudaIpc for ALL peers + staging GpuBuffers ─────
-    // GpuBuffer uses cuMemCreate → Fabric handles → cross-node CudaIpc works.
+  } else if (nvlsSupported) {
     multiNodeMode_ = MultiNodeMode::NVSwitch;
     this->conns_ = setupConnections(comm);
   } else {
-    // ── IB: CudaIpc intra-node + IB inter-node ────────────────────────
-    // For non-NVSwitch systems (H100 etc.) where CudaIpc doesn't work cross-node.
-    if (getIBDeviceCount() <= 0) {
+    if (ibDevCount <= 0) {
       throw Error("Multi-node alltoallv requires IB transport but no IB devices found. "
                   "Ensure IB drivers are loaded and devices are available.",
                   ErrorCode::InvalidUsage);
     }
     multiNodeMode_ = MultiNodeMode::IB;
     this->conns_ = setupHybridConnections(comm, localGpuIdx);
+  }
+
+  const char* modeStr = (multiNodeMode_ == MultiNodeMode::SingleNode) ? "SingleNode" :
+                        (multiNodeMode_ == MultiNodeMode::NVSwitch) ? "NVSwitch" : "IB";
+  INFO(MSCCLPP_COLL, "[alltoallv][rank %d] mode=%s, connections=%zu",
+       rank, modeStr, this->conns_.size());
+  for (size_t i = 0; i < this->conns_.size(); ++i) {
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d]   conn[%zu] transport=%d",
+         rank, i, (int)this->conns_[i].transport());
   }
 }
 
@@ -237,24 +248,45 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
 
   int rank = ctx->rank;
   int localGpuIdx = rank % ctx->nRanksPerNode;
+  const char* modeStr = (ctx->mode == MultiNodeMode::SingleNode) ? "SingleNode" :
+                        (ctx->mode == MultiNodeMode::NVSwitch) ? "NVSwitch" : "IB";
+  INFO(MSCCLPP_COLL, "[alltoallv][rank %d] initContext: mode=%s, useStaging=%d, "
+       "input=%p (%zu B), output=%p (%zu B), localGpuIdx=%d",
+       rank, modeStr, ctx->useStaging, input, inputSize, output, outputSize, localGpuIdx);
 
   if (ctx->mode == MultiNodeMode::NVSwitch) {
     // ── NVSwitch (GB200): staging GpuBuffers + CudaIpc MemoryChannel for all peers
     ctx->inputStaging = std::make_shared<GpuBuffer<char>>(inputSize);
     ctx->outputStaging = std::make_shared<GpuBuffer<char>>(outputSize);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] NVSwitch staging: input=%p (%zu B), output=%p (%zu B)",
+         rank, ctx->inputStaging->data(), inputSize, ctx->outputStaging->data(), outputSize);
 
     TransportFlags allTransports = Transport::CudaIpc;
     RegisteredMemory inputBufRegMem = comm->registerMemory(
         ctx->inputStaging->data(), ctx->inputStaging->bytes(), allTransports);
     RegisteredMemory outputBufRegMem = comm->registerMemory(
         ctx->outputStaging->data(), ctx->outputStaging->bytes(), allTransports);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] NVSwitch: registered input=%p, output=%p",
+         rank, inputBufRegMem.data(), outputBufRegMem.data());
 
     std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, rank, outputBufRegMem);
+    for (size_t i = 0; i < remoteOutputMemories.size(); ++i) {
+      INFO(MSCCLPP_COLL, "[alltoallv][rank %d] NVSwitch: remoteOutput[%zu] data=%p, size=%zu",
+           rank, i, remoteOutputMemories[i].data(), remoteOutputMemories[i].size());
+      if (remoteOutputMemories[i].data() == nullptr) {
+        INFO(MSCCLPP_COLL, "[alltoallv][rank %d] ERROR: remoteOutput[%zu] has NULL data pointer! "
+             "Cross-node CudaIpc mapping failed.", rank, i);
+      }
+    }
 
     constexpr int nChannelsPerConnection = 1;
     ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] NVSwitch: %zu semaphores created",
+         rank, ctx->memorySemaphores.size());
     ctx->memoryChannels = setupMemoryChannels(
         this->conns_, ctx->memorySemaphores, remoteOutputMemories, inputBufRegMem, nChannelsPerConnection);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] NVSwitch: %zu memoryChannels created",
+         rank, ctx->memoryChannels.size());
     ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
     ctx->registeredMemories = std::move(remoteOutputMemories);
@@ -268,12 +300,20 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
     RegisteredMemory outputBufRegMem = comm->registerMemory(output, outputSize, allTransports);
 
     std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, rank, outputBufRegMem);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: input=%p (%zu B), output=%p (%zu B), remotes=%zu",
+         rank, input, inputSize, output, outputSize, remoteOutputMemories.size());
+    for (size_t i = 0; i < remoteOutputMemories.size(); ++i) {
+      INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: remoteOutput[%zu] data=%p, size=%zu",
+           rank, i, remoteOutputMemories[i].data(), remoteOutputMemories[i].size());
+    }
 
     ctx->proxyService = std::make_shared<ProxyService>();
     ctx->portChannels = setupAllPortChannels(
         ctx->proxyService, *comm, this->conns_, remoteOutputMemories, inputBufRegMem);
     ctx->portChannelDeviceHandles = setupPortChannelDeviceHandles(ctx->portChannels);
     ctx->proxyService->startProxy(true);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: %zu portChannels created, proxy started",
+         rank, ctx->portChannels.size());
 
     ctx->registeredMemories = std::move(remoteOutputMemories);
     ctx->registeredMemories.push_back(inputBufRegMem);
