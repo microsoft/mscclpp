@@ -1,4 +1,4 @@
-set -e
+set -ex
 
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"

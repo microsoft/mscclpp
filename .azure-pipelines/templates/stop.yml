@@ -1,0 +1,20 @@
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: resourceGroup
+  type: string
+  default: mscclpp
+
+steps:
+- task: AzureCLI@2
+  name: StopVMSS
+  displayName: Deallocate VMSS
+  condition: always()
+  inputs:
+    azureSubscription: ${{ parameters.subscription }}
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      az vmss deallocate --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
