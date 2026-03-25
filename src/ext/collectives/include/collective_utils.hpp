@@ -12,6 +12,7 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/semaphore.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <mscclpp/utils.hpp>
 #include <unordered_map>
 #include <vector>
 
@@ -42,6 +43,63 @@ std::vector<MemoryChannel> setupMemoryChannels(
     const std::vector<RegisteredMemory>& remoteMemories, RegisteredMemory localMemory, int nChannelsPerConnection);
 
 std::vector<Connection> setupConnections(std::shared_ptr<Communicator> comm);
+
+/// Setup connections with hybrid transport: CudaIpc for intra-node, IB for inter-node.
+/// Dynamically detects if all peers are intra-node (single-node case) and falls back to CudaIpc-only.
+/// @param comm Communicator
+/// @param localGpuIdx Local GPU index within the node (used to select IB device)
+/// @return Vector of connections (one per peer)
+std::vector<Connection> setupHybridConnections(std::shared_ptr<Communicator> comm, int localGpuIdx);
+
+/// Check if a connection is intra-node (CudaIpc transport).
+/// @param conn The connection to check
+/// @return true if the connection uses CudaIpc transport
+inline bool isIntraNodeConnection(const Connection& conn) {
+  return conn.transport() == Transport::CudaIpc;
+}
+
+/// Get the IB transport for a given local GPU index.
+/// @param localGpuIdx Local GPU index (0-7)
+/// @return The corresponding IB transport
+Transport getIBTransportForGpu(int localGpuIdx);
+
+/// Setup PortChannels for inter-node connections via ProxyService.
+/// Creates PortChannels only for IB connections, with MemoryId-based addressing.
+/// @param proxyService The ProxyService managing IB transfers
+/// @param comm The communicator
+/// @param connections All connections (mixed CudaIpc + IB)
+/// @param remoteMemories Remote registered memories (one per peer)
+/// @param localMemory Local registered memory
+/// @return Vector of PortChannels (only for IB peers, in connection order)
+std::vector<PortChannel> setupPortChannels(
+    std::shared_ptr<ProxyService> proxyService,
+    Communicator& comm,
+    const std::vector<Connection>& connections,
+    const std::vector<RegisteredMemory>& remoteMemories,
+    RegisteredMemory localMemory);
+
+/// Setup PortChannels for ALL connections (both CudaIpc and IB) via ProxyService.
+/// This follows the proven pattern from allgather_test_cpp.cu:
+/// - CudaIpc connections: proxy does cudaMemcpyD2D
+/// - IB connections: proxy does RDMA write
+/// Creates one PortChannel per peer (dense indexing by peerIdx).
+/// @param proxyService The ProxyService managing transfers
+/// @param comm The communicator
+/// @param connections All connections (mixed CudaIpc + IB)
+/// @param remoteMemories Remote registered memories (one per peer)
+/// @param localMemory Local registered memory
+/// @return Vector of PortChannels (one per peer, in connection order)
+std::vector<PortChannel> setupAllPortChannels(
+    std::shared_ptr<ProxyService> proxyService,
+    Communicator& comm,
+    const std::vector<Connection>& connections,
+    const std::vector<RegisteredMemory>& remoteMemories,
+    RegisteredMemory localMemory);
+
+/// Setup PortChannel device handles (GPU-allocated array).
+std::shared_ptr<PortChannelDeviceHandle> setupPortChannelDeviceHandles(
+    const std::vector<PortChannel>& portChannels);
+
 std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
     std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections, int nChannelsPerConnection);
 

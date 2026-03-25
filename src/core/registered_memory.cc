@@ -157,12 +157,53 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
         }
       }
     }
-  } else if (transports.has(Transport::CudaIpc)) {
+  } else if (transports.has(Transport::CudaIpc) && getHostHash() == this->hostHash) {
     auto entry = getTransportInfo(Transport::CudaIpc);
     auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
     // Create a memory map for the remote GPU memory. The memory map will keep the GpuIpcMem instance alive.
     this->remoteMemMap = gpuIpcMem->map();
     this->data = this->remoteMemMap.get();
+  } else if (transports.has(Transport::CudaIpc) && getHostHash() != this->hostHash) {
+    // Cross-node CudaIpc: try available handle types in order of preference.
+    // On GB200 NVSwitch, both Fabric and RuntimeIpc handles work cross-node.
+    // On H100 (no NVSwitch across nodes), none of these will work.
+    auto entry = getTransportInfo(Transport::CudaIpc);
+    bool mapped = false;
+
+    // 1) Try Fabric handle first (works on any NVSwitch-connected system)
+    if (!mapped && (entry.gpuIpcMemHandle.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
+      GpuIpcMemHandle fabricOnlyHandle = entry.gpuIpcMemHandle;
+      fabricOnlyHandle.typeFlags = GpuIpcMemHandle::Type::Fabric;
+      try {
+        auto gpuIpcMem = GpuIpcMem::create(fabricOnlyHandle);
+        this->remoteMemMap = gpuIpcMem->map();
+        this->data = this->remoteMemMap.get();
+        mapped = true;
+        INFO(GPU, "Mapped cross-node CudaIpc memory via Fabric handle at pointer ", this->data);
+      } catch (const std::exception& e) {
+        INFO(GPU, "Fabric handle mapping failed (will try RuntimeIpc): ", e.what());
+      }
+    }
+
+    // 2) Try RuntimeIpc handle (cudaIpcOpenMemHandle — works on GB200 NVSwitch cross-node)
+    if (!mapped && (entry.gpuIpcMemHandle.typeFlags & GpuIpcMemHandle::Type::RuntimeIpc)) {
+      GpuIpcMemHandle runtimeOnlyHandle = entry.gpuIpcMemHandle;
+      runtimeOnlyHandle.typeFlags = GpuIpcMemHandle::Type::RuntimeIpc;
+      try {
+        auto gpuIpcMem = GpuIpcMem::create(runtimeOnlyHandle);
+        this->remoteMemMap = gpuIpcMem->map();
+        this->data = this->remoteMemMap.get();
+        mapped = true;
+        INFO(GPU, "Mapped cross-node CudaIpc memory via RuntimeIpc handle at pointer ", this->data);
+      } catch (const std::exception& e) {
+        INFO(GPU, "RuntimeIpc handle mapping failed for cross-node peer: ", e.what());
+      }
+    }
+
+    if (!mapped) {
+      WARN(GPU, "Skipping CudaIpc map for cross-node peer (all handle types failed, local hostHash=",
+           getHostHash(), ", remote hostHash=", this->hostHash, ")");
+    }
   }
   if (this->data != nullptr) {
     INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);

@@ -248,6 +248,10 @@ class MscclppAlltoAllV:
         # Fast path: skip GPU copies + bootstrap exchange if split sizes unchanged
         splits_key = (tuple(send_counts_bytes), tuple(recv_counts_bytes))
         if splits_key != self._cached_splits_key:
+            # Clear cached contexts to free RegisteredMemory for old (possibly freed) tensors.
+            # Without this, stale CUDA IPC handles accumulate and eventually SIGSEGV.
+            if hasattr(self._algo, 'reset'):
+                self._algo.reset()
             # Copy counts/displacements to GPU
             self._d_send_counts.copy_(torch.tensor(send_counts_bytes, dtype=torch.int64))
             self._d_send_displs.copy_(torch.tensor(send_displs_bytes, dtype=torch.int64))
@@ -268,13 +272,16 @@ class MscclppAlltoAllV:
             stream = torch.cuda.current_stream()
         cuda_stream = stream.cuda_stream
 
-        # Use full buffer sizes (not actual data sizes) so the C++ context
-        # key (input_ptr, output_ptr, inputSize, outputSize) is always the
-        # same when using persistent buffers.  This ensures only ONE context
-        # is ever created, avoiding bootstrap TCP on every unique size combo.
-        # The kernel uses per-peer sendCounts/recvCounts for actual data bounds.
-        input_size = input.numel() * elem_size
-        output_size = output.numel() * elem_size
+        # Use the full underlying storage size (not just the view's active data)
+        # for the context key, so that reusing views of the same tensor with
+        # different split sizes doesn't create new contexts (which leak
+        # RegisteredMemory for stale buffers).
+        try:
+            input_alloc_size = input.untyped_storage().size()
+            output_alloc_size = output.untyped_storage().size()
+        except Exception:
+            input_alloc_size = input.nelement() * input.element_size()
+            output_alloc_size = output.nelement() * output.element_size()
 
         self._a2av_call_count += 1
         _cid = self._a2av_call_count
@@ -297,8 +304,8 @@ class MscclppAlltoAllV:
             self._comm,
             input.data_ptr(),
             output.data_ptr(),
-            input_size,
-            output_size,
+            input_alloc_size,
+            output_alloc_size,
             _torch_dtype_to_mscclpp(dtype),
             ReduceOp.NOP,
             cuda_stream,
