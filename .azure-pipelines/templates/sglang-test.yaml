@@ -26,6 +26,13 @@ steps:
 #       make -j
 #     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
+- template: deploy.yml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    gpuArch:          ${{ parameters.gpuArch }}
+    deployArgs:       'single-node-test'
+
 - task: Bash@3
   name: InstallPackages
   displayName: Install Packages
