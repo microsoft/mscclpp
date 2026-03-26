@@ -196,15 +196,13 @@ class Algorithm:
             extras: Additional algorithm-specific parameters.
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
             accum_dtype: Data type for accumulation during reduction. If None, defaults to
-                         float32 for FP8 types, or same as dtype for other types.
-                         Use DataType.float32 for high-precision FP8 accumulation.
+                         the same as dtype. Use DataType.float32 for high-precision FP8 accumulation.
 
         Returns:
             The result code (0 for success).
         """
         merged_extras = dict(extras) if extras is not None else {}
-        if accum_dtype is not None:
-            merged_extras["accum_dtype"] = int(accum_dtype)
+        accum_dtype = accum_dtype if accum_dtype is not None else dtype
         return self._algorithm.execute(
             comm,
             int(input_buffer),
@@ -219,6 +217,7 @@ class Algorithm:
             nthreads_per_block,
             merged_extras,
             symmetric_memory,
+            int(accum_dtype),
         )
 
     def reset(self):

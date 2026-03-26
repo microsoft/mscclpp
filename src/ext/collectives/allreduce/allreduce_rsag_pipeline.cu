@@ -277,9 +277,9 @@ void AllreduceRsAgPipeline::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                                       size_t inputSize, DataType dtype, ReduceOp op,
                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                      const std::unordered_map<std::string, uintptr_t>& extras) {
+                                                      const std::unordered_map<std::string, uintptr_t>& extras,
+                                                      DataType accumDtype) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
-  auto accumDtype = getAccumDtype(dtype, extras);
   AllreduceFunc allreduce = dispatch<AllreduceRsAgPipelineAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
@@ -321,9 +321,10 @@ std::shared_ptr<Algorithm> AllreduceRsAgPipeline::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

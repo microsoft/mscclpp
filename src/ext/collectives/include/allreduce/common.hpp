@@ -77,24 +77,6 @@ using AllreduceFunc =
                               mscclpp::DeviceHandle<mscclpp::SwitchChannel>*, size_t, size_t, size_t, int, int, int,
                               size_t, cudaStream_t, void*, uint32_t, uint32_t, int, int)>;
 
-/// Helper to extract the accumulation DataType from the extras map.
-/// If "accum_dtype" key is present, returns that DataType; otherwise returns the default.
-/// For FP8 data types the default accumulation type is FLOAT32 (high-precision accumulation).
-/// For all other types the default is identity (same as dtype).
-inline mscclpp::DataType getAccumDtype(mscclpp::DataType dtype,
-                                       const std::unordered_map<std::string, uintptr_t>& extras) {
-  auto it = extras.find("accum_dtype");
-  if (it != extras.end()) {
-    return static_cast<mscclpp::DataType>(it->second);
-  }
-  // Default: FLOAT32 for FP8, identity for everything else
-  if (dtype == mscclpp::DataType::FLOAT8_E4M3 || dtype == mscclpp::DataType::FLOAT8_E5M2 ||
-      dtype == mscclpp::DataType::FLOAT8_E4B15) {
-    return mscclpp::DataType::FLOAT32;
-  }
-  return dtype;
-}
-
 /// Dispatch helper for FP8 types with a configurable accumulation type.
 template <ReduceOp Op, typename FP8T, template <ReduceOp, typename, typename> class Adapter>
 AllreduceFunc dispatchFp8Accum(mscclpp::DataType accumDtype, mscclpp::DataType dtype) {

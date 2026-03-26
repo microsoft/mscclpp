@@ -203,12 +203,3 @@ def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
     else:
         raise ValueError(f"Unknown data type: {dtype}")
 
-
-def fp8_e4m3b15_dtype() -> DataType:
-    """Return the mscclpp DataType for float8_e4m3b15.
-
-    Since PyTorch has no native float8_e4m3b15 dtype, users should store data
-    as ``torch.uint8`` tensors containing raw fp8_e4m3b15 bit patterns and pass
-    ``DataType.float8_e4m3b15`` directly when calling mscclpp APIs.
-    """
-    return DataType.float8_e4m3b15

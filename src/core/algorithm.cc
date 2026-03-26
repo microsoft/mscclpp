@@ -41,7 +41,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory) {
+                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory,
+                                    DataType accumDtype) {
+  if (accumDtype == static_cast<DataType>(-1)) accumDtype = dtype;
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -53,7 +55,7 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
     contexts_[ctxKey] = ctx;
   }
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
-                           nThreadsPerBlock, extras);
+                           nThreadsPerBlock, extras, accumDtype);
 }
 
 const std::string& NativeAlgorithm::name() const { return name_; }
@@ -163,7 +165,7 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
                                  std::shared_ptr<Executor> executor, int, int,
-                                 const std::unordered_map<std::string, uintptr_t>&, bool) {
+                                 const std::unordered_map<std::string, uintptr_t>&, bool, DataType) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }

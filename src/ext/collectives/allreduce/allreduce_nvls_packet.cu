@@ -105,7 +105,8 @@ std::shared_ptr<void> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<
 CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
                                                     void* output, size_t inputSize, mscclpp::DataType dtype,
                                                     ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                    const std::unordered_map<std::string, uintptr_t>& extras) {
+                                                    const std::unordered_map<std::string, uintptr_t>& extras,
+                                                    mscclpp::DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -115,7 +116,6 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
     WARN("Block number %d exceeds the maximum limit %d", blockAndThreadNum.first, maxBlockNum_);
     return CommResult::CommInvalidArgument;
   }
-  auto accumDtype = getAccumDtype(dtype, extras);
   AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
@@ -140,9 +140,10 @@ std::shared_ptr<mscclpp::Algorithm> AllreduceNvlsPacket::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             mscclpp::DataType accumDtype) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

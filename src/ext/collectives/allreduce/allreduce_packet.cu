@@ -227,7 +227,8 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                 size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
                                                 cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                const std::unordered_map<std::string, uintptr_t>& extras) {
+                                                const std::unordered_map<std::string, uintptr_t>& extras,
+                                                DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -239,7 +240,6 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
-  auto accumDtype = getAccumDtype(dtype, extras);
   AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
@@ -295,9 +295,10 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

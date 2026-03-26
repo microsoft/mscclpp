@@ -332,7 +332,8 @@ public:
                    size_t inputSize, size_t outputSize,
                    mscclpp::DataType dtype, mscclpp::ReduceOp op,
                    cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                   const std::unordered_map<std::string, uintptr_t>& extras) {
+                   const std::unordered_map<std::string, uintptr_t>& extras,
+                   [[maybe_unused]] mscclpp::DataType accumDtype) {
                 return self->kernelFunc(ctx, input, output, inputSize, dtype, stream);
             },
             // Context initialization function

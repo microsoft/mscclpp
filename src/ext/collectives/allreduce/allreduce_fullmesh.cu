@@ -177,7 +177,8 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                   size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                                                   int nBlocks, int nThreadsPerBlock,
-                                                  const std::unordered_map<std::string, uintptr_t>& extras) {
+                                                  const std::unordered_map<std::string, uintptr_t>& extras,
+                                                  DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
@@ -198,7 +199,6 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
 
-  auto accumDtype = getAccumDtype(dtype, extras);
   AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
@@ -262,9 +262,10 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
