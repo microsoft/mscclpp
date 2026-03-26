@@ -908,6 +908,56 @@ MSCCLPP_DEVICE_INLINE f8_e4m3x4 to<f8_e4m3x4, f32x4>(const f32x4& v) {
 #endif
 }
 
+// --- f8_e4m3 <-> f32 decomposed x8/x16 specializations ---
+
+/// f8_e4m3x8 -> f32x8: decompose into 2x f8_e4m3x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE f32x8 to<f32x8, f8_e4m3x8>(const f8_e4m3x8& v) {
+  const f8_e4m3x4* pair = reinterpret_cast<const f8_e4m3x4*>(&v);
+  f32x8 result;
+  f32x4* out = reinterpret_cast<f32x4*>(&result);
+  out[0] = to<f32x4>(pair[0]);
+  out[1] = to<f32x4>(pair[1]);
+  return result;
+}
+
+/// f32x8 -> f8_e4m3x8: decompose into 2x f32x4 -> f8_e4m3x4.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3x8 to<f8_e4m3x8, f32x8>(const f32x8& v) {
+  const f32x4* pair = reinterpret_cast<const f32x4*>(&v);
+  f8_e4m3x8 result;
+  f8_e4m3x4* out = reinterpret_cast<f8_e4m3x4*>(&result);
+  out[0] = to<f8_e4m3x4>(pair[0]);
+  out[1] = to<f8_e4m3x4>(pair[1]);
+  return result;
+}
+
+/// f8_e4m3x16 -> f32x16: decompose into 4x f8_e4m3x4 -> f32x4.
+template <>
+MSCCLPP_DEVICE_INLINE f32x16 to<f32x16, f8_e4m3x16>(const f8_e4m3x16& v) {
+  const f8_e4m3x4* quad = reinterpret_cast<const f8_e4m3x4*>(&v);
+  f32x16 result;
+  f32x4* out = reinterpret_cast<f32x4*>(&result);
+  out[0] = to<f32x4>(quad[0]);
+  out[1] = to<f32x4>(quad[1]);
+  out[2] = to<f32x4>(quad[2]);
+  out[3] = to<f32x4>(quad[3]);
+  return result;
+}
+
+/// f32x16 -> f8_e4m3x16: decompose into 4x f32x4 -> f8_e4m3x4.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3x16 to<f8_e4m3x16, f32x16>(const f32x16& v) {
+  const f32x4* quad = reinterpret_cast<const f32x4*>(&v);
+  f8_e4m3x16 result;
+  f8_e4m3x4* out = reinterpret_cast<f8_e4m3x4*>(&result);
+  out[0] = to<f8_e4m3x4>(quad[0]);
+  out[1] = to<f8_e4m3x4>(quad[1]);
+  out[2] = to<f8_e4m3x4>(quad[2]);
+  out[3] = to<f8_e4m3x4>(quad[3]);
+  return result;
+}
+
 // --- f32 -> f8_e5m2 specializations (downcast) ---
 
 /// f32x2 -> f8_e5m2x2.
