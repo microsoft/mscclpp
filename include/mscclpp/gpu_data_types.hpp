@@ -1263,8 +1263,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   return to<f8_e4m3b15x4, f16x4>(h);
 #elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
   f16x4 h;
-  h.words[0] = __builtin_amdgcn_cvt_pkrtz(v.data[0], v.data[1]);
-  h.words[1] = __builtin_amdgcn_cvt_pkrtz(v.data[2], v.data[3]);
+  h.words[0] = __builtin_bit_cast(uint32_t, __builtin_amdgcn_cvt_pkrtz(v.data[0], v.data[1]));
+  h.words[1] = __builtin_bit_cast(uint32_t, __builtin_amdgcn_cvt_pkrtz(v.data[2], v.data[3]));
   return to<f8_e4m3b15x4, f16x4>(h);
 #else
   f8_e4m3b15x4 result;
