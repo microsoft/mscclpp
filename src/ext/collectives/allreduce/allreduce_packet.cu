@@ -227,7 +227,7 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                 size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
                                                 cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                const std::unordered_map<std::string, uintptr_t>& extras,
+                                                const std::unordered_map<std::string, uintptr_t>&,
                                                 DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};

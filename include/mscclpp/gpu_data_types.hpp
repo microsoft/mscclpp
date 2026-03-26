@@ -228,6 +228,7 @@ struct alignas(Bytes) Words<Bytes, false> {};
 template <typename T, int N, typename StorageT>
 union alignas(sizeof(T) * N) VectorTypeImpl {
   static_assert(N > 0, "N must be greater than 0");
+  static_assert(sizeof(StorageT) >= sizeof(T) * N, "StorageT must cover the full vector size");
 
   T data[N];
   Words<sizeof(T) * N> words;
@@ -240,47 +241,10 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const StorageT& value) : storage(value) {}
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl& other) {
-    // Use words (which covers the full sizeof(T)*N bytes) when storage is smaller.
-    if constexpr (sizeof(StorageT) >= sizeof(T) * N) {
-      storage = other.storage;
-    } else {
-      words = other.words;
-    }
-  }
+  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl& other) { storage = other.storage; }
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl& other) {
-    if constexpr (sizeof(StorageT) >= sizeof(T) * N) {
-      storage = other.storage;
-    } else {
-      words = other.words;
-    }
-    return *this;
-  }
-
-  /// Converting constructor from a different element type with the same vector size.
-  /// Enables e.g. `f32x2 a = some_f8_e4m3x2_value;`
-  /// Uses element-wise static_cast. For the optimized path (e.g. hardware FP8->F32 intrinsics),
-  /// use mscclpp::to<TargetType>(value) explicitly.
-  template <typename OtherT, typename OtherStorageT, typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
-#if defined(MSCCLPP_DEVICE_COMPILE)
-#pragma unroll
-#endif
-    for (int i = 0; i < N; ++i) {
-      data[i] = static_cast<T>(other.data[i]);
-    }
-  }
-
-  /// Converting assignment from a different element type with the same vector size.
-  template <typename OtherT, typename OtherStorageT, typename = std::enable_if_t<!std::is_same_v<T, OtherT>>>
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl& operator=(const VectorTypeImpl<OtherT, N, OtherStorageT>& other) {
-#if defined(MSCCLPP_DEVICE_COMPILE)
-#pragma unroll
-#endif
-    for (int i = 0; i < N; ++i) {
-      data[i] = static_cast<T>(other.data[i]);
-    }
+    storage = other.storage;
     return *this;
   }
 
@@ -295,13 +259,14 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
   MSCCLPP_HOST_DEVICE_INLINE const T& operator[](int i) const { return data[i]; }
 };
 
-// Helper template to get the appropriate vector type for a given element type and count
+// Helper template to get the appropriate vector type for a given element type and count.
 template <typename T, int N>
 struct VectorTypeHelper {
-  using type =
-      VectorTypeImpl<T, N,
-                     typename std::conditional_t<N * sizeof(T) == 4, uint32_t,
-                                                 typename std::conditional_t<N * sizeof(T) == 8, uint2, uint4>>>;
+  static constexpr int Bytes = N * sizeof(T);
+  using type = VectorTypeImpl<
+      T, N,
+      std::conditional_t<Bytes == 4, uint32_t,
+                         std::conditional_t<Bytes == 8, uint2, std::conditional_t<Bytes <= 16, uint4, Words<Bytes>>>>>;
 };
 
 /// Vector type - clean user interface (automatically selects appropriate storage type)
@@ -337,6 +302,11 @@ DEFINE_VEC(bf16x4, __bfloat16, 4, uint2);
 
 DEFINE_VEC(f16x8, __half, 8, uint4);
 DEFINE_VEC(bf16x8, __bfloat16, 8, uint4);
+
+// Aliases for large vector types (>16 bytes) where no native CUDA storage type exists.
+using f32x8 = VectorType<float, 8>;
+using f32x16 = VectorType<float, 16>;
+using f16x16 = VectorType<__half, 16>;
 
 #if defined(__FP8_TYPES_EXIST__)
 DEFINE_VEC(f8_e4m3x2, __fp8_e4m3, 2, __fp8x2_e4m3);
@@ -1113,6 +1083,7 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   return result;
 #else
   f32x4 result;
+#pragma unroll
   for (int i = 0; i < 4; ++i) {
     result.data[i] = float(v.data[i]);
   }
@@ -1192,6 +1163,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   return bit_cast<f8_e4m3b15x4>(packed);
 #else
   f8_e4m3b15x4 result;
+#pragma unroll
   for (int i = 0; i < 4; ++i) {
     result.data[i] = __fp8_e4m3b15(v.data[i]);
   }
@@ -1205,67 +1177,55 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
 
 /// f8_e4m3b15x8 -> f32 (8 elements): decompose into 2x f8_e4m3b15x4 -> f32x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<float, 8> to<VectorType<float, 8>, VectorType<__fp8_e4m3b15, 8>>(
-    const VectorType<__fp8_e4m3b15, 8>& v) {
+MSCCLPP_DEVICE_INLINE f32x8 to<f32x8, f8_e4m3b15x8>(const f8_e4m3b15x8& v) {
   const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f32x4 lo = to<f32x4>(pair[0]);
-  f32x4 hi = to<f32x4>(pair[1]);
-  VectorType<float, 8> result;
-  for (int i = 0; i < 4; ++i) result.data[i] = lo.data[i];
-  for (int i = 0; i < 4; ++i) result.data[4 + i] = hi.data[i];
+  f32x8 result;
+  f32x4* out = reinterpret_cast<f32x4*>(&result);
+  out[0] = to<f32x4>(pair[0]);
+  out[1] = to<f32x4>(pair[1]);
   return result;
 }
 
 /// f32 (8 elements) -> f8_e4m3b15x8: decompose into 2x f32x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8> to<VectorType<__fp8_e4m3b15, 8>, VectorType<float, 8>>(
-    const VectorType<float, 8>& v) {
-  f32x4 lo, hi;
-  for (int i = 0; i < 4; ++i) lo.data[i] = v.data[i];
-  for (int i = 0; i < 4; ++i) hi.data[i] = v.data[4 + i];
-  f8_e4m3b15x4 lo_fp8 = to<f8_e4m3b15x4>(lo);
-  f8_e4m3b15x4 hi_fp8 = to<f8_e4m3b15x4>(hi);
-  VectorType<__fp8_e4m3b15, 8> result;
-  result.words[0] = lo_fp8.words[0];
-  result.words[1] = hi_fp8.words[0];
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x8 to<f8_e4m3b15x8, f32x8>(const f32x8& v) {
+  const f32x4* pair = reinterpret_cast<const f32x4*>(&v);
+  f8_e4m3b15x8 result;
+  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
+  out[0] = to<f8_e4m3b15x4>(pair[0]);
+  out[1] = to<f8_e4m3b15x4>(pair[1]);
   return result;
 }
 
 /// f8_e4m3b15x16 -> f32 (16 elements): decompose into 4x f8_e4m3b15x4 -> f32x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<float, 16> to<VectorType<float, 16>, VectorType<__fp8_e4m3b15, 16>>(
-    const VectorType<__fp8_e4m3b15, 16>& v) {
+MSCCLPP_DEVICE_INLINE f32x16 to<f32x16, f8_e4m3b15x16>(const f8_e4m3b15x16& v) {
   const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  VectorType<float, 16> result;
+  f32x16 result;
   f32x4 q0 = to<f32x4>(quads[0]);
   f32x4 q1 = to<f32x4>(quads[1]);
   f32x4 q2 = to<f32x4>(quads[2]);
   f32x4 q3 = to<f32x4>(quads[3]);
-  for (int i = 0; i < 4; ++i) result.data[i] = q0.data[i];
-  for (int i = 0; i < 4; ++i) result.data[4 + i] = q1.data[i];
-  for (int i = 0; i < 4; ++i) result.data[8 + i] = q2.data[i];
-  for (int i = 0; i < 4; ++i) result.data[12 + i] = q3.data[i];
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = q0.data[i];
+    result.data[4 + i] = q1.data[i];
+    result.data[8 + i] = q2.data[i];
+    result.data[12 + i] = q3.data[i];
+  }
   return result;
 }
 
 /// f32 (16 elements) -> f8_e4m3b15x16: decompose into 4x f32x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16> to<VectorType<__fp8_e4m3b15, 16>, VectorType<float, 16>>(
-    const VectorType<float, 16>& v) {
-  f32x4 q0, q1, q2, q3;
-  for (int i = 0; i < 4; ++i) q0.data[i] = v.data[i];
-  for (int i = 0; i < 4; ++i) q1.data[i] = v.data[4 + i];
-  for (int i = 0; i < 4; ++i) q2.data[i] = v.data[8 + i];
-  for (int i = 0; i < 4; ++i) q3.data[i] = v.data[12 + i];
-  f8_e4m3b15x4 r0 = to<f8_e4m3b15x4>(q0);
-  f8_e4m3b15x4 r1 = to<f8_e4m3b15x4>(q1);
-  f8_e4m3b15x4 r2 = to<f8_e4m3b15x4>(q2);
-  f8_e4m3b15x4 r3 = to<f8_e4m3b15x4>(q3);
-  VectorType<__fp8_e4m3b15, 16> result;
-  result.words[0] = r0.words[0];
-  result.words[1] = r1.words[0];
-  result.words[2] = r2.words[0];
-  result.words[3] = r3.words[0];
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x16 to<f8_e4m3b15x16, f32x16>(const f32x16& v) {
+  const f32x4* quads = reinterpret_cast<const f32x4*>(&v);
+  f8_e4m3b15x16 result;
+  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
+  out[0] = to<f8_e4m3b15x4>(quads[0]);
+  out[1] = to<f8_e4m3b15x4>(quads[1]);
+  out[2] = to<f8_e4m3b15x4>(quads[2]);
+  out[3] = to<f8_e4m3b15x4>(quads[3]);
   return result;
 }
 
@@ -1318,6 +1278,7 @@ MSCCLPP_DEVICE_INLINE f16x4 to<f16x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   return result;
 #else
   f16x4 result;
+#pragma unroll
   for (int i = 0; i < 4; ++i) {
     result.data[i] = __float2half(float(v.data[i]));
   }
@@ -1371,6 +1332,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   return bit_cast<f8_e4m3b15x4>(packed);
 #else
   f8_e4m3b15x4 result;
+#pragma unroll
   for (int i = 0; i < 4; ++i) {
     result.data[i] = __fp8_e4m3b15(__half2float(v.data[i]));
   }
@@ -1380,7 +1342,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
 
 /// f8_e4m3b15x8 -> f16x8: decompose into 2x f8_e4m3b15x4 -> f16x4.
 template <>
-MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, VectorType<__fp8_e4m3b15, 8>>(const VectorType<__fp8_e4m3b15, 8>& v) {
+MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, f8_e4m3b15x8>(const f8_e4m3b15x8& v) {
   const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
   f16x4 lo = to<f16x4>(pair[0]);
   f16x4 hi = to<f16x4>(pair[1]);
@@ -1394,7 +1356,7 @@ MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, VectorType<__fp8_e4m3b15, 8>>(const Vector
 
 /// f16x8 -> f8_e4m3b15x8: decompose into 2x f16x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8> to<VectorType<__fp8_e4m3b15, 8>, f16x8>(const f16x8& v) {
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x8 to<f8_e4m3b15x8, f16x8>(const f16x8& v) {
   f16x4 lo, hi;
   lo.words[0] = v.words[0];
   lo.words[1] = v.words[1];
@@ -1402,18 +1364,17 @@ MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 8> to<VectorType<__fp8_e4m3b15, 
   hi.words[1] = v.words[3];
   f8_e4m3b15x4 lo_fp8 = to<f8_e4m3b15x4>(lo);
   f8_e4m3b15x4 hi_fp8 = to<f8_e4m3b15x4>(hi);
-  VectorType<__fp8_e4m3b15, 8> result;
+  f8_e4m3b15x8 result;
   result.words[0] = lo_fp8.words[0];
   result.words[1] = hi_fp8.words[0];
   return result;
 }
 
-/// f8_e4m3b15x16 -> VectorType<__half, 16>: decompose into 4x f8_e4m3b15x4 -> f16x4.
+/// f8_e4m3b15x16 -> f16x16: decompose into 4x f8_e4m3b15x4 -> f16x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__half, 16> to<VectorType<__half, 16>, VectorType<__fp8_e4m3b15, 16>>(
-    const VectorType<__fp8_e4m3b15, 16>& v) {
+MSCCLPP_DEVICE_INLINE f16x16 to<f16x16, f8_e4m3b15x16>(const f8_e4m3b15x16& v) {
   const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  VectorType<__half, 16> result;
+  f16x16 result;
   f16x4* out = reinterpret_cast<f16x4*>(&result);
   out[0] = to<f16x4>(quads[0]);
   out[1] = to<f16x4>(quads[1]);
@@ -1422,12 +1383,11 @@ MSCCLPP_DEVICE_INLINE VectorType<__half, 16> to<VectorType<__half, 16>, VectorTy
   return result;
 }
 
-/// VectorType<__half, 16> -> f8_e4m3b15x16: decompose into 4x f16x4 -> f8_e4m3b15x4.
+/// f16x16 -> f8_e4m3b15x16: decompose into 4x f16x4 -> f8_e4m3b15x4.
 template <>
-MSCCLPP_DEVICE_INLINE VectorType<__fp8_e4m3b15, 16> to<VectorType<__fp8_e4m3b15, 16>, VectorType<__half, 16>>(
-    const VectorType<__half, 16>& v) {
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x16 to<f8_e4m3b15x16, f16x16>(const f16x16& v) {
   const f16x4* quads = reinterpret_cast<const f16x4*>(&v);
-  VectorType<__fp8_e4m3b15, 16> result;
+  f8_e4m3b15x16 result;
   f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
   out[0] = to<f8_e4m3b15x4>(quads[0]);
   out[1] = to<f8_e4m3b15x4>(quads[1]);

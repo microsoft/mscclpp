@@ -166,7 +166,7 @@ void AllreduceRsAg::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                               size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                                               int nBlocks, int nThreadsPerBlock,
-                                              const std::unordered_map<std::string, uintptr_t>& extras,
+                                              const std::unordered_map<std::string, uintptr_t>&,
                                               DataType accumDtype) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
   AllreduceFunc allreduce = dispatch<AllreduceRsAgAdapter>(op, dtype, accumDtype);
