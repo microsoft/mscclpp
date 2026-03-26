@@ -21,6 +21,9 @@
 #include "context.hpp"
 #if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
+#if defined(MSCCLPP_USE_MLX5DV)
+#include "mlx5dv_wrapper.hpp"
+#endif  // defined(MSCCLPP_USE_MLX5DV)
 #endif  // defined(USE_IBVERBS)
 #include "logger.hpp"
 
@@ -64,7 +67,8 @@ static inline bool isDmabufSupportedByGpu(int gpuId) {
   return ret;
 }
 
-IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff), size_(0) {
+IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
+    : mr_(nullptr), buff_(buff), size_(0), isDmabuf_(false), isDataDirect_(false) {
   if (size == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
   }
@@ -84,13 +88,24 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
     MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
 
     size_t offsetInDmaBuf = buffIntPtr % pageSize;
-    mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd,
-                                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                                         IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                      IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
+#if defined(MSCCLPP_USE_MLX5DV)
+    if (isMlx5 && MLX5DV::isAvailable()) {
+      mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+      if (mr_ != nullptr) {
+        isDataDirect_ = true;
+      }
+    }
+#endif
+    if (mr_ == nullptr) {
+      mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+    }
     ::close(fd);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
+    isDmabuf_ = true;
 #else   // defined(MSCCLPP_USE_ROCM)
     THROW(NET, Error, ErrorCode::InvalidUsage, "We don't support DMABUF on HIP platforms yet");
 #endif  // defined(MSCCLPP_USE_ROCM)
@@ -130,8 +145,12 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
+bool IbMr::isDmabuf() const { return isDmabuf_; }
+
+bool IbMr::isDataDirect() const { return isDataDirect_; }
+
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
-           int maxSendWr, int maxRecvWr, int maxWrPerSend)
+           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic, bool isMlx5)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
@@ -151,7 +170,9 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
       maxSendCqPollNum_(maxSendCqPollNum),
       maxSendWr_(maxSendWr),
       maxWrPerSend_(maxWrPerSend),
-      maxRecvWr_(maxRecvWr) {
+      maxRecvWr_(maxRecvWr),
+      noAtomic_(noAtomic),
+      isMlx5_(isMlx5) {
   sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
   if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
@@ -165,21 +186,47 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
     }
   }
 
-  struct ibv_qp_init_attr qpInitAttr = {};
-  qpInitAttr.sq_sig_all = 0;
-  qpInitAttr.send_cq = sendCq_;
-  // Use separate recv CQ if created, otherwise use the send CQ
-  qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
-  qpInitAttr.qp_type = IBV_QPT_RC;
-  qpInitAttr.cap.max_send_wr = maxSendWr;
-  qpInitAttr.cap.max_recv_wr = maxRecvWr;
-  qpInitAttr.cap.max_send_sge = 1;
-  qpInitAttr.cap.max_recv_sge = 1;
-  qpInitAttr.cap.max_inline_data = 0;
+  struct ibv_qp* qp = nullptr;
+#if defined(MSCCLPP_USE_MLX5DV)
+  if (isMlx5_) {
+    struct ibv_qp_init_attr_ex qpInitAttrEx = {};
+    qpInitAttrEx.sq_sig_all = 0;
+    qpInitAttrEx.send_cq = sendCq_;
+    qpInitAttrEx.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
+    qpInitAttrEx.qp_type = IBV_QPT_RC;
+    qpInitAttrEx.cap.max_send_wr = maxSendWr;
+    qpInitAttrEx.cap.max_recv_wr = maxRecvWr;
+    qpInitAttrEx.cap.max_send_sge = 1;
+    qpInitAttrEx.cap.max_recv_sge = 1;
+    qpInitAttrEx.cap.max_inline_data = 0;
+    qpInitAttrEx.pd = pd;
+    qpInitAttrEx.comp_mask = IBV_QP_INIT_ATTR_PD;
 
-  struct ibv_qp* qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
-  if (qp == nullptr) {
-    THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
+    struct mlx5dv_qp_init_attr mlx5QpAttr = {};
+
+    qp = MLX5DV::mlx5dv_create_qp(ctx, &qpInitAttrEx, &mlx5QpAttr);
+    if (qp == nullptr) {
+      THROW(NET, IbError, errno, "mlx5dv_create_qp failed (errno ", errno, ")");
+    }
+  } else
+#endif  // defined(MSCCLPP_USE_MLX5DV)
+  {
+    struct ibv_qp_init_attr qpInitAttr = {};
+    qpInitAttr.sq_sig_all = 0;
+    qpInitAttr.send_cq = sendCq_;
+    // Use separate recv CQ if created, otherwise use the send CQ
+    qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
+    qpInitAttr.qp_type = IBV_QPT_RC;
+    qpInitAttr.cap.max_send_wr = maxSendWr;
+    qpInitAttr.cap.max_recv_wr = maxRecvWr;
+    qpInitAttr.cap.max_send_sge = 1;
+    qpInitAttr.cap.max_recv_sge = 1;
+    qpInitAttr.cap.max_inline_data = 0;
+
+    qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
+    if (qp == nullptr) {
+      THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
+    }
   }
 
   struct ibv_port_attr portAttr;
@@ -211,7 +258,8 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
   qpAttr.port_num = portNum_;
-  qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
+  qpAttr.qp_access_flags = noAtomic_ ? IBV_ACCESS_REMOTE_WRITE
+                                     : (IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (IBVerbs::ibv_modify_qp(qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
   }
@@ -240,7 +288,7 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.path_mtu = static_cast<ibv_mtu>(info.mtu);
   qp_attr.dest_qp_num = info.qpn;
   qp_attr.rq_psn = 0;
-  qp_attr.max_dest_rd_atomic = 1;
+  qp_attr.max_dest_rd_atomic = noAtomic_ ? 0 : 1;
   qp_attr.min_rnr_timer = 0x12;
   if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.isGrh) {
     qp_attr.ah_attr.is_global = 1;
@@ -272,7 +320,7 @@ void IbQp::rts() {
   qp_attr.retry_cnt = 7;
   qp_attr.rnr_retry = 7;
   qp_attr.sq_psn = 0;
-  qp_attr.max_rd_atomic = 1;
+  qp_attr.max_rd_atomic = noAtomic_ ? 0 : 1;
   int ret = IBVerbs::ibv_modify_qp(
       qp_, &qp_attr,
       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
@@ -434,12 +482,21 @@ std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_
 
 unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
 
-IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr), supportsRdmaAtomics_(false) {
+IbCtx::IbCtx(const std::string& devName)
+    : devName_(devName), ctx_(nullptr), pd_(nullptr), supportsRdmaAtomics_(false), isMlx5_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (std::string(devices[i]->name) == devName_) {
       ctx_ = IBVerbs::ibv_open_device(devices[i]);
+#if defined(MSCCLPP_USE_MLX5DV)
+      if (MLX5DV::isAvailable()) {
+        isMlx5_ = MLX5DV::mlx5dv_is_supported(devices[i]);
+        if (isMlx5_) {
+          INFO(NET, "IB device ", devName_, " supports mlx5 Direct Verbs");
+        }
+      }
+#endif  // defined(MSCCLPP_USE_MLX5DV)
       break;
     }
   }
@@ -512,7 +569,7 @@ int IbCtx::getAnyUsablePort(int gidIndex) const {
 }
 
 std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-                                      int maxRecvWr, int maxWrPerSend) {
+                                      int maxRecvWr, int maxWrPerSend, bool noAtomic) {
   if (port == -1) {
     port = this->getAnyUsablePort(gidIndex);
     if (port == -1) {
@@ -521,15 +578,17 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
   } else if (!this->isPortUsable(port, gidIndex)) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
-  return std::shared_ptr<IbQp>(
-      new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+  return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
+                                        maxRecvWr, maxWrPerSend, noAtomic, isMlx5_));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size));
+  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isMlx5_));
 }
 
 bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
+
+bool IbCtx::isMlx5() const { return isMlx5_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;
@@ -640,6 +699,8 @@ IbMr::~IbMr() {}
 IbMrInfo IbMr::getInfo() const { return IbMrInfo(); }
 const void* IbMr::getBuff() const { return nullptr; }
 uint32_t IbMr::getLkey() const { return 0; }
+bool IbMr::isDmabuf() const { return false; }
+bool IbMr::isDataDirect() const { return false; }
 
 IbQp::~IbQp() {}
 void IbQp::rtr(const IbQpInfo& /*info*/) {}
