@@ -202,4 +202,3 @@ def torch_dtype_to_mscclpp_dtype(dtype: "torch.dtype") -> DataType:
         return DataType.uint8
     else:
         raise ValueError(f"Unknown data type: {dtype}")
-

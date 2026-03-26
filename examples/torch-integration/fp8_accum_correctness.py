@@ -269,8 +269,7 @@ def main():
 
         if rank == 0:
             print(f"\n  Algorithm: {algo_name}")
-            print(f"  {'Size':>10} {'AccumType':>16} "
-                  f"{'MaxAbsErr':>12} {'MeanAbsErr':>12} {'MaxRelErr':>12}")
+            print(f"  {'Size':>10} {'AccumType':>16} " f"{'MaxAbsErr':>12} {'MeanAbsErr':>12} {'MaxRelErr':>12}")
             print(f"  {'-'*80}")
 
         for size in e4m3b15_test_sizes:
