@@ -106,32 +106,15 @@ struct alignas(1) __fp8_e4m3b15 {
       } nan_val = {0x7FC00000u};
       return nan_val.f;
     }
-    if (bits == 0 || bits == 0x80) return 0.0f;
+    if (bits == 0) return 0.0f;
 
     // Triton-style bit manipulation: fp8 → fp16 → fp32.
     // fp8 layout: [S:1][E:4][M:3]  (bias=15)
     // fp16 layout: [S:1][E:5][M:10] (bias=15)
     //
-    // Step 1: Place 8-bit fp8 value into bits [15:8] of a 16-bit word
-    //         via left-shift by 8: h = bits << 8.
-    // Step 2: The fp8 sign is now at bit 15 (fp16 sign position). Good.
-    //         The fp8 E4 field [14:11] needs to map to fp16 E5 [14:10].
-    //         Split: b0 = h & 0x7F00 (exponent + upper bits), shift right 1 → moves exponent.
-    //                The sign bit is recovered separately.
-    // Step 3: The lower mantissa byte is adjusted for subnormal renormalization.
-    //
-    // This exactly follows Triton's PTX:
-    //   prmt.b32 a0, 0, $2, 0x5746;  →  spread 4 fp8 values into 2×uint16 packed in uint32
-    //   and.b32 b0, a0, 0x7f007f00;  →  extract sign+exponent+upper mantissa
-    //   and.b32 b1, a0, 0x00ff00ff;  →  extract the full 8-bit value for mantissa work
-    //   and.b32 a1, a0, 0x00800080;  →  extract sign bit (shifted to bit 7)
-    //   shr.b32 b0, b0, 1;           →  shift exponent right: E4 bias15 → E5 bias15
-    //   add.u32 b1, b1, a1;          →  add sign bit to propagate into high byte for subnormals
-    //   lop3.b32 $0, b0, 0x80008000, a0, 0xf8;  →  combine: b0 | (0x8000 & a0)
-    //   shl.b32 $1, b1, 7;           →  shift mantissa part for second output
-    //
-    // Refer:
-    // https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
+    // Place fp8 in upper byte of fp16, then right-shift exponent+mantissa by 1
+    // to convert E4 → E5 (both share bias=15). Sign bit stays at bit 15.
+    // Refer: https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
     uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
     uint16_t sign16 = h & 0x8000u;                // extract sign at fp16 position
     uint16_t nosign = h & 0x7F00u;                // exponent + mantissa (no sign)

@@ -197,7 +197,6 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
       CUDA_SUCCESS) {
     MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&(handle->fabric.allocHandle), (void*)basePtr));
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
-    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&(handle->fabric.allocHandle), (void*)basePtr));
   }
 
   MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
