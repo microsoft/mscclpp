@@ -78,6 +78,8 @@ steps:
       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
         -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-sglang-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
         sudo docker exec -t mscclpp-sglang-test bash -c " \
+          python3 -m venv /root/venv && \
+          export PATH=/root/venv/bin:\\\$PATH && \
           git clone https://github.com/microsoft/mscclpp.git && \
           cd mscclpp && \
           mkdir build && \
@@ -85,7 +87,6 @@ steps:
           cmake -DCMAKE_BUILD_TYPE=Release .. && \
           make -j && \
           cd .. && \
-          hostname 
           pip install . && \
           pip install -r ./python/requirements_cuda12.txt \
         "'

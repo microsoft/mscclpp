@@ -10,7 +10,7 @@ baseImageTable=(
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
-    ["sglang"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
+    ["sglang"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
 )
 
 declare -A extraLdPathTable
@@ -21,7 +21,7 @@ extraLdPathTable=(
     ["cuda12.9"]="/usr/local/cuda-12.9/compat"
     ["cuda13.0"]="/usr/local/cuda-13.0/compat"
     ["rocm6.2"]="/opt/rocm/lib"
-    ["sglang"]="/usr/local/cuda-13.0/compat"
+    ["sglang"]="/usr/local/cuda-12.9/compat"
 )
 
 declare -A ofedVersionTable
@@ -32,7 +32,7 @@ ofedVersionTable=(
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
     ["rocm6.2"]="24.10-1.1.4.0"
-    ["sglang"]="24.10-3.2.5.0"
+    ["sglang"]="24.10-1.1.4.0"
 )
 
 TARGET=${1}
