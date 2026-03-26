@@ -9,7 +9,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
@@ -25,6 +25,10 @@ __global__ void __launch_bounds__(512, 1)
   int4* buff4 = reinterpret_cast<int4*>(buff);
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
+
+  // AccumVec: wider vector for mixed-precision accumulation. When AccumT==T, this is just int4 (no-op).
+  constexpr int nElemsPerInt4 = sizeof(int4) / sizeof(T);
+  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nElemsPerInt4>>;
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
   constexpr size_t unitNInt4 = 512;
@@ -81,12 +85,14 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
 
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      AccumVec acc = mscclpp::upcast_vector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vector<T, OpType>(val, data);
+        acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, val);
       }
+      int4 data = mscclpp::downcast_vector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -121,12 +127,14 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
 
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      AccumVec acc = mscclpp::upcast_vector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vector<T, OpType>(val, data);
+        acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, val);
       }
+      int4 data = mscclpp::downcast_vector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -155,7 +163,7 @@ struct AllreduceAllconnectAdapter {
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0) nBlocks = 35;
     if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
-    allreduceFullmesh<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreduceFullmesh<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
         channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
     return cudaGetLastError();
