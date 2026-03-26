@@ -2,6 +2,14 @@ set -e
 
 PLATFORM="${1:-cuda}"
 
+# Create a Python venv if one is not already active
+if [ -z "${VIRTUAL_ENV}" ] && [ ! -f /root/venv/bin/activate ]; then
+    python3 -m venv /root/venv
+fi
+if [ -f /root/venv/bin/activate ]; then
+    . /root/venv/bin/activate
+fi
+
 mkdir -p /root/.ssh
 mv /root/mscclpp/sshkey.pub /root/.ssh/authorized_keys
 chown root:root /root/.ssh/authorized_keys
