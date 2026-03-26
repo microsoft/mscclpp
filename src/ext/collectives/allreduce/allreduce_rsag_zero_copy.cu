@@ -94,7 +94,7 @@ __global__ void __launch_bounds__(1024, 1)
     for (int i = 0; i < NPeers; i++) {
       acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, data[i]);
     }
-    int4 tmp = mscclpp::downcast_vector<T, AccumT, int4, AccumVec>(acc);
+    int4 tmp = mscclpp::downcast_vector<T, AccumT, int4>(acc);
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;

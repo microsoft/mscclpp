@@ -106,8 +106,8 @@ __global__ void __launch_bounds__(1024, 1)
         acc_x = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_x, val.x);
         acc_y = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_y, val.y);
       }
-      data.x = mscclpp::downcast_vector<T, AccumT, uint32_t, AccRaw>(acc_x);
-      data.y = mscclpp::downcast_vector<T, AccumT, uint32_t, AccRaw>(acc_y);
+      data.x = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_x);
+      data.y = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_y);
     }
 
     dst[idx].x = data.x;

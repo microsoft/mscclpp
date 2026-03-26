@@ -1202,17 +1202,11 @@ template <>
 MSCCLPP_DEVICE_INLINE f32x16 to<f32x16, f8_e4m3b15x16>(const f8_e4m3b15x16& v) {
   const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
   f32x16 result;
-  f32x4 q0 = to<f32x4>(quads[0]);
-  f32x4 q1 = to<f32x4>(quads[1]);
-  f32x4 q2 = to<f32x4>(quads[2]);
-  f32x4 q3 = to<f32x4>(quads[3]);
-#pragma unroll
-  for (int i = 0; i < 4; ++i) {
-    result.data[i] = q0.data[i];
-    result.data[4 + i] = q1.data[i];
-    result.data[8 + i] = q2.data[i];
-    result.data[12 + i] = q3.data[i];
-  }
+  f32x4* out = reinterpret_cast<f32x4*>(&result);
+  out[0] = to<f32x4>(quads[0]);
+  out[1] = to<f32x4>(quads[1]);
+  out[2] = to<f32x4>(quads[2]);
+  out[3] = to<f32x4>(quads[3]);
   return result;
 }
 
@@ -1344,29 +1338,21 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, f8_e4m3b15x8>(const f8_e4m3b15x8& v) {
   const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f16x4 lo = to<f16x4>(pair[0]);
-  f16x4 hi = to<f16x4>(pair[1]);
   f16x8 result;
-  result.words[0] = lo.words[0];
-  result.words[1] = lo.words[1];
-  result.words[2] = hi.words[0];
-  result.words[3] = hi.words[1];
+  f16x4* out = reinterpret_cast<f16x4*>(&result);
+  out[0] = to<f16x4>(pair[0]);
+  out[1] = to<f16x4>(pair[1]);
   return result;
 }
 
 /// f16x8 -> f8_e4m3b15x8: decompose into 2x f16x4 -> f8_e4m3b15x4.
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3b15x8 to<f8_e4m3b15x8, f16x8>(const f16x8& v) {
-  f16x4 lo, hi;
-  lo.words[0] = v.words[0];
-  lo.words[1] = v.words[1];
-  hi.words[0] = v.words[2];
-  hi.words[1] = v.words[3];
-  f8_e4m3b15x4 lo_fp8 = to<f8_e4m3b15x4>(lo);
-  f8_e4m3b15x4 hi_fp8 = to<f8_e4m3b15x4>(hi);
+  const f16x4* pair = reinterpret_cast<const f16x4*>(&v);
   f8_e4m3b15x8 result;
-  result.words[0] = lo_fp8.words[0];
-  result.words[1] = hi_fp8.words[0];
+  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
+  out[0] = to<f8_e4m3b15x4>(pair[0]);
+  out[1] = to<f8_e4m3b15x4>(pair[1]);
   return result;
 }
 

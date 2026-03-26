@@ -42,7 +42,7 @@ __global__ void __launch_bounds__(1024, 1)
       uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
       acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc, val);
     }
-    dst[i] = mscclpp::downcast_vector<T, AccumT, uint, AccRaw>(acc);
+    dst[i] = mscclpp::downcast_vector<T, AccumT, uint>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {
