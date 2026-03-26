@@ -114,7 +114,8 @@ struct alignas(1) __fp8_e4m3b15 {
     //
     // Place fp8 in upper byte of fp16, then right-shift exponent+mantissa by 1
     // to convert E4 → E5 (both share bias=15). Sign bit stays at bit 15.
-    // Refer: https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
+    // Refer:
+    // https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
     uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
     uint16_t sign16 = h & 0x8000u;                // extract sign at fp16 position
     uint16_t nosign = h & 0x7F00u;                // exponent + mantissa (no sign)
@@ -207,6 +208,7 @@ enum class DataType {
   FLOAT8_E5M2,   // float8 with E5M2 layout.
   UINT8,         // 8-bit unsigned integer.
   FLOAT8_E4B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
+  AUTO = 255,    // Sentinel: resolve to the input dtype at runtime.
 };
 
 /// Word array.
@@ -801,8 +803,11 @@ MSCCLPP_DEVICE_INLINE To to(const From& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3x2>(const f8_e4m3x2& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  float2 f = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, 0);
-  return f;
+  auto f = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, 0);
+  f32x2 result;
+  result.data[0] = f[0];
+  result.data[1] = f[1];
+  return result;
 #elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
   __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(bit_cast<__nv_fp8x2_storage_t>(v.storage), __NV_E4M3);
   f32x2 result;
@@ -821,13 +826,13 @@ MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3x2>(const f8_e4m3x2& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3x4>(const f8_e4m3x4& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  float2 lo = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, false);
-  float2 hi = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, true);
+  auto lo = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, false);
+  auto hi = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, true);
   f32x4 result;
-  result.data[0] = lo.x;
-  result.data[1] = lo.y;
-  result.data[2] = hi.x;
-  result.data[3] = hi.y;
+  result.data[0] = lo[0];
+  result.data[1] = lo[1];
+  result.data[2] = hi[0];
+  result.data[3] = hi[1];
   return result;
 #else
   const f8_e4m3x2* pair = reinterpret_cast<const f8_e4m3x2*>(&v);
@@ -850,8 +855,11 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3x4>(const f8_e4m3x4& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e5m2x2>(const f8_e5m2x2& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  float2 f = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, 0);
-  return f;
+  auto f = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, 0);
+  f32x2 result;
+  result.data[0] = f[0];
+  result.data[1] = f[1];
+  return result;
 #elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
   __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(bit_cast<__nv_fp8x2_storage_t>(v.storage), __NV_E5M2);
   f32x2 result;
@@ -870,13 +878,13 @@ MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e5m2x2>(const f8_e5m2x2& v) {
 template <>
 MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e5m2x4>(const f8_e5m2x4& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  float2 lo = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, false);
-  float2 hi = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, true);
+  auto lo = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, false);
+  auto hi = __builtin_amdgcn_cvt_pk_f32_bf8(v.storage.__x, true);
   f32x4 result;
-  result.data[0] = lo.x;
-  result.data[1] = lo.y;
-  result.data[2] = hi.x;
-  result.data[3] = hi.y;
+  result.data[0] = lo[0];
+  result.data[1] = lo[1];
+  result.data[2] = hi[0];
+  result.data[3] = hi[1];
   return result;
 #else
   const f8_e5m2x2* pair = reinterpret_cast<const f8_e5m2x2*>(&v);

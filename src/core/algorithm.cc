@@ -41,9 +41,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    const std::unordered_map<std::string, uintptr_t>& extras, bool symmetricMemory,
+                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras,
                                     DataType accumDtype) {
-  if (accumDtype == static_cast<DataType>(-1)) accumDtype = dtype;
+  if (accumDtype == DataType::AUTO) accumDtype = dtype;
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -164,8 +164,8 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
-                                 std::shared_ptr<Executor> executor, int, int,
-                                 const std::unordered_map<std::string, uintptr_t>&, bool, DataType) {
+                                 std::shared_ptr<Executor> executor, int, int, bool,
+                                 const std::unordered_map<std::string, uintptr_t>&, DataType) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }

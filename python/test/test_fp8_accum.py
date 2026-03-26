@@ -18,7 +18,6 @@ from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp, is_nvls_supported
 from mscclpp.ext import AlgorithmCollectionBuilder
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
-
 # ---------------------------------------------------------------------------
 # FP8 E4M3FN helpers (bias=7, no infinity, NaN = exp=15 & mant=7)
 # ---------------------------------------------------------------------------
@@ -249,9 +248,9 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, size: int):
         algo.reset()
 
     # float16 accumulation should be at least as accurate as native fp8
-    assert errors["float16"] <= errors["fp8_native"] + 1e-6, (
-        f"float16 accum ({errors['float16']:.6f}) worse than native ({errors['fp8_native']:.6f})"
-    )
+    assert (
+        errors["float16"] <= errors["fp8_native"] + 1e-6
+    ), f"float16 accum ({errors['float16']:.6f}) worse than native ({errors['fp8_native']:.6f})"
 
 
 # ---------------------------------------------------------------------------
@@ -346,9 +345,9 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         algo.reset()
 
     # Higher-precision accumulation should be at least as accurate as native
-    assert errors["float16"] <= errors["e4m3b15_native"] + 1e-8, (
-        f"float16 accum ({errors['float16']:.8f}) worse than native ({errors['e4m3b15_native']:.8f})"
-    )
-    assert errors["float32"] <= errors["e4m3b15_native"] + 1e-8, (
-        f"float32 accum ({errors['float32']:.8f}) worse than native ({errors['e4m3b15_native']:.8f})"
-    )
+    assert (
+        errors["float16"] <= errors["e4m3b15_native"] + 1e-8
+    ), f"float16 accum ({errors['float16']:.8f}) worse than native ({errors['e4m3b15_native']:.8f})"
+    assert (
+        errors["float32"] <= errors["e4m3b15_native"] + 1e-8
+    ), f"float32 accum ({errors['float32']:.8f}) worse than native ({errors['e4m3b15_native']:.8f})"

@@ -175,8 +175,8 @@ class Algorithm:
         executor: Optional[CppExecutor] = None,
         nblocks=0,
         nthreads_per_block=0,
-        extras: Optional[Dict[str, int]] = None,
         symmetric_memory: bool = False,
+        extras: Optional[Dict[str, int]] = None,
         accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
@@ -193,8 +193,8 @@ class Algorithm:
             executor: The executor for DSL algorithms (required for DSL, optional for native).
             nblocks: Number of CUDA blocks (0 for auto-selection).
             nthreads_per_block: Number of threads per block (0 for auto-selection).
-            extras: Additional algorithm-specific parameters.
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
+            extras: Additional algorithm-specific parameters.
             accum_dtype: Data type for accumulation during reduction. If None, defaults to
                          the same as dtype. Use DataType.float32 for high-precision FP8 accumulation.
 
@@ -215,8 +215,8 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
-            merged_extras,
             symmetric_memory,
+            merged_extras,
             int(accum_dtype),
         )
 

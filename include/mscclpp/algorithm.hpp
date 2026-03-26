@@ -101,15 +101,16 @@ class Algorithm {
   /// @param executor The executor for DSL algorithms (may be nullptr for native).
   /// @param nBlocks Number of CUDA blocks (0 for auto-selection).
   /// @param nThreadsPerBlock Number of threads per block (0 for auto-selection).
-  /// @param extras Additional parameters for algorithm-specific customization.
   /// @param symmetricMemory Whether to use symmetric memory optimization.
-  /// @param accumDtype Data type for accumulation during reduction. Default sentinel resolves to dtype.
+  /// @param extras Additional parameters for algorithm-specific customization.
+  /// @param accumDtype Data type for accumulation during reduction. DataType::AUTO resolves to dtype.
   /// @return The result of the operation.
   virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                              size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                              std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
+                             bool symmetricMemory = false,
                              const std::unordered_map<std::string, uintptr_t>& extras = {},
-                             bool symmetricMemory = false, DataType accumDtype = static_cast<DataType>(-1)) = 0;
+                             DataType accumDtype = DataType::AUTO) = 0;
 
   /// Reset the algorithm state, clearing any cached contexts.
   virtual void reset() = 0;
@@ -235,8 +236,8 @@ class NativeAlgorithm : public Algorithm {
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
-                     const std::unordered_map<std::string, uintptr_t>& extras = {},
-                     bool symmetricMemory = false, DataType accumDtype = static_cast<DataType>(-1)) override;
+                     bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
+                     DataType accumDtype = DataType::AUTO) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
@@ -287,8 +288,8 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
-                     const std::unordered_map<std::string, uintptr_t>& extras = {},
-                     bool symmetricMemory = false, DataType accumDtype = static_cast<DataType>(-1)) override;
+                     bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
+                     DataType accumDtype = DataType::AUTO) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;
   void reset() override;
