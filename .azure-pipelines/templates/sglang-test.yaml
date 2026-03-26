@@ -75,8 +75,8 @@ steps:
       tail -f azureuser@10.0.0.4 &
       CHILD_PID=$!
       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
-        sudo docker exec -t mscclpp-test bash -c " \
+        -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-sglang-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
+        sudo docker exec -t mscclpp-sglang-test bash -c " \
           git clone https://github.com/microsoft/mscclpp.git && \
           cd mscclpp && \
           mkdir build && \
@@ -104,7 +104,7 @@ steps:
       tail -f azureuser@10.0.0.4 &
       CHILD_PID=$!
       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-test bash -c " \
+        -O $SSH_OPTION 'sudo docker exec -t mscclpp-sglang-test bash -c " \
         export PATH=/usr/local/mpi/bin:\$PATH;                     \
         export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
         echo Running on \$(hostname -i);                            \
