@@ -67,6 +67,7 @@ steps:
   inputs:
     targetType: inline
     script: |
+      hostname
       set -e
       HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
       SSH_OPTION="StrictHostKeyChecking=no"
@@ -84,6 +85,7 @@ steps:
           cmake -DCMAKE_BUILD_TYPE=Release .. && \
           make -j && \
           cd .. && \
+          hostname 
           pip install . && \
           pip install -r ./python/requirements_cuda12.txt \
         "'
