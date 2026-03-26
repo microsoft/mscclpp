@@ -15,7 +15,7 @@ jobs:
     strategy:
         fail-fast: false
         matrix:
-          version: [ 'cuda11.8', 'cuda12.8' ]
+          version: [ 'cuda11.8', 'cuda12.9' ]
 
     steps:
     - uses: actions/checkout@v4

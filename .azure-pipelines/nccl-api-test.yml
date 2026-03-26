@@ -1,0 +1,67 @@
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+      - .devcontainer/**
+      - .github/**
+      - docker/**
+      - docs/**
+      - '**/*.md'
+
+jobs:
+- job: NcclTestA100
+  displayName: Run MSCCLPP over NCCL Test (A100)
+  pool:
+    name: msccl-ci
+
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/nccl-test.yml
+    parameters:
+      subscription:     mscclpp-ci
+      vmssName:         mscclpp-ci
+      nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
+
+- job: NcclTestH100
+  displayName: Run MSCCLPP over NCCL Test (H100)
+  pool:
+    name: msccl-ci-h100
+
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/nccl-test.yml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
+      nvccGencode:      "-gencode=arch=compute_90,code=sm_90"
