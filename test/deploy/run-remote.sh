@@ -11,6 +11,7 @@
 #   --hostfile    Override hostfile path (default: test/deploy/hostfile_ci)
 #   --host        Run command on a single host (uses parallel-ssh -H)
 #   --user        SSH user when using --host or custom hostfile
+#   --container   Docker container name to exec into (default: mscclpp-test)
 
 set -e
 
@@ -23,9 +24,10 @@ USE_DOCKER=true
 USE_LOG=true
 TARGET_HOST=""
 REMOTE_USER=""
+CONTAINER_NAME="mscclpp-test"
 
 usage() {
-    echo "Usage: $0 [--no-docker] [--no-log] [--hostfile <path>] [--host <name>] [--user <name>] < <command_script>" >&2
+    echo "Usage: $0 [--no-docker] [--no-log] [--hostfile <path>] [--host <name>] [--user <name>] [--container <name>] < <command_script>" >&2
 }
 
 require_value() {
@@ -54,6 +56,11 @@ while [[ "$1" == --* ]]; do
         --user)
             require_value "--user" "${2-}"
             REMOTE_USER="$2"
+            shift 2
+            ;;
+        --container)
+            require_value "--container" "${2-}"
+            CONTAINER_NAME="$2"
             shift 2
             ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -93,6 +100,13 @@ PSSH_COMMON=(
 )
 
 if $USE_DOCKER; then
+    # If using the sglang container, launch it first
+    if [ "${CONTAINER_NAME}" = "mscclpp-sglang-test" ]; then
+        parallel-ssh -i "${PSSH_COMMON[@]}" \
+            "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null; \
+             sudo docker run -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash"
+    fi
+
     INNER="set -euxo pipefail;"
     INNER+=" cd /root/mscclpp;"
     INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
@@ -100,7 +114,7 @@ if $USE_DOCKER; then
     INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
 
     parallel-ssh -i "${PSSH_COMMON[@]}" \
-        "sudo docker exec mscclpp-test bash -c \"${INNER}\""
+        "sudo docker exec ${CONTAINER_NAME} bash -c \"${INNER}\""
 else
     parallel-ssh -i "${PSSH_COMMON[@]}" \
         "set -euxo pipefail; CMD_B64='${CMD_B64}'; printf '%s' \"\$CMD_B64\" | base64 -d | bash -euxo pipefail"

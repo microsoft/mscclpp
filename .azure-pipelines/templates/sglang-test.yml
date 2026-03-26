@@ -3,8 +3,6 @@ parameters:
   type: string
 - name: vmssName
   type: string
-- name: sshKeySecureFile
-  type: string
 - name: perfBaselineFile
   type: string
   default: 'test/deploy/perf_ndmv4.jsonl'
@@ -33,36 +31,52 @@ steps:
     gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'single-node-test'
 
-- task: Bash@3
-  name: SGLangSetup
-  displayName: SGLang Setup
-  inputs:
-    targetType: inline
-    script: |
-      hostname
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      : > azureuser@10.0.0.4
-      tail -f azureuser@10.0.0.4 &
-      CHILD_PID=$!
-      parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-sglang-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
-        sudo docker exec -t mscclpp-sglang-test bash -c " \
-          python3 -m venv /root/venv && \
-          git clone https://github.com/microsoft/mscclpp.git && \
-          cd mscclpp && \
-          mkdir build && \
-          cd build && \
-          cmake -DCMAKE_BUILD_TYPE=Release .. && \
-          make -j && \
-          cd .. && \
-          /root/venv/bin/pip install . && \
-          /root/venv/bin/pip install -r ./python/requirements_cuda12.txt \
-        "'
-      kill $CHILD_PID
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+- template: run-remote-task.yml
+  parameters:
+    name: SGLangTest
+    displayName: Run mscclpp SGLang test
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      git clone https://github.com/microsoft/mscclpp.git
+      cd mscclpp
+      mkdir build
+      cd build
+      cmake -DCMAKE_BUILD_TYPE=Release ..
+      make -j
+      cd ..
+      pip install .
+      pip install -r ./python/requirements_cuda12.txt
+
+# - task: Bash@3
+#   name: SGLangSetup
+#   displayName: SGLang Setup
+#   inputs:
+#     targetType: inline
+#     script: |
+#       hostname
+#       set -e
+#       HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+#       SSH_OPTION="StrictHostKeyChecking=no"
+#       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+#       : > azureuser@10.0.0.4
+#       tail -f azureuser@10.0.0.4 &
+#       CHILD_PID=$!
+#       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+#         -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-sglang-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
+#         sudo docker exec -t mscclpp-sglang-test bash -c " \
+#           python3 -m venv /root/venv && \
+#           git clone https://github.com/microsoft/mscclpp.git && \
+#           cd mscclpp && \
+#           mkdir build && \
+#           cd build && \
+#           cmake -DCMAKE_BUILD_TYPE=Release .. && \
+#           make -j && \
+#           cd .. && \
+#           /root/venv/bin/pip install . && \
+#           /root/venv/bin/pip install -r ./python/requirements_cuda12.txt \
+#         "'
+#       kill $CHILD_PID
+#     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - task: Bash@3
   name: AllGatherTest
