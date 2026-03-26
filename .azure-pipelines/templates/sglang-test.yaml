@@ -85,7 +85,7 @@ steps:
           make -j && \
           cd .. && \
           pip install . && \
-          pip install -r ./python/requirements_cuda13.txt \
+          pip install -r ./python/requirements_cuda12.txt \
         "'
       kill $CHILD_PID
     workingDirectory: '$(System.DefaultWorkingDirectory)'
