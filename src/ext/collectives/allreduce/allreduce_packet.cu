@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/algorithm.hpp>
+#include <type_traits>
 
 #include "allreduce/allreduce_packet.hpp"
 #include "allreduce/common.hpp"
@@ -11,7 +12,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreducePacket(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
                     size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode, int worldSize,
@@ -92,12 +93,21 @@ __global__ void __launch_bounds__(1024, 1)
   // step 2: get data from scratch buffer, reduce data and write result to remote scratch buffer
   for (int idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nPktsPerRank; idx += blockDim.x * gridDim.x) {
     uint2 data = src[idx];
-    for (int index = 0; index < nPeers; index++) {
-      const int remoteRank = index < rank ? index : index + 1;
-      mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
-      uint2 val = dstPkt[idx].read(flag);
-      data.x = cal_vector<T, OpType>(val.x, data.x);
-      data.y = cal_vector<T, OpType>(val.y, data.y);
+    {
+      // When T == AccumT, stay with raw uint32_t to avoid type mismatch in identity path.
+      using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
+                                        mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
+      AccRaw acc_x = mscclpp::upcast_vector<T, AccumT, AccRaw>(data.x);
+      AccRaw acc_y = mscclpp::upcast_vector<T, AccumT, AccRaw>(data.y);
+      for (int index = 0; index < nPeers; index++) {
+        const int remoteRank = index < rank ? index : index + 1;
+        mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
+        uint2 val = dstPkt[idx].read(flag);
+        acc_x = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_x, val.x);
+        acc_y = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_y, val.y);
+      }
+      data.x = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_x);
+      data.y = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_y);
     }
 
     dst[idx].x = data.x;
@@ -142,7 +152,7 @@ __global__ void __launch_bounds__(1024, 1)
 #endif
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
@@ -155,12 +165,12 @@ struct PacketAdapter {
     nBlocks = nBlocks / (worldSize - 1) * (worldSize - 1);
 #if defined(ENABLE_NPKIT)
     size_t sharedMemSize = sizeof(NpKitEvent) * NPKIT_SHM_NUM_EVENTS;
-    allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, sharedMemSize, stream>>>(
+    allreducePacket<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, sharedMemSize, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, flags, flagBufferSize, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
         NpKit::GetCpuTimestamp());
 #else
-    allreducePacket<OpType><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreducePacket<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, flags, flagBufferSize, numScratchBuff);
 #endif
@@ -186,18 +196,22 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
     }
   }
 
-#if defined(__FP8_TYPES_EXIST__)
   // FP8-specific tuning for 32KB-256KB range
-  if (dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2) {
-    if (inputSize < (64 << 10)) {
-      nThreadsPerBlock = 64;
-    } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
-      nThreadsPerBlock = 128;
-    } else if (inputSize >= (128 << 10) && inputSize <= (256 << 10)) {
-      nThreadsPerBlock = 256;
+  {
+    bool isFp8 = dtype == DataType::FLOAT8_E4B15;
+#if defined(__FP8_TYPES_EXIST__)
+    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2;
+#endif
+    if (isFp8) {
+      if (inputSize < (64 << 10)) {
+        nThreadsPerBlock = 64;
+      } else if (inputSize >= (64 << 10) && inputSize <= (128 << 10)) {
+        nThreadsPerBlock = 128;
+      } else if (inputSize >= (128 << 10) && inputSize <= (256 << 10)) {
+        nThreadsPerBlock = 256;
+      }
     }
   }
-#endif
 #endif
   return {nBlocks, nThreadsPerBlock};
 }
@@ -213,7 +227,8 @@ void AllreducePacket::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                 size_t inputSize, [[maybe_unused]] DataType dtype, ReduceOp op,
                                                 cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                const std::unordered_map<std::string, uintptr_t>&) {
+                                                const std::unordered_map<std::string, uintptr_t>&,
+                                                DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
@@ -225,7 +240,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   size_t channelInOffset = (char*)input - (char*)sendBasePtr;
 
-  AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
@@ -280,9 +295,9 @@ std::shared_ptr<Algorithm> AllreducePacket::build() {
       "default_allreduce_packet", "allreduce", [self](std::shared_ptr<Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype) {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

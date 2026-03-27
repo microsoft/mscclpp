@@ -19,7 +19,8 @@ static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, Da
     return false;
   }
 
-  const bool isFp8 = dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2;
+  const bool isFp8 =
+      dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E4B15;
 
   if (!isFp8) {
     return nvlsSupported;

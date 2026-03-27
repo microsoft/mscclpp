@@ -220,7 +220,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
@@ -277,9 +277,10 @@ void AllreduceRsAgPipeline::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceRsAgPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                                       size_t inputSize, DataType dtype, ReduceOp op,
                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                      const std::unordered_map<std::string, uintptr_t>&) {
+                                                      const std::unordered_map<std::string, uintptr_t>& extras,
+                                                      DataType accumDtype) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
-  AllreduceFunc allreduce = dispatch<AllreduceRsAgPipelineAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<AllreduceRsAgPipelineAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
          ", dtype=", static_cast<int>(dtype));
@@ -320,9 +321,10 @@ std::shared_ptr<Algorithm> AllreduceRsAgPipeline::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
