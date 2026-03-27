@@ -194,15 +194,23 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
 
 
 @parametrize_mpi_groups(8)
+@pytest.mark.parametrize(
+    "algo_name",
+    [
+        "default_allreduce_packet",
+        "default_allreduce_nvls_packet",
+        "default_allreduce_fullmesh",
+        "default_allreduce_rsag_zero_copy",
+    ],
+)
 @pytest.mark.parametrize("size", [1024, 4096, 16384, 65536, 262144, 1048576])
-def test_fp8_e4m3_accum(mpi_group: MpiGroup, size: int):
-    """Verify that FP8 E4M3 allreduce with float16 accumulation is at least as
-    accurate as native FP8 accumulation."""
+def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
+    """Verify that FP8 E4M3 allreduce with higher-precision accumulation is at
+    least as accurate as native FP8 accumulation, across all algorithm variants."""
     rank = mpi_group.comm.rank
     world_size = mpi_group.comm.size
 
     comm_group, algo_map, scratch = setup_algorithms(mpi_group)
-    algo_name = "default_allreduce_packet"
     if algo_name not in algo_map:
         pytest.skip(f"{algo_name} not available")
     algo = algo_map[algo_name]
@@ -212,7 +220,19 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, size: int):
     accum_configs = [
         ("fp8_native", DataType.float8_e4m3),
         ("float16", DataType.float16),
+        ("float32", DataType.float32),
     ]
+
+    # rsag_zero_copy and fullmesh need explicit block/thread counts
+    if "rsag" in algo_name:
+        nb = max(1, min(32, size // (world_size * 32)))
+        nt = 1024
+    elif "fullmesh" in algo_name:
+        nb = 35
+        nt = 512
+    else:
+        nb = 0
+        nt = 0
 
     errors = {}
     for accum_label, accum_dtype in accum_configs:
@@ -227,7 +247,15 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, size: int):
         cp.cuda.Device().synchronize()
 
         # Run allreduce
-        result = run_allreduce(algo, comm_group, buf, dtype=DataType.float8_e4m3, accum_dtype=accum_dtype)
+        result = run_allreduce(
+            algo,
+            comm_group,
+            buf,
+            dtype=DataType.float8_e4m3,
+            accum_dtype=accum_dtype,
+            nblocks=nb,
+            nthreads_per_block=nt,
+        )
         result_f32 = e4m3fn_to_float(result)
 
         # Compute float32 reference: sum all ranks' quantized FP8 inputs in float32
@@ -247,10 +275,13 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, size: int):
         # Reset between runs
         algo.reset()
 
-    # float16 accumulation should be at least as accurate as native fp8
+    # Higher-precision accumulation should be at least as accurate as native fp8
     assert (
         errors["float16"] <= errors["fp8_native"] + 1e-6
     ), f"float16 accum ({errors['float16']:.6f}) worse than native ({errors['fp8_native']:.6f})"
+    assert (
+        errors["float32"] <= errors["fp8_native"] + 1e-6
+    ), f"float32 accum ({errors['float32']:.6f}) worse than native ({errors['fp8_native']:.6f})"
 
 
 # ---------------------------------------------------------------------------
