@@ -64,7 +64,7 @@ steps:
     displayName: Run SGLang test
     runRemoteArgs: '--container mscclpp-sglang-test'
     remoteScript: |
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch <bs> --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
 # - template: stop.yml
 #   parameters:
