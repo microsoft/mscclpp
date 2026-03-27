@@ -55,6 +55,8 @@ steps:
   inputs:
     targetType: 'inline'
     script: |
+      sudo apt-get update -y
+      sudo apt-get install cmake -y
       set -e
       rm -rf build
       mkdir -p build && cd build
