@@ -236,9 +236,9 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     errors = {}
     for accum_label, accum_dtype in accum_configs:
-        # Generate deterministic per-rank data
-        cp.random.seed(42 + rank)
-        src_f32 = cp.random.randn(size).astype(cp.float32)
+        # Generate deterministic per-rank data (use numpy to avoid hipRAND issues on ROCm)
+        rng = np.random.RandomState(42 + rank)
+        src_f32 = cp.asarray(rng.randn(size).astype(np.float32))
         src_f32 = cp.clip(src_f32, -240.0, 240.0)
         src_fp8 = float_to_e4m3fn(src_f32)
 
@@ -261,8 +261,8 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         # Compute float32 reference: sum all ranks' quantized FP8 inputs in float32
         ref_f32 = cp.zeros(size, dtype=cp.float32)
         for r in range(world_size):
-            cp.random.seed(42 + r)
-            rank_data = cp.random.randn(size).astype(cp.float32)
+            rng_r = np.random.RandomState(42 + r)
+            rank_data = cp.asarray(rng_r.randn(size).astype(np.float32))
             rank_data = cp.clip(rank_data, -240.0, 240.0)
             rank_data_fp8 = float_to_e4m3fn(rank_data)
             ref_f32 += e4m3fn_to_float(rank_data_fp8)
@@ -330,9 +330,9 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     errors = {}
     for accum_label, accum_dtype in accum_configs:
         # Generate deterministic per-rank random uint8 values in valid e4m3b15 range
-        cp.random.seed(42 + rank)
-        raw = cp.random.randint(0, 0x78, (size,), dtype=cp.uint8)
-        signs = cp.random.randint(0, 2, (size,), dtype=cp.uint8).astype(cp.uint8) << 7
+        rng = np.random.RandomState(42 + rank)
+        raw = cp.asarray(rng.randint(0, 0x78, (size,)).astype(np.uint8))
+        signs = cp.asarray(rng.randint(0, 2, (size,)).astype(np.uint8)) << 7
         src_uint8 = raw | signs
         # Fix negative zero -> positive zero
         src_uint8 = cp.where(src_uint8 == 0x80, cp.uint8(0), src_uint8)
@@ -358,9 +358,9 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         # Compute float32 reference
         ref_f32 = cp.zeros(size, dtype=cp.float32)
         for r in range(world_size):
-            cp.random.seed(42 + r)
-            raw_r = cp.random.randint(0, 0x78, (size,), dtype=cp.uint8)
-            signs_r = cp.random.randint(0, 2, (size,), dtype=cp.uint8).astype(cp.uint8) << 7
+            rng_r = np.random.RandomState(42 + r)
+            raw_r = cp.asarray(rng_r.randint(0, 0x78, (size,)).astype(np.uint8))
+            signs_r = cp.asarray(rng_r.randint(0, 2, (size,)).astype(np.uint8)) << 7
             bits_r = raw_r | signs_r
             bits_r = cp.where(bits_r == 0x80, cp.uint8(0), bits_r)
             ref_f32 += e4m3b15_to_float(bits_r)
