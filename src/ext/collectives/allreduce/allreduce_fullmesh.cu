@@ -161,8 +161,6 @@ struct AllreduceAllconnectAdapter {
                           int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
-    if (nBlocks == 0) nBlocks = 35;
-    if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
     allreduceFullmesh<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
         channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
