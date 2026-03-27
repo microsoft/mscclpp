@@ -33,8 +33,8 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: SGLangTest
-    displayName: Run mscclpp SGLang test
+    name: InstallMscclpp
+    displayName: Install mscclpp
     runRemoteArgs: '--container mscclpp-sglang-test'
     remoteScript: |
       git clone https://github.com/microsoft/mscclpp.git
@@ -46,6 +46,25 @@ steps:
       cd ..
       pip install .
       pip install -r ./python/requirements_cuda12.txt
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallSGLang
+    displayName: Install SGLang
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
+      cd sglang
+      pip install --upgrade pip
+      pip install -e "python"
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangTest
+    displayName: Run SGLang test
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch <bs> --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
 # - task: Bash@3
 #   name: SGLangSetup
@@ -78,26 +97,26 @@ steps:
 #       kill $CHILD_PID
 #     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-- task: Bash@3
-  name: AllGatherTest
-  displayName: Run mscclpp AllGather test
-  inputs:
-    targetType: inline
-    script: |
-      set -e
-      HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-      SSH_OPTION="StrictHostKeyChecking=no"
-      KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-      : > azureuser@10.0.0.4
-      tail -f azureuser@10.0.0.4 &
-      CHILD_PID=$!
-      parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-        -O $SSH_OPTION 'sudo docker exec -t mscclpp-sglang-test bash -c " \
-        export PATH=/usr/local/mpi/bin:\$PATH;                     \
-        export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
-        echo Running on \$(hostname -i);                            \
-      kill $CHILD_PID
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
+# - task: Bash@3
+  # name: AllGatherTest
+  # displayName: Run mscclpp AllGather test
+  # inputs:
+  #   targetType: inline
+  #   script: |
+  #     set -e
+  #     HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
+  #     SSH_OPTION="StrictHostKeyChecking=no"
+  #     KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
+  #     : > azureuser@10.0.0.4
+  #     tail -f azureuser@10.0.0.4 &
+  #     CHILD_PID=$!
+  #     parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
+  #       -O $SSH_OPTION 'sudo docker exec -t mscclpp-sglang-test bash -c " \
+  #       export PATH=/usr/local/mpi/bin:\$PATH;                     \
+  #       export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
+  #       echo Running on \$(hostname -i);                            \
+  #     kill $CHILD_PID
+  #   workingDirectory: '$(System.DefaultWorkingDirectory)'
 
 - template: stop.yml
   parameters:
