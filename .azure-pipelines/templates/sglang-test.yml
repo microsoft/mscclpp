@@ -66,59 +66,7 @@ steps:
     remoteScript: |
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch <bs> --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-# - task: Bash@3
-#   name: SGLangSetup
-#   displayName: SGLang Setup
-#   inputs:
-#     targetType: inline
-#     script: |
-#       hostname
-#       set -e
-#       HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-#       SSH_OPTION="StrictHostKeyChecking=no"
-#       KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-#       : > azureuser@10.0.0.4
-#       tail -f azureuser@10.0.0.4 &
-#       CHILD_PID=$!
-#       parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-#         -O $SSH_OPTION 'sudo docker run -itd --name=mscclpp-sglang-test --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash && \
-#         sudo docker exec -t mscclpp-sglang-test bash -c " \
-#           python3 -m venv /root/venv && \
-#           git clone https://github.com/microsoft/mscclpp.git && \
-#           cd mscclpp && \
-#           mkdir build && \
-#           cd build && \
-#           cmake -DCMAKE_BUILD_TYPE=Release .. && \
-#           make -j && \
-#           cd .. && \
-#           /root/venv/bin/pip install . && \
-#           /root/venv/bin/pip install -r ./python/requirements_cuda12.txt \
-#         "'
-#       kill $CHILD_PID
-#     workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-# - task: Bash@3
-  # name: AllGatherTest
-  # displayName: Run mscclpp AllGather test
-  # inputs:
-  #   targetType: inline
-  #   script: |
-  #     set -e
-  #     HOSTFILE=$(System.DefaultWorkingDirectory)/test/deploy/hostfile_ci
-  #     SSH_OPTION="StrictHostKeyChecking=no"
-  #     KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
-  #     : > azureuser@10.0.0.4
-  #     tail -f azureuser@10.0.0.4 &
-  #     CHILD_PID=$!
-  #     parallel-ssh -o . -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" \
-  #       -O $SSH_OPTION 'sudo docker exec -t mscclpp-sglang-test bash -c " \
-  #       export PATH=/usr/local/mpi/bin:\$PATH;                     \
-  #       export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH;  \
-  #       echo Running on \$(hostname -i);                            \
-  #     kill $CHILD_PID
-  #   workingDirectory: '$(System.DefaultWorkingDirectory)'
-
-- template: stop.yml
-  parameters:
-    subscription: ${{ parameters.subscription }}
-    vmssName:     ${{ parameters.vmssName }}
+# - template: stop.yml
+#   parameters:
+#     subscription: ${{ parameters.subscription }}
+#     vmssName:     ${{ parameters.vmssName }}
