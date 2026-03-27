@@ -161,8 +161,6 @@ struct AllreduceAllconnectAdapter {
                           int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
-    if (nBlocks == 0) nBlocks = 35;
-    if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
     allreduceFullmesh<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
         channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
@@ -185,7 +183,7 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                                   size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                                                   int nBlocks, int nThreadsPerBlock,
-                                                  const std::unordered_map<std::string, uintptr_t>& extras,
+                                                  const std::unordered_map<std::string, uintptr_t>&,
                                                   DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
@@ -214,6 +212,13 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > 64) {
+    WARN("AllreduceFullmesh: number of blocks exceeds maximum supported blocks, which is 64");
+    return mscclpp::CommResult::CommInvalidArgument;
+  }
+  if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
+    numBlocksAndThreads = {35, 512};
+  }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
                 nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,

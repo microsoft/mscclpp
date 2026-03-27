@@ -61,6 +61,8 @@ class CustomizedComm:
         self.accum_dtype = accum_dtype
         dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
+        self._nvls_supported = mscclpp.is_nvls_supported()
+        self._barrier_tensor = torch.empty(comm.nranks, dtype=torch.float, device=torch.device("cuda"))
         algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
         self._algorithm_nvls_packet = [
             algo
@@ -75,7 +77,12 @@ class CustomizedComm:
         self._algorithm_packet = [
             algo for algo in algorithms if algo.collective == "allreduce" and algo.name == "default_allreduce_packet"
         ][0]
-        if mscclpp.is_nvls_supported():
+        self._algorithm_fullmesh = [
+            algo
+            for algo in algorithms
+            if algo.collective == "allreduce" and algo.name == "default_allreduce_fullmesh"
+        ][0]
+        if self._nvls_supported:
             self._algorithm_nvls_zero_copy = [
                 algo
                 for algo in algorithms
@@ -85,8 +92,11 @@ class CustomizedComm:
 
     def _tune(self, n_warmup, n_graph_launches, n_ops_per_graph):
         sizes = [1 << i for i in range(10, 28)]
-        # Pre-fill with defaults for barrier
-        self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
+        # Pre-fill with a platform-aware default for barrier
+        if self._nvls_supported:
+            self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
+        else:
+            self.best_configs = {1024: (self._algorithm_fullmesh, 32, 512)}
 
         tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(self.dtype))
         tune_tensor = torch.utils.dlpack.from_dlpack(tune_tensor)
@@ -100,13 +110,17 @@ class CustomizedComm:
 
         for size in sizes:
             algos = []
-            if mscclpp.is_nvls_supported():
+            if self._nvls_supported:
                 algos.append(self._algorithm_nvls_zero_copy)
             if size <= 4 * 1024 * 1024:
-                algos.append(self._algorithm_nvls_packet)
+                if self._nvls_supported:
+                    algos.append(self._algorithm_nvls_packet)
                 algos.append(self._algorithm_packet)
             if size >= 512 * 1024:
                 algos.append(self._algorithm_rsag_zero_copy)
+            # On ROCm/HIP, fullmesh is the primary large-message algorithm
+            if torch.version.hip is not None:
+                algos.append(self._algorithm_fullmesh)
 
             best_time = float("inf")
             best_config = None
@@ -117,8 +131,12 @@ class CustomizedComm:
                         continue
                     if algo.name == "default_allreduce_packet" and nb > 56:
                         continue
+                    if algo.name == "default_allreduce_fullmesh" and nb > 64:
+                        continue
                     for nt in candidates_nthreads:
-                        if self._run_algo(algo, tune_tensor, size, nb, nt) != 0:
+                        ret = self._run_algo(algo, tune_tensor, size, nb, nt)
+                        torch.cuda.synchronize()
+                        if ret != 0:
                             continue
 
                         for _ in range(n_warmup):
@@ -200,10 +218,14 @@ class CustomizedComm:
             target_size = 1 << (size - 1).bit_length()
         return self.best_configs.get(target_size)
 
-    def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None):
+    def all_reduce(self, tensor: torch.Tensor, op=torch.distributed.ReduceOp.SUM, stream: torch.cuda.Stream = None, symmetric_memory: bool = True):
         assert op == torch.distributed.ReduceOp.SUM
         config = self.get_tuned_config(tensor.nbytes)
-        algo, nblocks, nthreads = config if config else (self._algorithm_nvls_packet, 0, 0)
+        if self._nvls_supported:
+            default_config = (self._algorithm_nvls_packet, 0, 0)
+        else:
+            default_config = (self._algorithm_fullmesh, 32, 512)
+        algo, nblocks, nthreads = config if config else default_config
         ret = algo.execute(
             comm=self.comm.communicator,
             input_buffer=tensor.data_ptr(),
@@ -215,15 +237,14 @@ class CustomizedComm:
             stream=stream.cuda_stream if stream is not None else torch.cuda.current_stream().cuda_stream,
             nblocks=nblocks,
             nthreads_per_block=nthreads,
-            symmetric_memory=True,
+            symmetric_memory=symmetric_memory,
             accum_dtype=self.accum_dtype,
         )
         if ret != 0:
             print(f"Rank {self.rank}: Algo {algo.name} failed with error {ret}")
 
     def barrier(self):
-        tensor = torch.empty(self.world_size, dtype=torch.float, device=torch.device("cuda"))
-        self.all_reduce(tensor, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
+        self.all_reduce(self._barrier_tensor, op=torch.distributed.ReduceOp.SUM, stream=torch.cuda.current_stream())
 
     def benchmark(self, n_warmup=10, n_graph_launches=10, n_iter_per_graph=100):
         low = 5 * 1024
@@ -288,8 +309,13 @@ class CustomizedComm:
                 print(f"{size:<20} {time_us:<20.2f} {alg_bw / 1e9:<20.2f}")
 
     def destroy(self):
-        self._algorithm_nvls_nonzero_copy = None
         self._algorithm_nvls_packet = None
+        self._algorithm_fullmesh = None
+        self._algorithm_packet = None
+        self._algorithm_rsag_zero_copy = None
+        if self._nvls_supported:
+            self._algorithm_nvls_zero_copy = None
+        self._barrier_tensor = None
         self.scratch_buffer = None
         self.comm = None
 
