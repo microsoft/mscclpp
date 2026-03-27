@@ -670,6 +670,51 @@ MSCCLPP_DEVICE_INLINE u8x4 min(const u8x4& a, const u8x4& b) {
 #endif
 }
 
+/// Convert a vector type From to vector type To.
+/// Primary template with auto-decomposition: vectors with N > 4 elements decompose into x4 chunks,
+/// vectors with N == 4 decompose into x2 chunks, enabling optimized x2/x4 specializations to be reached.
+/// Specialized below for optimized FP8 conversion paths at x2/x4 level.
+template <typename To, typename From>
+MSCCLPP_DEVICE_INLINE To to(const From& v) {
+  static_assert(To::Size == From::Size, "to<To, From>: vector sizes must match");
+  constexpr int N = From::Size;
+
+  // Auto-decompose: N > 4 → split into x4 chunks
+  if constexpr (N > 4 && N % 4 == 0) {
+    constexpr int nChunks = N / 4;
+    using FromChunk = VectorType<typename From::ElementType, 4>;
+    using ToChunk = VectorType<typename To::ElementType, 4>;
+    const FromChunk* in = reinterpret_cast<const FromChunk*>(&v);
+    To result;
+    ToChunk* out = reinterpret_cast<ToChunk*>(&result);
+#pragma unroll
+    for (int c = 0; c < nChunks; ++c) {
+      out[c] = to<ToChunk>(in[c]);
+    }
+    return result;
+  }
+  // Auto-decompose: N == 4 → split into 2x x2 chunks
+  else if constexpr (N == 4) {
+    using FromChunk = VectorType<typename From::ElementType, 2>;
+    using ToChunk = VectorType<typename To::ElementType, 2>;
+    const FromChunk* in = reinterpret_cast<const FromChunk*>(&v);
+    To result;
+    ToChunk* out = reinterpret_cast<ToChunk*>(&result);
+    out[0] = to<ToChunk>(in[0]);
+    out[1] = to<ToChunk>(in[1]);
+    return result;
+  }
+  // Base case: element-wise conversion
+  else {
+    To result;
+#pragma unroll
+    for (int i = 0; i < N; ++i) {
+      result.data[i] = static_cast<typename To::ElementType>(v.data[i]);
+    }
+    return result;
+  }
+}
+
 #if defined(__FP8_TYPES_EXIST__)
 template <>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3 min(const __fp8_e4m3& a, const __fp8_e4m3& b) {
@@ -730,20 +775,6 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 min(const f8_e5m2x4& a, const f8_e5m2x4& b) {
   result_ptr[0] = mscclpp::min(a_ptr[0], b_ptr[0]);
   result_ptr[1] = mscclpp::min(a_ptr[1], b_ptr[1]);
 
-  return result;
-}
-
-/// Convert a vector type From to vector type To.
-/// Primary template: element-wise conversion via static_cast.
-/// Specialized below for optimized FP8 conversion paths.
-template <typename To, typename From>
-MSCCLPP_DEVICE_INLINE To to(const From& v) {
-  static_assert(To::Size == From::Size, "to<To, From>: vector sizes must match");
-  To result;
-#pragma unroll
-  for (int i = 0; i < From::Size; ++i) {
-    result.data[i] = static_cast<typename To::ElementType>(v.data[i]);
-  }
   return result;
 }
 
@@ -964,16 +995,72 @@ MSCCLPP_DEVICE_INLINE f8_e5m2x4 to<f8_e5m2x4, f32x4>(const f32x4& v) {
   return result;
 #endif
 }
+
+// --- f8_e4m3 <-> f16 conversion specializations ---
+
+/// f8_e4m3x2 -> f16x2.
+/// NVIDIA SM90+: packed intrinsic (1 instruction).
+/// HIP gfx942: fp8 -> float -> half (via AMD builtin).
+/// Pre-SM90 / fallback: element-wise scalar conversion.
+template <>
+MSCCLPP_DEVICE_INLINE f16x2 to<f16x2, f8_e4m3x2>(const f8_e4m3x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  auto f = __builtin_amdgcn_cvt_pk_f32_fp8(v.storage.__x, 0);
+  f16x2 result;
+  result.data[0] = __float2half(f[0]);
+  result.data[1] = __float2half(f[1]);
+  return result;
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2 = __nv_cvt_fp8x2_to_halfraw2(bit_cast<__nv_fp8x2_storage_t>(v.storage), __NV_E4M3);
+  return bit_cast<f16x2>(h2);
+#else
+  f16x2 result;
+  result.data[0] = static_cast<__half>(v.data[0]);
+  result.data[1] = static_cast<__half>(v.data[1]);
+  return result;
+#endif
+}
+
+/// f16x2 -> f8_e4m3x2.
+/// NVIDIA SM90+: packed intrinsic (1 instruction).
+/// HIP gfx942: half -> float -> fp8 (via AMD builtin).
+/// Pre-SM90: element-wise scalar conversion.
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f16x2>(const f16x2& v) {
+#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  float f0 = __half2float(v.data[0]);
+  float f1 = __half2float(v.data[1]);
+  uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(f0, f1, 0, false);
+  return bit_cast<f8_e4m3x2>(static_cast<__hip_fp8x2_storage_t>(packed));
+#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
+  __half2_raw h2 = bit_cast<__half2_raw>(v);
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E4M3);
+  return bit_cast<f8_e4m3x2>(fp8x2);
+#elif defined(MSCCLPP_DEVICE_CUDA)
+  __half_raw h0, h1;
+  h0.x = bit_cast<unsigned short>(v.data[0]);
+  h1.x = bit_cast<unsigned short>(v.data[1]);
+  f8_e4m3x2 result;
+  result.data[0] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h0, __NV_SATFINITE, __NV_E4M3));
+  result.data[1] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h1, __NV_SATFINITE, __NV_E4M3));
+  return result;
+#else
+  f8_e4m3x2 result;
+  result.data[0] = static_cast<__fp8_e4m3>(v.data[0]);
+  result.data[1] = static_cast<__fp8_e4m3>(v.data[1]);
+  return result;
+#endif
+}
+
 #endif  // defined(__FP8_TYPES_EXIST__)
 
 // --- fp8_e4m3b15 <-> fp16 direct conversion specializations ---
-// These avoid the fp32 detour: fp8_b15 <-> fp16 is just a 1-bit exponent shift
+// These are the PRIMARY conversions: fp8_b15 <-> fp16 is just a 1-bit exponent shift
 // (E4 bias=15 <-> E5 bias=15), no precision loss since fp16 has 10 mantissa bits
-// vs fp8's 3. Enables fp16 accumulation for allreduce.
+// vs fp8's 3. fp32 conversions are derived by routing through fp16.
 
 /// f8_e4m3b15x2 -> f16x2.
-/// Direct fp8 -> fp16 via branch-free bit manipulation (same as the to<f32x2> path
-/// but stops at fp16 instead of converting further to fp32).
+/// Direct fp8 -> fp16 via branch-free bit manipulation.
 template <>
 MSCCLPP_DEVICE_INLINE f16x2 to<f16x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -1120,51 +1207,136 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
 #endif
 }
 
-/// f8_e4m3b15x8 -> f16x8: decompose into 2x f8_e4m3b15x4 -> f16x4.
+// --- fp8_e4m3b15 <-> f32 conversion specializations ---
+// Derived from fp16 conversions: fp8→f32 = fp8→fp16→f32, f32→fp8 = f32→fp16→fp8.
+
+/// f8_e4m3b15x2 -> f32x2.
+/// Routes through fp16: fp8→fp16 (bit manip) then fp16→f32.
 template <>
-MSCCLPP_DEVICE_INLINE f16x8 to<f16x8, f8_e4m3b15x8>(const f8_e4m3b15x8& v) {
-  const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f16x8 result;
-  f16x4* out = reinterpret_cast<f16x4*>(&result);
-  out[0] = to<f16x4>(pair[0]);
-  out[1] = to<f16x4>(pair[1]);
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  f16x2 h = to<f16x2, f8_e4m3b15x2>(v);
+  float2 f2 = __half22float2(h);
+  return bit_cast<f32x2>(f2);
+#else
+  f32x2 result;
+  result.data[0] = float(v.data[0]);
+  result.data[1] = float(v.data[1]);
+  return result;
+#endif
+}
+
+/// f8_e4m3b15x4 -> f32x4.
+/// Routes through fp16: fp8→fp16 (bit manip) then fp16→f32.
+template <>
+MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  f16x4 h = to<f16x4, f8_e4m3b15x4>(v);
+  __half2 h0, h1;
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h0)) : "r"(h.words[0]));
+  asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h1)) : "r"(h.words[1]));
+  float2 f0 = __half22float2(h0);
+  float2 f1 = __half22float2(h1);
+  f32x4 result;
+  result.data[0] = f0.x;
+  result.data[1] = f0.y;
+  result.data[2] = f1.x;
+  result.data[3] = f1.y;
+  return result;
+#else
+  f32x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = float(v.data[i]);
+  }
+  return result;
+#endif
+}
+
+/// f32x2 -> f8_e4m3b15x2.
+/// Routes through fp16: f32→fp16 then fp16→fp8 (clamp + exponent shift + pack).
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  float2 f2 = {v.data[0], v.data[1]};
+  __half2 h = __float22half2_rn(f2);
+  return to<f8_e4m3b15x2, f16x2>(h);
+#else
+  f8_e4m3b15x2 result;
+  result.data[0] = __fp8_e4m3b15(v.data[0]);
+  result.data[1] = __fp8_e4m3b15(v.data[1]);
+  return result;
+#endif
+}
+
+/// f32x4 -> f8_e4m3b15x4.
+/// Routes through fp16: f32→fp16 then fp16→fp8 (clamp + exponent shift + pack).
+template <>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  float2 f01 = {v.data[0], v.data[1]};
+  float2 f23 = {v.data[2], v.data[3]};
+  __half2 h01 = __float22half2_rn(f01);
+  __half2 h23 = __float22half2_rn(f23);
+  f16x4 h;
+  asm("mov.b32 %0, %1;" : "=r"(h.words[0]) : "r"(*reinterpret_cast<uint32_t*>(&h01)));
+  asm("mov.b32 %0, %1;" : "=r"(h.words[1]) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
+  return to<f8_e4m3b15x4, f16x4>(h);
+#else
+  f8_e4m3b15x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __fp8_e4m3b15(v.data[i]);
+  }
+  return result;
+#endif
+}
+
+// --- fp8_e4m3b15 arithmetic (software, always available) ---
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE __fp8_e4m3b15 operator+(const __fp8_e4m3b15& a, const __fp8_e4m3b15& b) {
+  return __fp8_e4m3b15(float(a) + float(b));
+}
+
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 operator+(const f8_e4m3b15x2& a, const f8_e4m3b15x2& b) {
+  f8_e4m3b15x2 result;
+  result.data[0] = __fp8_e4m3b15(float(a.data[0]) + float(b.data[0]));
+  result.data[1] = __fp8_e4m3b15(float(a.data[1]) + float(b.data[1]));
   return result;
 }
 
-/// f16x8 -> f8_e4m3b15x8: decompose into 2x f16x4 -> f8_e4m3b15x4.
-template <>
-MSCCLPP_DEVICE_INLINE f8_e4m3b15x8 to<f8_e4m3b15x8, f16x8>(const f16x8& v) {
-  const f16x4* pair = reinterpret_cast<const f16x4*>(&v);
-  f8_e4m3b15x8 result;
-  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
-  out[0] = to<f8_e4m3b15x4>(pair[0]);
-  out[1] = to<f8_e4m3b15x4>(pair[1]);
+template <bool UseClip = true>
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 operator+(const f8_e4m3b15x4& a, const f8_e4m3b15x4& b) {
+  f8_e4m3b15x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = __fp8_e4m3b15(float(a.data[i]) + float(b.data[i]));
+  }
   return result;
 }
 
-/// f8_e4m3b15x16 -> f16x16: decompose into 4x f8_e4m3b15x4 -> f16x4.
+// --- fp8_e4m3b15 min (software) ---
+
 template <>
-MSCCLPP_DEVICE_INLINE f16x16 to<f16x16, f8_e4m3b15x16>(const f8_e4m3b15x16& v) {
-  const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f16x16 result;
-  f16x4* out = reinterpret_cast<f16x4*>(&result);
-  out[0] = to<f16x4>(quads[0]);
-  out[1] = to<f16x4>(quads[1]);
-  out[2] = to<f16x4>(quads[2]);
-  out[3] = to<f16x4>(quads[3]);
+MSCCLPP_DEVICE_INLINE __fp8_e4m3b15 min(const __fp8_e4m3b15& a, const __fp8_e4m3b15& b) {
+  return __fp8_e4m3b15(fminf(float(a), float(b)));
+}
+
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 min(const f8_e4m3b15x2& a, const f8_e4m3b15x2& b) {
+  f8_e4m3b15x2 result;
+  result.data[0] = mscclpp::min(a.data[0], b.data[0]);
+  result.data[1] = mscclpp::min(a.data[1], b.data[1]);
   return result;
 }
 
-/// f16x16 -> f8_e4m3b15x16: decompose into 4x f16x4 -> f8_e4m3b15x4.
-template <>
-MSCCLPP_DEVICE_INLINE f8_e4m3b15x16 to<f8_e4m3b15x16, f16x16>(const f16x16& v) {
-  const f16x4* quads = reinterpret_cast<const f16x4*>(&v);
-  f8_e4m3b15x16 result;
-  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
-  out[0] = to<f8_e4m3b15x4>(quads[0]);
-  out[1] = to<f8_e4m3b15x4>(quads[1]);
-  out[2] = to<f8_e4m3b15x4>(quads[2]);
-  out[3] = to<f8_e4m3b15x4>(quads[3]);
+MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 min(const f8_e4m3b15x4& a, const f8_e4m3b15x4& b) {
+  f8_e4m3b15x4 result;
+#pragma unroll
+  for (int i = 0; i < 4; ++i) {
+    result.data[i] = mscclpp::min(a.data[i], b.data[i]);
+  }
   return result;
 }
 
