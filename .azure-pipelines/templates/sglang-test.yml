@@ -10,47 +10,47 @@ parameters:
   type: string
 
 steps:
-# - template: deploy.yml
-#   parameters:
-#     subscription:     ${{ parameters.subscription }}
-#     vmssName:         ${{ parameters.vmssName }}
-#     gpuArch:          ${{ parameters.gpuArch }}
-#     deployArgs:       'single-node-test'
+- template: deploy.yml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    gpuArch:          ${{ parameters.gpuArch }}
+    deployArgs:       'single-node-test'
 
-# - template: run-remote-task.yml
-#   parameters:
-#     name: InstallMscclpp
-#     displayName: Install mscclpp
-#     runRemoteArgs: '--container mscclpp-sglang-test'
-#     remoteScript: |
-#       git clone https://github.com/microsoft/mscclpp.git
-#       cd mscclpp
-#       mkdir build
-#       cd build
-#       cmake -DCMAKE_BUILD_TYPE=Release ..
-#       make -j
-#       cd ..
-#       pip install .
-#       pip install -r ./python/requirements_cuda12.txt
+- template: run-remote-task.yml
+  parameters:
+    name: InstallMscclpp
+    displayName: Install mscclpp
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      git clone https://github.com/microsoft/mscclpp.git
+      cd mscclpp
+      mkdir build
+      cd build
+      cmake -DCMAKE_BUILD_TYPE=Release ..
+      make -j
+      cd ..
+      pip install .
+      pip install -r ./python/requirements_cuda12.txt
 
-# - template: run-remote-task.yml
-#   parameters:
-#     name: InstallSGLang
-#     displayName: Install SGLang
-#     runRemoteArgs: '--container mscclpp-sglang-test'
-#     remoteScript: |
-#       git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
-#       cd sglang
-#       pip install --upgrade pip
-#       pip install -e "python"
+- template: run-remote-task.yml
+  parameters:
+    name: InstallSGLang
+    displayName: Install SGLang
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
+      cd sglang
+      pip install --upgrade pip
+      pip install -e "python"
 
-# - template: run-remote-task.yml
-#   parameters:
-#     name: RunSGLangTest
-#     displayName: Run SGLang test
-#     runRemoteArgs: '--container mscclpp-sglang-test'
-#     remoteScript: |
-#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangTest
+    displayName: Run SGLang test
+    runRemoteArgs: '--container mscclpp-sglang-test'
+    remoteScript: |
+      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
 - template: stop.yml
   parameters:
