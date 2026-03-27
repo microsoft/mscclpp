@@ -105,13 +105,13 @@ if $USE_DOCKER; then
         parallel-ssh -i "${PSSH_COMMON[@]}" \
             "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null; \
              sudo docker run -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash"
+    else
+        INNER="set -euxo pipefail;"
+        INNER+=" cd /root/mscclpp;"
+        INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
+        INNER+=" CMD_B64='${CMD_B64}';"
+        INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
     fi
-
-    INNER="set -euxo pipefail;"
-    INNER+=" cd /root/mscclpp;"
-    INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
-    INNER+=" CMD_B64='${CMD_B64}';"
-    INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
 
     parallel-ssh -i "${PSSH_COMMON[@]}" \
         "sudo docker exec ${CONTAINER_NAME} bash -c \"${INNER}\""
