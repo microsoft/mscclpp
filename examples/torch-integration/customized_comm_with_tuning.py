@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# torchrun --nnodes=1 --nproc_per_node=8 customized_comm_with_tuning.py
+# torchrun --nnodes=1 --nproc_per_node=8 examples/torch-integration/customized_comm_with_tuning.py
 
 import os
 import ipaddress
@@ -152,6 +152,9 @@ class CustomizedComm:
             if self._nvls and a:
                 out.append(a)
             a = self._algo("allreduce", "default_allreduce_packet")
+            if a:
+                out.append(a)
+            a = self._algo("allreduce", "default_allreduce_allpair_packet")
             if a:
                 out.append(a)
         if size >= 512 << 10:

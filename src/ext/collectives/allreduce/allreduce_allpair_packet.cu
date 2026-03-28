@@ -76,6 +76,11 @@ struct AllpairAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
+    // Round nBlocks to multiple of nPeers so every block maps to a valid peer.
+    const int nPeers = worldSize - 1;
+    if (nPeers > 0) {
+      nBlocks = (nBlocks / nPeers) * nPeers;
+    }
     allreduceAllPairs<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
@@ -100,6 +105,11 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
+  }
+  // nBlocks must be at least nPeers for allpair — each block maps to one peer.
+  const int nPeers = algoCtx->nRanksPerNode - 1;
+  if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+    return CommResult::CommInvalidArgument;
   }
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
