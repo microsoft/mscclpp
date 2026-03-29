@@ -201,6 +201,7 @@ def run_allreduce(algo, comm_group, buffer, dtype, accum_dtype=None, nblocks=0, 
         "default_allreduce_nvls_packet",
         "default_allreduce_fullmesh",
         "default_allreduce_rsag_zero_copy",
+        "default_allreduce_allpair_packet",
     ],
 )
 @pytest.mark.parametrize("size", [1024, 4096, 16384, 65536, 262144, 1048576])
@@ -299,6 +300,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         "default_allreduce_nvls_packet",
         "default_allreduce_rsag_zero_copy",
         "default_allreduce_fullmesh",
+        "default_allreduce_allpair_packet",
     ],
 )
 @pytest.mark.parametrize("size", [1024, 4096, 65536])
