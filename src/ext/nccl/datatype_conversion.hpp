@@ -78,8 +78,9 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclFloat8e5m2;
 #endif
     case mscclpp::DataType::FLOAT8_E4B15:
-      // float8_e4m3b15 has no NCCL equivalent; fall back to uint8 for raw byte transfer.
-      return ncclUint8;
+      // float8_e4m3b15 has no NCCL equivalent; NCCL cannot reduce this type correctly.
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "FLOAT8_E4B15 (float8_e4m3b15) has no NCCL equivalent and cannot be used with NCCL collectives");
     default:
       THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
             "Unsupported mscclpp::DataType: " + std::to_string(static_cast<int>(dtype)));
