@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_ATOMIC_DEVICE_HPP_
 #define MSCCLPP_ATOMIC_DEVICE_HPP_
 
-#include <type_traits>
-
 #include "device.hpp"
 
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -40,12 +38,9 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
   return cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
 }
 
-/// Fire-and-forget atomic add using PTX `red` (reduce) — no return value, more efficient than `atom`.
-/// Supports uint32_t, int32_t, uint64_t, float, double with explicit PTX; other types fall back to fetch_add.
 #if defined(MSCCLPP_DEVICE_COMPILE)
 
-// PTX `red` only supports relaxed and release semantics — all other memory orders (acquire, acq_rel,
-// seq_cst) are mapped to release, which is the strongest ordering `red` provides.
+// Internal macro: emit PTX `red` (reduce) instruction for a given type and scope.
 #define MSCCLPP_RED_(TYPE, CSTR)                                                                          \
   do {                                                                                                    \
     if constexpr (Scope == cuda::thread_scope_block) {                                                    \
@@ -66,8 +61,15 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
     }                                                                                                     \
   } while (0)
 
+/// Fire-and-forget atomic add — no return value, more efficient than atomicFetchAdd.
+/// Uses PTX `red` (reduce) for relaxed/release orders on uint32_t, int32_t, uint64_t, float, double.
+/// Falls back to `atom` (fetch_add) for stronger memory orders (acquire, acq_rel, seq_cst) or other types.
 template <typename T, cuda::thread_scope Scope = cuda::thread_scope_system>
 MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, cuda::memory_order memoryOrder) {
+  if (memoryOrder != cuda::memory_order_relaxed && memoryOrder != cuda::memory_order_release) {
+    (void)cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
+    return;
+  }
   if constexpr (std::is_same_v<T, uint32_t>) {
     MSCCLPP_RED_(u32, r);
   } else if constexpr (std::is_same_v<T, int32_t>) {
@@ -79,7 +81,6 @@ MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, cuda::memory_order me
   } else if constexpr (std::is_same_v<T, double>) {
     MSCCLPP_RED_(f64, d);
   } else {
-    // Generic fallback: nvcc won't optimize (void)fetch_add to red, but it's correct.
     (void)cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
   }
 }
