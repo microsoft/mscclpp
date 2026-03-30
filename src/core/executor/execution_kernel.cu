@@ -85,6 +85,9 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
     case DataType::FLOAT8_E4B15:
       // fp8_e4m3b15 is a software type not supported in the CUDA execution kernel.
       break;
+    case DataType::AUTO:
+      // AUTO is a sentinel resolved before reaching this point; nothing to do.
+      break;
   }
 }
 

@@ -921,6 +921,9 @@ class ExecutionKernel {
         );
 #endif
         break;
+      case DataType::AUTO:
+        // AUTO is a sentinel resolved before reaching this point; nothing to do.
+        break;
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
