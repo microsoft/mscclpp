@@ -17,8 +17,6 @@ void SemaphorePerfTest::SetUp() {
 
 void SemaphorePerfTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-// ─── CUDA kernel: signal+wait ping-pong ───────────────────────────────────────
-
 __constant__ mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle gSemaphorePerfTestHandle;
 
 __global__ void kernelSemaphorePingPong(int rank, int nIters) {
@@ -42,8 +40,6 @@ __global__ void kernelSemaphorePingPong(int rank, int nIters) {
     }
   }
 }
-
-// ─── Test body ────────────────────────────────────────────────────────────────
 
 PERF_TEST(SemaphorePerfTest, SignalPingPong) {
   if (gEnv->rank >= numRanksToUse) return;
