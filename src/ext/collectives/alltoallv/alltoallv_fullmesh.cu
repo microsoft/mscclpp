@@ -100,24 +100,38 @@ void AlltoallvFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   bool nvlsSupported = isNvlsSupported();
   int ibDevCount = getIBDeviceCount();
 
+  // Detect compute capability to distinguish NVSwitch topologies:
+  //   SM 10.x (Blackwell/GB200): NVSwitch fabric can span across nodes (MNNVLS),
+  //     so CudaIpc works cross-node → prefer NVSwitch mode.
+  //   SM 9.x  (Hopper/H100):     NVSwitch is intra-node only,
+  //     CudaIpc cannot map cross-node memory → must use IB for cross-node.
+  int computeCapabilityMajor = 0;
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&computeCapabilityMajor,
+                                            cudaDevAttrComputeCapabilityMajor, localGpuIdx));
+
   INFO(MSCCLPP_COLL, "[alltoallv][rank %d] initialize: worldSize=%d, nRanksPerNode=%d, "
-       "isMultiNode=%d, isNvlsSupported=%d, ibDevCount=%d, localGpuIdx=%d",
-       rank, worldSize_, nRanksPerNode, isMultiNode, nvlsSupported, ibDevCount, localGpuIdx);
+       "isMultiNode=%d, isNvlsSupported=%d, ibDevCount=%d, localGpuIdx=%d, computeCapabilityMajor=%d",
+       rank, worldSize_, nRanksPerNode, isMultiNode, nvlsSupported, ibDevCount, localGpuIdx,
+       computeCapabilityMajor);
 
   if (!isMultiNode) {
     multiNodeMode_ = MultiNodeMode::SingleNode;
     this->conns_ = setupConnections(comm);
-  } else if (nvlsSupported) {
+  } else if (nvlsSupported && computeCapabilityMajor >= 10) {
+    // Blackwell/GB200 (SM 10.x+): NVSwitch fabric spans across nodes (MNNVLS).
+    // CudaIpc works cross-node → use NVSwitch mode for all peers.
     multiNodeMode_ = MultiNodeMode::NVSwitch;
     this->conns_ = setupConnections(comm);
-  } else {
-    if (ibDevCount <= 0) {
-      throw Error("Multi-node alltoallv requires IB transport but no IB devices found. "
-                  "Ensure IB drivers are loaded and devices are available.",
-                  ErrorCode::InvalidUsage);
-    }
+  } else if (ibDevCount > 0) {
+    // Hopper/Ampere (SM 9.x/8.x) or no NVLS: NVSwitch is intra-node only.
+    // Use IB (PortChannel) for cross-node, CudaIpc for intra-node.
     multiNodeMode_ = MultiNodeMode::IB;
     this->conns_ = setupHybridConnections(comm, localGpuIdx);
+  } else {
+    throw Error("Multi-node alltoallv requires either IB transport or cross-node NVSwitch (GB200+). "
+                "On Hopper/Ampere, ensure IB drivers are loaded. On Blackwell, ensure NVSwitch is "
+                "properly configured.",
+                ErrorCode::InvalidUsage);
   }
 
   const char* modeStr = (multiNodeMode_ == MultiNodeMode::SingleNode) ? "SingleNode" :
