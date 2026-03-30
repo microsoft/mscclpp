@@ -81,14 +81,10 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   }
 
   /// Signal remote device, ensures prior memory ops complete.
-  MSCCLPP_DEVICE_INLINE void signal() {
-    atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelease);
-  }
+  MSCCLPP_DEVICE_INLINE void signal() { atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelease); }
 
   /// Relaxed signal; no memory completion guarantee. Use it only for synchronizing execution, not data.
-  MSCCLPP_DEVICE_INLINE void relaxedSignal() {
-    atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelaxed);
-  }
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() { atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelaxed); }
 
   /// Thread-safe read of expected inbound value.
   /// @return The expected inbound value.

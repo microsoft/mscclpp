@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/semaphore.hpp>
 
@@ -17,17 +18,27 @@ void SemaphorePerfTest::SetUp() {
 
 void SemaphorePerfTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
-// ─── CUDA kernel: signal+wait ping-pong ───────────────────────────────────────
+// ─── CUDA kernels: signal+wait ping-pong ──────────────────────────────────────
 
 __constant__ mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle gSemaphorePerfTestHandle;
 
-__global__ void kernelSemaphorePingPong(int rank, int nIters) {
+/// Old store-based signal: local fetch-add on outboundToken, then store to remote.
+__device__ __forceinline__ void signalStore(mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle& sem) {
+  auto outbound = sem.incOutbound();
+  mscclpp::atomicStore(sem.remoteInboundToken, outbound, mscclpp::memoryOrderRelease);
+}
+
+// mode: 0 = new (signal()), 1 = old (store-based)
+__global__ void kernelSemaphorePingPong(int rank, int nIters, int mode) {
   mscclpp::MemoryDevice2DeviceSemaphoreDeviceHandle& sem = gSemaphorePerfTestHandle;
 
   // Warmup
   for (int i = 0; i < 10; i++) {
     if ((rank ^ (i & 1)) == 0) {
-      sem.signal();
+      if (mode == 1)
+        signalStore(sem);
+      else
+        sem.signal();
     } else {
       sem.wait();
     }
@@ -36,11 +47,31 @@ __global__ void kernelSemaphorePingPong(int rank, int nIters) {
   // Timed iterations — alternating signal/wait like the memory channel ping-pong
   for (int i = 0; i < nIters; i++) {
     if ((rank ^ (i & 1)) == 0) {
-      sem.signal();
+      if (mode == 1)
+        signalStore(sem);
+      else
+        sem.signal();
     } else {
       sem.wait();
     }
   }
+}
+
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+static float runPingPong(std::shared_ptr<mscclpp::Communicator>& communicator, int rank, int nIters, int mode) {
+  // Warmup
+  kernelSemaphorePingPong<<<1, 1>>>(rank, nIters, mode);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  mscclpp::Timer timer;
+  kernelSemaphorePingPong<<<1, 1>>>(rank, nIters, mode);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  return (float)timer.elapsed() / (float)nIters;
 }
 
 // ─── Test body ────────────────────────────────────────────────────────────────
@@ -51,28 +82,26 @@ PERF_TEST(SemaphorePerfTest, SignalPingPong) {
   connectMesh(/*useIpc=*/true, /*useIb=*/false, /*useEthernet=*/false);
 
   int peerRank = (gEnv->rank == 0) ? 1 : 0;
-  auto d2dSemaphore = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[peerRank]);
-
-  auto devHandle = d2dSemaphore->deviceHandle();
-  MSCCLPP_CUDATHROW(
-      cudaMemcpyToSymbol(gSemaphorePerfTestHandle, &devHandle, sizeof(devHandle)));
-
   const int nIters = 1000;
   const std::string testName = ::mscclpp::test::currentTestName();
 
-  // Warmup run
-  kernelSemaphorePingPong<<<1, 1>>>(gEnv->rank, nIters);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  // --- Old store-based signal (mode=1) ---
+  auto semOld = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[peerRank]);
+  auto handleOld = semOld->deviceHandle();
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gSemaphorePerfTestHandle, &handleOld, sizeof(handleOld)));
+  float usOld = runPingPong(communicator, gEnv->rank, nIters, 1);
 
-  communicator->bootstrap()->barrier();
-
-  // Timed run
-  mscclpp::Timer timer;
-  kernelSemaphorePingPong<<<1, 1>>>(gEnv->rank, nIters);
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-  communicator->bootstrap()->barrier();
+  // --- New red-based signal (mode=0) — need fresh semaphore ---
+  auto semNew = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[peerRank]);
+  auto handleNew = semNew->deviceHandle();
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gSemaphorePerfTestHandle, &handleNew, sizeof(handleNew)));
+  float usNew = runPingPong(communicator, gEnv->rank, nIters, 0);
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nIters << " us/iter\n";
+    float speedup = usOld / usNew;
+    std::cout << testName << ":\n"
+              << "  Store-based (old): " << std::setprecision(4) << usOld << " us/iter\n"
+              << "  Red-based   (new): " << std::setprecision(4) << usNew << " us/iter\n"
+              << "  Speedup:           " << std::setprecision(3) << speedup << "x\n";
   }
 }
