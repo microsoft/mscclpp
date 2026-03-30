@@ -183,8 +183,7 @@ MSCCLPP_API_CPP void Host2HostSemaphore::wait(int64_t maxSpinCount) {
 }
 
 MSCCLPP_API_CPP MemoryDevice2DeviceSemaphore::MemoryDevice2DeviceSemaphore(const Semaphore& semaphore)
-    : semaphore_(semaphore),
-      expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()) {
+    : semaphore_(semaphore), expectedInboundToken_(detail::gpuCallocUnique<uint64_t>()) {
   if (connection().localDevice().type != DeviceType::GPU) {
     throw Error("Local endpoint device type of MemoryDevice2DeviceSemaphore should be GPU", ErrorCode::InvalidUsage);
   }

@@ -41,17 +41,51 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
 }
 
 /// Fire-and-forget atomic add using PTX `red` (reduce) — no return value, more efficient than `atom`.
+/// Supports uint32_t, int32_t, uint64_t, float, double with explicit PTX; other types fall back to fetch_add.
 #if defined(MSCCLPP_DEVICE_COMPILE)
+
+// PTX `red` only supports relaxed and release semantics — all other memory orders (acquire, acq_rel,
+// seq_cst) are mapped to release, which is the strongest ordering `red` provides.
+#define MSCCLPP_RED_(TYPE, CSTR)                                                                          \
+  do {                                                                                                    \
+    if constexpr (Scope == cuda::thread_scope_block) {                                                    \
+      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
+        asm volatile("red.relaxed.cta.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+      else                                                                                                \
+        asm volatile("red.release.cta.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+    } else if constexpr (Scope == cuda::thread_scope_device) {                                            \
+      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
+        asm volatile("red.relaxed.gpu.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+      else                                                                                                \
+        asm volatile("red.release.gpu.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+    } else {                                                                                              \
+      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
+        asm volatile("red.relaxed.sys.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+      else                                                                                                \
+        asm volatile("red.release.sys.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
+    }                                                                                                     \
+  } while (0)
+
 template <typename T, cuda::thread_scope Scope = cuda::thread_scope_system>
 MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, cuda::memory_order memoryOrder) {
-  static_assert(std::is_same_v<T, uint64_t>, "atomicAdd (red) only supports uint64_t");
-  static_assert(Scope == cuda::thread_scope_system, "atomicAdd (red) only supports system scope");
-  if (memoryOrder == cuda::memory_order_relaxed) {
-    asm volatile("red.relaxed.sys.global.add.u64 [%0], %1;" ::"l"(ptr), "l"(val) : "memory");
+  if constexpr (std::is_same_v<T, uint32_t>) {
+    MSCCLPP_RED_(u32, r);
+  } else if constexpr (std::is_same_v<T, int32_t>) {
+    MSCCLPP_RED_(s32, r);
+  } else if constexpr (std::is_same_v<T, uint64_t>) {
+    MSCCLPP_RED_(u64, l);
+  } else if constexpr (std::is_same_v<T, float>) {
+    MSCCLPP_RED_(f32, f);
+  } else if constexpr (std::is_same_v<T, double>) {
+    MSCCLPP_RED_(f64, d);
   } else {
-    asm volatile("red.release.sys.global.add.u64 [%0], %1;" ::"l"(ptr), "l"(val) : "memory");
+    // Generic fallback: nvcc won't optimize (void)fetch_add to red, but it's correct.
+    (void)cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
   }
 }
+
+#undef MSCCLPP_RED_
+
 #endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 #elif defined(MSCCLPP_DEVICE_HIP)
@@ -81,7 +115,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrde
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
 
-/// Fire-and-forget atomic add — discards return value.
+/// Fire-and-forget atomic add — hipcc optimizes (void)fetch_add to no-return atomic.
 #if defined(MSCCLPP_DEVICE_COMPILE)
 template <typename T, int scope = scopeSystem>
 MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, int memoryOrder) {
