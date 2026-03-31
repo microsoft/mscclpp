@@ -83,11 +83,7 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   /// Signal remote device, ensures prior memory ops complete.
   MSCCLPP_DEVICE_INLINE void signal() {
 #if defined(MSCCLPP_DEVICE_CUDA)
-#if __CUDA_ARCH__ >= 1000
-    asm volatile("red.async.release.sys.global.add.u64 [%0], %1;" ::"l"(remoteInboundToken), "l"((uint64_t)1) : "memory");
-#else
     asm volatile("red.release.sys.global.add.u64 [%0], %1;" ::"l"(remoteInboundToken), "l"((uint64_t)1) : "memory");
-#endif
 #elif defined(MSCCLPP_DEVICE_HIP)
     (void)atomicFetchAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelease);
 #endif
