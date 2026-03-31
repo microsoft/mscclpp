@@ -87,8 +87,8 @@ steps:
       export RANK=0
       export MASTER_ADDR=127.0.0.1
       export MASTER_PORT=12345
-      
-      ls -la
+
+      cd sglang
 
       torchrun --nproc_per_node gpu \
       --nnodes $WORLD_SIZE \
