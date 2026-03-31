@@ -30,9 +30,4 @@ RUN python3 -m venv /root/venv && \
     echo 'source /root/venv/bin/activate' >> /root/.bashrc
 ENV PATH="/root/venv/bin:${PATH}"
 
-# Install SGLang
-RUN pip install --upgrade pip && \
-    pip install uv && \
-    uv pip install sglang
-
 WORKDIR /
