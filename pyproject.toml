@@ -13,6 +13,25 @@ name = "mscclpp"
 dynamic = ["version"]
 description = "MSCCL++ Python API"
 requires-python = ">=3.8"
+dependencies = [
+    "numpy",
+    "blake3",
+    "pybind11",
+    "sortedcontainers",
+]
+
+[project.optional-dependencies]
+cuda11 = ["cupy-cuda11x"]
+cuda12 = ["cupy-cuda12x"]
+cuda13 = ["cupy-cuda13x"]
+rocm6 = ["cupy"]
+benchmark = [
+    "mpi4py",
+    "prettytable",
+    "netifaces",
+    "matplotlib",
+]
+test = ["pytest"]
 
 [tool.setuptools_scm]
 write_to = "python/mscclpp/_version.py"
