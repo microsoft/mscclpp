@@ -42,23 +42,12 @@ def to_mscclpp_reduce_op(op: torch.distributed.ReduceOp) -> mscclpp.ReduceOp:
 
 
 class CustomizedComm:
-    def __init__(self, comm: mscclpp.CommGroup, dtype=torch.float16, accum_dtype=None):
-        """Initialize the customized communicator with tuning.
-
-        Args:
-            comm: The CommGroup to use.
-            dtype: Data type for allreduce tensors (e.g., torch.float16, torch.float8_e4m3fn).
-            accum_dtype: Accumulation data type for reduction. If None, defaults to
-                         float32 for FP8 types, or same as dtype for other types.
-                         Pass mscclpp.DataType.float32 for high-precision FP8 accumulation.
-        """
+    def __init__(self, comm: mscclpp.CommGroup):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.local_rank = comm.my_rank % comm.nranks_per_node
         self.n_ranks_per_node = comm.nranks_per_node
-        self.dtype = dtype
-        self.accum_dtype = accum_dtype
         dlpack = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         self.scratch_buffer = torch.utils.dlpack.from_dlpack(dlpack)
         algorithms = load_algorithms(scratch_buffer=self.scratch_buffer, rank=self.rank)
@@ -88,13 +77,9 @@ class CustomizedComm:
         # Pre-fill with defaults for barrier
         self.best_configs = {1024: (self._algorithm_nvls_packet, 0, 0)}
 
-        tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(self.dtype))
+        tune_tensor = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(torch.float16))
         tune_tensor = torch.utils.dlpack.from_dlpack(tune_tensor)
-        if self.dtype in (torch.float16, torch.float32, torch.bfloat16):
-            tune_tensor.normal_()
-        else:
-            # FP8 doesn't support normal_(), fill from float16 and view as bytes
-            tune_tensor.fill_(0)
+        tune_tensor.normal_()
         candidates_nblocks = [4, 8, 16, 24, 32, 48, 64, 128]
         candidates_nthreads = [512, 768, 1024]
 
@@ -188,7 +173,6 @@ class CustomizedComm:
             nblocks=nblocks,
             nthreads_per_block=nthreads,
             symmetric_memory=True,
-            accum_dtype=self.accum_dtype,
         )
 
     def get_tuned_config(self, size):
@@ -216,7 +200,6 @@ class CustomizedComm:
             nblocks=nblocks,
             nthreads_per_block=nthreads,
             symmetric_memory=True,
-            accum_dtype=self.accum_dtype,
         )
         if ret != 0:
             print(f"Rank {self.rank}: Algo {algo.name} failed with error {ret}")
@@ -237,17 +220,14 @@ class CustomizedComm:
         if self.rank == 0:
             print(f"{'Size (Bytes)':<20} {'Time (us)':<20} {'AlgoBW (GB/s)':<20}")
 
-        dtype = self.dtype
+        dtype = torch.float16
         capture_stream = torch.cuda.Stream()
 
         # Allocate a single large RawGpuBuffer (symmetric memory) and reuse it for all sizes.
         # Cannot allocate per-size tensors with symmetric memory.
         bench_buf = mscclpp.RawGpuBuffer(1 << 27).to_dlpack(data_type=str(dtype))
         bench_buf = torch.utils.dlpack.from_dlpack(bench_buf)
-        if dtype in (torch.float16, torch.float32, torch.bfloat16):
-            bench_buf.normal_()
-        else:
-            bench_buf.fill_(0)
+        bench_buf.normal_()
 
         for size in sizes:
             n_elements = size // bench_buf.element_size()
@@ -294,7 +274,7 @@ class CustomizedComm:
         self.comm = None
 
 
-def init_dist() -> mscclpp.CommGroup:
+def init_dist() -> CustomizedComm:
     rank = int(os.environ["RANK"])
     world = int(os.environ["WORLD_SIZE"])
     master_addr = os.environ["MSCCLPP_MASTER_ADDR"]
@@ -303,31 +283,18 @@ def init_dist() -> mscclpp.CommGroup:
     if interface is None:
         raise ValueError(f"Cannot find network interface for IP address {master_addr}")
     interfaceIpPortTrio = f"{interface}:{master_addr}:{master_port}"
-    return mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
+    mscclpp_group = mscclpp.CommGroup(interfaceIpPortTrio=interfaceIpPortTrio, rank=rank, size=world)
+    return CustomizedComm(mscclpp_group)
 
 
 def main():
     local = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local)
-
-    # Configure dtype and accumulation type via env vars.
-    # Example: DTYPE=float8_e4m3fn ACCUM_DTYPE=float32
-    dtype_str = os.environ.get("DTYPE", "float16")
-    dtype = getattr(torch, dtype_str, torch.float16)
-
-    accum_dtype_map = {
-        "float32": mscclpp.DataType.float32,
-        "float16": mscclpp.DataType.float16,
-    }
-    accum_dtype_str = os.environ.get("ACCUM_DTYPE", None)
-    accum_dtype = accum_dtype_map.get(accum_dtype_str) if accum_dtype_str else None
-
-    comm_group = init_dist()
-    custom_comm = CustomizedComm(comm_group, dtype=dtype, accum_dtype=accum_dtype)
-    custom_comm.benchmark(n_warmup=5, n_graph_launches=10, n_iter_per_graph=100)
-    custom_comm.barrier()
+    comm = init_dist()
+    comm.benchmark(n_warmup=5, n_graph_launches=10, n_iter_per_graph=100)
+    comm.barrier()
     torch.cuda.synchronize()
-    custom_comm.destroy()
+    comm.destroy()
     print(f"rank {local} All-reduce operation completed successfully.")
 
 

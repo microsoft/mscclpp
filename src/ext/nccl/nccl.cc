@@ -83,7 +83,7 @@ static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
-      WARN(MSCCLPP_NCCL, "The value of the environment variable ", ncclLibPath, " is a directory");
+      WARN(MSCCLPP_NCCL, "MSCCLPP_NCCL_LIB_PATH points to a directory: ", ncclLibPath);
       return dlopenError;
     }
 
@@ -588,7 +588,7 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     std::unordered_map<std::string, uintptr_t> extras{{"root", reinterpret_cast<uintptr_t>(&root)}};
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
                                                    mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
-                                                   symmetricMemory, extras, dtype));
+                                                   symmetricMemory, extras));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -643,7 +643,7 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes, dtype,
                                                    ncclRedOpToMscclpp(reductionOperation), stream, comm->executor, 0, 0,
-                                                   symmetricMemory, {}, dtype));
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -699,7 +699,7 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes * nRank, bytes, dtype,
                                                    ncclRedOpToMscclpp(op), stream, comm->executor, 0, 0,
-                                                   symmetricMemory, {}, dtype));
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {
@@ -755,7 +755,7 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
   if (algo != nullptr) {
     return static_cast<ncclResult_t>(algo->execute(comm->comm, sendbuff, recvbuff, bytes, bytes * nRank, dtype,
                                                    mscclpp::ReduceOp::NOP, stream, comm->executor, 0, 0,
-                                                   symmetricMemory, {}, dtype));
+                                                   symmetricMemory));
   }
 
   if (mscclppNcclDlopenSharedLib == true) {

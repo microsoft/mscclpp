@@ -921,6 +921,10 @@ class ExecutionKernel {
         );
 #endif
         break;
+      case DataType::AUTO:
+        // AUTO is a sentinel that must be resolved before reaching this point.
+        assert(false && "DataType::AUTO must be resolved before kernel launch");
+        break;
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)
