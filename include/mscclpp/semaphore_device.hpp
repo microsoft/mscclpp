@@ -81,10 +81,26 @@ struct MemoryDevice2DeviceSemaphoreDeviceHandle {
   }
 
   /// Signal remote device, ensures prior memory ops complete.
-  MSCCLPP_DEVICE_INLINE void signal() { atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelease); }
+  MSCCLPP_DEVICE_INLINE void signal() {
+#if defined(MSCCLPP_DEVICE_CUDA)
+#if __CUDA_ARCH__ >= 1000
+    asm volatile("red.async.release.sys.global.add.u64 [%0], %1;" ::"l"(remoteInboundToken), "l"((uint64_t)1) : "memory");
+#else
+    asm volatile("red.release.sys.global.add.u64 [%0], %1;" ::"l"(remoteInboundToken), "l"((uint64_t)1) : "memory");
+#endif
+#elif defined(MSCCLPP_DEVICE_HIP)
+    (void)atomicFetchAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelease);
+#endif
+  }
 
   /// Relaxed signal; no memory completion guarantee. Use it only for synchronizing execution, not data.
-  MSCCLPP_DEVICE_INLINE void relaxedSignal() { atomicAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelaxed); }
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() {
+#if defined(MSCCLPP_DEVICE_CUDA)
+    asm volatile("red.relaxed.sys.global.add.u64 [%0], %1;" ::"l"(remoteInboundToken), "l"((uint64_t)1) : "memory");
+#elif defined(MSCCLPP_DEVICE_HIP)
+    (void)atomicFetchAdd(remoteInboundToken, (uint64_t)1, memoryOrderRelaxed);
+#endif
+  }
 
   /// Thread-safe read of expected inbound value.
   /// @return The expected inbound value.
