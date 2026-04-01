@@ -91,7 +91,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
 #if defined(MSCCLPP_USE_MLX5DV)
     if (isDataDirect && MLX5DV::isAvailable()) {
-      mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+      // mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
 #endif
     if (mr_ == nullptr) {
