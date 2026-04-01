@@ -117,7 +117,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
 CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
                                               size_t inputSize, mscclpp::DataType dtype, ReduceOp op,
                                               cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                              const std::unordered_map<std::string, uintptr_t>& extras,
+                                              [[maybe_unused]] const std::unordered_map<std::string, uintptr_t>& extras,
                                               mscclpp::DataType accumDtype) {
   if (!symmetricMemory_) {
     WARN("AllreduceNvls requires symmetric memory for now.");
