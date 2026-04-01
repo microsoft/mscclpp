@@ -402,7 +402,6 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
     // has been committed to GPU memory. The recv thread then forwards the token to the
     // semaphore's inbound token via GDRCopy atomicStore.
     unsigned int immData = static_cast<unsigned int>(newValue);
-    *atomicSrc_ = newValue;
     qp_.lock()->stageSendWriteWithImm(nullptr, dstMrInfo,
                                       /*size=*/0, /*wrId=*/0,
                                       /*srcOffset=*/0, /*dstOffset=*/0,

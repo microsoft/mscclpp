@@ -90,7 +90,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
     int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
 #if defined(MSCCLPP_USE_MLX5DV)
-    if (isDataDirect && MLX5DV::isAvailable()) {
+    if (isDataDirect) {
       // mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
 #endif
@@ -452,7 +452,7 @@ IbCtx::IbCtx(const std::string& devName)
       pd_(nullptr),
       supportsRdmaAtomics_(false),
       isMlx5_(false),
-      dataDirect_(false),
+      isDataDirect_(false),
       isVF_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
@@ -496,7 +496,7 @@ IbCtx::IbCtx(const std::string& devName)
     char sysfsPath[256];
     int ret = MLX5DV::mlx5dv_get_data_direct_sysfs_path(ctx_, sysfsPath, sizeof(sysfsPath));
     if (ret == 0) {
-      dataDirect_ = true;
+      isDataDirect_ = true;
       INFO(NET, "IB device ", devName_, " supports Data Direct (sysfs: ", sysfsPath, ")");
     } else {
       INFO(NET, "IB device ", devName_, " does not support Data Direct");
@@ -578,14 +578,14 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, dataDirect_));
+  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isDataDirect_));
 }
 
 bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
 
 bool IbCtx::isMlx5() const { return isMlx5_; }
 
-bool IbCtx::supportsDataDirect() const { return dataDirect_; }
+bool IbCtx::isDataDirect() const { return isDataDirect_; }
 
 bool IbCtx::isVirtualFunction() const { return isVF_; }
 

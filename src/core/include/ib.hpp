@@ -144,7 +144,7 @@ class IbCtx {
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
   bool supportsRdmaAtomics() const;
   bool isMlx5() const;
-  bool supportsDataDirect() const;
+  bool isDataDirect() const;
   bool isVirtualFunction() const;
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
@@ -156,7 +156,7 @@ class IbCtx {
   }
   bool supportsRdmaAtomics() const { return false; }
   bool isMlx5() const { return false; }
-  bool supportsDataDirect() const { return false; }
+  bool isDataDirect() const { return false; }
   bool isVirtualFunction() const { return false; }
 #endif
 
@@ -171,7 +171,7 @@ class IbCtx {
   ibv_pd* pd_;
   bool supportsRdmaAtomics_;
   bool isMlx5_;
-  bool dataDirect_;
+  bool isDataDirect_;
   bool isVF_;
 };
 
