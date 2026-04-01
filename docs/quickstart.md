@@ -31,6 +31,9 @@
         ```
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
+    * (Optional, for NVIDIA platforms) [GDRCopy](https://github.com/NVIDIA/gdrcopy) >= 2.5.0
+        * GDRCopy is required for IB `HostNoAtomic` mode, which uses CPU-side signal forwarding to GPU memory via BAR1 mappings. This mode is used on platforms where RDMA atomics are not available (e.g., when using Data Direct Virtual Functions).
+        * Install GDRCopy from source or via packages. See the [GDRCopy installation guide](https://github.com/NVIDIA/gdrcopy#installation).
 * Others
     * For RDMA (InfiniBand or RoCE) support on NVIDIA platforms, [GPUDirect RDMA](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#gpudirect-rdma-and-gpudirect-storage) should be supported by the system. See the detailed prerequisites from [this NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#common-prerequisites).
     * For NVLink SHARP (NVLS) support on NVIDIA platforms, the Linux kernel version should be 5.6 or above.
