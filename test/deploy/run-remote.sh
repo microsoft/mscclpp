@@ -103,10 +103,14 @@ if $USE_DOCKER; then
     # If using the sglang container, launch it first
     if [ "${CONTAINER_NAME}" = "mscclpp-sglang-test" ]; then
         parallel-ssh -i "${PSSH_COMMON[@]}" \
-             "sudo docker run -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash"
+             "if ! sudo docker ps -q -f name=^/${CONTAINER_NAME}\$ | grep -q .; then \
+                  sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true; \
+                  sudo docker run -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v /mnt:/mnt lmsysorg/sglang:latest bash; \
+              fi"
 
         INNER="set -euxo pipefail;"
         INNER+=" CMD_B64='${CMD_B64}';"
+        INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
         INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
     else
         INNER="set -euxo pipefail;"
