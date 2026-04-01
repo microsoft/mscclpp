@@ -16,7 +16,7 @@ set -ex
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"
 PLATFORM="${3:-cuda}"
-CONTAINER_NAME="${4:-mscclpp-test}"
+CONTAINER_NAME="${4}"
 
 ###############################################################################
 # 2. Resolve paths and host file

@@ -25,7 +25,7 @@ steps:
   parameters:
     name: InstallMscclpp
     displayName: Install mscclpp
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       git clone https://github.com/microsoft/mscclpp.git
       cd mscclpp
@@ -41,7 +41,7 @@ steps:
   parameters:
     name: InstallSGLang
     displayName: Install SGLang
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
       cd sglang
@@ -52,7 +52,7 @@ steps:
   parameters:
     name: RunSGLangTestBatchSize1
     displayName: Run SGLang Test Batch Size 1
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
@@ -60,7 +60,7 @@ steps:
   parameters:
     name: RunSGLangTestBatchSize2
     displayName: Run SGLang Test Batch Size 2
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 2 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
@@ -68,7 +68,7 @@ steps:
   parameters:
     name: RunSGLangTestBatchSize32
     displayName: Run SGLang Test Batch Size 32
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 32 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
@@ -76,7 +76,7 @@ steps:
   parameters:
     name: RunSGLangTestBatchSize64
     displayName: Run SGLang Test Batch Size 64
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
@@ -85,7 +85,7 @@ steps:
   parameters:
     name: RunSGLangTestAllReduce
     displayName: Run SGLang Test All Reduce
-    runRemoteArgs: '--container mscclpp-sglang-test'
+    runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export WORLD_SIZE=1
       export RANK=0

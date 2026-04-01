@@ -101,7 +101,7 @@ PSSH_COMMON=(
 
 if $USE_DOCKER; then
     # If using the sglang container, launch it first
-    if [ "${CONTAINER_NAME}" = "mscclpp-sglang-test" ]; then
+    if [ "${CONTAINER_NAME}" = "sglang-mscclpp-test" ]; then
         # parallel-ssh -i "${PSSH_COMMON[@]}" \
         #      "if ! sudo docker ps -q -f name=^/${CONTAINER_NAME}\$ | grep -q .; then \
         #           sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true; \
