@@ -34,17 +34,13 @@ class IbMr {
   IbMrInfo getInfo() const;
   const void* getBuff() const;
   uint32_t getLkey() const;
-  bool isDmabuf() const;
-  bool isDataDirect() const;
 
  private:
-  IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5);
+  IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect);
 
   ibv_mr* mr_;
   void* buff_;
   std::size_t size_;
-  bool isDmabuf_;
-  bool isDataDirect_;
 
   friend class IbCtx;
 };
@@ -92,7 +88,6 @@ class IbQp {
   int getRecvWcStatus(int idx) const;
   std::string getRecvWcStatusString(int idx) const;
   unsigned int getRecvWcImmData(int idx) const;
-  bool isMlx5() const { return isMlx5_; }
 
  private:
   struct SendWrInfo {
@@ -106,7 +101,7 @@ class IbQp {
   };
 
   IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-       int maxRecvWr, int maxWrPerSend, bool noAtomic, bool isMlx5);
+       int maxRecvWr, int maxWrPerSend, bool noAtomic);
   SendWrInfo getNewSendWrInfo();
   RecvWrInfo getNewRecvWrInfo();
 
@@ -134,7 +129,6 @@ class IbQp {
   const int maxWrPerSend_;
   const int maxRecvWr_;
   const bool noAtomic_;
-  const bool isMlx5_;
 
   friend class IbCtx;
 };
@@ -150,6 +144,8 @@ class IbCtx {
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
   bool supportsRdmaAtomics() const;
   bool isMlx5() const;
+  bool supportsDataDirect() const;
+  bool isVirtualFunction() const;
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
@@ -160,6 +156,8 @@ class IbCtx {
   }
   bool supportsRdmaAtomics() const { return false; }
   bool isMlx5() const { return false; }
+  bool supportsDataDirect() const { return false; }
+  bool isVirtualFunction() const { return false; }
 #endif
 
   const std::string& getDevName() const { return devName_; };
@@ -173,6 +171,8 @@ class IbCtx {
   ibv_pd* pd_;
   bool supportsRdmaAtomics_;
   bool isMlx5_;
+  bool dataDirect_;
+  bool isVF_;
 };
 
 }  // namespace mscclpp

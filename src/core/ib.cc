@@ -67,8 +67,7 @@ static inline bool isDmabufSupportedByGpu(int gpuId) {
   return ret;
 }
 
-IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
-    : mr_(nullptr), buff_(buff), size_(0), isDmabuf_(false), isDataDirect_(false) {
+IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nullptr), buff_(buff), size_(0) {
   if (size == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
   }
@@ -91,11 +90,8 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
     int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
 #if defined(MSCCLPP_USE_MLX5DV)
-    if (isMlx5 && MLX5DV::isAvailable()) {
+    if (isDataDirect && MLX5DV::isAvailable()) {
       mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
-      if (mr_ != nullptr) {
-        isDataDirect_ = true;
-      }
     }
 #endif
     if (mr_ == nullptr) {
@@ -105,7 +101,6 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
-    isDmabuf_ = true;
 #else   // defined(MSCCLPP_USE_ROCM)
     THROW(NET, Error, ErrorCode::InvalidUsage, "We don't support DMABUF on HIP platforms yet");
 #endif  // defined(MSCCLPP_USE_ROCM)
@@ -145,12 +140,8 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
-bool IbMr::isDmabuf() const { return isDmabuf_; }
-
-bool IbMr::isDataDirect() const { return isDataDirect_; }
-
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
-           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic, bool isMlx5)
+           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
@@ -171,8 +162,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
       maxSendWr_(maxSendWr),
       maxWrPerSend_(maxWrPerSend),
       maxRecvWr_(maxRecvWr),
-      noAtomic_(noAtomic),
-      isMlx5_(isMlx5) {
+      noAtomic_(noAtomic) {
   sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
   if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
@@ -186,47 +176,21 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
     }
   }
 
-  struct ibv_qp* qp = nullptr;
-#if defined(MSCCLPP_USE_MLX5DV)
-  if (isMlx5_) {
-    struct ibv_qp_init_attr_ex qpInitAttrEx = {};
-    qpInitAttrEx.sq_sig_all = 0;
-    qpInitAttrEx.send_cq = sendCq_;
-    qpInitAttrEx.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
-    qpInitAttrEx.qp_type = IBV_QPT_RC;
-    qpInitAttrEx.cap.max_send_wr = maxSendWr;
-    qpInitAttrEx.cap.max_recv_wr = maxRecvWr;
-    qpInitAttrEx.cap.max_send_sge = 1;
-    qpInitAttrEx.cap.max_recv_sge = 1;
-    qpInitAttrEx.cap.max_inline_data = 0;
-    qpInitAttrEx.pd = pd;
-    qpInitAttrEx.comp_mask = IBV_QP_INIT_ATTR_PD;
+  struct ibv_qp_init_attr qpInitAttr = {};
+  qpInitAttr.sq_sig_all = 0;
+  qpInitAttr.send_cq = sendCq_;
+  // Use separate recv CQ if created, otherwise use the send CQ
+  qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
+  qpInitAttr.qp_type = IBV_QPT_RC;
+  qpInitAttr.cap.max_send_wr = maxSendWr;
+  qpInitAttr.cap.max_recv_wr = maxRecvWr;
+  qpInitAttr.cap.max_send_sge = 1;
+  qpInitAttr.cap.max_recv_sge = 1;
+  qpInitAttr.cap.max_inline_data = 0;
 
-    struct mlx5dv_qp_init_attr mlx5QpAttr = {};
-
-    qp = MLX5DV::mlx5dv_create_qp(ctx, &qpInitAttrEx, &mlx5QpAttr);
-    if (qp == nullptr) {
-      THROW(NET, IbError, errno, "mlx5dv_create_qp failed (errno ", errno, ")");
-    }
-  } else
-#endif  // defined(MSCCLPP_USE_MLX5DV)
-  {
-    struct ibv_qp_init_attr qpInitAttr = {};
-    qpInitAttr.sq_sig_all = 0;
-    qpInitAttr.send_cq = sendCq_;
-    // Use separate recv CQ if created, otherwise use the send CQ
-    qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
-    qpInitAttr.qp_type = IBV_QPT_RC;
-    qpInitAttr.cap.max_send_wr = maxSendWr;
-    qpInitAttr.cap.max_recv_wr = maxRecvWr;
-    qpInitAttr.cap.max_send_sge = 1;
-    qpInitAttr.cap.max_recv_sge = 1;
-    qpInitAttr.cap.max_inline_data = 0;
-
-    qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
-    if (qp == nullptr) {
-      THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
-    }
+  struct ibv_qp* qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
+  if (qp == nullptr) {
+    THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
   }
 
   struct ibv_port_attr portAttr;
@@ -483,12 +447,29 @@ std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_
 unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
 
 IbCtx::IbCtx(const std::string& devName)
-    : devName_(devName), ctx_(nullptr), pd_(nullptr), supportsRdmaAtomics_(false), isMlx5_(false) {
+    : devName_(devName),
+      ctx_(nullptr),
+      pd_(nullptr),
+      supportsRdmaAtomics_(false),
+      isMlx5_(false),
+      dataDirect_(false),
+      isVF_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (std::string(devices[i]->name) == devName_) {
       ctx_ = IBVerbs::ibv_open_device(devices[i]);
+
+      // Detect if this IB device is a Virtual Function (VF).
+      // VFs have a 'physfn' sysfs symlink pointing to their parent PF; PFs do not.
+      {
+        std::string physfnPath = "/sys/class/infiniband/" + devName_ + "/device/physfn";
+        isVF_ = (access(physfnPath.c_str(), F_OK) == 0);
+        if (isVF_) {
+          INFO(NET, "IB device ", devName_, " is a Virtual Function (Data Direct ordering available)");
+        }
+      }
+
 #if defined(MSCCLPP_USE_MLX5DV)
       if (MLX5DV::isAvailable()) {
         isMlx5_ = MLX5DV::mlx5dv_is_supported(devices[i]);
@@ -508,6 +489,20 @@ IbCtx::IbCtx(const std::string& devName)
   if (pd_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_alloc_pd failed (errno ", errno, ")");
   }
+
+  // Detect Data Direct support via mlx5dv_get_data_direct_sysfs_path
+#if defined(MSCCLPP_USE_MLX5DV)
+  if (isMlx5_ && MLX5DV::isAvailable()) {
+    char sysfsPath[256];
+    int ret = MLX5DV::mlx5dv_get_data_direct_sysfs_path(ctx_, sysfsPath, sizeof(sysfsPath));
+    if (ret == 0) {
+      dataDirect_ = true;
+      INFO(NET, "IB device ", devName_, " supports Data Direct (sysfs: ", sysfsPath, ")");
+    } else {
+      INFO(NET, "IB device ", devName_, " does not support Data Direct");
+    }
+  }
+#endif  // defined(MSCCLPP_USE_MLX5DV)
 
   // Query and cache RDMA atomics capability
   struct ibv_device_attr attr = {};
@@ -579,16 +574,20 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
   return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
-                                        maxRecvWr, maxWrPerSend, noAtomic, isMlx5_));
+                                        maxRecvWr, maxWrPerSend, noAtomic));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isMlx5_));
+  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, dataDirect_));
 }
 
 bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
 
 bool IbCtx::isMlx5() const { return isMlx5_; }
+
+bool IbCtx::supportsDataDirect() const { return dataDirect_; }
+
+bool IbCtx::isVirtualFunction() const { return isVF_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;
@@ -699,8 +698,6 @@ IbMr::~IbMr() {}
 IbMrInfo IbMr::getInfo() const { return IbMrInfo(); }
 const void* IbMr::getBuff() const { return nullptr; }
 uint32_t IbMr::getLkey() const { return 0; }
-bool IbMr::isDmabuf() const { return false; }
-bool IbMr::isDataDirect() const { return false; }
 
 IbQp::~IbQp() {}
 void IbQp::rtr(const IbQpInfo& /*info*/) {}

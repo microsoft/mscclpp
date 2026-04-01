@@ -4,8 +4,23 @@
 #include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
 
+#include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
+
+// Skip the current test if HostNoAtomic mode is not supported.
+// On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding.
+// On ROCm, HostNoAtomic uses direct volatile writes and does not need GDRCopy.
+#if defined(MSCCLPP_USE_CUDA)
+#define REQUIRE_HOST_NO_ATOMIC                                                         \
+  do {                                                                                 \
+    if (!mscclpp::gdrEnabled()) {                                                      \
+      SKIP_TEST() << "HostNoAtomic requires GDRCopy: " << mscclpp::gdrStatusMessage(); \
+    }                                                                                  \
+  } while (0)
+#else
+#define REQUIRE_HOST_NO_ATOMIC  // No extra requirements on non-CUDA platforms.
+#endif
 
 void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks
@@ -272,6 +287,7 @@ TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
 
 TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_HOST_NO_ATOMIC;
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
@@ -465,16 +481,19 @@ TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
 
 TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_HOST_NO_ATOMIC;
   testPacketPingPongPerf(true, IbMode::HostNoAtomic);
 }
 
 TEST(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_HOST_NO_ATOMIC;
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
 
 TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_HOST_NO_ATOMIC;
   testPacketPingPong(true, IbMode::HostNoAtomic);
 }

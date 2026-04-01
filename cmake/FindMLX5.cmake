@@ -33,5 +33,6 @@ find_library(MLX5_LIBRARIES
   /usr/lib/x86_64-linux-gnu)
 
 include(FindPackageHandleStandardArgs)
+
 find_package_handle_standard_args(MLX5 DEFAULT_MSG MLX5_INCLUDE_DIRS MLX5_LIBRARIES)
 mark_as_advanced(MLX5_INCLUDE_DIRS MLX5_LIBRARIES)

@@ -37,16 +37,18 @@ class BaseConnection {
 
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
-  /// Set the local address where forwarded signals should be written.
-  /// This is called by the receiver to specify where incoming signals should be forwarded.
-  /// Default implementation is a no-op for connections that don't need it.
-  /// @param mem Shared pointer to the memory for incoming writes (nullptr to clear).
-  virtual void setSignalForwardingDst(std::shared_ptr<uint64_t> /*mem*/) {}
+  /// Start signal forwarding to the given memory address.
+  /// Called by the semaphore to specify where incoming signals should be written.
+  /// @param mem Shared pointer to the GPU memory for the signal token.
+  virtual void startSignalForwarding(std::shared_ptr<uint64_t> /*mem*/) {}
+
+  /// Stop signal forwarding and release associated resources.
+  virtual void stopSignalForwarding() {}
 
   /// Whether this connection uses signal forwarding (e.g., IB host-no-atomic mode).
   /// When true, the semaphore must allocate a separate inboundToken_ for the recv thread to write to.
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
-  virtual bool usesSignalForwarding() const { return false; }
+  virtual bool isSignalForwarding() const { return false; }
 
   virtual Transport transport() const = 0;
 
@@ -105,31 +107,20 @@ class IBConnection : public BaseConnection {
   // For write-with-imm mode (HostNoAtomic): uses RDMA write-with-imm to signal
   // instead of atomic operations, with a host thread forwarding to GPU for memory consistency.
   bool ibNoAtomic_;
+  bool gdrSignalForwarding_;  // ibNoAtomic_ && gdrEnabled() — decided once at construction
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
   int localGpuDeviceId_;  // Local GPU device ID for CUDA context and GDR mapping
 
-  // Write-with-imm design:
-  // - Sender: 8-byte RDMA write-with-imm from local host buffer to remote signal GPU buffer,
-  //   carrying the token value both as RDMA payload and in imm_data (32-bit).
-  // - Receiver: reads the full 64-bit token from the local signal GPU buffer (via BAR1 or
-  //   volatile read), then writes it to remoteUpdateDstAddr_ (the semaphore's inbound token).
-  uint64_t remoteUpdateDstAddr_;
+  // Signal forwarding design (HostNoAtomic mode):
+  // - Sender: 0-byte RDMA WRITE_WITH_IMM carrying the token value in imm_data (32-bit).
+  // - Receiver: CPU recv thread polls recv CQ for WRITE_WITH_IMM completions (CQE), reads
+  //   the token from imm_data, then writes it to signalAddr_ (the semaphore's
+  //   inbound token) via atomicStore through the GDRCopy BAR1 mapping. The GPU reads
+  //   inboundToken with system-scope acquire ordering.
+  uint64_t signalAddr_;
 
-  // Remote endpoint's signal GPU buffer MR info (destination for RDMA write-with-imm).
-  // The local host buffer (atomicSrc_ / atomicSrcTransportInfo_.ibMr) serves as the source.
-  IbMrInfo remoteSignalGpuMrInfo_;
-
-  std::unique_ptr<GdrMap> remoteUpdateDstAddrMap_;
-  std::unique_ptr<GdrMap> localSignalGpuMap_;
-  uint64_t* localSignalGpuPtr_;
-
-  // When true, recvThreadFunc reads the token from imm_data (from CQE) instead of the
-  // signal GPU buffer via GDRCopy. Enabled only when all Data Direct conditions are met:
-  // the signal GPU buffer MR is registered with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT,
-  // and all GDRCopy mappings (local signal buffer and remoteUpdateDstAddr) are valid,
-  // so both RDMA data writes and GDRCopy token writes go through the Data Direct engine.
-  bool dataDirectEnabled_;
+  std::unique_ptr<GdrMap> signalGdrMap_;
 
   void recvThreadFunc();
 
@@ -137,12 +128,15 @@ class IBConnection : public BaseConnection {
   IBConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint, const Endpoint& remoteEndpoint);
   ~IBConnection();
 
-  /// Set the local address where forwarded signals should be written.
-  /// Must be called before the remote sends any updateAndSync in host-no-atomic mode.
-  /// @param mem Shared pointer to the memory for incoming writes (nullptr to clear).
-  void setSignalForwardingDst(std::shared_ptr<uint64_t> mem) override;
+  /// Start signal forwarding to the given memory address.
+  /// Must be called before the remote sends any updateAndSync in HostNoAtomic mode.
+  /// @param mem Shared pointer to the GPU memory for the signal token.
+  void startSignalForwarding(std::shared_ptr<uint64_t> mem) override;
 
-  bool usesSignalForwarding() const override;
+  /// Stop signal forwarding and release associated resources.
+  void stopSignalForwarding() override;
+
+  bool isSignalForwarding() const override;
 
   Transport transport() const override;
 

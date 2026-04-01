@@ -285,6 +285,9 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
         passed++;
       } else {
         std::cout << "[  FAILED  ] " << fullName << std::endl;
+        if (!gCurrentTestFailureMessage.empty()) {
+          std::cout << "            Reason: " << gCurrentTestFailureMessage << std::endl;
+        }
         failed++;
       }
     }

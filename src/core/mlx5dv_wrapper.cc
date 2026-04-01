@@ -3,9 +3,19 @@
 
 #if defined(MSCCLPP_USE_MLX5DV)
 
+// _GNU_SOURCE is required for dlvsym()
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "mlx5dv_wrapper.hpp"
 
 #include <dlfcn.h>
+#include <infiniband/mlx5dv.h>
+
+#ifndef MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT
+#define MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT (1 << 0)
+#endif
 
 #include <memory>
 
@@ -72,14 +82,6 @@ bool MLX5DV::mlx5dv_is_supported(struct ibv_device* device) {
   return impl(device);
 }
 
-struct ibv_qp* MLX5DV::mlx5dv_create_qp(struct ibv_context* ctx, struct ibv_qp_init_attr_ex* qpAttr,
-                                        struct mlx5dv_qp_init_attr* mlx5QpAttr) {
-  using FuncType = struct ibv_qp* (*)(struct ibv_context*, struct ibv_qp_init_attr_ex*, struct mlx5dv_qp_init_attr*);
-  static FuncType impl = nullptr;
-  if (!impl) impl = reinterpret_cast<FuncType>(MLX5DV::dlsym("mlx5dv_create_qp"));
-  return impl(ctx, qpAttr, mlx5QpAttr);
-}
-
 struct ibv_mr* MLX5DV::mlx5dv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
                                             int access) {
   // mlx5dv_reg_dmabuf_mr(pd, offset, length, iova, fd, access, mlx5_access) — the last arg is mlx5-specific flags.
@@ -92,10 +94,25 @@ struct ibv_mr* MLX5DV::mlx5dv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, 
     resolved = true;
   }
   if (!impl) return nullptr;
-#ifndef MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT
-#define MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT (1 << 0)
-#endif
   return impl(pd, offset, length, iova, fd, access, MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT);
+}
+
+int MLX5DV::mlx5dv_get_data_direct_sysfs_path(struct ibv_context* context, char* buf, size_t buf_len) {
+  using FuncType = int (*)(struct ibv_context*, char*, size_t);
+  static FuncType impl = nullptr;
+  static bool resolved = false;
+  if (!resolved) {
+    if (globalMLX5Handle) {
+      void* ptr = dlvsym(globalMLX5Handle.get(), "mlx5dv_get_data_direct_sysfs_path", "MLX5_1.25");
+      if (!ptr) {
+        ptr = MLX5DV::dlsym("mlx5dv_get_data_direct_sysfs_path", /*allowReturnNull=*/true);
+      }
+      impl = ptr ? reinterpret_cast<FuncType>(ptr) : nullptr;
+    }
+    resolved = true;
+  }
+  if (!impl) return -1;
+  return impl(context, buf, buf_len);
 }
 
 }  // namespace mscclpp
