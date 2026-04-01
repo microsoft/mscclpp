@@ -79,7 +79,13 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
 
 ###############################################################################
-# 8. Launch Docker container
+# 8. Remove any existing container with the same name
+###############################################################################
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
+
+###############################################################################
+# 9. Launch Docker container
 ###############################################################################
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
