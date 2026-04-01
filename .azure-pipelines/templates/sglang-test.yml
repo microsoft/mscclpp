@@ -8,6 +8,9 @@ parameters:
   default: 'test/deploy/perf_ndmv4.jsonl'
 - name: gpuArch
   type: string
+- name: containerName
+  type: string
+  default: 'sglang-mscclpp-test'
 
 steps:
 - template: deploy.yml
@@ -16,6 +19,7 @@ steps:
     vmssName:         ${{ parameters.vmssName }}
     gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'single-node-test'
+    containerName:    ${{ parameters.containerName }}
 
 - template: run-remote-task.yml
   parameters:

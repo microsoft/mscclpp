@@ -32,6 +32,9 @@ parameters:
 - name: deployArgs
   type: string
   default: ''
+- name: containerName
+  type: string
+  default: 'mscclpp-test'
 
 steps:
 # 0. Ensure Azure CLI exists before running AzureCLI@2 tasks.
@@ -129,5 +132,5 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: ${{ parameters.deployArgs }}
+    arguments: ${{ parameters.deployArgs }} ${{ parameters.containerName }}
     workingDirectory: '$(System.DefaultWorkingDirectory)'
