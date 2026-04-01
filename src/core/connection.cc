@@ -198,6 +198,8 @@ void IBConnection::recvThreadFunc() {
     }
   }
 
+  uint32_t lastImmData = 0;
+  uint64_t immHighBits = 0;
   uint64_t newValueHost = 0;
 
   auto qp = qp_.lock();
@@ -220,8 +222,15 @@ void IBConnection::recvThreadFunc() {
         continue;
       }
 
-      // Read the token from imm_data (always available and correct in the CQE).
-      newValueHost = static_cast<uint64_t>(qp->getRecvWcImmData(i));
+      // Read the lower 32 bits of the token from imm_data. Reconstruct the full 64-bit value
+      // using wrap-around detection: tokens increase monotonically, so if the new lower 32 bits
+      // are less than the previous value, the upper 32 bits must have incremented by 1.
+      uint32_t immData = qp->getRecvWcImmData(i);
+      if (immData < lastImmData) {
+        immHighBits += (1ULL << 32);
+      }
+      lastImmData = immData;
+      newValueHost = immHighBits | static_cast<uint64_t>(immData);
 
       // Forward the token to the semaphore's inbound token address via atomicStore
       // through the GDRCopy BAR1 mapping. The GPU reads with system-scope acquire.
@@ -397,10 +406,17 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   *src = newValue;
 
   if (ibNoAtomic_) {
-    // Signal forwarding: send a 0-byte RDMA WRITE_WITH_IMM with the token in imm_data.
-    // The receiver's recv thread polls the CQE, which guarantees the preceding data WRITE
-    // has been committed to GPU memory. The recv thread then forwards the token to the
-    // semaphore's inbound token via GDRCopy atomicStore.
+    // Signal forwarding: send a 0-byte RDMA WRITE_WITH_IMM with the lower 32 bits of the
+    // token in imm_data. The receiver reconstructs the full 64-bit value using wrap-around
+    // detection (tokens are monotonically increasing, so a decrease in the lower 32 bits
+    // indicates the upper 32 bits incremented by 1).
+    if (newValue <= oldValue) {
+      WARN(CONN, "IBConnection signal forwarding: token is not monotonically increasing: ", oldValue, " -> ",
+           newValue);
+    } else if (newValue - oldValue >= (1ULL << 32)) {
+      WARN(CONN, "IBConnection signal forwarding: token increment too large for 32-bit wrap-around detection: ",
+           oldValue, " -> ", newValue, " (delta ", newValue - oldValue, " >= 2^32)");
+    }
     unsigned int immData = static_cast<unsigned int>(newValue);
     qp_.lock()->stageSendWriteWithImm(nullptr, dstMrInfo,
                                       /*size=*/0, /*wrId=*/0,

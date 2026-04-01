@@ -113,12 +113,13 @@ class IBConnection : public BaseConnection {
   int localGpuDeviceId_;  // Local GPU device ID for CUDA context and GDR mapping
 
   // Signal forwarding design (HostNoAtomic mode):
-  // - Sender: 0-byte RDMA WRITE_WITH_IMM carrying the token value in imm_data (32-bit).
+  // - Sender: 0-byte RDMA WRITE_WITH_IMM carrying the lower 32 bits of the token in imm_data.
   // - Receiver: CPU recv thread polls recv CQ for WRITE_WITH_IMM completions (CQE), reads
-  //   the token from imm_data, then writes it to signalAddr_ (the semaphore's
-  //   inbound token) via atomicStore through the GDRCopy BAR1 mapping. The GPU reads
-  //   inboundToken with system-scope acquire ordering.
+  //   the lower 32 bits from imm_data, reconstructs the full 64-bit token using wrap-around
+  //   detection (monotonically increasing tokens: if lower 32 bits decrease, the upper half
+  //   incremented), then writes it to signalAddr_ via atomicStore through GDRCopy BAR1.
   uint64_t signalAddr_;
+
 
   std::unique_ptr<GdrMap> signalGdrMap_;
 
