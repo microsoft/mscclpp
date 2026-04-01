@@ -411,11 +411,11 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
     // detection (tokens are monotonically increasing, so a decrease in the lower 32 bits
     // indicates the upper 32 bits incremented by 1).
     if (newValue <= oldValue) {
-      WARN(CONN, "IBConnection signal forwarding: token is not monotonically increasing: ", oldValue, " -> ",
-           newValue);
+      WARN(CONN, "IBConnection signal forwarding: token is not monotonically increasing: ", oldValue, " -> ", newValue);
     } else if (newValue - oldValue >= (1ULL << 32)) {
-      WARN(CONN, "IBConnection signal forwarding: token increment too large for 32-bit wrap-around detection: ",
-           oldValue, " -> ", newValue, " (delta ", newValue - oldValue, " >= 2^32)");
+      WARN(CONN,
+           "IBConnection signal forwarding: token increment too large for 32-bit wrap-around detection: ", oldValue,
+           " -> ", newValue, " (delta ", newValue - oldValue, " >= 2^32)");
     }
     unsigned int immData = static_cast<unsigned int>(newValue);
     qp_.lock()->stageSendWriteWithImm(nullptr, dstMrInfo,

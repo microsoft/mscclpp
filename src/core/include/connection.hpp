@@ -120,7 +120,6 @@ class IBConnection : public BaseConnection {
   //   incremented), then writes it to signalAddr_ via atomicStore through GDRCopy BAR1.
   uint64_t signalAddr_;
 
-
   std::unique_ptr<GdrMap> signalGdrMap_;
 
   void recvThreadFunc();
