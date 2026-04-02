@@ -32,7 +32,7 @@ steps:
       mkdir build 
       cd build 
       cmake -DCMAKE_BUILD_TYPE=Release .. 
-      make –j 
+      make -j
       cd .. 
       pip install .
       pip install -r ./python/requirements_cuda12.txt
