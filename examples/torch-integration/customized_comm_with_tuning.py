@@ -17,6 +17,13 @@ import mscclpp.utils as mscclpp_utils
 
 def _make_tensor(size_bytes: int, dtype: torch.dtype) -> torch.Tensor:
     """Allocate a tensor backed by RawGpuBuffer (symmetric memory)."""
+    # PyTorch's from_dlpack does not support certain float8 DLPack type codes.
+    # Work around by importing as uint8 and reinterpreting via .view().
+    _DLPACK_UNSUPPORTED = (torch.float8_e4m3fn, torch.float8_e4m3fnuz,
+                           torch.float8_e5m2, torch.float8_e5m2fnuz)
+    if dtype in _DLPACK_UNSUPPORTED:
+        dlpack = mscclpp.RawGpuBuffer(size_bytes).to_dlpack(data_type=str(torch.uint8))
+        return torch.utils.dlpack.from_dlpack(dlpack).view(dtype)
     dlpack = mscclpp.RawGpuBuffer(size_bytes).to_dlpack(data_type=str(dtype))
     return torch.utils.dlpack.from_dlpack(dlpack)
 
@@ -309,13 +316,14 @@ def benchmark_allreduce(comm: CustomizedComm, dtype=torch.float16, accum_dtype=N
     sizes = _bench_sizes()
     if comm.rank == 0:
         print(f"\n{'='*60}\nAllreduce Benchmark\n{'='*60}")
-        print(f"{'Size(B)':<18} {'Time(us)':<18} {'AlgoBW(GB/s)':<18}")
+        print(f"{'Nelements':<18} {'Size(B)':<18} {'Time(us)':<18} {'AlgoBW(GB/s)':<18}")
 
     cs = torch.cuda.Stream()
     buf = _make_tensor(1 << 27, dtype)
     buf.normal_() if dtype in (torch.float16, torch.float32, torch.bfloat16) else buf.fill_(0)
 
     for size in sizes:
+        nelems = size // buf.element_size()
         t = buf[:size // buf.element_size()]
         comm.all_reduce(t, accum_dtype=accum_dtype)
         torch.cuda.synchronize()
@@ -340,7 +348,7 @@ def benchmark_allreduce(comm: CustomizedComm, dtype=torch.float16, accum_dtype=N
 
         ms = s.elapsed_time(e) / (n_graph_launches * n_iter)
         if comm.rank == 0:
-            print(f"{size:<18} {ms*1000:<18.2f} {size/(ms*1e-3)/1e9:<18.2f}")
+            print(f"{nelems:<18} {size:<18} {ms*1000:<18.2f} {size/(ms*1e-3)/1e9:<18.2f}")
 
 
 def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16,
@@ -411,14 +419,14 @@ def main():
 
     dtype_str = os.environ.get("DTYPE", "float16")
     dtype = getattr(torch, dtype_str, torch.float16)
-    accum_map = {"float32": mscclpp.DataType.float32, "float16": mscclpp.DataType.float16,
-                 "float8_e4m3fn": mscclpp.DataType.float16}
+    accum_map = {"float32": mscclpp.DataType.float32, "float16": mscclpp.DataType.float16}
     accum_str = os.environ.get("ACCUM_DTYPE")
     accum_dtype = accum_map.get(accum_str) if accum_str else None
 
     comm_group = init_dist()
     cc = CustomizedComm(comm_group)
 
+    print(f"rank {local} starting benchmarks with dtype={dtype} accum_dtype={accum_dtype}...")
     benchmark_allreduce(cc, dtype=dtype, accum_dtype=accum_dtype)
     cc.barrier(); torch.cuda.synchronize()
 
