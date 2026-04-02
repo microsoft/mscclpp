@@ -21,15 +21,22 @@ steps:
     deployArgs:       'single-node-test false cuda' # not sure if this should be IB or not
     containerName:    ${{ parameters.containerName }}
 
-# - template: run-remote-task.yml
-#   parameters:
-#     name: InstallMscclpp
-#     displayName: Install mscclpp
-#     runRemoteArgs: '--container sglang-mscclpp-test'
-#     remoteScript: |
-#       cd mscclpp
-#       pip install .
-#       pip install -r ./python/requirements_cuda12.txt
+- template: run-remote-task.yml
+  parameters:
+    name: InstallMscclpp
+    displayName: Install mscclpp
+    runRemoteArgs: '--container sglang-mscclpp-test'
+    remoteScript: |
+      rm -rf mscclpp
+      git clone https://github.com/microsoft/mscclpp.git 
+      cd mscclpp
+      mkdir build 
+      cd build 
+      cmake -DCMAKE_BUILD_TYPE=Release .. 
+      make –j 
+      cd .. 
+      pip install .
+      pip install -r ./python/requirements_cuda12.txt
 
 - template: run-remote-task.yml
   parameters:
