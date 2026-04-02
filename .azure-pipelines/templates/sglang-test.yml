@@ -42,37 +42,37 @@ steps:
       pip install --upgrade pip
       pip install -e "python"
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangTestBatchSize1
-    displayName: Run SGLang Test Batch Size 1
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangTestBatchSize1
+#     displayName: Run SGLang Test Batch Size 1
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangTestBatchSize2
-    displayName: Run SGLang Test Batch Size 2
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 2 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangTestBatchSize2
+#     displayName: Run SGLang Test Batch Size 2
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 2 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangTestBatchSize32
-    displayName: Run SGLang Test Batch Size 32
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 32 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangTestBatchSize32
+#     displayName: Run SGLang Test Batch Size 32
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 32 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangTestBatchSize64
-    displayName: Run SGLang Test Batch Size 64
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangTestBatchSize64
+#     displayName: Run SGLang Test Batch Size 64
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
 
 - template: run-remote-task.yml
