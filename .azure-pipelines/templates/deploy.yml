@@ -59,7 +59,7 @@ steps:
     targetType: 'inline'
     script: |
       sudo apt-get update -y
-      sudo apt-get install cmake=3.26.4 -y
+      sudo apt-get install cmake -y
       set -e
       rm -rf build
       mkdir -p build && cd build
