@@ -12,6 +12,7 @@ via the NativeAlgorithm framework with size-adaptive algorithm selection.
 """
 
 from __future__ import annotations
+import os
 import torch
 import torch.distributed as dist
 from typing import Optional, List, Tuple
@@ -22,6 +23,8 @@ from mscclpp._mscclpp import (
     ReduceOp,
 )
 from mscclpp.ext.algorithm_collection_builder import AlgorithmCollectionBuilder
+
+_DEBUG = os.environ.get("MSCCLPP_DEBUG_ALLTOALLV", "0") == "1"
 
 __all__ = ["MscclppAlltoAllV", "all_to_all_single"]
 
@@ -239,8 +242,8 @@ class MscclppAlltoAllV:
         # Fast path: skip GPU copies + bootstrap exchange if split sizes unchanged
         splits_key = (tuple(send_counts_bytes), tuple(recv_counts_bytes))
         if splits_key != self._cached_splits_key:
-            import sys as _sys
-            print(f"  [rank {self._rank}] alltoallv: splits changed, doing bootstrap exchange", flush=True)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: splits changed, doing bootstrap exchange", flush=True)
             # Clear cached contexts to free RegisteredMemory for old (possibly freed) tensors.
             # Without this, stale CUDA IPC handles accumulate and eventually SIGSEGV.
             if hasattr(self._algo, 'reset'):
@@ -252,9 +255,11 @@ class MscclppAlltoAllV:
             self._d_recv_displs.copy_(torch.tensor(recv_displs_bytes, dtype=torch.int64))
 
             # Exchange recv displacements with peers via bootstrap
-            print(f"  [rank {self._rank}] alltoallv: starting _exchange_recv_displs", flush=True)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: starting _exchange_recv_displs", flush=True)
             remote_recv_displs = self._exchange_recv_displs(recv_displs_bytes)
-            print(f"  [rank {self._rank}] alltoallv: _exchange_recv_displs done", flush=True)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: _exchange_recv_displs done", flush=True)
             self._d_remote_recv_displs.copy_(torch.tensor(remote_recv_displs, dtype=torch.int64))
 
             # Cache for subsequent calls
@@ -267,9 +272,11 @@ class MscclppAlltoAllV:
             # bootstrap operations (comm->connect, setupRemoteMemories).
             # Without this barrier, fast ranks' bootstrap messages from
             # initialize() can collide with slow ranks still in _exchange_recv_displs.
-            print(f"  [rank {self._rank}] alltoallv: waiting on bootstrap barrier", flush=True)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: waiting on bootstrap barrier", flush=True)
             self._comm.bootstrap().barrier()
-            print(f"  [rank {self._rank}] alltoallv: bootstrap barrier done", flush=True)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: bootstrap barrier done", flush=True)
 
         # Get stream
         if stream is None:
@@ -288,7 +295,6 @@ class MscclppAlltoAllV:
             output_alloc_size = output.nelement() * output.element_size()
         
         # Execute the optimized kernel
-        import sys as _sys
         # Clear any stale CUDA errors before executing (the C++ code checks
         # cudaGetLastError() after the kernel and returns INTERNAL_ERROR if any
         # previous error was pending).
@@ -298,11 +304,12 @@ class MscclppAlltoAllV:
         try:
             _cudart = ctypes.CDLL("libcudart.so")
             _last_err = _cudart.cudaGetLastError()
-            if _last_err != 0:
+            if _last_err != 0 and _DEBUG:
                 print(f"  [rank {self._rank}] WARNING: cleared stale CUDA error code {_last_err} before execute", flush=True)
         except Exception:
             pass
-        print(f"  [rank {self._rank}] alltoallv: calling algo.execute(input_alloc={input_alloc_size}, output_alloc={output_alloc_size})", flush=True)
+        if _DEBUG:
+            print(f"  [rank {self._rank}] alltoallv: calling algo.execute(input_alloc={input_alloc_size}, output_alloc={output_alloc_size})", flush=True)
         result = self._algo.execute(
             self._comm,
             input.data_ptr(),
@@ -317,7 +324,8 @@ class MscclppAlltoAllV:
             0,     # nthreads_per_block (auto)
             self._extras,
         )
-        print(f"  [rank {self._rank}] alltoallv: algo.execute returned {result}", flush=True)
+        if _DEBUG:
+            print(f"  [rank {self._rank}] alltoallv: algo.execute returned {result}", flush=True)
         
         from mscclpp._mscclpp import CommResult
         if result != CommResult.COMM_SUCCESS:
