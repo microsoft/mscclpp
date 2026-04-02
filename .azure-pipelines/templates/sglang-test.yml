@@ -28,10 +28,6 @@ steps:
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       cd mscclpp
-      cd build
-      cmake -DCMAKE_BUILD_TYPE=Release ..
-      make -j
-      cd ..
       pip install .
       pip install -r ./python/requirements_cuda12.txt
 
