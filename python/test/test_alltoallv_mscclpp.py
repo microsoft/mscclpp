@@ -174,7 +174,9 @@ def main():
         print(f"  IB devices: {ib_devices if ib_devices else 'NONE FOUND'}")
         print(f"  MSCCLPP_SOCKET_IFNAME: {os.environ.get('MSCCLPP_SOCKET_IFNAME', '<not set>')}")
         if is_multi_node and not ib_devices:
-            print(f"  WARNING: Multi-node detected but no IB devices! Cross-node will fail.")
+            print(f"  NOTE: Multi-node detected but no IB devices. "
+                  f"GB200 NVSwitch can handle cross-node without IB; "
+                  f"on Hopper/Ampere IB is required.")
     # Also print from rank n_ranks_per_node (first rank on node 1) for comparison
     if is_multi_node and rank == n_ranks_per_node and _DEBUG:
         print(f"  [Node 1] Hostname: {hostname}, rank={rank}")
