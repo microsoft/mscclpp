@@ -13,17 +13,10 @@
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/utils.hpp>
 
-#include <algorithm>
 #include "debug.h"
 
 namespace mscclpp {
 namespace collective {
-
-#if defined(__HIP_PLATFORM_AMD__)
-#define ALLTOALLV_WARP_SIZE 64
-#else
-#define ALLTOALLV_WARP_SIZE 32
-#endif
 
 using MultiNodeMode = AlltoallvFullmesh::MultiNodeMode;
 
@@ -396,8 +389,6 @@ AlgorithmCtxKey AlltoallvFullmesh::generateAlltoallvContextKey(
     [[maybe_unused]] DataType dtype) {
   return {(void*)input, output, inputSize, outputSize, 0};
 }
-
-#undef ALLTOALLV_WARP_SIZE
 
 }  // namespace collective
 }  // namespace mscclpp

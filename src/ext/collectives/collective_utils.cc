@@ -4,7 +4,6 @@
 #include "collective_utils.hpp"
 
 #include <algorithm>
-#include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
@@ -120,26 +119,6 @@ std::vector<mscclpp::PortChannel> setupPortChannels(
       mscclpp::MemoryId dstMemId = proxyService->addMemory(remoteMemories[cid]);
       channels.emplace_back(proxyService->portChannel(semId, dstMemId, srcMemId));
     }
-  }
-  return channels;
-}
-
-std::vector<mscclpp::PortChannel> setupAllPortChannels(
-    std::shared_ptr<mscclpp::ProxyService> proxyService,
-    mscclpp::Communicator& comm,
-    const std::vector<mscclpp::Connection>& connections,
-    const std::vector<mscclpp::RegisteredMemory>& remoteMemories,
-    mscclpp::RegisteredMemory localMemory) {
-  std::vector<mscclpp::PortChannel> channels;
-  mscclpp::MemoryId srcMemId = proxyService->addMemory(localMemory);
-  for (size_t cid = 0; cid < connections.size(); ++cid) {
-    // Create PortChannel for EVERY connection (CudaIpc and IB alike).
-    // The ProxyService proxy thread handles both connection types:
-    //   - CudaIpc: cudaMemcpyD2D via IPC-mapped pointer
-    //   - IB: RDMA write via ibv_post_send
-    mscclpp::SemaphoreId semId = proxyService->buildAndAddSemaphore(comm, connections[cid]);
-    mscclpp::MemoryId dstMemId = proxyService->addMemory(remoteMemories[cid]);
-    channels.emplace_back(proxyService->portChannel(semId, dstMemId, srcMemId));
   }
   return channels;
 }
