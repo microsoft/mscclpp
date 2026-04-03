@@ -94,17 +94,20 @@ if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   if [ "${PLATFORM}" == "rocm" ]; then
     LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
   fi
+  echo "LAUNCH_OPTION=${LAUNCH_OPTION}"
 
   if [ "${IB_ENVIRONMENT}" == "true" ]; then
+    echo "LAUNCH_OPTION=${LAUNCH_OPTION} && IB_ENVIRONMENT=${IB_ENVIRONMENT}"
     # InfiniBand: use --privileged for RDMA device access
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=sglang-mscclpp-test \
       --entrypoint /bin/bash lmsysorg/sglang:latest"
   else
+    echo "LAUNCH_OPTION=${LAUNCH_OPTION} && IB_ENVIRONMENT=${IB_ENVIRONMENT}"
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=sglang-mscclpp-test \
       --entrypoint /bin/bash lmsysorg/sglang:latest"
   fi
