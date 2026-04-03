@@ -21,8 +21,15 @@ from mscclpp._mscclpp import (
     TcpBootstrap,
     DataType,
     ReduceOp,
+    CommResult,
 )
 from mscclpp.ext.algorithm_collection_builder import AlgorithmCollectionBuilder
+
+import ctypes as _ctypes
+try:
+    _cudart = _ctypes.CDLL("libcudart.so")
+except Exception:
+    _cudart = None
 
 _DEBUG = os.environ.get("MSCCLPP_DEBUG_ALLTOALLV", "0") == "1"
 
@@ -283,32 +290,19 @@ class MscclppAlltoAllV:
             stream = torch.cuda.current_stream()
         cuda_stream = stream.cuda_stream
 
-        # Use the full underlying storage size (not just the view's active data)
-        # for the context key, so that reusing views of the same tensor with
-        # different split sizes doesn't create new contexts (which leak
-        # RegisteredMemory for stale buffers).
-        try:
-            input_alloc_size = input.untyped_storage().size()
-            output_alloc_size = output.untyped_storage().size()
-        except Exception:
-            input_alloc_size = input.nelement() * input.element_size()
-            output_alloc_size = output.nelement() * output.element_size()
-        
-        # Execute the optimized kernel
-        # Clear any stale CUDA errors before executing (the C++ code checks
-        # cudaGetLastError() after the kernel and returns INTERNAL_ERROR if any
-        # previous error was pending).
-        torch.cuda.synchronize()
-        # Also clear the CUDA error state via cudaGetLastError (consumes the error)
-        import ctypes
-        try:
-            _cudart = ctypes.CDLL("libcudart.so")
-            _last_err = _cudart.cudaGetLastError()
-            if _last_err != 0 and _DEBUG:
-                print(f"  [rank {self._rank}] WARNING: cleared stale CUDA error code {_last_err} before execute", flush=True)
-        except Exception:
-            pass
+        # Use the full underlying storage size for context key stability.
+        # When the test reuses the same large tensor with different split sizes,
+        # storage size stays constant → same context key → reuses channels.
+        input_alloc_size = input.untyped_storage().size()
+        output_alloc_size = output.untyped_storage().size()
+
         if _DEBUG:
+            # Clear stale CUDA errors (the C++ code checks cudaGetLastError
+            # after the kernel and returns INTERNAL_ERROR if any was pending).
+            if _cudart is not None:
+                _last_err = _cudart.cudaGetLastError()
+                if _last_err != 0:
+                    print(f"  [rank {self._rank}] WARNING: cleared stale CUDA error code {_last_err} before execute", flush=True)
             print(f"  [rank {self._rank}] alltoallv: calling algo.execute(input_alloc={input_alloc_size}, output_alloc={output_alloc_size})", flush=True)
         result = self._algo.execute(
             self._comm,
@@ -327,7 +321,6 @@ class MscclppAlltoAllV:
         if _DEBUG:
             print(f"  [rank {self._rank}] alltoallv: algo.execute returned {result}", flush=True)
         
-        from mscclpp._mscclpp import CommResult
         if result != CommResult.COMM_SUCCESS:
             # Get detailed CUDA error before raising
             try:

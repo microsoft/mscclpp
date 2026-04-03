@@ -193,12 +193,16 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
   }
 
   if (algoCtx->mode == MultiNodeMode::IB) {
-    // ── IB mode: PortChannel kernel for ALL peers ──────────────────────
-    // PortChannel handles both CudaIpc (intra) and IB (inter) connections
-    // via the ProxyService proxy thread.
+    // ── IB mode: Hybrid kernel ─────────────────────────────────────────
+    // MemoryChannel (direct NVLink) for intra-node peers,
+    // PortChannel (CPU proxy → RDMA) for inter-node peers.
     int numBlocks = nPeers;
-    alltoallvPortChannelKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+    alltoallvHybridKernel<<<numBlocks, threadsPerBlock, 0, stream>>>(
+        algoCtx->memoryChannelDeviceHandles.get(),
         algoCtx->portChannelDeviceHandles.get(),
+        algoCtx->d_peerIsLocal.get(),
+        algoCtx->d_peerToPortChannelIdx.get(),
+        algoCtx->deviceSyncer.get(),
         rank, worldSize,
         sendBuff, recvBuff,
         d_sendCounts, d_sendDispls,
@@ -308,25 +312,54 @@ std::shared_ptr<void> AlltoallvFullmesh::initAlltoallvContext(
     ctx->registeredMemories.push_back(outputBufRegMem);
 
   } else if (ctx->mode == MultiNodeMode::IB) {
-    // ── IB: PortChannel for ALL peers (CudaIpc intra + IB inter connections)
+    // ── IB hybrid: MemoryChannel (intra-node) + PortChannel (inter-node) ──
     TransportFlags allTransports = Transport::CudaIpc | getIBTransportForGpu(localGpuIdx);
     RegisteredMemory inputBufRegMem = comm->registerMemory((void*)input, inputSize, allTransports);
     RegisteredMemory outputBufRegMem = comm->registerMemory(output, outputSize, allTransports);
 
     std::vector<RegisteredMemory> remoteOutputMemories = setupRemoteMemories(comm, rank, outputBufRegMem);
-    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: input=%p (%zu B), output=%p (%zu B), remotes=%zu",
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB hybrid: input=%p (%zu B), output=%p (%zu B), remotes=%zu",
          rank, input, inputSize, output, outputSize, remoteOutputMemories.size());
-    for (size_t i = 0; i < remoteOutputMemories.size(); ++i) {
-      INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: remoteOutput[%zu] data=%p, size=%zu",
-           rank, i, remoteOutputMemories[i].data(), remoteOutputMemories[i].size());
-    }
 
+    // Build peer locality map and per-type channel arrays
+    int nPeers = ctx->worldSize - 1;
+    int thisNode = rank / ctx->nRanksPerNode;
+    std::vector<int> peerIsLocal(nPeers, 0);
+    std::vector<int> peerToPortChIdx(nPeers, -1);
+    int portChCount = 0;
+    for (int peerIdx = 0; peerIdx < nPeers; peerIdx++) {
+      int peer = peerIdx < rank ? peerIdx : peerIdx + 1;
+      if (peer / ctx->nRanksPerNode == thisNode) {
+        peerIsLocal[peerIdx] = 1;
+      } else {
+        peerToPortChIdx[peerIdx] = portChCount++;
+      }
+    }
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB hybrid: nPeers=%d, localPeers=%d, remotePeers=%d",
+         rank, nPeers, nPeers - portChCount, portChCount);
+
+    // Copy locality arrays to GPU
+    ctx->d_peerIsLocal = mscclpp::detail::gpuCallocShared<int>(nPeers);
+    ctx->d_peerToPortChannelIdx = mscclpp::detail::gpuCallocShared<int>(nPeers);
+    mscclpp::gpuMemcpy<int>(ctx->d_peerIsLocal.get(), peerIsLocal.data(), nPeers, cudaMemcpyHostToDevice);
+    mscclpp::gpuMemcpy<int>(ctx->d_peerToPortChannelIdx.get(), peerToPortChIdx.data(), nPeers, cudaMemcpyHostToDevice);
+
+    // MemoryChannel for intra-node CudaIpc connections (direct NVLink put)
+    constexpr int nChannelsPerConnection = 1;
+    ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);
+    ctx->memoryChannels = setupMemoryChannels(
+        this->conns_, ctx->memorySemaphores, remoteOutputMemories, inputBufRegMem, nChannelsPerConnection);
+    ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB hybrid: %zu memoryChannels (intra-node)",
+         rank, ctx->memoryChannels.size());
+
+    // PortChannel for inter-node IB connections only (CPU proxy → RDMA)
     ctx->proxyService = std::make_shared<ProxyService>();
-    ctx->portChannels = setupAllPortChannels(
+    ctx->portChannels = setupPortChannels(
         ctx->proxyService, *comm, this->conns_, remoteOutputMemories, inputBufRegMem);
     ctx->portChannelDeviceHandles = setupPortChannelDeviceHandles(ctx->portChannels);
     ctx->proxyService->startProxy(true);
-    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB: %zu portChannels created, proxy started",
+    INFO(MSCCLPP_COLL, "[alltoallv][rank %d] IB hybrid: %zu portChannels (inter-node), proxy started",
          rank, ctx->portChannels.size());
 
     ctx->registeredMemories = std::move(remoteOutputMemories);
