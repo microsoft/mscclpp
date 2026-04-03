@@ -121,3 +121,49 @@ TEST_DATA_REDUCE_SCATTER(int32, int)
 TEST_DATA_ALL_TO_ALL(float16, __half)
 TEST_DATA_ALL_TO_ALL(float32, float)
 TEST_DATA_ALL_TO_ALL(int32, int)
+
+#define TEST_DATA_SENDRECV(FuncNameType, DataType)                                                          \
+  extern "C" __global__ void __launch_bounds__(1024, 1) test_data_sendrecv_##FuncNameType(                  \
+      DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {    \
+                                                                                                             \
+    /* Pair ranks: 0<->1, 2<->3, ... */                                                                      \
+    int peer_rank = my_rank ^ 1;                                                                             \
+    if (peer_rank >= num_ranks) return;                                                                      \
+                                                                                                             \
+    unsigned int seed =                                                                                      \
+        (unsigned int)(blockIdx.x * blockDim.x + threadIdx.x + peer_rank + seq);                             \
+                                                                                                             \
+    for (size_t i = blockIdx.x * blockDim.x + threadIdx.x;                                                   \
+         i < num_elems;                                                                                      \
+         i += blockDim.x * gridDim.x) {                                                                      \
+                                                                                                             \
+      seed = ranqd1(seed);                                                                                   \
+      test_buf[i] = DataType(seed % blockDim.x) / DataType(blockDim.x);                                      \
+                                                                                                             \
+      /* Print a small subset to avoid flooding */                                                           \
+      if (blockIdx.x == 0 && threadIdx.x == 0 && i < 8) {                                                     \
+        printf("rank=%d peer=%d i=%zu result=%f expected=%f\n",                                              \
+               my_rank,                                                                                      \
+               peer_rank,                                                                                    \
+               i,                                                                                            \
+               (float)result_buf[i],                                                                         \
+               (float)test_buf[i]);                                                                          \
+      }                                                                                                      \
+                                                                                                             \
+      /* Print mismatches explicitly */                                                                      \
+      if (result_buf[i] != test_buf[i]) {                                                                    \
+        printf("MISMATCH rank=%d peer=%d i=%zu result=%f expected=%f\n",                                     \
+               my_rank,                                                                                      \
+               peer_rank,                                                                                    \
+               i,                                                                                            \
+               (float)result_buf[i],                                                                         \
+               (float)test_buf[i]);                                                                          \
+      }                                                                                                      \
+                                                                                                             \
+      assert(result_buf[i] == test_buf[i]);                                                                  \
+    }                                                                                                        \
+  }
+
+TEST_DATA_SENDRECV(float16, __half)
+TEST_DATA_SENDRECV(float32, float)
+TEST_DATA_SENDRECV(int32, int)
