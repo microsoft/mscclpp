@@ -91,6 +91,7 @@ steps:
       export RANK=0
       export MASTER_ADDR=127.0.0.1
       export MASTER_PORT=12345
+      export MSCCLPP_FORCE_DISABLE_NVLS=1
 
       cd sglang
 
