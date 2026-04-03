@@ -32,15 +32,15 @@ jobs:
     matrix:
       sglang:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
-
+        
   pool:
-    name: msccl-ci
+    name: msccl-ci-h100
   container:
     image: $(containerImage)
 
   steps:
   - template: templates/sglang-test.yml
     parameters:
-      subscription:     mscclpp-ci
-      vmssName:         mscclpp-ci
-      gpuArch:          '80'
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
+      gpuArch:          '90'
