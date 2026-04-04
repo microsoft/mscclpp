@@ -85,12 +85,18 @@ bool MLX5DV::mlx5dv_is_supported(struct ibv_device* device) {
 struct ibv_mr* MLX5DV::mlx5dv_reg_dmabuf_mr(struct ibv_pd* pd, uint64_t offset, size_t length, uint64_t iova, int fd,
                                             int access) {
   // mlx5dv_reg_dmabuf_mr(pd, offset, length, iova, fd, access, mlx5_access) — the last arg is mlx5-specific flags.
+  // Must use dlvsym with "MLX5_1.25" version to get the Data Direct-capable symbol.
   using FuncType = struct ibv_mr* (*)(struct ibv_pd*, uint64_t, size_t, uint64_t, int, int, int);
   static FuncType impl = nullptr;
   static bool resolved = false;
   if (!resolved) {
-    void* ptr = MLX5DV::dlsym("mlx5dv_reg_dmabuf_mr", /*allowReturnNull=*/true);
-    impl = ptr ? reinterpret_cast<FuncType>(ptr) : nullptr;
+    if (globalMLX5Handle) {
+      void* ptr = dlvsym(globalMLX5Handle.get(), "mlx5dv_reg_dmabuf_mr", "MLX5_1.25");
+      if (!ptr) {
+        ptr = MLX5DV::dlsym("mlx5dv_reg_dmabuf_mr", /*allowReturnNull=*/true);
+      }
+      impl = ptr ? reinterpret_cast<FuncType>(ptr) : nullptr;
+    }
     resolved = true;
   }
   if (!impl) return nullptr;

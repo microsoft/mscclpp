@@ -20,7 +20,29 @@ static bool gCurrentTestPassed = true;
 static std::string gCurrentTestFailureMessage;
 static std::string gCurrentTestName;
 
+// Performance result collection
+struct PerfResult {
+  std::string label;
+  double value;
+  std::string unit;
+};
+struct PerfTestResults {
+  std::string testName;
+  std::vector<PerfResult> results;
+};
+static std::vector<PerfTestResults> gPerfResults;
+
 std::string currentTestName() { return gCurrentTestName; }
+
+void reportPerfResult(const std::string& label, double value, const std::string& unit) {
+  if (gMpiRank != 0) return;
+  if (gCurrentTestName.empty()) return;
+  // Find or create entry for the current test
+  if (gPerfResults.empty() || gPerfResults.back().testName != gCurrentTestName) {
+    gPerfResults.push_back({gCurrentTestName, {}});
+  }
+  gPerfResults.back().results.push_back({label, value, unit});
+}
 
 namespace utils {
 
@@ -151,6 +173,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
   // Parse command line arguments
   std::string filter;
   bool excludePerfTests = false;
+  bool onlyPerfTests = false;
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
@@ -161,6 +184,8 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       ++i;
     } else if (arg == "--exclude-perf-tests") {
       excludePerfTests = true;
+    } else if (arg == "--only-perf-tests") {
+      onlyPerfTests = true;
     }
   }
 
@@ -189,11 +214,15 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       skippedByFilter++;
       continue;
     }
+    if (onlyPerfTests && !entry.isPerfTest) {
+      skippedByFilter++;
+      continue;
+    }
     if (!matchesFilter(fullName, filter)) {
       skippedByFilter++;
       continue;
     }
-    totalToRun++;
+    totalToRun++;;
   }
 
   if (gMpiRank == 0) {
@@ -208,6 +237,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     std::string fullName = entry.suiteName + "." + entry.testName;
 
     if (excludePerfTests && entry.isPerfTest) continue;
+    if (onlyPerfTests && !entry.isPerfTest) continue;
     if (!matchesFilter(fullName, filter)) continue;
 
     gCurrentTestPassed = true;
@@ -303,6 +333,19 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
     }
     if (failed > 0) {
       std::cout << "[  FAILED  ] " << failed << " tests.\n";
+    }
+
+    // Print collected performance results
+    if (!gPerfResults.empty()) {
+      std::cout << "\n[   PERF   ] Performance results:\n";
+      for (const auto& testResult : gPerfResults) {
+        std::cout << "[   PERF   ] " << testResult.testName << "\n";
+        for (const auto& r : testResult.results) {
+          std::cout << "[   PERF   ]   " << std::setw(12) << r.label << ": " << std::setprecision(4) << r.value << " "
+                    << r.unit << "\n";
+        }
+      }
+      gPerfResults.clear();
     }
   }
 

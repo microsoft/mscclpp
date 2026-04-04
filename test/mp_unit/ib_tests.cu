@@ -86,7 +86,7 @@ void IbPeerToPeerTest::stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint6
   qp->stageSendWriteWithImm(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
 }
 
-TEST(IbPeerToPeerTest, SimpleSendRecv) {
+PERF_TEST(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
@@ -122,7 +122,7 @@ TEST(IbPeerToPeerTest, SimpleSendRecv) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbPeerToPeerTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
+    ::mscclpp::test::reportPerfResult("latency", us / maxIter, "us/iter");
   }
   bootstrap->barrier();
 }
@@ -385,7 +385,7 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
   }
 }
 
-TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
+PERF_TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
@@ -426,7 +426,7 @@ TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbPeerToPeerTest.SimpleAtomicAdd: " << us / maxIter << " us/iter" << std::endl;
+    ::mscclpp::test::reportPerfResult("latency", us / maxIter, "us/iter");
   }
   bootstrap->barrier();
 }

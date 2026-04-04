@@ -241,7 +241,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
   }
 
   proxyService->stopProxy();
@@ -274,25 +274,25 @@ TEST(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
 }
 
-TEST(PortChannelOneToOneTest, PingPongPerf) {
+PERF_TEST(PortChannelOneToOneTest, PingPongPerf) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
   REQUIRE_IBVERBS;
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
 
-TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
   REQUIRE_HOST_NO_ATOMIC;
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
 
-TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
@@ -459,7 +459,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
   }
 
   proxyService->stopProxy();
@@ -472,14 +472,14 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
   testPacketPingPong(true, IbMode::Host);
 }
 
-TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
 
-TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
   REQUIRE_IBVERBS;
   testPacketPingPongPerf(true, IbMode::Host);
 }
 
-TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
   REQUIRE_HOST_NO_ATOMIC;
   testPacketPingPongPerf(true, IbMode::HostNoAtomic);
@@ -496,4 +496,87 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
   REQUIRE_HOST_NO_ATOMIC;
   testPacketPingPong(true, IbMode::HostNoAtomic);
+}
+
+// Bandwidth test: bidirectional bulk transfer matching the tutorial pattern.
+// Both ranks do signal+wait+putWithSignal+wait per iteration.
+__global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0) return;
+  const uint64_t srcOffset = rank * nElem * sizeof(int);
+  const uint64_t dstOffset = srcOffset;
+  for (int i = 0; i < nIters; i++) {
+    portChan.signal();
+    portChan.wait();
+    portChan.putWithSignal(dstOffset, srcOffset, nElem * sizeof(int));
+    portChan.wait();
+  }
+}
+
+void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int maxElem = 32 * 1024 * 1024;  // 128 MB per direction
+  const int bufElem = maxElem * 2;        // 2x for bidirectional
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(bufElem).memory();
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(),
+                       bufElem * sizeof(int), nullptr, 0, params.ibMode);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  ASSERT_EQ(portChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  proxyService->startProxy();
+
+  const std::string testName = ::mscclpp::test::currentTestName();
+  const int nIters = 1000;
+
+  for (int nElem : {256, 16 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024}) {
+    // Warm-up
+    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, 10, gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+
+    // Measure
+    mscclpp::Timer timer;
+    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, nIters, gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    double elapsedUs = timer.elapsed();
+    communicator->bootstrap()->barrier();
+
+    if (gEnv->rank == 0) {
+      double copyBytes = (double)nElem * sizeof(int);
+      double elapsedMsPerIter = elapsedUs / 1e3 / nIters;
+      double gbps = copyBytes / elapsedMsPerIter * 1e-6;
+      double sizeKB = copyBytes / 1024.0;
+      std::string label = (sizeKB >= 1024.0) ? (std::to_string((int)(sizeKB / 1024.0)) + " MB")
+                                             : (std::to_string((int)sizeKB) + " KB");
+      ::mscclpp::test::reportPerfResult(label, gbps, "GB/s");
+    }
+  }
+
+  proxyService->stopProxy();
+}
+
+PERF_TEST(PortChannelOneToOneTest, Bandwidth) {
+  testBandwidth(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostMode) {
+  REQUIRE_IBVERBS;
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_HOST_NO_ATOMIC;
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }

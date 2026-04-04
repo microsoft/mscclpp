@@ -208,18 +208,22 @@ void IBConnection::recvThreadFunc() {
   while (!stopRecvThread_.load(std::memory_order_relaxed)) {
     int wcNum = qp->pollRecvCq();
     if (wcNum < 0) {
-      WARN(NET, "IBConnection recvThreadFunc: pollRecvCq failed");
+      recvThreadErrorMsg_ = "pollRecvCq failed";
+      recvThreadError_.store(true, std::memory_order_release);
+      WARN(NET, "IBConnection recvThreadFunc: ", recvThreadErrorMsg_);
       break;
     }
 
     for (int i = 0; i < wcNum; ++i) {
       int status = qp->getRecvWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
-        WARN(NET, "IBConnection recvThreadFunc: recv work completion failed: ", qp->getRecvWcStatusString(i));
-        // Post another recv to replace the failed one
-        qp->stageRecv(/*wrId=*/0);
-        qp->postRecv();
-        continue;
+        // A failed recv WC typically means the QP entered error state (e.g., WR Flushed Error).
+        // All remaining WRs will also fail — no recovery without QP recreation. Exit the thread
+        // and set the error flag so the main thread can detect it.
+        recvThreadErrorMsg_ = std::string("recv work completion failed: ") + qp->getRecvWcStatusString(i);
+        recvThreadError_.store(true, std::memory_order_release);
+        WARN(NET, "IBConnection recvThreadFunc: ", recvThreadErrorMsg_);
+        return;
       }
 
       // Read the lower 32 bits of the token from imm_data. Reconstruct the full 64-bit value
@@ -260,6 +264,7 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
       ibNoAtomic_(getImpl(localEndpoint).ibNoAtomic_),
       gdrSignalForwarding_(false),
       stopRecvThread_(false),
+      recvThreadError_(false),
       localGpuDeviceId_(localEndpoint.device().id),
       signalAddr_(0) {
   qp_ = getImpl(localEndpoint).ibQp_;
@@ -441,6 +446,11 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+
+  // Check if the recv thread has already reported an error (e.g., QP entered error state).
+  if (recvThreadError_.load(std::memory_order_acquire)) {
+    THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
+  }
 
   Timer timer;
   while (qp_.lock()->getNumSendCqItems()) {

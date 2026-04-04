@@ -110,6 +110,8 @@ class IBConnection : public BaseConnection {
   bool gdrSignalForwarding_;  // ibNoAtomic_ && gdrEnabled() — decided once at construction
   std::thread recvThread_;
   std::atomic<bool> stopRecvThread_;
+  std::atomic<bool> recvThreadError_;    // Set by recv thread on fatal error
+  std::string recvThreadErrorMsg_;       // Error message from recv thread (written before recvThreadError_ is set)
   int localGpuDeviceId_;  // Local GPU device ID for CUDA context and GDR mapping
 
   // Signal forwarding design (HostNoAtomic mode):
