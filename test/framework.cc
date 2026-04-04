@@ -222,7 +222,7 @@ int TestRegistry::runAllTests(int argc, char* argv[]) {
       skippedByFilter++;
       continue;
     }
-    totalToRun++;;
+    totalToRun++;
   }
 
   if (gMpiRank == 0) {

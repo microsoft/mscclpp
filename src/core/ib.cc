@@ -91,8 +91,8 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
     // routes DMA through the Data Direct engine for correct ordering and higher throughput.
     // Fall back to the default (non-PCIe) mapping if the flag is unsupported.
 #if (CUDA_VERSION >= 12030)
-    CUresult cuRes = cuMemGetHandleForAddressRange(
-        &fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
+    CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+                                                   CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
     if (cuRes != CUDA_SUCCESS || fd < 0) {
       if (fd >= 0) ::close(fd);
       fd = -1;

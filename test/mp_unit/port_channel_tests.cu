@@ -517,12 +517,12 @@ void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int maxElem = 32 * 1024 * 1024;  // 128 MB per direction
-  const int bufElem = maxElem * 2;        // 2x for bidirectional
+  const int bufElem = maxElem * 2;       // 2x for bidirectional
 
   std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(bufElem).memory();
-  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(),
-                       bufElem * sizeof(int), nullptr, 0, params.ibMode);
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), bufElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -554,8 +554,8 @@ void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
       double elapsedMsPerIter = elapsedUs / 1e3 / nIters;
       double gbps = copyBytes / elapsedMsPerIter * 1e-6;
       double sizeKB = copyBytes / 1024.0;
-      std::string label = (sizeKB >= 1024.0) ? (std::to_string((int)(sizeKB / 1024.0)) + " MB")
-                                             : (std::to_string((int)sizeKB) + " KB");
+      std::string label =
+          (sizeKB >= 1024.0) ? (std::to_string((int)(sizeKB / 1024.0)) + " MB") : (std::to_string((int)sizeKB) + " KB");
       ::mscclpp::test::reportPerfResult(label, gbps, "GB/s");
     }
   }
