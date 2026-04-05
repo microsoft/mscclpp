@@ -51,6 +51,7 @@ option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
+option(MSCCLPP_BUILD_EXT_TORCHCOMMS "Build TorchComms MSCCL++ backend" OFF)
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
@@ -250,4 +251,9 @@ endif()
 # Python bindings
 if(MSCCLPP_BUILD_PYTHON_BINDINGS)
     add_subdirectory(python)
+endif()
+
+# TorchComms MSCCL++ backend
+if(MSCCLPP_BUILD_EXT_TORCHCOMMS)
+    add_subdirectory(python/mscclpp_torchcomm)
 endif()
