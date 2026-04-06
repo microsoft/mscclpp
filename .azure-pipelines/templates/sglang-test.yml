@@ -91,6 +91,10 @@ steps:
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
+      
+      cd mscclpp
+
+      echo "Directory: $(pwd)"
 
       # Launch sglang server in the background
       python3 -m sglang.launch_server \
@@ -136,14 +140,14 @@ steps:
       mkdir -p "$RESULTS_DIR"
 
       # Run the benchmark
-      python3 mscclpp/testbench_sglang.py \
+      python3 ./test/bench_sglang.py \
         --tokenizer Qwen/Qwen3-8B \
         --host 127.0.0.1 \
         --port 30000 \
         --request-rate 20 \
         --num-prompts 1729 \
         --max-concurrency 512 \
-        --dataset mscclpp/test/single_turn_completions_with_si_fixed.jsonl \
+        --dataset ./test/single_turn_completions_with_si_fixed.jsonl \
         --output-file "$RESULTS_DIR/run.json" \
         --flush-cache \
         --num-warmup 50
