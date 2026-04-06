@@ -50,8 +50,8 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangTestBatchSize1
-    displayName: Run SGLang Test Batch Size 1
+    name: RunSGLangBenchOneBatch1
+    displayName: Run SGLang Bench One Batch - 1
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
@@ -59,8 +59,8 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangTestBatchSize2
-    displayName: Run SGLang Test Batch Size 2
+    name: RunSGLangBenchOneBatch2
+    displayName: Run SGLang Bench One Batch - 2
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
@@ -68,8 +68,8 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangTestBatchSize32
-    displayName: Run SGLang Test Batch Size 32
+    name: RunSGLangBenchOneBatch32
+    displayName: Run SGLang Bench One Batch - 32
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
@@ -77,14 +77,83 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangTestBatchSize64
-    displayName: Run SGLang Test Batch Size 64
+    name: RunSGLangBenchOneBatch64
+    displayName: Run SGLang Bench One Batch - 64
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangValidationTest
+    displayName: Run SGLang Validation Test
+    runRemoteArgs: '--container sglang-mscclpp-test'
+    remoteScript: |
+      export FLASHINFER_DISABLE_VERSION_CHECK=1
 
+      # Launch sglang server in the background
+      python3 -m sglang.launch_server \
+        --model-path Qwen/Qwen3-8B \
+        --port 30000 \
+        --host 0.0.0.0 \
+        --tp 8 \
+        --swa-full-tokens-ratio 1.0 \
+        --max-prefill-tokens 16384 \
+        --chunked-prefill-size 16384 \
+        --mem-fraction-static 0.85 \
+        --max-running-requests 512 \
+        --attention-backend triton \
+        --grammar-backend outlines \
+        --schedule-policy fcfs \
+        --disable-custom-all-reduce \
+        --enable-mscclpp \
+        > /tmp/sglang_server.log 2>&1 &
+      SERVER_PID=$!
+
+      # Wait for the server to be ready (poll the health endpoint)
+      echo "Waiting for sglang server to be ready..."
+      MAX_WAIT=600
+      ELAPSED=0
+      until curl -s http://localhost:30000/health > /dev/null 2>&1; do
+        if ! kill -0 $SERVER_PID 2>/dev/null; then
+          echo "Server process died. Logs:"
+          cat /tmp/sglang_server.log
+          exit 1
+        fi
+        if [ $ELAPSED -ge $MAX_WAIT ]; then
+          echo "Server did not become ready within ${MAX_WAIT}s. Logs:"
+          cat /tmp/sglang_server.log
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
+        fi
+        sleep 5
+        ELAPSED=$((ELAPSED + 5))
+      done
+      echo "Server is ready after ${ELAPSED}s"
+
+      RESULTS_DIR=/tmp/sglang_bench_results
+      mkdir -p "$RESULTS_DIR"
+
+      # Run the benchmark
+      python3 ./mscclpp/testbench_sglang.py \
+        --tokenizer Qwen/Qwen3-8B \
+        --host 127.0.0.1 \
+        --port 30000 \
+        --request-rate 20 \
+        --num-prompts 1729 \
+        --max-concurrency 512 \
+        --dataset ./mscclpp/test/single_turn_completions_with_si_fixed.jsonl \
+        --output-file "$RESULTS_DIR/run.json" \
+        --flush-cache \
+        --num-warmup 50
+
+      echo "Benchmark completed. Results:"
+      cat "$RESULTS_DIR/run.json"
+
+      # Shut down the server
+      kill $SERVER_PID 2>/dev/null || true
+      wait $SERVER_PID 2>/dev/null || true
 - template: run-remote-task.yml
   parameters:
     name: RunSGLangTestAllReduce
