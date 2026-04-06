@@ -106,8 +106,9 @@ steps:
       if [ -n "${{ parameters.gpuArch }}" ]; then
         PIP_CMAKE_ARGS="-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}"
       fi
-      if [ -n '${{ parameters.cmakeArgs }}' ]; then
-        PIP_CMAKE_ARGS="${PIP_CMAKE_ARGS} ${{ parameters.cmakeArgs }}"
+      CMAKE_EXTRA_ARGS='${{ parameters.cmakeArgs }}'
+      if [ -n "${CMAKE_EXTRA_ARGS}" ]; then
+        PIP_CMAKE_ARGS="${PIP_CMAKE_ARGS} ${CMAKE_EXTRA_ARGS}"
       fi
       echo "${PIP_CMAKE_ARGS}" > pip_cmake_args.txt
       echo "pip CMake args: $(cat pip_cmake_args.txt)"
