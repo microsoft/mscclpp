@@ -29,7 +29,12 @@ void PortChannelOneToOneTest::SetUp() {
   proxyService = std::make_shared<mscclpp::ProxyService>();
 }
 
-void PortChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
+void PortChannelOneToOneTest::TearDown() {
+  // Destroy proxyService (and its semaphores) BEFORE connections are cleared,
+  // because ~Host2DeviceSemaphore calls stopSignalForwarding() on the connection.
+  proxyService.reset();
+  CommunicatorTestBase::TearDown();
+}
 
 void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC,
                                                    bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
