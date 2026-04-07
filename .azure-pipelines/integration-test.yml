@@ -26,7 +26,7 @@ pr:
       - '**/*.md'
 
 jobs:
-- job: sglangtest
+- job: SGlangTest
   displayName: SGLANG Test
   strategy:
     matrix:
@@ -44,3 +44,15 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       gpuArch:          '90'
+
+- job: SGlangMultiNodeTest
+  displayName: SGLANG Multi-Node Test
+  strategy:
+    matrix:
+      sglang:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
+
+  pool:
+    name: mscclpp-it
+  container:
+    image: $(containerImage)

@@ -1,0 +1,86 @@
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: perfBaselineFile
+  type: string
+  default: 'test/deploy/perf_ndmv4.jsonl'
+- name: gpuArch
+  type: string
+- name: containerName
+  type: string
+  default: 'sglang-mscclpp-test'
+
+steps:
+- task: Bash@3
+  displayName: Add HostEntry
+  inputs:
+    targetType: 'inline'
+    script: |
+      ENTRY="${{ parameters.hostEntries }}"
+      if ! grep -qxF "$ENTRY" /etc/hosts; then
+        echo "Adding to /etc/hosts"
+        echo "$ENTRY" | sudo tee -a /etc/hosts
+      else
+        echo "Entry already exists, nothing to do."
+      fi
+
+- template: deploy.yml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    gpuArch:          ${{ parameters.gpuArch }}
+    deployArgs:       'single-node-test true cuda'
+    containerName:    ${{ parameters.containerName }}
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallMscclpp
+    displayName: Install mscclpp
+    runRemoteArgs: '--container sglang-mscclpp-test'
+    remoteScript: |
+      cd mscclpp
+      rm -rf build
+      mkdir build 
+      cd build 
+      cmake -DCMAKE_BUILD_TYPE=Release .. 
+      make -j
+      cd .. 
+      pip install .
+      pip install -r ./python/requirements_cuda12.txt
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallSGLang
+    displayName: Install SGLang
+    runRemoteArgs: '--container sglang-mscclpp-test'
+    remoteScript: |
+      git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
+      cd sglang
+      pip install --upgrade pip
+      pip install -e "python"
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangMutliBenchOneBatch1
+    displayName: Run SGLang Multi-Node Bench One Batch - 1
+    runRemoteArgs: '--container sglang-mscclpp-test --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
+    remoteScript: |
+      export FLASHINFER_DISABLE_VERSION_CHECK=1
+      HOSTNAME=$(hostname)
+      if [ "$HOSTNAME" = "mscclit-000000" ]; then
+        NODE_RANK=0
+      elif [ "$HOSTNAME" = "mscclit-000001" ]; then
+        NODE_RANK=1
+      else
+        echo "Unknown hostname: $HOSTNAME"
+        exit 1
+      fi
+      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 16 --dist-init-addr mscclit-000000:20003 --nnodes 2 --node-rank $NODE_RANK --enable-mscclpp
+
+- template: stop.yml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName:     ${{ parameters.vmssName }}
+
