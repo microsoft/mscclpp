@@ -6,8 +6,6 @@ parameters:
 - name: perfBaselineFile
   type: string
   default: 'test/deploy/perf_ndmv4.jsonl'
-- name: gpuArch
-  type: string
 - name: containerName
   type: string
   default: 'sglang-mscclpp-test'
@@ -30,7 +28,6 @@ steps:
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
-    gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'single-node-test true cuda'
     containerName:    ${{ parameters.containerName }}
 
