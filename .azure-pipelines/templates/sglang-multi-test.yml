@@ -9,6 +9,8 @@ parameters:
 - name: containerName
   type: string
   default: 'sglang-mscclpp-test'
+- name: resourceGroup
+  type: string
 
 steps:
 - task: Bash@3
@@ -30,6 +32,7 @@ steps:
     vmssName:         ${{ parameters.vmssName }}
     deployArgs:       'single-node-test true cuda'
     containerName:    ${{ parameters.containerName }}
+    resourceGroup:    ${{ parameters.resourceGroup }}
 
 - template: run-remote-task.yml
   parameters:
@@ -80,4 +83,5 @@ steps:
   parameters:
     subscription: ${{ parameters.subscription }}
     vmssName:     ${{ parameters.vmssName }}
+    resourceGroup: ${{ parameters.resourceGroup }}
 
