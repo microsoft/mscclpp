@@ -46,14 +46,14 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     uint32_t data = src[idx];
     using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
                                       mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
-    AccRaw acc = mscclpp::upcast_vector<T, AccumT, AccRaw>(data);
+    AccRaw acc = mscclpp::upcastVector<T, AccumT, AccRaw>(data);
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       LL8Packet* dstPkt = (LL8Packet*)scratchBuff + remoteRank * nelems;
       uint32_t val = dstPkt[idx].read(flag, -1);
       data = calVector<T, OpType>(val, data);
     }
-    dst[idx] = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc);
+    dst[idx] = mscclpp::downcastVector<T, AccumT, uint32_t>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {
