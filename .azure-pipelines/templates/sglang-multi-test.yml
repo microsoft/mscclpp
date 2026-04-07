@@ -11,6 +11,8 @@ parameters:
   default: 'sglang-mscclpp-test'
 - name: resourceGroup
   type: string
+- name: hostEntries
+  type: string
 
 steps:
 - task: Bash@3
