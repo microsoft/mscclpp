@@ -97,11 +97,14 @@ if $USE_DOCKER; then
     INNER+=" cd /root/mscclpp;"
     INNER+=" export LD_LIBRARY_PATH=/root/mscclpp/build/lib:\\\$LD_LIBRARY_PATH;"
     INNER+=" CMD_B64='${CMD_B64}';"
-    INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d | bash -euxo pipefail"
+    INNER+=" TMP=\\\$(mktemp);"
+    INNER+=" printf '%s' \\\"\\\$CMD_B64\\\" | base64 -d > \\\"\\\$TMP\\\";"
+    INNER+=" bash -euxo pipefail \\\"\\\$TMP\\\";"
+    INNER+=" rm -f \\\"\\\$TMP\\\""
 
     parallel-ssh -i "${PSSH_COMMON[@]}" \
         "sudo docker exec mscclpp-test bash -c \"${INNER}\""
 else
     parallel-ssh -i "${PSSH_COMMON[@]}" \
-        "set -euxo pipefail; CMD_B64='${CMD_B64}'; printf '%s' \"\$CMD_B64\" | base64 -d | bash -euxo pipefail"
+        "set -euxo pipefail; CMD_B64='${CMD_B64}'; TMP=\$(mktemp); printf '%s' \"\$CMD_B64\" | base64 -d > \"\$TMP\"; bash -euxo pipefail \"\$TMP\"; rm -f \"\$TMP\""
 fi
