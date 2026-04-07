@@ -14,7 +14,7 @@ import cupy as cp
 import numpy as np
 import pytest
 
-from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp
+from mscclpp import CommGroup, GpuBuffer, DataType, ReduceOp, is_nvls_supported
 from mscclpp.ext import AlgorithmCollectionBuilder
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 
@@ -220,6 +220,8 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     comm_group, algo_map, scratch = setup_algorithms(mpi_group)
     if algo_name not in algo_map:
         pytest.skip(f"{algo_name} not available")
+    if "nvls" in algo_name and not is_nvls_supported():
+        pytest.skip(f"{algo_name} requires NVLS which is not supported on this platform")
     algo = algo_map[algo_name]
 
     buf = GpuBuffer(size, dtype=cp.uint8)
@@ -317,6 +319,8 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     comm_group, algo_map, scratch = setup_algorithms(mpi_group)
     if algo_name not in algo_map:
         pytest.skip(f"{algo_name} not available")
+    if "nvls" in algo_name and not is_nvls_supported():
+        pytest.skip(f"{algo_name} requires NVLS which is not supported on this platform")
 
     algo = algo_map[algo_name]
     buf = GpuBuffer(size, dtype=cp.uint8)
