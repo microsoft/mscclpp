@@ -230,6 +230,8 @@ def main(
     # Count how many elements changed
     changed = cp.count_nonzero(result_buf != cp.float16(123.0)).item()
     print("changed elements:", changed, "out of", result_buf.size)
+    cp.cuda.runtime.deviceSynchronize()
+    mscclpp_group.barrier()
 
     bench_correctness(
         collective,
