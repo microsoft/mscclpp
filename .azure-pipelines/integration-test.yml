@@ -64,9 +64,9 @@ jobs:
   container:
     image: $(containerImage)
 
-steps:
-- template: templates/sglang-test.yml
-  parameters:
-      subscription:  msccl-it
-      vmssName:      mscclit-vmss
-      resourceGroup: msccl-IT
+  steps:
+  - template: templates/sglang-multi-test.yml
+    parameters:
+        subscription:  msccl-it
+        vmssName:      mscclit-vmss
+        resourceGroup: msccl-IT
