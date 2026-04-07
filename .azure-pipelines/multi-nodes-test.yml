@@ -70,3 +70,4 @@ jobs:
         subscription:  msccl-it
         vmssName:      mscclit-vmss
         resourceGroup: msccl-IT
+        hostEntries:   ${{ parameters.hostEntries }}
