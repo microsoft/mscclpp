@@ -86,13 +86,13 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
       int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      AccumVec acc = mscclpp::upcast_vector<T, AccumT, AccumVec>(rawData);
+      AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, val);
+        acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, val);
       }
-      int4 data = mscclpp::downcast_vector<T, AccumT, int4>(acc);
+      int4 data = mscclpp::downcastVector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -128,13 +128,13 @@ __global__ void __launch_bounds__(512, 1)
 
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
       int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
-      AccumVec acc = mscclpp::upcast_vector<T, AccumT, AccumVec>(rawData);
+      AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, val);
+        acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, val);
       }
-      int4 data = mscclpp::downcast_vector<T, AccumT, int4>(acc);
+      int4 data = mscclpp::downcastVector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),

@@ -48,7 +48,7 @@ void register_core(nb::module_& m) {
       .value("float8_e4m3", DataType::FLOAT8_E4M3)
       .value("float8_e5m2", DataType::FLOAT8_E5M2)
       .value("uint8", DataType::UINT8)
-      .value("float8_e4m3b15", DataType::FLOAT8_E4B15);
+      .value("float8_e4m3b15", DataType::FLOAT8_E4M3B15);
 
   nb::class_<Bootstrap>(m, "CppBootstrap")
       .def("get_rank", &Bootstrap::getRank)

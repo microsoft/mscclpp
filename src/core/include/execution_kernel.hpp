@@ -210,7 +210,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
           sizeof(int4);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       val = mscclpp::read<int4>(remoteMemory, srcOffset + idx);
-      tmp = cal_vector<T, OpType>(tmp, val);
+      tmp = calVector<T, OpType>(tmp, val);
     }
     output4[outputOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
@@ -353,9 +353,9 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
     for (uint32_t index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
-      data = cal_vector<T, OpType>(data, val);
+      data = calVector<T, OpType>(data, val);
     }
-    data = cal_vector<T, OpType>(data, srcPacketPayload[idx]);
+    data = calVector<T, OpType>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
     if constexpr (SendToRemote) {
@@ -394,9 +394,9 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
     for (uint32_t index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
-      data = cal_vector<T, OpType>(data, val);
+      data = calVector<T, OpType>(data, val);
     }
-    data = cal_vector<T, OpType>(data, srcPacketPayload[idx]);
+    data = calVector<T, OpType>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
     PacketType* dst_val = &dstPkt[idx];
     dst_val->write(data, flag_);
@@ -464,7 +464,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
       size_t buffOffset =
           (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset)) / sizeof(int4);
       int4 val = buff4[buffOffset + idx];
-      tmp = cal_vector<T, OpType>(tmp, val);
+      tmp = calVector<T, OpType>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
@@ -899,7 +899,7 @@ class ExecutionKernel {
 #endif
         break;
 #endif  // __FP8_TYPES_EXIST__
-      case DataType::FLOAT8_E4B15:
+      case DataType::FLOAT8_E4M3B15:
         executionKernel<__fp8_e4m3b15, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e4m3b15*)src, (__fp8_e4m3b15*)dst, (__fp8_e4m3b15*)scratch, scratchOffset, scratchChunkSize,
             plan, semaphores, localMemoryIdBegin, flag

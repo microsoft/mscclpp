@@ -36,13 +36,13 @@ __global__ void __launch_bounds__(1024, 1)
     // When T == AccumT, stay with raw uint to avoid type mismatch in identity path.
     using AccRaw =
         std::conditional_t<std::is_same_v<T, AccumT>, uint, mscclpp::VectorType<AccumT, sizeof(uint) / sizeof(T)>>;
-    AccRaw acc = mscclpp::upcast_vector<T, AccumT, AccRaw>(src[i]);
+    AccRaw acc = mscclpp::upcastVector<T, AccumT, AccRaw>(src[i]);
     for (int peer = 0; peer < worldSize; peer++) {
       if (peer == rank) continue;
       uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
-      acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc, val);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccRaw>(acc, val);
     }
-    dst[i] = mscclpp::downcast_vector<T, AccumT, uint>(acc);
+    dst[i] = mscclpp::downcastVector<T, AccumT, uint>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {

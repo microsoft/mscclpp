@@ -199,16 +199,16 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,         // 32-bit signed integer.
-  UINT32,        // 32-bit unsigned integer.
-  FLOAT16,       // IEEE 754 half precision.
-  FLOAT32,       // IEEE 754 single precision.
-  BFLOAT16,      // bfloat16 precision.
-  FLOAT8_E4M3,   // float8 with E4M3 layout.
-  FLOAT8_E5M2,   // float8 with E5M2 layout.
-  UINT8,         // 8-bit unsigned integer.
-  FLOAT8_E4B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
-  AUTO = 255,    // Sentinel: resolve to the input dtype at runtime.
+  INT32,           // 32-bit signed integer.
+  UINT32,          // 32-bit unsigned integer.
+  FLOAT16,         // IEEE 754 half precision.
+  FLOAT32,         // IEEE 754 single precision.
+  BFLOAT16,        // bfloat16 precision.
+  FLOAT8_E4M3,     // float8 with E4M3 layout.
+  FLOAT8_E5M2,     // float8 with E5M2 layout.
+  UINT8,           // 8-bit unsigned integer.
+  FLOAT8_E4M3B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
+  AUTO = 255,      // Sentinel: resolve to the input dtype at runtime.
 };
 
 /// Word array.
