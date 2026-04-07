@@ -233,6 +233,21 @@ SwitchChannel::DeviceHandle SwitchChannel::deviceHandle() const {
 
 void* SwitchChannel::getDevicePtr() { return devicePtr_; };
 
+SwitchGroupSemaphore::SwitchGroupSemaphore(SwitchChannel& flagChannel, int numDevices)
+    : mcFlag_(flagChannel.mcPtr_.get()),
+      deviceFlag_(flagChannel.devicePtr_),
+      expectedInbound_(detail::gpuCallocUnique<uint32_t>()),
+      numDevices_(numDevices) {}
+
+SwitchGroupSemaphore::DeviceHandle SwitchGroupSemaphore::deviceHandle() const {
+  DeviceHandle handle;
+  handle.mcFlag = reinterpret_cast<uint32_t*>(mcFlag_);
+  handle.deviceFlag = reinterpret_cast<uint32_t*>(deviceFlag_);
+  handle.expectedInbound = expectedInbound_.get();
+  handle.numDevices = numDevices_;
+  return handle;
+}
+
 MSCCLPP_API_CPP std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm,
                                                                       std::vector<int> allRanks, size_t bufferSize) {
   auto bootstrap = comm->bootstrap();

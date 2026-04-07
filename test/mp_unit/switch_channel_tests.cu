@@ -25,6 +25,7 @@ void SwitchChannelTest::TearDown() { CommunicatorTestBase::TearDown(); }
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan;
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan1;
 __constant__ mscclpp::SwitchChannelDeviceHandle gConstSwitchChan2;
+__constant__ mscclpp::SwitchGroupSemaphoreDeviceHandle gConstSwitchGroupSema;
 
 __global__ void kernelSwitchReduce() {
 #if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
@@ -133,4 +134,71 @@ TEST(SwitchChannelTest, TwoChannelsSameConnection) {
   }
   ASSERT_EQ(result1, expected1);
   ASSERT_EQ(result2, expected2);
+}
+
+__global__ void kernelSwitchGroupSignalWait() {
+#if (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+  // All GPUs signal and wait - acts as a barrier ensuring all data is ready
+  gConstSwitchGroupSema.signal();
+  gConstSwitchGroupSema.wait();
+
+  // After barrier, reduce and broadcast (safe because all data is visible)
+  auto val = gConstSwitchChan.reduce<mscclpp::f32x1>(0);
+  gConstSwitchChan.broadcast(0, val);
+
+  // Signal and wait again to ensure broadcast is complete before host reads
+  gConstSwitchGroupSema.signal();
+  gConstSwitchGroupSema.wait();
+#endif  // (CUDA_NVLS_API_AVAILABLE) && (__CUDA_ARCH__ >= 900)
+}
+
+TEST(SwitchChannelTest, GroupSignalWait) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  std::vector<int> ranks;
+  for (int i = 0; i < numRanksToUse; i++) {
+    ranks.push_back(i);
+  }
+
+  auto buffer = mscclpp::GpuBuffer<float>(256);
+  float data = gEnv->rank + 1.0f;
+  MSCCLPP_CUDATHROW(cudaMemcpy(buffer.data(), &data, sizeof(data), cudaMemcpyHostToDevice));
+
+  auto flagBuffer = mscclpp::GpuBuffer<uint32_t>(1);
+
+  size_t connSize = buffer.bytes() + flagBuffer.bytes();
+  auto nvlsConnection = mscclpp::connectNvlsCollective(communicator, ranks, connSize);
+
+  auto switchChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(buffer.data()), buffer.bytes());
+  auto flagChannel = nvlsConnection->bindAllocatedMemory(CUdeviceptr(flagBuffer.data()), flagBuffer.bytes());
+
+  auto semaphore = mscclpp::SwitchGroupSemaphore(flagChannel, numRanksToUse);
+
+  auto deviceHandle = switchChannel.deviceHandle();
+  auto semaHandle = semaphore.deviceHandle();
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchChan, &deviceHandle, sizeof(deviceHandle)));
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gConstSwitchGroupSema, &semaHandle, sizeof(semaHandle)));
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  // All ranks launch the kernel - signal/wait replaces the host barrier for GPU synchronization
+  kernelSwitchGroupSignalWait<<<1, 1>>>();
+  MSCCLPP_CUDATHROW(cudaGetLastError());
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+  communicator->bootstrap()->barrier();
+
+  float result;
+  MSCCLPP_CUDATHROW(cudaMemcpy(&result, buffer.data(), sizeof(result), cudaMemcpyDeviceToHost));
+
+  float expected = 0.0f;
+  for (int i = 0; i < numRanksToUse; i++) {
+    expected += i + 1.0f;
+  }
+  if (result != expected) {
+    std::cerr << "Expected " << expected << " but got " << result << " for rank " << gEnv->rank << std::endl;
+  }
+  ASSERT_EQ(result, expected);
 }

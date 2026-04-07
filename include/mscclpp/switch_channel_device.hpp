@@ -15,6 +15,11 @@
 
 #include "device.hpp"
 
+#if defined(MSCCLPP_DEVICE_COMPILE)
+#include "atomic_device.hpp"
+#include "poll_device.hpp"
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+
 namespace mscclpp {
 
 template <class>
@@ -198,6 +203,78 @@ struct SwitchChannelDeviceHandle {
     }
   };
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
+};
+
+/// Device-side handle for @ref SwitchGroupSemaphore.
+///
+/// Provides O(1) signal/wait synchronization across all devices in a multicast group
+/// using `multimem.red` hardware reduction on the NVSwitch. Each signal atomically
+/// increments a flag on all peers via a single multicast reduction, and each wait
+/// polls the local flag until all devices have signaled.
+struct SwitchGroupSemaphoreDeviceHandle {
+#if defined(MSCCLPP_DEVICE_CUDA)
+  /// Signal all devices in the multicast group. Ensures prior memory operations are visible.
+  MSCCLPP_DEVICE_INLINE void signal() {
+    asm volatile("multimem.red.release.sys.global.add.u32 [%0], %1;" ::"l"(mcFlag), "r"(1u) : "memory");
+  }
+
+  /// Relaxed signal; no prior memory completion guarantee. Use only for synchronizing execution, not data.
+  MSCCLPP_DEVICE_INLINE void relaxedSignal() {
+    asm volatile("multimem.red.relaxed.sys.global.add.u32 [%0], %1;" ::"l"(mcFlag), "r"(1u) : "memory");
+  }
+
+  /// Wait for all devices in the group to signal.
+  /// @param maxSpinCount Maximum number of spin iterations before assertion. Never asserts if negative.
+  MSCCLPP_DEVICE_INLINE void wait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
+    uint32_t expected = incExpectedInbound();
+    POLL_MAYBE_JAILBREAK((loadInbound() < expected), maxSpinCount);
+  }
+
+  /// Relaxed wait; no memory completion guarantee. Use only for synchronizing execution, not data.
+  /// @param maxSpinCount Maximum number of spin iterations before assertion. Never asserts if negative.
+  MSCCLPP_DEVICE_INLINE void relaxedWait([[maybe_unused]] int64_t maxSpinCount = 100000000) {
+    uint32_t expected = incExpectedInbound();
+    POLL_MAYBE_JAILBREAK((loadInboundRelaxed() < expected), maxSpinCount);
+  }
+
+  /// Thread-safe read of expected inbound value.
+  /// @return The expected inbound value.
+  MSCCLPP_DEVICE_INLINE uint32_t loadExpectedInbound() {
+    return atomicLoad<uint32_t, scopeDevice>(expectedInbound, memoryOrderRelaxed);
+  }
+
+  /// Thread-safe increment of expected inbound value by @ref numDevices.
+  /// @return The incremented expected inbound value.
+  MSCCLPP_DEVICE_INLINE uint32_t incExpectedInbound() {
+    return atomicFetchAdd<uint32_t, scopeDevice>(expectedInbound, static_cast<uint32_t>(numDevices),
+                                                 memoryOrderRelaxed) +
+           static_cast<uint32_t>(numDevices);
+  }
+
+  /// Thread-safe read of inbound flag value with acquire ordering.
+  /// @return The inbound flag value.
+  MSCCLPP_DEVICE_INLINE uint32_t loadInbound() {
+    return atomicLoad<uint32_t, scopeSystem>(deviceFlag, memoryOrderAcquire);
+  }
+
+  /// Thread-safe read of inbound flag value with relaxed ordering.
+  /// @return The inbound flag value.
+  MSCCLPP_DEVICE_INLINE uint32_t loadInboundRelaxed() {
+    return atomicLoad<uint32_t, scopeSystem>(deviceFlag, memoryOrderRelaxed);
+  }
+#endif  // defined(MSCCLPP_DEVICE_CUDA)
+
+  /// Multicast address for the flag (used for signaling via multimem.red).
+  uint32_t* mcFlag;
+
+  /// Local device address for the flag (used for polling during wait).
+  uint32_t* deviceFlag;
+
+  /// Local GPU memory where the expected inbound value is tracked.
+  uint32_t* expectedInbound;
+
+  /// Number of devices in the multicast group.
+  int numDevices;
 };
 
 }  // namespace mscclpp

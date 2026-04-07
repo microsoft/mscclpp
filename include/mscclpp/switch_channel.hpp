@@ -25,6 +25,7 @@ struct SwitchChannel {
   void* getDevicePtr();
 
   friend class NvlsConnection;
+  friend struct SwitchGroupSemaphore;
 };
 
 class NvlsConnection {
@@ -59,6 +60,44 @@ class Communicator;
 /// @return std::shared_ptr<NvlsConnection> A shared pointer to the NVLS connection.
 std::shared_ptr<NvlsConnection> connectNvlsCollective(std::shared_ptr<Communicator> comm, std::vector<int> allRanks,
                                                       size_t bufferSize);
+
+/// A semaphore for O(1) signal/wait synchronization across all devices in a switch (multicast) group.
+///
+/// Uses `multimem.red` hardware reduction on the NVSwitch multicast address to signal all peers
+/// simultaneously with a single operation, instead of O(N) point-to-point signals. Each device
+/// atomically increments a shared flag via multicast reduction on signal, and polls its local
+/// copy of the flag on wait.
+///
+/// The flag channel must be a @ref SwitchChannel bound to a buffer used exclusively for the flag.
+/// The caller is responsible for keeping the flag channel (and its underlying @ref NvlsConnection
+/// and @ref GpuBuffer) alive for the lifetime of this semaphore.
+///
+/// Example usage:
+/// @code
+/// auto flagBuffer = mscclpp::GpuBuffer<uint32_t>(1);
+/// auto flagChannel = nvlsConn->bindAllocatedMemory(CUdeviceptr(flagBuffer.data()), flagBuffer.bytes());
+/// auto semaphore = mscclpp::SwitchGroupSemaphore(flagChannel, numDevices);
+/// auto devHandle = semaphore.deviceHandle();
+/// // In kernel: devHandle.signal(); devHandle.wait();
+/// @endcode
+struct SwitchGroupSemaphore {
+  using DeviceHandle = SwitchGroupSemaphoreDeviceHandle;
+
+  /// Construct a SwitchGroupSemaphore from a SwitchChannel used as the flag channel.
+  /// @param flagChannel A SwitchChannel bound to a buffer used for the flag.
+  /// @param numDevices The number of devices in the multicast group.
+  SwitchGroupSemaphore(SwitchChannel& flagChannel, int numDevices);
+
+  /// Returns the device-side handle.
+  /// @return The device-side handle for use in GPU kernels.
+  DeviceHandle deviceHandle() const;
+
+ private:
+  void* mcFlag_;
+  void* deviceFlag_;
+  detail::UniqueGpuPtr<uint32_t> expectedInbound_;
+  int numDevices_;
+};
 
 }  // namespace mscclpp
 
