@@ -1,4 +1,4 @@
-mpi4py==4.1.1
+mpi4py
 cupy
 prettytable
 netifaces
