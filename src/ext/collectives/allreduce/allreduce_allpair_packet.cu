@@ -51,7 +51,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
       const int remoteRank = index < rank ? index : index + 1;
       LL8Packet* dstPkt = (LL8Packet*)scratchBuff + remoteRank * nelems;
       uint32_t val = dstPkt[idx].read(flag, -1);
-      acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc, val);
+      data = calVector<T, OpType>(val, data);
     }
     dst[idx] = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc);
   }

@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#ifndef MSCCLPP_ALLREDUCE_COMMOM_HPP_
-#define MSCCLPP_ALLREDUCE_COMMOM_HPP_
+#ifndef MSCCLPP_ALLREDUCE_COMMON_HPP_
+#define MSCCLPP_ALLREDUCE_COMMON_HPP_
 
 #include <cmath>
 #include <mscclpp/algorithm.hpp>
@@ -106,7 +106,7 @@ AllreduceFunc dispatchByDtype(mscclpp::DataType dtype, mscclpp::DataType accumDt
   } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
     return dispatchFp8Accum<Op, __fp8_e5m2, Adapter>(accumDtype, dtype);
 #endif
-  } else if (dtype == mscclpp::DataType::FLOAT8_E4B15) {
+  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3B15) {
     return dispatchFp8Accum<Op, __fp8_e4m3b15, Adapter>(accumDtype, dtype);
   } else if (dtype == mscclpp::DataType::INT32 || dtype == mscclpp::DataType::UINT32) {
     return Adapter<Op, int, int>::call;

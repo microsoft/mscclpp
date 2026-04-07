@@ -7,7 +7,7 @@
 #include "allreduce/allreduce_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -97,17 +97,17 @@ __global__ void __launch_bounds__(1024, 1)
       // When T == AccumT, stay with raw uint32_t to avoid type mismatch in identity path.
       using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
                                         mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
-      AccRaw acc_x = mscclpp::upcast_vector<T, AccumT, AccRaw>(data.x);
-      AccRaw acc_y = mscclpp::upcast_vector<T, AccumT, AccRaw>(data.y);
+      AccRaw accX = mscclpp::upcastVector<T, AccumT, AccRaw>(data.x);
+      AccRaw accY = mscclpp::upcastVector<T, AccumT, AccRaw>(data.y);
       for (int index = 0; index < nPeers; index++) {
         const int remoteRank = index < rank ? index : index + 1;
         mscclpp::LLPacket* dstPkt = (mscclpp::LLPacket*)scratchBuff + remoteRank * nPktsPerRank;
         uint2 val = dstPkt[idx].read(flag);
-        acc_x = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_x, val.x);
-        acc_y = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc_y, val.y);
+        accX = mscclpp::calVectorAccum<T, AccumT, OpType, AccRaw>(accX, val.x);
+        accY = mscclpp::calVectorAccum<T, AccumT, OpType, AccRaw>(accY, val.y);
       }
-      data.x = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_x);
-      data.y = mscclpp::downcast_vector<T, AccumT, uint32_t>(acc_y);
+      data.x = mscclpp::downcastVector<T, AccumT, uint32_t>(accX);
+      data.y = mscclpp::downcastVector<T, AccumT, uint32_t>(accY);
     }
 
     dst[idx].x = data.x;
@@ -198,7 +198,7 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
 
   // FP8-specific tuning for 32KB-256KB range
   {
-    bool isFp8 = dtype == DataType::FLOAT8_E4B15;
+    bool isFp8 = dtype == DataType::FLOAT8_E4M3B15;
 #if defined(__FP8_TYPES_EXIST__)
     isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2;
 #endif
@@ -242,7 +242,8 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
 
   AllreduceFunc allreduce = dispatch<PacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
+         ", dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
@@ -251,7 +252,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
                 stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_, this->nSegmentsForScratchBuffer_,
                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
-    WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "AllreducePacket failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;

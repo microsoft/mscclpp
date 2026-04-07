@@ -83,7 +83,7 @@ static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
-      WARN(MSCCLPP_NCCL, "The value of the environment variable ", ncclLibPath, " is a directory");
+      WARN(MSCCLPP_NCCL, "MSCCLPP_NCCL_LIB_PATH points to a directory: ", ncclLibPath);
       return dlopenError;
     }
 

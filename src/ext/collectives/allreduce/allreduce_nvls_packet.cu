@@ -6,7 +6,7 @@
 #include "allreduce/allreduce_nvls_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -36,13 +36,13 @@ __global__ void __launch_bounds__(1024, 1)
     // When T == AccumT, stay with raw uint to avoid type mismatch in identity path.
     using AccRaw =
         std::conditional_t<std::is_same_v<T, AccumT>, uint, mscclpp::VectorType<AccumT, sizeof(uint) / sizeof(T)>>;
-    AccRaw acc = mscclpp::upcast_vector<T, AccumT, AccRaw>(src[i]);
+    AccRaw acc = mscclpp::upcastVector<T, AccumT, AccRaw>(src[i]);
     for (int peer = 0; peer < worldSize; peer++) {
       if (peer == rank) continue;
       uint val = scratchPkt[peer * worldSize * nPktPerRank + i].read(flag);
-      acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccRaw>(acc, val);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccRaw>(acc, val);
     }
-    dst[i] = mscclpp::downcast_vector<T, AccumT, uint>(acc);
+    dst[i] = mscclpp::downcastVector<T, AccumT, uint>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {
@@ -113,12 +113,12 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize);
   }
   if (blockAndThreadNum.first > maxBlockNum_) {
-    WARN("Block number %d exceeds the maximum limit %d", blockAndThreadNum.first, maxBlockNum_);
+    WARN(ALGO, "Block number ", blockAndThreadNum.first, " exceeds the maximum limit ", maxBlockNum_);
     return CommResult::CommInvalidArgument;
   }
   AllreduceFunc allreduce = dispatch<AllreduceNvlsPacketAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce, dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
@@ -126,7 +126,7 @@ CommResult AllreduceNvlsPacket::allreduceKernelFunc(const std::shared_ptr<void> 
                 0, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream,
                 (void*)flagBuffer_, (uint32_t)flagBufferSize_, 0, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
-    WARN("AllreduceNvlsPacket failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "AllreduceNvlsPacket failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;

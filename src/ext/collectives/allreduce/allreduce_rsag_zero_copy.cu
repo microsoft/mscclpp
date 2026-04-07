@@ -90,11 +90,11 @@ __global__ void __launch_bounds__(1024, 1)
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
     }
-    AccumVec acc = mscclpp::upcast_vector<T, AccumT, AccumVec>(tmp_raw);
+    AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(tmp_raw);
     for (int i = 0; i < NPeers; i++) {
-      acc = mscclpp::cal_vector_accum<T, AccumT, OpType, AccumVec>(acc, data[i]);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data[i]);
     }
-    int4 tmp = mscclpp::downcast_vector<T, AccumT, int4>(acc);
+    int4 tmp = mscclpp::downcastVector<T, AccumT, int4>(acc);
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;

@@ -199,16 +199,16 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,         // 32-bit signed integer.
-  UINT32,        // 32-bit unsigned integer.
-  FLOAT16,       // IEEE 754 half precision.
-  FLOAT32,       // IEEE 754 single precision.
-  BFLOAT16,      // bfloat16 precision.
-  FLOAT8_E4M3,   // float8 with E4M3 layout.
-  FLOAT8_E5M2,   // float8 with E5M2 layout.
-  UINT8,         // 8-bit unsigned integer.
-  FLOAT8_E4B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
-  AUTO = 255,    // Sentinel: resolve to the input dtype at runtime.
+  INT32,           // 32-bit signed integer.
+  UINT32,          // 32-bit unsigned integer.
+  FLOAT16,         // IEEE 754 half precision.
+  FLOAT32,         // IEEE 754 single precision.
+  BFLOAT16,        // bfloat16 precision.
+  FLOAT8_E4M3,     // float8 with E4M3 layout.
+  FLOAT8_E5M2,     // float8 with E5M2 layout.
+  UINT8,           // 8-bit unsigned integer.
+  FLOAT8_E4M3B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
+  AUTO = 255,      // Sentinel: resolve to the input dtype at runtime.
 };
 
 /// Word array.
@@ -1313,57 +1313,6 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   }
   return result;
 #endif
-}
-// --- fp8_e4m3b15 <-> f32 decomposed x8/x16 specializations ---
-// Decompose into x4 chunks to use the optimized bit-manipulation specializations
-// instead of the generic template (which has issues with large VectorType sizes > 16 bytes).
-
-/// f8_e4m3b15x8 -> f32 (8 elements): decompose into 2x f8_e4m3b15x4 -> f32x4.
-template <>
-MSCCLPP_DEVICE_INLINE f32x8 to<f32x8, f8_e4m3b15x8>(const f8_e4m3b15x8& v) {
-  const f8_e4m3b15x4* pair = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f32x8 result;
-  f32x4* out = reinterpret_cast<f32x4*>(&result);
-  out[0] = to<f32x4>(pair[0]);
-  out[1] = to<f32x4>(pair[1]);
-  return result;
-}
-
-/// f32 (8 elements) -> f8_e4m3b15x8: decompose into 2x f32x4 -> f8_e4m3b15x4.
-template <>
-MSCCLPP_DEVICE_INLINE f8_e4m3b15x8 to<f8_e4m3b15x8, f32x8>(const f32x8& v) {
-  const f32x4* pair = reinterpret_cast<const f32x4*>(&v);
-  f8_e4m3b15x8 result;
-  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
-  out[0] = to<f8_e4m3b15x4>(pair[0]);
-  out[1] = to<f8_e4m3b15x4>(pair[1]);
-  return result;
-}
-
-/// f8_e4m3b15x16 -> f32 (16 elements): decompose into 4x f8_e4m3b15x4 -> f32x4.
-template <>
-MSCCLPP_DEVICE_INLINE f32x16 to<f32x16, f8_e4m3b15x16>(const f8_e4m3b15x16& v) {
-  const f8_e4m3b15x4* quads = reinterpret_cast<const f8_e4m3b15x4*>(&v);
-  f32x16 result;
-  f32x4* out = reinterpret_cast<f32x4*>(&result);
-  out[0] = to<f32x4>(quads[0]);
-  out[1] = to<f32x4>(quads[1]);
-  out[2] = to<f32x4>(quads[2]);
-  out[3] = to<f32x4>(quads[3]);
-  return result;
-}
-
-/// f32 (16 elements) -> f8_e4m3b15x16: decompose into 4x f32x4 -> f8_e4m3b15x4.
-template <>
-MSCCLPP_DEVICE_INLINE f8_e4m3b15x16 to<f8_e4m3b15x16, f32x16>(const f32x16& v) {
-  const f32x4* quads = reinterpret_cast<const f32x4*>(&v);
-  f8_e4m3b15x16 result;
-  f8_e4m3b15x4* out = reinterpret_cast<f8_e4m3b15x4*>(&result);
-  out[0] = to<f8_e4m3b15x4>(quads[0]);
-  out[1] = to<f8_e4m3b15x4>(quads[1]);
-  out[2] = to<f8_e4m3b15x4>(quads[2]);
-  out[3] = to<f8_e4m3b15x4>(quads[3]);
-  return result;
 }
 
 // --- fp8_e4m3b15 arithmetic (software, always available) ---
