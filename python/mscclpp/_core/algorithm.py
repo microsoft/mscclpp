@@ -177,6 +177,7 @@ class Algorithm:
         nthreads_per_block=0,
         symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
+        accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
 
@@ -194,10 +195,14 @@ class Algorithm:
             nthreads_per_block: Number of threads per block (0 for auto-selection).
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
+            accum_dtype: Data type for accumulation during reduction. If None, defaults to
+                         the same as dtype. Use DataType.float32 for high-precision FP8 accumulation.
 
         Returns:
             The result code (0 for success).
         """
+        merged_extras = dict(extras) if extras is not None else {}
+        accum_dtype = accum_dtype if accum_dtype is not None else dtype
         return self._algorithm.execute(
             comm,
             int(input_buffer),
@@ -211,7 +216,8 @@ class Algorithm:
             nblocks,
             nthreads_per_block,
             symmetric_memory,
-            extras if extras is not None else {},
+            merged_extras,
+            int(accum_dtype),
         )
 
     def reset(self):
