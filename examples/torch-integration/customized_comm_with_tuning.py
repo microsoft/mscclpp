@@ -12,15 +12,14 @@ import mscclpp
 import mscclpp.ext
 import mscclpp.utils as mscclpp_utils
 
-
 # -- Helpers ------------------------------------------------------------------
+
 
 def _make_tensor(size_bytes: int, dtype: torch.dtype) -> torch.Tensor:
     """Allocate a tensor backed by RawGpuBuffer (symmetric memory)."""
     # PyTorch's from_dlpack does not support certain float8 DLPack type codes.
     # Work around by importing as uint8 and reinterpreting via .view().
-    _DLPACK_UNSUPPORTED = (torch.float8_e4m3fn, torch.float8_e4m3fnuz,
-                           torch.float8_e5m2, torch.float8_e5m2fnuz)
+    _DLPACK_UNSUPPORTED = (torch.float8_e4m3fn, torch.float8_e4m3fnuz, torch.float8_e5m2, torch.float8_e5m2fnuz)
     if dtype in _DLPACK_UNSUPPORTED:
         dlpack = mscclpp.RawGpuBuffer(size_bytes).to_dlpack(data_type=str(torch.uint8))
         return torch.utils.dlpack.from_dlpack(dlpack).view(dtype)
@@ -30,7 +29,9 @@ def _make_tensor(size_bytes: int, dtype: torch.dtype) -> torch.Tensor:
 
 def _load_algorithms(scratch: torch.Tensor, rank: int):
     return mscclpp.ext.AlgorithmCollectionBuilder().build_default_algorithms(
-        scratch_buffer=scratch.data_ptr(), scratch_buffer_size=scratch.nbytes, rank=rank,
+        scratch_buffer=scratch.data_ptr(),
+        scratch_buffer_size=scratch.nbytes,
+        rank=rank,
     )
 
 
@@ -61,6 +62,7 @@ def _round_pow2(size: int) -> int:
 
 
 # -- CustomizedComm -----------------------------------------------------------
+
 
 class CustomizedComm:
     """Exposes all_reduce, all_gather, barrier with lazy per-size tuning."""
@@ -108,16 +110,21 @@ class CustomizedComm:
 
     # -- low-level execute --
 
-    def _exec_ar(self, tensor, algo, nb, nt, op=mscclpp.ReduceOp.SUM,
-                 stream=None, accum_dtype=None, sym=True):
+    def _exec_ar(self, tensor, algo, nb, nt, op=mscclpp.ReduceOp.SUM, stream=None, accum_dtype=None, sym=True):
         s = stream.cuda_stream if stream else torch.cuda.current_stream().cuda_stream
         ret = algo.execute(
             comm=self.comm.communicator,
-            input_buffer=tensor.data_ptr(), output_buffer=tensor.data_ptr(),
-            input_size=tensor.nbytes, output_size=tensor.nbytes,
+            input_buffer=tensor.data_ptr(),
+            output_buffer=tensor.data_ptr(),
+            input_size=tensor.nbytes,
+            output_size=tensor.nbytes,
             dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(tensor.dtype),
-            op=op, stream=s, nblocks=nb, nthreads_per_block=nt,
-            symmetric_memory=sym, accum_dtype=accum_dtype,
+            op=op,
+            stream=s,
+            nblocks=nb,
+            nthreads_per_block=nt,
+            symmetric_memory=sym,
+            accum_dtype=accum_dtype,
         )
         if ret != 0:
             print(f"Rank {self.rank}: {algo.name} failed ({ret})")
@@ -129,10 +136,15 @@ class CustomizedComm:
         s = stream.cuda_stream if stream else torch.cuda.current_stream().cuda_stream
         ret = algo.execute(
             comm=self.comm.communicator,
-            input_buffer=inp.data_ptr(), output_buffer=out.data_ptr(),
-            input_size=inp.nbytes, output_size=out.nbytes,
+            input_buffer=inp.data_ptr(),
+            output_buffer=out.data_ptr(),
+            input_size=inp.nbytes,
+            output_size=out.nbytes,
             dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(inp.dtype),
-            op=mscclpp.ReduceOp.NOP, stream=s, nblocks=nb, nthreads_per_block=nt,
+            op=mscclpp.ReduceOp.NOP,
+            stream=s,
+            nblocks=nb,
+            nthreads_per_block=nt,
             symmetric_memory=sym,
         )
         if ret != 0:
@@ -186,22 +198,32 @@ class CustomizedComm:
         if collective == "allreduce":
             return algo.execute(
                 comm=self.comm.communicator,
-                input_buffer=buf.data_ptr(), output_buffer=buf.data_ptr(),
-                input_size=size, output_size=size,
+                input_buffer=buf.data_ptr(),
+                output_buffer=buf.data_ptr(),
+                input_size=size,
+                output_size=size,
                 dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(buf.dtype),
-                op=mscclpp.ReduceOp.SUM, stream=torch.cuda.current_stream().cuda_stream,
-                nblocks=nb, nthreads_per_block=nt, symmetric_memory=True,
+                op=mscclpp.ReduceOp.SUM,
+                stream=torch.cuda.current_stream().cuda_stream,
+                nblocks=nb,
+                nthreads_per_block=nt,
+                symmetric_memory=True,
             )
         else:
             total = size * self.world_size
             out_ptr = buf.data_ptr()
             return algo.execute(
                 comm=self.comm.communicator,
-                input_buffer=out_ptr + self.rank * size, output_buffer=out_ptr,
-                input_size=size, output_size=total,
+                input_buffer=out_ptr + self.rank * size,
+                output_buffer=out_ptr,
+                input_size=size,
+                output_size=total,
                 dtype=mscclpp_utils.torch_dtype_to_mscclpp_dtype(buf.dtype),
-                op=mscclpp.ReduceOp.NOP, stream=torch.cuda.current_stream().cuda_stream,
-                nblocks=nb, nthreads_per_block=nt, symmetric_memory=False,
+                op=mscclpp.ReduceOp.NOP,
+                stream=torch.cuda.current_stream().cuda_stream,
+                nblocks=nb,
+                nthreads_per_block=nt,
+                symmetric_memory=False,
             )
 
     def _tune_size(self, collective: str, target_size: int):
@@ -262,11 +284,17 @@ class CustomizedComm:
             self._tune_cache[collective][target_size] = best_cfg
             if self.rank == 0:
                 n = self._TUNE_N_GRAPH_LAUNCHES * self._TUNE_N_OPS_PER_GRAPH
-                print(f"[tune] {collective} size={target_size}: {best_cfg[0].name} "
-                      f"nb={best_cfg[1]} nt={best_cfg[2]} time={best_time / n * 1000:.2f}us", flush=True)
+                print(
+                    f"[tune] {collective} size={target_size}: {best_cfg[0].name} "
+                    f"nb={best_cfg[1]} nt={best_cfg[2]} time={best_time / n * 1000:.2f}us",
+                    flush=True,
+                )
         else:
-            fb = self._default_ar_config() if collective == "allreduce" else (
-                (self._ag_candidates()[0], 32, 512) if self._ag_candidates() else None)
+            fb = (
+                self._default_ar_config()
+                if collective == "allreduce"
+                else ((self._ag_candidates()[0], 32, 512) if self._ag_candidates() else None)
+            )
             self._tune_cache[collective][target_size] = fb
 
         torch.cuda.synchronize()
@@ -281,16 +309,16 @@ class CustomizedComm:
         if sz not in self._tune_cache["allreduce"]:
             self._tune_size("allreduce", sz)
         a, nb, nt = self._tune_cache["allreduce"][sz]
-        self._exec_ar(tensor, a, nb, nt, op=_to_mscclpp_op(op),
-                      stream=stream, accum_dtype=accum_dtype, sym=self.symmetric_memory)
+        self._exec_ar(
+            tensor, a, nb, nt, op=_to_mscclpp_op(op), stream=stream, accum_dtype=accum_dtype, sym=self.symmetric_memory
+        )
 
     def all_gather(self, output_tensor, input_tensor, stream=None):
         sz = _round_pow2(input_tensor.nbytes)
         if sz not in self._tune_cache["allgather"]:
             self._tune_size("allgather", sz)
         a, nb, nt = self._tune_cache["allgather"][sz]
-        self._exec_ag(input_tensor, output_tensor, a, nb, nt,
-                      stream=stream, sym=self.symmetric_memory)
+        self._exec_ag(input_tensor, output_tensor, a, nb, nt, stream=stream, sym=self.symmetric_memory)
 
     def barrier(self):
         self._barrier_internal()
@@ -303,6 +331,7 @@ class CustomizedComm:
 
 # -- Benchmarks (standalone) --------------------------------------------------
 
+
 def _bench_sizes(low=5 * 1024, high=80 << 20):
     sizes, c = [], low
     while c <= high:
@@ -311,8 +340,9 @@ def _bench_sizes(low=5 * 1024, high=80 << 20):
     return sizes
 
 
-def benchmark_allreduce(comm: CustomizedComm, dtype=torch.float16, accum_dtype=None,
-                        n_warmup=10, n_graph_launches=10, n_iter=100):
+def benchmark_allreduce(
+    comm: CustomizedComm, dtype=torch.float16, accum_dtype=None, n_warmup=10, n_graph_launches=10, n_iter=100
+):
     sizes = _bench_sizes()
     if comm.rank == 0:
         print(f"\n{'='*60}\nAllreduce Benchmark\n{'='*60}")
@@ -324,7 +354,7 @@ def benchmark_allreduce(comm: CustomizedComm, dtype=torch.float16, accum_dtype=N
 
     for size in sizes:
         nelems = size // buf.element_size()
-        t = buf[:size // buf.element_size()]
+        t = buf[: size // buf.element_size()]
         comm.all_reduce(t, accum_dtype=accum_dtype)
         torch.cuda.synchronize()
 
@@ -344,15 +374,15 @@ def benchmark_allreduce(comm: CustomizedComm, dtype=torch.float16, accum_dtype=N
         with torch.cuda.stream(cs):
             for _ in range(n_graph_launches):
                 g.replay()
-        e.record(cs); e.synchronize()
+        e.record(cs)
+        e.synchronize()
 
         ms = s.elapsed_time(e) / (n_graph_launches * n_iter)
         if comm.rank == 0:
             print(f"{nelems:<18} {size:<18} {ms*1000:<18.2f} {size/(ms*1e-3)/1e9:<18.2f}")
 
 
-def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16,
-                        n_warmup=10, n_graph_launches=10, n_iter=100):
+def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=10, n_graph_launches=10, n_iter=100):
     sizes = _bench_sizes()
     if comm.rank == 0:
         print(f"\n{'='*60}\nAllgather Benchmark\n{'='*60}")
@@ -390,7 +420,8 @@ def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16,
         with torch.cuda.stream(cs):
             for _ in range(n_graph_launches):
                 g.replay()
-        e.record(cs); e.synchronize()
+        e.record(cs)
+        e.synchronize()
 
         ms = s.elapsed_time(e) / (n_graph_launches * n_iter)
         if comm.rank == 0:
@@ -398,6 +429,7 @@ def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16,
 
 
 # -- Bootstrap & main ---------------------------------------------------------
+
 
 def init_dist() -> mscclpp.CommGroup:
     addr = os.environ.get("MSCCLPP_MASTER_ADDR")
@@ -409,6 +441,7 @@ def init_dist() -> mscclpp.CommGroup:
             raise ValueError(f"No interface for {addr}")
         return mscclpp.CommGroup(interfaceIpPortTrio=f"{iface}:{addr}:{port}", rank=rank, size=world)
     import torch.distributed as dist
+
     dist.init_process_group(backend="gloo")
     return mscclpp.CommGroup(torch_group=dist.group.WORLD)
 
@@ -428,10 +461,12 @@ def main():
 
     print(f"rank {local} starting benchmarks with dtype={dtype} accum_dtype={accum_dtype}...")
     benchmark_allreduce(cc, dtype=dtype, accum_dtype=accum_dtype)
-    cc.barrier(); torch.cuda.synchronize()
+    cc.barrier()
+    torch.cuda.synchronize()
 
     benchmark_allgather(cc, dtype=dtype)
-    cc.barrier(); torch.cuda.synchronize()
+    cc.barrier()
+    torch.cuda.synchronize()
 
     cc.destroy()
     print(f"rank {local} completed successfully.")
