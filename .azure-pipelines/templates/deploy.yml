@@ -94,7 +94,27 @@ steps:
       du -sh build/bin/* 2>/dev/null || true
     workingDirectory: '$(System.DefaultWorkingDirectory)'
 
-# 2. Download SSH key + install packages + start VMSS
+# 2. Write CMake args for pip install on remote VMs
+- task: Bash@3
+  name: WritePipCmakeArgs
+  displayName: Write pip CMake args
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+      PIP_CMAKE_ARGS=""
+      if [ -n "${{ parameters.gpuArch }}" ]; then
+        PIP_CMAKE_ARGS="-DMSCCLPP_GPU_ARCHS=${{ parameters.gpuArch }}"
+      fi
+      CMAKE_EXTRA_ARGS='${{ parameters.cmakeArgs }}'
+      if [ -n "${CMAKE_EXTRA_ARGS}" ]; then
+        PIP_CMAKE_ARGS="${PIP_CMAKE_ARGS} ${CMAKE_EXTRA_ARGS}"
+      fi
+      echo "${PIP_CMAKE_ARGS}" > pip_cmake_args.txt
+      echo "pip CMake args: $(cat pip_cmake_args.txt)"
+    workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+# 3. Download SSH key + install packages + start VMSS
 - task: DownloadSecureFile@1
   name: SshKeyFile
   displayName: Download key file
@@ -120,7 +140,7 @@ steps:
     inlineScript: |
       az vmss start --name ${{ parameters.vmssName }} --resource-group ${{ parameters.resourceGroup }}
 
-# 3. Deploy test environment
+# 4. Deploy test environment
 - task: Bash@3
   name: DeployTestEnv
   displayName: Deploy Test Env
