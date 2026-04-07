@@ -22,7 +22,7 @@ from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
 _is_hip = hasattr(cp.cuda.runtime, "is_hip") and cp.cuda.runtime.is_hip
 _skip_fp8 = not _is_hip and int(cp.cuda.Device().compute_capability) < 89
-pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA (HIP not yet supported)")
+pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA")
 
 # ---------------------------------------------------------------------------
 # FP8 E4M3FN helpers (bias=7, no infinity, NaN = exp=15 & mant=7)
