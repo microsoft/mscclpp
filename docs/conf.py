@@ -30,16 +30,10 @@ python_path = project_root / "python"
 sys.path.insert(0, str(python_path))
 
 # -- Project version -----------------------------------------------------
-_version_file = python_path / "mscclpp" / "_version.py"
-if _version_file.exists():
-    spec = importlib.util.spec_from_file_location("_version", _version_file)
-    version_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(version_module)
-    version = version_module.__version__
-else:
-    # Fallback: read VERSION file (always present in the repo)
-    version_file = project_root / "VERSION"
-    version = version_file.read_text().strip() if version_file.exists() else "0.0.0"
+spec = importlib.util.spec_from_file_location("_version", python_path / "mscclpp" / "_version.py")
+version_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(version_module)
+version = version_module.__version__
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information

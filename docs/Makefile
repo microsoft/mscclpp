@@ -5,7 +5,7 @@
 # from the environment for the first two.
 SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
-SPHINXMULTIVERSION ?= sphinx-multiversion
+SPHINXMULTIVERSION ?= python3 build_multiversion.py
 SOURCEDIR     = .
 BUILDDIR      = _build
 
@@ -33,7 +33,7 @@ multiversion: generate-versions
 	@cd .. && python3 -m setuptools_scm --force-write-version-files
 	@export LC_ALL=C.UTF-8; $(SPHINXBUILD) -M html "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
 	@echo "Building versioned docs from tags..."
-	@export LC_ALL=C.UTF-8; python3 build_multiversion.py "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
+	@export LC_ALL=C.UTF-8; $(SPHINXMULTIVERSION) "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
 	@mkdir -p $(BUILDDIR)/html/_static
 	@cp -f _static/versions.js $(BUILDDIR)/html/_static/ 2>/dev/null || true
 	@cp -f _static/version-selector.js $(BUILDDIR)/html/_static/ 2>/dev/null || true
