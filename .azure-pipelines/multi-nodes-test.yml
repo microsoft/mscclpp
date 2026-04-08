@@ -19,8 +19,8 @@ parameters:
 - name: hostEntries
   type: string
   default: |
-    10.0.0.10 mscclit-000000
-    10.0.0.11 mscclit-000001
+    10.0.0.5 mscclpp-h100-multinode-ci000000
+    10.0.0.4 mscclpp-h100-multinode-ci000001
 
 jobs:
 - job: MultiNodesTest
@@ -32,7 +32,7 @@ jobs:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
-    name: mscclpp-it
+    name: mscclpp-multi-node
   container:
     image: $[ variables['containerImage'] ]
 
@@ -52,9 +52,9 @@ jobs:
 
   - template: templates/deploy.yml
     parameters:
-      subscription:  msccl-it
-      vmssName:      mscclit-vmss
-      resourceGroup: msccl-IT
+      subscription:  mscclpp-ci-h100
+      vmssName:      mscclpp-h100-multinode-ci
+      resourceGroup: mscclpp
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -90,6 +90,6 @@ jobs:
 
   - template: templates/stop.yml
     parameters:
-      subscription:  msccl-it
-      vmssName:      mscclit-vmss
-      resourceGroup: msccl-IT
+      subscription:  mscclpp-ci-h100
+      vmssName:      mscclpp-h100-multinode-ci
+      resourceGroup: mscclpp
