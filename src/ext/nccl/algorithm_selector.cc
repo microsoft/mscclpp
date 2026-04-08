@@ -16,7 +16,7 @@ static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, Da
 
   // NVLS does not support uint8_t (no hardware support for byte-level reduction)
   // NVLS also does not support float8_e4m3b15 (software-defined type with no hardware NVLS reduction support)
-  if (dtype == DataType::UINT8 || dtype == DataType::FLOAT8_E4B15) {
+  if (dtype == DataType::UINT8 || dtype == DataType::FLOAT8_E4M3B15) {
     return false;
   }
 
