@@ -100,10 +100,22 @@ There are a few optional CMake options you can set:
 Python 3.8 or later is required.
 
 ```bash
-# For NVIDIA platforms
+# For NVIDIA platforms (basic install)
 $ python -m pip install .
 # For AMD platforms, set the C++ compiler to HIPCC
 $ CXX=/opt/rocm/bin/hipcc python -m pip install .
+```
+
+Optional extras can be installed by specifying them in brackets. Available extras:
+- **`cuda11`**, **`cuda12`**, **`cuda13`**, **`rocm6`**: Install the appropriate CuPy package for your platform.
+- **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
+- **`test`**: Install test dependencies (pytest).
+
+```bash
+# Example: install with CUDA 12 and benchmark extras
+$ python -m pip install ".[cuda12,benchmark]"
+# Example: install with all extras for testing on CUDA 12
+$ python -m pip install ".[cuda12,benchmark,test]"
 ```
 
 (vscode-dev-container)=
@@ -155,8 +167,9 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 [Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
-# Choose `requirements_*.txt` according to your CUDA/ROCm version.
-$ python3 -m pip install -r ./python/requirements_cuda12.txt
+# Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
+# Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
+$ python3 -m pip install ".[cuda12,benchmark,test]"
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 
