@@ -6,8 +6,6 @@
 
 #include "device.hpp"
 
-#include <type_traits>
-
 #if defined(MSCCLPP_DEVICE_CUDA)
 #include <cuda/atomic>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
@@ -40,57 +38,6 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
   return cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
 }
 
-#if defined(MSCCLPP_DEVICE_COMPILE)
-
-// Internal macro: emit PTX `red` (reduce) instruction for a given type and scope.
-#define MSCCLPP_RED_(TYPE, CSTR)                                                                          \
-  do {                                                                                                    \
-    if constexpr (Scope == cuda::thread_scope_block) {                                                    \
-      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
-        asm volatile("red.relaxed.cta.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-      else                                                                                                \
-        asm volatile("red.release.cta.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-    } else if constexpr (Scope == cuda::thread_scope_device) {                                            \
-      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
-        asm volatile("red.relaxed.gpu.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-      else                                                                                                \
-        asm volatile("red.release.gpu.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-    } else {                                                                                              \
-      if (memoryOrder == cuda::memory_order_relaxed)                                                      \
-        asm volatile("red.relaxed.sys.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-      else                                                                                                \
-        asm volatile("red.release.sys.global.add." #TYPE " [%0], %1;" ::"l"(ptr), #CSTR(val) : "memory"); \
-    }                                                                                                     \
-  } while (0)
-
-/// Fire-and-forget atomic add — no return value, more efficient than atomicFetchAdd.
-/// Uses PTX `red` (reduce) for relaxed/release orders on uint32_t, int32_t, uint64_t, float, double.
-/// Falls back to `atom` (fetch_add) for stronger memory orders (acquire, acq_rel, seq_cst) or other types.
-template <typename T, cuda::thread_scope Scope = cuda::thread_scope_system>
-MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, cuda::memory_order memoryOrder) {
-  if (memoryOrder != cuda::memory_order_relaxed && memoryOrder != cuda::memory_order_release) {
-    (void)cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
-    return;
-  }
-  if constexpr (std::is_same_v<T, uint32_t>) {
-    MSCCLPP_RED_(u32, r);
-  } else if constexpr (std::is_same_v<T, int32_t>) {
-    MSCCLPP_RED_(s32, r);
-  } else if constexpr (std::is_same_v<T, uint64_t>) {
-    MSCCLPP_RED_(u64, l);
-  } else if constexpr (std::is_same_v<T, float>) {
-    MSCCLPP_RED_(f32, f);
-  } else if constexpr (std::is_same_v<T, double>) {
-    MSCCLPP_RED_(f64, d);
-  } else {
-    (void)cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
-  }
-}
-
-#undef MSCCLPP_RED_
-
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
-
 #elif defined(MSCCLPP_DEVICE_HIP)
 
 constexpr auto memoryOrderRelaxed = __ATOMIC_RELAXED;
@@ -117,14 +64,6 @@ template <typename T, int scope = scopeSystem>
 MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrder) {
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
-
-/// Fire-and-forget atomic add — hipcc optimizes (void)fetch_add to no-return atomic.
-#if defined(MSCCLPP_DEVICE_COMPILE)
-template <typename T, int scope = scopeSystem>
-MSCCLPP_DEVICE_INLINE void atomicAdd(T* ptr, const T& val, int memoryOrder) {
-  (void)__atomic_fetch_add(ptr, val, memoryOrder);
-}
-#endif  // defined(MSCCLPP_DEVICE_COMPILE)
 
 #endif  // defined(MSCCLPP_DEVICE_HIP)
 
