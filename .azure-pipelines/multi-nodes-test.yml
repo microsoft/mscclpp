@@ -60,7 +60,7 @@ jobs:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
 
   pool:
-    name: mscclpp-it
+    name: mscclpp-multi-node
   container:
     image: $(containerImage)
 
