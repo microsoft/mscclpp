@@ -2,6 +2,7 @@
 // Licensed under the MIT license.
 
 #include <collective_utils.hpp>
+#include <type_traits>
 
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/common.hpp"
@@ -11,7 +12,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
                                   int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags,
@@ -43,13 +44,16 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   // step 2: Reduce Data
   for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
     uint32_t data = src[idx];
+    using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
+                                      mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
+    AccRaw acc = mscclpp::upcastVector<T, AccumT, AccRaw>(data);
     for (int index = 0; index < nPeers; index++) {
       const int remoteRank = index < rank ? index : index + 1;
       LL8Packet* dstPkt = (LL8Packet*)scratchBuff + remoteRank * nelems;
       uint32_t val = dstPkt[idx].read(flag, -1);
-      data = calVector<T, OpType>(val, data);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccRaw>(acc, val);
     }
-    dst[idx] = data;
+    dst[idx] = mscclpp::downcastVector<T, AccumT, uint32_t>(acc);
   }
   __syncthreads();
   if (threadIdx.x == 0) {
@@ -76,7 +80,12 @@ struct AllpairAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    allreduceAllPairs<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    // Round nBlocks to multiple of nPeers so every block maps to a valid peer.
+    const int nPeers = worldSize - 1;
+    if (nPeers > 0) {
+      nBlocks = (nBlocks / nPeers) * nPeers;
+    }
+    allreduceAllPairs<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
     return cudaGetLastError();
@@ -100,6 +109,11 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   std::pair<int, int> blockAndThreadNum{nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
+  }
+  // nBlocks must be at least nPeers for allpair — each block maps to one peer.
+  const int nPeers = algoCtx->nRanksPerNode - 1;
+  if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+    return CommResult::CommInvalidArgument;
   }
   size_t sendBytes;
   CUdeviceptr sendBasePtr;

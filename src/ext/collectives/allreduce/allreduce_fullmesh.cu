@@ -213,6 +213,13 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > 64) {
+    WARN("AllreduceFullmesh: number of blocks exceeds maximum supported blocks, which is 64");
+    return mscclpp::CommResult::CommInvalidArgument;
+  }
+  if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
+    numBlocksAndThreads = {35, 512};
+  }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
                 nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
