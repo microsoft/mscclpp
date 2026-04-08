@@ -28,8 +28,17 @@ from mscclpp._mscclpp import (
     TcpBootstrap,
     DataType,
     ReduceOp,
+    CommResult,
 )
 from mscclpp.ext.algorithm_collection_builder import AlgorithmCollectionBuilder
+
+import ctypes as _ctypes
+try:
+    _cudart = _ctypes.CDLL("libcudart.so")
+except Exception:
+    _cudart = None
+
+_DEBUG = os.environ.get("MSCCLPP_DEBUG_ALLTOALLV", "0") == "1"
 
 __all__ = ["MscclppAlltoAllV", "all_to_all_single"]
 
@@ -164,6 +173,8 @@ class MscclppAlltoAllV:
         self._cached_output_size = 0
         self._cached_total_output_elems = 0
         self._cached_dtype = None
+        # One-time check for untyped_storage (available since PyTorch 1.13)
+        self._has_untyped_storage = hasattr(torch.Tensor, 'untyped_storage')
         # Pre-built extras dict (GPU pointers don't change)
         self._extras = {
             "sendCounts": self._d_send_counts.data_ptr(),
@@ -248,6 +259,8 @@ class MscclppAlltoAllV:
         # Fast path: skip GPU copies + bootstrap exchange if split sizes unchanged
         splits_key = (tuple(send_counts_bytes), tuple(recv_counts_bytes))
         if splits_key != self._cached_splits_key:
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: splits changed, doing bootstrap exchange", flush=True)
             # Clear cached contexts to free RegisteredMemory for old (possibly freed) tensors.
             # Without this, stale CUDA IPC handles accumulate and eventually SIGSEGV.
             if hasattr(self._algo, 'reset'):
@@ -259,7 +272,11 @@ class MscclppAlltoAllV:
             self._d_recv_displs.copy_(torch.tensor(recv_displs_bytes, dtype=torch.int64))
 
             # Exchange recv displacements with peers via bootstrap
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: starting _exchange_recv_displs", flush=True)
             remote_recv_displs = self._exchange_recv_displs(recv_displs_bytes)
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: _exchange_recv_displs done", flush=True)
             self._d_remote_recv_displs.copy_(torch.tensor(remote_recv_displs, dtype=torch.int64))
 
             # Cache for subsequent calls
@@ -267,19 +284,29 @@ class MscclppAlltoAllV:
             self._cached_input_size = sum(send_counts_bytes)
             self._cached_output_size = sum(recv_counts_bytes)
 
+            # Barrier: all ranks must finish the displacement exchange before any
+            # rank enters algo.execute() → initialize(), which does its own
+            # bootstrap operations (comm->connect, setupRemoteMemories).
+            # Without this barrier, fast ranks' bootstrap messages from
+            # initialize() can collide with slow ranks still in _exchange_recv_displs.
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: waiting on bootstrap barrier", flush=True)
+            self._comm.bootstrap().barrier()
+            if _DEBUG:
+                print(f"  [rank {self._rank}] alltoallv: bootstrap barrier done", flush=True)
+
         # Get stream
         if stream is None:
             stream = torch.cuda.current_stream()
         cuda_stream = stream.cuda_stream
 
-        # Use the full underlying storage size (not just the view's active data)
-        # for the context key, so that reusing views of the same tensor with
-        # different split sizes doesn't create new contexts (which leak
-        # RegisteredMemory for stale buffers).
-        try:
+        # Use the full underlying storage size for context key stability.
+        # When the test reuses the same large tensor with different split sizes,
+        # storage size stays constant → same context key → reuses channels.
+        if self._has_untyped_storage:
             input_alloc_size = input.untyped_storage().size()
             output_alloc_size = output.untyped_storage().size()
-        except Exception:
+        else:
             input_alloc_size = input.nelement() * input.element_size()
             output_alloc_size = output.nelement() * output.element_size()
 
@@ -290,7 +317,7 @@ class MscclppAlltoAllV:
         # so the alltoallv kernel launches on a quiet GPU.
         torch.cuda.synchronize()
 
-        _a2av_dbg(f"[A2AV R{self._rank}] #{_cid} pre-barrier  in={input_size} out={output_size}")
+        _a2av_dbg(f"[A2AV R{self._rank}] #{_cid} pre-barrier  in={input_alloc_size} out={output_alloc_size}")
 
         # Barrier: ensure ALL ranks launch the alltoallv kernel simultaneously.
         # The kernel uses inter-GPU flag-based signaling that requires every
@@ -300,6 +327,16 @@ class MscclppAlltoAllV:
         _a2av_dbg(f"[A2AV R{self._rank}] #{_cid} post-barrier, launching kernel")
 
         # Execute the optimized kernel
+
+        if _DEBUG:
+            # Clear stale CUDA errors (the C++ code checks cudaGetLastError
+            # after the kernel and returns INTERNAL_ERROR if any was pending).
+            if _cudart is not None:
+                _last_err = _cudart.cudaGetLastError()
+                if _last_err != 0:
+                    print(f"  [rank {self._rank}] WARNING: cleared stale CUDA error code {_last_err} before execute", flush=True)
+            print(f"  [rank {self._rank}] alltoallv: calling algo.execute(input_alloc={input_alloc_size}, output_alloc={output_alloc_size})", flush=True)
+
         result = self._algo.execute(
             self._comm,
             input.data_ptr(),
@@ -315,9 +352,15 @@ class MscclppAlltoAllV:
             self._extras,
         )
 
-        _a2av_dbg(f"[A2AV R{self._rank}] #{_cid} kernel returned rc={result}")
-
-        if result != 0:
+        if _DEBUG:
+            print(f"  [rank {self._rank}] alltoallv: algo.execute returned {result}", flush=True)
+        
+        if result != CommResult.COMM_SUCCESS:
+            # Get detailed CUDA error before raising
+            try:
+                torch.cuda.synchronize()
+            except Exception as cuda_err:
+                raise RuntimeError(f"alltoallv execution failed with code {result}; CUDA error: {cuda_err}")
             raise RuntimeError(f"alltoallv execution failed with code {result}")
         
         return output

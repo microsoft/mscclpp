@@ -65,44 +65,6 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
   const int nThreads = 1024;
 
   if (kernelNum == 0) {
-    // Use high-throughput kernel with all threads participating in each transfer
-    mscclpp::collective::alltoallvKernel<<<1, nThreads, 0, stream>>>(
-        d_memoryChannels,
-        rank, worldSize,
-        localSendBuffV, localRecvBuffV,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
-  } else if (kernelNum == 1) {
-    // Use ring-based kernel for larger world sizes
-    mscclpp::collective::alltoallvRingKernel<<<1, nThreads, 0, stream>>>(
-        d_memoryChannels,
-        rank, worldSize,
-        localSendBuffV, localRecvBuffV,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
-  } else if (kernelNum == 2) {
-    // Use pipelined kernel for imbalanced workloads (MoE)
-    mscclpp::collective::alltoallvPipelinedKernel<<<1, nThreads, 0, stream>>>(
-        d_memoryChannels,
-        rank, worldSize,
-        localSendBuffV, localRecvBuffV,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
-  } else if (kernelNum == 3) {
-    // Use legacy multi-block kernel (sequential peers)
-    const int nBlocks = mscclpp::collective::ALLTOALLV_DEFAULT_NBLOCKS;
-    mscclpp::collective::alltoallvMultiBlockKernel<<<nBlocks, nThreads, 0, stream>>>(
-        d_memoryChannels,
-        d_deviceSyncer,
-        rank, worldSize,
-        localSendBuffV, localRecvBuffV,
-        d_sendCounts, d_sendDispls,
-        d_recvCounts, d_recvDispls,
-        d_remoteRecvDispls);
-  } else if (kernelNum == 4) {
     // Peer-parallel kernel: small messages (1 block/peer, no barrier)
     const int nPeers = worldSize - 1;
     const int nBlocks = (nPeers > 0) ? nPeers : 1;
@@ -114,7 +76,7 @@ void AllToAllVTestColl::runColl(const TestArgs& args, cudaStream_t stream) {
         d_sendCounts, d_sendDispls,
         d_recvCounts, d_recvDispls,
         d_remoteRecvDispls);
-  } else if (kernelNum == 5) {
+  } else if (kernelNum == 1) {
     // Peer-parallel kernel: large messages (multiple blocks/peer, barrier)
     const int nPeers = worldSize - 1;
     const int blocksPerPeer = mscclpp::collective::ALLTOALLV_DEFAULT_BLOCKS_PER_PEER;
@@ -220,12 +182,8 @@ void AllToAllVTestColl::setupCollTest(size_t size) {
 
 std::vector<KernelRestriction> AllToAllVTestColl::getKernelRestrictions() {
   return {
-      {0, "alltoallvKernel", true, 1, 4 * worldSize_},
-      {1, "alltoallvRingKernel", true, 1, 4 * worldSize_},
-      {2, "alltoallvPipelinedKernel", true, 1, 4 * worldSize_},
-      {3, "alltoallvMultiBlockKernel", true, 1, 4 * worldSize_},
-      {4, "alltoallvPeerParallel(small)", true, 1, 4 * worldSize_},
-      {5, "alltoallvPeerParallel(large)", true, 1, 4 * worldSize_}
+      {0, "alltoallvPeerParallel(small)", true, 1, 4 * worldSize_},
+      {1, "alltoallvPeerParallel(large)", true, 1, 4 * worldSize_}
   };
 }
 
