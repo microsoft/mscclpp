@@ -52,7 +52,7 @@ RUN OS_ARCH=$(uname -m) && \
 # Install GDRCopy userspace library for CUDA targets
 ARG TARGET="cuda13.0"
 RUN if echo "$TARGET" | grep -q "^cuda"; then \
-        GDRCOPY_VERSION="2.5.1" && \
+        GDRCOPY_VERSION="2.5.2" && \
         apt-get update -y && \
         apt-get install -y --no-install-recommends devscripts debhelper fakeroot pkg-config dkms && \
         cd /tmp && \
