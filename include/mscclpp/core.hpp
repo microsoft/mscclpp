@@ -418,7 +418,7 @@ struct EndpointConfig {
     /// Constructor.
     /// @param deviceIndex Device index.
     /// @param port Port number.
-    /// @param gidIndex GID index. If -1 (default), uses `MSCCLPP_IB_GID_INDEX` env variable, then falls back to 0.
+    /// @param gidIndex GID index. If -1 (default), uses `MSCCLPP_IB_GID_INDEX` env variable.
     /// @param maxCqSize Maximum send completion queue size.
     /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.
