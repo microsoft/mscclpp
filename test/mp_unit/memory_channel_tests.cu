@@ -103,7 +103,7 @@ void MemoryChannelOneToOneTest::packetPingPongTest(const std::string testName,
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)(nTries) << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)(nTries), "us/iter");
   }
 }
 
@@ -324,14 +324,14 @@ __global__ void kernelMemLL16PacketPingPong(int* buff, int rank, int nElem, int*
   }
 }
 
-TEST(MemoryChannelOneToOneTest, LL8PacketPingPong) {
+PERF_TEST(MemoryChannelOneToOneTest, LL8PacketPingPong) {
   auto kernelMemLL8PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
     kernelMemLL8PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };
   packetPingPongTest("memoryLL8PacketPingPong", kernelMemLL8PacketPingPongWrapper);
 }
 
-TEST(MemoryChannelOneToOneTest, LL16PacketPingPong) {
+PERF_TEST(MemoryChannelOneToOneTest, LL16PacketPingPong) {
   auto kernelMemLL16PacketPingPongWrapper = [](int* buff, int rank, int nElem, int* ret, int nTries) {
     kernelMemLL16PacketPingPong<<<1, 1024>>>(buff, rank, nElem, ret, nTries);
   };
