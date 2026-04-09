@@ -30,6 +30,12 @@ fi
 if [ "${PLATFORM}" == "rocm" ]; then
     export CXX=/opt/rocm/bin/hipcc
 fi
+
+PIP_CMAKE_ARGS_FILE="/root/mscclpp/pip_cmake_args.txt"
+if [ -f "${PIP_CMAKE_ARGS_FILE}" ]; then
+    export CMAKE_ARGS="$(cat ${PIP_CMAKE_ARGS_FILE})"
+    echo "Using CMAKE_ARGS: ${CMAKE_ARGS}"
+fi
 cd /root/mscclpp && pip3 install .
 pip3 install setuptools_scm
 python3 -m setuptools_scm --force-write-version-files

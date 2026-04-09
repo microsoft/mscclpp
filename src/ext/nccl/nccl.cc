@@ -43,6 +43,7 @@ typedef enum mscclppNcclDlopenErr {
 typedef struct _mscclppNcclOps_t {
   ncclResult_t (*CommInitRank)(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank);
   ncclResult_t (*GetUniqueId)(ncclUniqueId* uniqueId);
+  ncclResult_t (*CommFinalize)(ncclComm_t comm);
   ncclResult_t (*CommDestroy)(ncclComm_t comm);
   ncclResult_t (*CommUserRank)(const ncclComm_t, int* rank);
   ncclResult_t (*AllReduce)(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, ncclRedOp_t op,
@@ -82,23 +83,24 @@ static inline int mscclppNcclDlopenInit() {
   const char* ncclLibPath = mscclpp::env()->ncclSharedLibPath.c_str();
   if (ncclLibPath != nullptr && ncclLibPath[0] != '\0') {
     if (std::filesystem::is_directory(ncclLibPath)) {
-      WARN(MSCCLPP_NCCL, "The value of the environment variable %s is a directory", ncclLibPath);
+      WARN(MSCCLPP_NCCL, "MSCCLPP_NCCL_LIB_PATH points to a directory: ", ncclLibPath);
       return dlopenError;
     }
 
-    mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE);
+    mscclppNcclDlHandle = dlopen(ncclLibPath, RTLD_LAZY | RTLD_NODELETE | RTLD_DEEPBIND);
     if (!mscclppNcclDlHandle) {
-      WARN(MSCCLPP_NCCL, "Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: %s\n", dlerror());
+      WARN(MSCCLPP_NCCL, "Cannot open the shared library specified by MSCCLPP_NCCL_LIB_PATH: ", dlerror());
       return dlopenError;
     }
   } else {
-    WARN(MSCCLPP_NCCL, "The value of MSCCLPP_NCCL_LIB_PATH is empty!\n");
+    WARN(MSCCLPP_NCCL, "The value of MSCCLPP_NCCL_LIB_PATH is empty!");
     return dlopenError;
   }
 
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommInitRank,
              ncclResult_t(*)(ncclComm_t*, int, ncclUniqueId, int));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, GetUniqueId, ncclResult_t(*)(ncclUniqueId*));
+  NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommFinalize, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommDestroy, ncclResult_t(*)(ncclComm_t));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, CommUserRank, ncclResult_t(*)(ncclComm_t, int*));
   NCCL_DLSYM(mscclppNcclOps, mscclppNcclDlHandle, nccl, AllReduce,
@@ -268,19 +270,18 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
     return mscclpp::nccl::selectSingleNodeAllreduce(algoMap, request, config);
   }
 
-  INFO(MSCCLPP_NCCL, "No suitable algorithm found for collective '%s', fallback to nccl/rccl",
-       request.collective.c_str());
+  INFO(MSCCLPP_NCCL, "No suitable algorithm found for collective '", request.collective, "', fallback to nccl/rccl");
   return nullptr;
 }
 
 NCCL_API ncclResult_t ncclCommInitRank(ncclComm_t* comm, int nranks, ncclUniqueId commId, int rank) {
-  INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank %d, world_size=%d", rank, nranks);
+  INFO(MSCCLPP_NCCL, "Initializing NCCL communicator for rank ", rank, ", world_size=", nranks);
   if (comm == nullptr) {
     WARN(MSCCLPP_NCCL, "comm is nullptr");
     return ncclInvalidArgument;
   }
   if (nranks < 0 || rank < 0 || rank >= nranks) {
-    WARN(MSCCLPP_NCCL, "nranks is %d, rank is %d", nranks, rank);
+    WARN(MSCCLPP_NCCL, "nranks is ", nranks, ", rank is ", rank);
     return ncclInvalidArgument;
   }
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nranks);
@@ -355,6 +356,17 @@ NCCL_API ncclResult_t ncclCommInitAll(ncclComm_t* comm, int ndev, const int*) {
 }
 
 NCCL_API ncclResult_t ncclCommFinalize(ncclComm_t comm) {
+  if (comm == nullptr) {
+    WARN(MSCCLPP_NCCL, "comm is nullptr");
+    return ncclInvalidArgument;
+  }
+  ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
+  if (mscclppNcclCommPtr != nullptr && mscclppNcclOps.CommFinalize != nullptr) {
+    ncclResult_t result = mscclppNcclOps.CommFinalize(*mscclppNcclCommPtr);
+    if (result != ncclSuccess) {
+      return result;
+    }
+  }
   comm->comm->bootstrap()->barrier();
   return ncclSuccess;
 }
@@ -373,11 +385,11 @@ NCCL_API ncclResult_t ncclCommDestroy(ncclComm_t comm) {
 #endif
 
   ncclComm_t* mscclppNcclCommPtr = reinterpret_cast<ncclComm_t*>(comm->mscclppNcclComm);
-  delete comm;
   if (mscclppNcclCommPtr != nullptr) {
-    mscclppNcclOps.CommDestroy(*reinterpret_cast<ncclComm_t*>(mscclppNcclCommPtr));
-    delete static_cast<ncclComm_t*>(mscclppNcclCommPtr);
+    mscclppNcclOps.CommDestroy(*mscclppNcclCommPtr);
+    delete mscclppNcclCommPtr;
   }
+  delete comm;
   return ncclSuccess;
 }
 
@@ -547,8 +559,8 @@ NCCL_API ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t
     return ncclInvalidArgument;
   }
 
-  INFO(MSCCLPP_NCCL, "rank %d broadcast sendbuff %p recvbuff %p count %ld, dtype %d, comm: %p", rank, sendbuff,
-       recvbuff, count, datatype, comm);
+  INFO(MSCCLPP_NCCL, "rank ", rank, " broadcast sendbuff ", sendbuff, " recvbuff ", recvbuff, " count ", count,
+       ", dtype ", datatype, ", comm: ", (void*)comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("broadcast", fallbackList)) {
@@ -606,8 +618,8 @@ NCCL_API ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t
   }
   // Declarating variables
   int rank = comm->comm->bootstrap()->getRank();
-  INFO(MSCCLPP_NCCL, "rank %d allreduce sendbuff %p recvbuff %p count %ld, dtype %d comm is %p", rank, sendbuff,
-       recvbuff, count, datatype, comm);
+  INFO(MSCCLPP_NCCL, "rank ", rank, " allreduce sendbuff ", sendbuff, " recvbuff ", recvbuff, " count ", count,
+       ", dtype ", datatype, " comm is ", (void*)comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib && mscclppNcclInFallbackList("allreduce", fallbackList)) {
@@ -660,8 +672,8 @@ NCCL_API ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, si
     return ncclInvalidArgument;
   }
 
-  INFO(MSCCLPP_NCCL, "ReduceScatter recvcount: %ld, datatype: %d, op: %d, messageSize: %ld", recvcount, datatype, op,
-       bytes * comm->comm->bootstrap()->getNranks());
+  INFO(MSCCLPP_NCCL, "ReduceScatter recvcount: ", recvcount, ", datatype: ", datatype, ", op: ", op,
+       ", messageSize: ", bytes * comm->comm->bootstrap()->getNranks());
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("reducescatter", fallbackList)) {
@@ -717,8 +729,8 @@ NCCL_API ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t
 
   int rank = comm->comm->bootstrap()->getRank();
   int nRank = comm->comm->bootstrap()->getNranks();
-  INFO(MSCCLPP_NCCL, "rank %d allgather sendbuff %p recvbuff %p count %ld, dtype %d, comm %p", rank, sendbuff, recvbuff,
-       sendcount, datatype, comm);
+  INFO(MSCCLPP_NCCL, "rank ", rank, " allgather sendbuff ", sendbuff, " recvbuff ", recvbuff, " count ", sendcount,
+       ", dtype ", datatype, ", comm ", (void*)comm);
 
   const char* fallbackList = mscclpp::env()->forceNcclFallbackOperation.c_str();
   if (mscclppNcclDlopenSharedLib == true && mscclppNcclInFallbackList("allgather", fallbackList)) {
@@ -853,20 +865,20 @@ ncclResult_t ncclMemAlloc(void** ptr, size_t size) {
     }
   } catch (const mscclpp::Error& e) {
     if (e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage) {
-      WARN(MSCCLPP_NCCL, "Invalid usage: %s", e.what());
+      WARN(MSCCLPP_NCCL, "Invalid usage: ", e.what());
       return ncclInvalidUsage;
     } else {
-      WARN(MSCCLPP_NCCL, "Internal error: %s", e.what());
+      WARN(MSCCLPP_NCCL, "Internal error: ", e.what());
       return ncclInternalError;
     }
   } catch (const mscclpp::CudaError& e) {
-    WARN(MSCCLPP_NCCL, "Cuda error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Cuda error: ", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::CuError& e) {
-    WARN(MSCCLPP_NCCL, "Cu error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Cu error: ", e.what());
     return ncclUnhandledCudaError;
   } catch (const mscclpp::BaseError& e) {
-    WARN(MSCCLPP_NCCL, "Base error: %s", e.what());
+    WARN(MSCCLPP_NCCL, "Base error: ", e.what());
     return ncclInternalError;
   }
   ptrMap[sharedPtr.get()] = sharedPtr;

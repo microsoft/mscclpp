@@ -84,6 +84,11 @@ class Algorithm {
   /// @return The Constraint struct specifying worldSize and nRanksPerNode requirements.
   virtual Constraint constraint() const = 0;
 
+  /// Set the valid message size range for this algorithm.
+  /// @param minMessageSize Minimum supported message size in bytes.
+  /// @param maxMessageSize Maximum supported message size in bytes.
+  virtual void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) = 0;
+
   /// Execute the algorithm.
   /// @param comm The communicator to use.
   /// @param input Pointer to the input buffer.
@@ -98,12 +103,14 @@ class Algorithm {
   /// @param nThreadsPerBlock Number of threads per block (0 for auto-selection).
   /// @param symmetricMemory Whether to use symmetric memory optimization.
   /// @param extras Additional parameters for algorithm-specific customization.
+  /// @param accumDtype Data type for accumulation during reduction. DataType::AUTO resolves to dtype.
   /// @return The result of the operation.
   virtual CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                              size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                              std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
                              bool symmetricMemory = false,
-                             const std::unordered_map<std::string, uintptr_t>& extras = {}) = 0;
+                             const std::unordered_map<std::string, uintptr_t>& extras = {},
+                             DataType accumDtype = DataType::AUTO) = 0;
 
   /// Reset the algorithm state, clearing any cached contexts.
   virtual void reset() = 0;
@@ -181,10 +188,11 @@ class NativeAlgorithm : public Algorithm {
   /// @param nBlocks Number of CUDA blocks.
   /// @param nThreadsPerBlock Number of threads per block.
   /// @param extras Additional algorithm-specific parameters.
+  /// @param accumDtype Data type for accumulation (resolved from input dtype if sentinel).
   /// @return The result of the operation.
   using KernelFunc =
       std::function<CommResult(const std::shared_ptr<void>, const void*, void*, size_t, size_t, DataType, ReduceOp,
-                               cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&)>;
+                               cudaStream_t, int, int, const std::unordered_map<std::string, uintptr_t>&, DataType)>;
 
   /// Function type for creating algorithm contexts.
   /// @param comm The communicator.
@@ -228,11 +236,12 @@ class NativeAlgorithm : public Algorithm {
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
-                     bool symmetricMemory = false,
-                     const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
+                     bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
+                     DataType accumDtype = DataType::AUTO) override;
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
+  void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   AlgorithmType type() const override { return AlgorithmType::Native; }
@@ -273,13 +282,14 @@ class DslAlgorithm : public Algorithm, public AlgorithmBuilder, public std::enab
   const std::string& name() const override;
   const std::string& collective() const override;
   const std::pair<size_t, size_t>& messageRange() const override;
+  void setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) override;
   const std::unordered_map<std::string, uint64_t>& tags() const override;
   const CollectiveBufferMode& bufferMode() const override;
   CommResult execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                      size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
                      std::shared_ptr<Executor> executor, int nBlocks = 0, int nThreadsPerBlock = 0,
-                     bool symmetricMemory = false,
-                     const std::unordered_map<std::string, uintptr_t>& extras = {}) override;
+                     bool symmetricMemory = false, const std::unordered_map<std::string, uintptr_t>& extras = {},
+                     DataType accumDtype = DataType::AUTO) override;
   AlgorithmType type() const override { return AlgorithmType::DSL; }
   Constraint constraint() const override;
   void reset() override;

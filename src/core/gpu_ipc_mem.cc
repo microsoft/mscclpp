@@ -140,6 +140,11 @@ void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
       UnixSocketServer::instance().unregisterFd(handle->posixFd.fd);
       ::close(handle->posixFd.fd);
     }
+    if (handle->typeFlags & GpuIpcMemHandle::Type::Fabric) {
+      if (handle->fabric.allocHandle != 0) {
+        cuMemRelease(handle->fabric.allocHandle);
+      }
+    }
     delete handle;
   }
 }
@@ -148,6 +153,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   auto handle = UniqueGpuIpcMemHandle(new GpuIpcMemHandle(), &GpuIpcMemHandle::deleter);
   handle->typeFlags = GpuIpcMemHandle::Type::None;
   handle->posixFd.fd = -1;
+  handle->fabric.allocHandle = {};
 
   CUdeviceptr basePtr;
   size_t sz;
@@ -189,6 +195,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   // FABRIC handle
   if (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle, CU_MEM_HANDLE_TYPE_FABRIC, 0) ==
       CUDA_SUCCESS) {
+    MSCCLPP_CUTHROW(cuMemRetainAllocationHandle(&(handle->fabric.allocHandle), (void*)basePtr));
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
   }
 
@@ -232,6 +239,7 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   handle->offsetFromBase = 0;
   handle->typeFlags = GpuIpcMemHandle::Type::None;
   handle->posixFd.fd = -1;
+  handle->fabric.allocHandle = {};
 
   // POSIX FD handle
   int fileDesc;
@@ -246,10 +254,17 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::createMulticast([[maybe_unused]] size_t b
   if (isFabricAvailable && (cuMemExportToShareableHandle(&(handle->fabric.handle), allocHandle,
                                                          CU_MEM_HANDLE_TYPE_FABRIC, 0) == CUDA_SUCCESS)) {
     handle->typeFlags |= GpuIpcMemHandle::Type::Fabric;
+    handle->fabric.allocHandle = allocHandle;
   }
 
   if (handle->typeFlags == GpuIpcMemHandle::Type::None) {
+    cuMemRelease(allocHandle);
     THROW(GPU, Error, ErrorCode::SystemError, "createMulticast failed: neither POSIX FD nor FABRIC handle was created");
+  }
+
+  // Only release allocHandle if it is not stored in fabric.allocHandle.
+  if (!(handle->typeFlags & GpuIpcMemHandle::Type::Fabric)) {
+    MSCCLPP_CUTHROW(cuMemRelease(allocHandle));
   }
   return handle;
 #else   // !(CUDA_NVLS_API_AVAILABLE)
@@ -270,6 +285,8 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
     if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
         CUDA_SUCCESS) {
+      // Ignore allocHandle in the handle struct since it is process-local and not transferable across processes.
+      handle_.fabric.allocHandle = {};
       type_ = GpuIpcMemHandle::Type::Fabric;
     }
   }
@@ -418,41 +435,45 @@ std::shared_ptr<void> GpuIpcMem::mapMulticast([[maybe_unused]] int numDevices, [
   // This will block until all devices call cuMulticastAddDevice()
   MSCCLPP_CUTHROW(cuMulticastBindAddr(allocHandle_, mcOffset, bufferAddr, bufferSize, 0));
 
+  // cuMemMap requires offset to be 0 for multicast handles, so we map the entire range
+  // [0, mcOffset + bufferSize) and return a pointer at mcPtr + mcOffset. This only consumes
+  // extra virtual address space for the mcOffset region; no additional physical memory is used.
+  size_t mapSize = mcOffset + bufferSize;
   CUdeviceptr mcPtr;
-  MSCCLPP_CUTHROW(cuMemAddressReserve(&mcPtr, bufferSize, minMcGran, 0U, 0));
-  MSCCLPP_CUTHROW(cuMemMap(mcPtr, bufferSize, 0, allocHandle_, 0));
+  MSCCLPP_CUTHROW(cuMemAddressReserve(&mcPtr, mapSize, minMcGran, 0U, 0));
+  MSCCLPP_CUTHROW(cuMemMap(mcPtr, mapSize, 0, allocHandle_, 0));
 
   CUmemAccessDesc accessDesc = {};
   accessDesc.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
   accessDesc.location.id = deviceId;
   accessDesc.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
-  MSCCLPP_CUTHROW(cuMemSetAccess(mcPtr, bufferSize, &accessDesc, 1));
+  MSCCLPP_CUTHROW(cuMemSetAccess(mcPtr, mapSize, &accessDesc, 1));
 
   // Return shared_ptr with custom deleter that unmaps and unbinds
   CUmemGenericAllocationHandle allocHandle = allocHandle_;
-  return std::shared_ptr<void>(
-      reinterpret_cast<void*>(mcPtr), [self = shared_from_this(), mcOffset, bufferSize, allocHandle](void* ptr) {
-        CUresult res;
-        const char* errStr;
+  return std::shared_ptr<void>(reinterpret_cast<void*>(mcPtr + mcOffset), [self = shared_from_this(), mcPtr, mapSize,
+                                                                           mcOffset, bufferSize, allocHandle](void*) {
+    CUresult res;
+    const char* errStr;
 
-        res = cuMemUnmap((CUdeviceptr)ptr, bufferSize);
-        if (res != CUDA_SUCCESS) {
-          (void)cuGetErrorString(res, &errStr);
-          WARN(GPU, "Failed to unmap CUDA memory at pointer ", (void*)ptr, ": ", errStr);
-        }
+    res = cuMemUnmap(mcPtr, mapSize);
+    if (res != CUDA_SUCCESS) {
+      (void)cuGetErrorString(res, &errStr);
+      WARN(GPU, "Failed to unmap CUDA memory at pointer ", (void*)mcPtr, ": ", errStr);
+    }
 
-        res = cuMemAddressFree((CUdeviceptr)ptr, bufferSize);
-        if (res != CUDA_SUCCESS) {
-          (void)cuGetErrorString(res, &errStr);
-          WARN(GPU, "Failed to free CUDA memory at pointer ", (void*)ptr, ": ", errStr);
-        }
+    res = cuMemAddressFree(mcPtr, mapSize);
+    if (res != CUDA_SUCCESS) {
+      (void)cuGetErrorString(res, &errStr);
+      WARN(GPU, "Failed to free CUDA memory at pointer ", (void*)mcPtr, ": ", errStr);
+    }
 
-        int deviceId;
-        CUdevice device;
-        if (cudaGetDevice(&deviceId) == cudaSuccess && cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
-          (void)cuMulticastUnbind(allocHandle, device, mcOffset, bufferSize);
-        }
-      });
+    int deviceId;
+    CUdevice device;
+    if (cudaGetDevice(&deviceId) == cudaSuccess && cuDeviceGet(&device, deviceId) == CUDA_SUCCESS) {
+      (void)cuMulticastUnbind(allocHandle, device, mcOffset, bufferSize);
+    }
+  });
 #else   // !(CUDA_NVLS_API_AVAILABLE)
   THROW(GPU, Error, ErrorCode::InvalidUsage,
         "NVLS is not supported on this device (requires CUDA version >= 12.3 and Linux kernel version >= 5.6.0)");

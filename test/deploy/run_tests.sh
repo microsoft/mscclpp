@@ -1,6 +1,5 @@
 set -e
 HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
-export PATH=/usr/local/mpi/bin:$PATH
 
 function run_mscclpp_test()
 {

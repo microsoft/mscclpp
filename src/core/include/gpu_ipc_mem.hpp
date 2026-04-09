@@ -44,6 +44,7 @@ struct GpuIpcMemHandle {
 
   struct {
     char handle[64];
+    CUmemGenericAllocationHandle allocHandle;
   } fabric;
 
   static void deleter(GpuIpcMemHandle* handle);

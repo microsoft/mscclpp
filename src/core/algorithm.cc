@@ -41,7 +41,9 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras) {
+                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras,
+                                    DataType accumDtype) {
+  if (accumDtype == DataType::AUTO) accumDtype = dtype;
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
@@ -53,7 +55,7 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
     contexts_[ctxKey] = ctx;
   }
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
-                           nThreadsPerBlock, extras);
+                           nThreadsPerBlock, extras, accumDtype);
 }
 
 const std::string& NativeAlgorithm::name() const { return name_; }
@@ -66,16 +68,18 @@ const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
   return range;
 }
 
+void NativeAlgorithm::setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) {
+  minMessageSize_ = minMessageSize;
+  maxMessageSize_ = maxMessageSize;
+}
+
 const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& NativeAlgorithm::bufferMode() const { return bufferMode_; }
 
 Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; }
 
-void NativeAlgorithm::reset() {
-  contexts_.clear();
-  initialized_ = false;
-}
+void NativeAlgorithm::reset() { contexts_.clear(); }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,
                                             std::shared_ptr<Algorithm> algorithm) {
@@ -143,6 +147,10 @@ const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
   return range;
 }
 
+void DslAlgorithm::setMessageSizeRange(size_t, size_t) {
+  THROW(EXEC, Error, ErrorCode::InvalidUsage, "setMessageSizeRange is only supported for native algorithms");
+}
+
 const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
@@ -157,7 +165,7 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
                                  std::shared_ptr<Executor> executor, int, int, bool,
-                                 const std::unordered_map<std::string, uintptr_t>&) {
+                                 const std::unordered_map<std::string, uintptr_t>&, DataType) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
@@ -183,6 +191,10 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         plan_, stream);
       break;
 #endif
+    case DataType::FLOAT8_E4M3B15:
+      executor->execute(rank, (__fp8_e4m3b15*)input, (__fp8_e4m3b15*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E4M3B15, plan_, stream);
+      break;
     case DataType::INT32:
     case DataType::UINT32:
       executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);

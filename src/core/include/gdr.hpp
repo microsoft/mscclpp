@@ -4,6 +4,10 @@
 #ifndef MSCCLPP_GDR_HPP_
 #define MSCCLPP_GDR_HPP_
 
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+
 namespace mscclpp {
 
 enum class GdrStatus {
@@ -20,25 +24,14 @@ GdrStatus gdrStatus();
 /// Whether the global GDRCopy context is enabled (shorthand for gdrStatus() == GdrStatus::Ok).
 bool gdrEnabled();
 
-}  // namespace mscclpp
+/// Return a human-readable error message for the current GDRCopy status.
+const char* gdrStatusMessage();
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-
-#if defined(MSCCLPP_USE_GDRCOPY)
-
-#include <gdrapi.h>
-
-namespace mscclpp {
-
-class GdrContext;
-
-/// RAII wrapper for a per-connection GDRCopy BAR1 mapping of a GPU address.
+/// RAII wrapper for a GDRCopy BAR1 mapping of a GPU address.
+/// When GDRCopy is not available, all operations are no-ops and valid() returns false.
 class GdrMap {
  public:
   /// Pin and map a GPU address for direct host-side access.
-  /// Holds a shared reference to the GPU memory to keep it alive.
   /// @param gpuMem   Shared pointer to the GPU memory (e.g. from gpuCallocShared).
   /// @param deviceId The CUDA device ID for setting context.
   GdrMap(std::shared_ptr<void> gpuMem, int deviceId);
@@ -48,10 +41,10 @@ class GdrMap {
   GdrMap& operator=(const GdrMap&) = delete;
 
   /// Whether the mapping was established successfully.
-  bool valid() const { return hostDstPtr_ != nullptr; }
+  bool valid() const;
 
   /// Return the BAR1-mapped host pointer to the GPU location.
-  uint64_t* hostPtr() const { return hostDstPtr_; }
+  uint64_t* hostPtr() const;
 
   /// Copy data from host memory to the mapped GPU location.
   void copyTo(const void* src, size_t size);
@@ -60,36 +53,10 @@ class GdrMap {
   void copyFrom(void* dst, size_t size) const;
 
  private:
-  std::shared_ptr<GdrContext> ctx_;
-  std::shared_ptr<void> gpuMem_;
-  gdr_mh_t mh_;
-  void* barPtr_;
-  uint64_t* hostDstPtr_;
-  size_t mappedSize_;
+  struct Impl;
+  std::unique_ptr<Impl> pimpl_;
 };
 
 }  // namespace mscclpp
 
-#else  // !defined(MSCCLPP_USE_GDRCOPY)
-
-namespace mscclpp {
-
-/// Stub GdrMap when GDRCopy is not available.
-class GdrMap {
- public:
-  GdrMap(std::shared_ptr<void> /*gpuMem*/, int /*deviceId*/) {}
-  ~GdrMap() = default;
-
-  GdrMap(const GdrMap&) = delete;
-  GdrMap& operator=(const GdrMap&) = delete;
-
-  bool valid() const { return false; }
-  void copyTo(const void* /*src*/, size_t /*size*/) {}
-  void copyFrom(void* /*dst*/, size_t /*size*/) const {}
-  uint64_t* hostPtr() const { return nullptr; }
-};
-
-}  // namespace mscclpp
-
-#endif  // !defined(MSCCLPP_USE_GDRCOPY)
 #endif  // MSCCLPP_GDR_HPP_

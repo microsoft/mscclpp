@@ -67,8 +67,7 @@ static inline bool isDmabufSupportedByGpu(int gpuId) {
   return ret;
 }
 
-IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
-    : mr_(nullptr), buff_(buff), size_(0), isDmabuf_(false), isDataDirect_(false) {
+IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nullptr), buff_(buff), size_(0) {
   if (size == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
   }
@@ -85,39 +84,50 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isMlx5)
   if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
 #if !defined(MSCCLPP_USE_ROCM)
     int fd = -1;
+    size_t rangeSize = pages * pageSize;
+
+    // Obtain a DMA-BUF file descriptor for the GPU memory range. On platforms with a CPU-GPU
+    // bridge that reorders posted writes (e.g., Grace/GB200 NVLink-C2C), the PCIe mapping flag
+    // routes DMA through the Data Direct engine for correct ordering and higher throughput.
+    // Fall back to the default (non-PCIe) mapping if the flag is unsupported.
+#if (CUDA_VERSION >= 12030)
+    CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+                                                   CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
+    if (cuRes != CUDA_SUCCESS || fd < 0) {
+      if (fd >= 0) ::close(fd);
+      fd = -1;
+    }
+    bool usedPcieFlag = (fd >= 0);
+#endif  // CUDA_VERSION >= 12030
+    if (fd < 0) {
+      MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+    }
+
+    // Register the DMA-BUF memory region. When Data Direct is available, use the mlx5dv API
+    // which enables hardware-level Data Direct routing for the MR. Otherwise use standard verbs.
     size_t offsetInDmaBuf = buffIntPtr % pageSize;
     int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
                       IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
+
 #if defined(MSCCLPP_USE_MLX5DV)
-    if (isMlx5 && MLX5DV::isAvailable()) {
-      // DATA_DIRECT requires a PCIe BAR1-mapped DMA-BUF fd (CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE).
-      // This matches the perftest approach for achieving full bandwidth with DATA_DIRECT.
-      CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize,
-                                                     CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
-                                                     CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
-      if (cuRes == CUDA_SUCCESS && fd >= 0) {
-        mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
-        if (mr_ != nullptr) {
-          isDataDirect_ = true;
-        } else {
-          INFO(NET, "mlx5dv_reg_dmabuf_mr failed with PCIe DMA-BUF, falling back to regular DMA-BUF");
-          ::close(fd);
-          fd = -1;
-        }
-      } else {
-        INFO(NET, "cuMemGetHandleForAddressRange with PCIE flag failed (", cuRes, "), falling back");
-        if (fd >= 0) { ::close(fd); fd = -1; }
-      }
+    if (isDataDirect) {
+      mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
 #endif
     if (mr_ == nullptr) {
-      if (fd < 0) {
-        MSCCLPP_CUTHROW(
-            cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
-      }
       mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
-    if (fd >= 0) ::close(fd);
+
+    // If MR registration failed with a PCIe-mapped fd, retry with the default mapping.
+#if (CUDA_VERSION >= 12030)
+    if (mr_ == nullptr && usedPcieFlag) {
+      ::close(fd);
+      MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+      mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+    }
+#endif  // CUDA_VERSION >= 12030
+
+    ::close(fd);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
@@ -166,7 +176,7 @@ bool IbMr::isDmabuf() const { return isDmabuf_; }
 bool IbMr::isDataDirect() const { return isDataDirect_; }
 
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
-           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic, bool isMlx5)
+           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
@@ -187,8 +197,7 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
       maxSendWr_(maxSendWr),
       maxWrPerSend_(maxWrPerSend),
       maxRecvWr_(maxRecvWr),
-      noAtomic_(noAtomic),
-      isMlx5_(isMlx5) {
+      noAtomic_(noAtomic) {
   sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
   if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
@@ -478,12 +487,29 @@ std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_
 unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
 
 IbCtx::IbCtx(const std::string& devName)
-    : devName_(devName), ctx_(nullptr), pd_(nullptr), supportsRdmaAtomics_(false), isMlx5_(false) {
+    : devName_(devName),
+      ctx_(nullptr),
+      pd_(nullptr),
+      supportsRdmaAtomics_(false),
+      isMlx5_(false),
+      isDataDirect_(false),
+      isVF_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (std::string(devices[i]->name) == devName_) {
       ctx_ = IBVerbs::ibv_open_device(devices[i]);
+
+      // Detect if this IB device is a Virtual Function (VF).
+      // VFs have a 'physfn' sysfs symlink pointing to their parent PF; PFs do not.
+      {
+        std::string physfnPath = "/sys/class/infiniband/" + devName_ + "/device/physfn";
+        isVF_ = (access(physfnPath.c_str(), F_OK) == 0);
+        if (isVF_) {
+          INFO(NET, "IB device ", devName_, " is a Virtual Function (Data Direct ordering available)");
+        }
+      }
+
 #if defined(MSCCLPP_USE_MLX5DV)
       if (MLX5DV::isAvailable()) {
         isMlx5_ = MLX5DV::mlx5dv_is_supported(devices[i]);
@@ -503,6 +529,20 @@ IbCtx::IbCtx(const std::string& devName)
   if (pd_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_alloc_pd failed (errno ", errno, ")");
   }
+
+  // Detect Data Direct support via mlx5dv_get_data_direct_sysfs_path
+#if defined(MSCCLPP_USE_MLX5DV)
+  if (isMlx5_ && MLX5DV::isAvailable()) {
+    char sysfsPath[256];
+    int ret = MLX5DV::mlx5dv_get_data_direct_sysfs_path(ctx_, sysfsPath, sizeof(sysfsPath));
+    if (ret == 0) {
+      isDataDirect_ = true;
+      INFO(NET, "IB device ", devName_, " supports Data Direct (sysfs: ", sysfsPath, ")");
+    } else {
+      INFO(NET, "IB device ", devName_, " does not support Data Direct");
+    }
+  }
+#endif  // defined(MSCCLPP_USE_MLX5DV)
 
   // Query and cache RDMA atomics capability
   struct ibv_device_attr attr = {};
@@ -574,16 +614,20 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize,
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
   return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
-                                        maxRecvWr, maxWrPerSend, noAtomic, isMlx5_));
+                                        maxRecvWr, maxWrPerSend, noAtomic));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isMlx5_));
+  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isDataDirect_));
 }
 
 bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
 
 bool IbCtx::isMlx5() const { return isMlx5_; }
+
+bool IbCtx::isDataDirect() const { return isDataDirect_; }
+
+bool IbCtx::isVirtualFunction() const { return isVF_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;

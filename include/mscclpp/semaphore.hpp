@@ -92,7 +92,6 @@ class MemoryDevice2DeviceSemaphore {
  private:
   Semaphore semaphore_;
   detail::UniqueGpuPtr<uint64_t> expectedInboundToken_;
-  detail::UniqueGpuPtr<uint64_t> outboundToken_;
 
  public:
   /// Constructor.

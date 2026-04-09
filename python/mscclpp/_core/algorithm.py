@@ -114,10 +114,23 @@ class Algorithm:
         """The collective operation this algorithm implements (e.g., "allreduce", "allgather")."""
         return self._algorithm.collective
 
-    @cached_property
+    @property
     def message_size_range(self) -> Tuple[int, int]:
         """The valid message size range (min_size, max_size) in bytes."""
         return (self._algorithm.message_range[0], self._algorithm.message_range[1])
+
+    def set_message_size_range(self, min_message_size: int, max_message_size: int):
+        """Set the valid message size range in bytes.
+
+        Args:
+            min_message_size: Minimum supported message size in bytes.
+            max_message_size: Maximum supported message size in bytes.
+
+        Only supported for native algorithms. Raises TypeError for DSL algorithms.
+        """
+        if self.is_dsl_algorithm():
+            raise TypeError("set_message_size_range is only supported for native algorithms")
+        self._algorithm.set_message_size_range(min_message_size, max_message_size)
 
     @cached_property
     def tags(self) -> Dict[str, int]:
@@ -164,6 +177,7 @@ class Algorithm:
         nthreads_per_block=0,
         symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
+        accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
 
@@ -181,10 +195,14 @@ class Algorithm:
             nthreads_per_block: Number of threads per block (0 for auto-selection).
             symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
+            accum_dtype: Data type for accumulation during reduction. If None, defaults to
+                         the same as dtype. Use DataType.float32 for high-precision FP8 accumulation.
 
         Returns:
             The result code (0 for success).
         """
+        merged_extras = dict(extras) if extras is not None else {}
+        accum_dtype = accum_dtype if accum_dtype is not None else dtype
         return self._algorithm.execute(
             comm,
             int(input_buffer),
@@ -198,7 +216,8 @@ class Algorithm:
             nblocks,
             nthreads_per_block,
             symmetric_memory,
-            extras if extras is not None else {},
+            merged_extras,
+            int(accum_dtype),
         )
 
     def reset(self):

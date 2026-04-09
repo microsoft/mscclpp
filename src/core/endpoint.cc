@@ -90,9 +90,6 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
     it = detail::deserialize(it, ibNoAtomic_);
-    if (ibNoAtomic_) {
-      it = detail::deserialize(it, ibSignalGpuMrInfo_);
-    }
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
   }
@@ -123,9 +120,6 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
     detail::serialize(data, pimpl_->ibNoAtomic_);
-    if (pimpl_->ibNoAtomic_) {
-      detail::serialize(data, pimpl_->ibSignalGpuMrInfo_);
-    }
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }

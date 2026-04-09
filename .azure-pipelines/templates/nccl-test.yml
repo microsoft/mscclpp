@@ -1,0 +1,76 @@
+# .azure-pipelines/templates/nccl-test.yml
+# ----------------------------------------
+# A step‐template that runs the entire MSCCLPP→NCCL test suite on one pool/container.
+#
+# Parameters:
+#   subscription     – Azure subscription to use for VMSS start/stop
+
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: nvccGencode
+  type: string
+  default: "-gencode=arch=compute_80,code=sm_80"
+
+steps:
+- template: deploy.yml
+  parameters:
+    subscription:     ${{ parameters.subscription }}
+    vmssName:         ${{ parameters.vmssName }}
+    deployArgs:       'nccltest-single-node'
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallNcclTests
+    displayName: Install NCCL Tests
+    remoteScript: |
+      cd
+      git clone https://github.com/NVIDIA/nccl-tests.git
+      cd nccl-tests
+      MPI=1 MPI_HOME=/usr/local/mpi make -j
+
+- template: run-remote-task.yml
+  parameters:
+    name: InstallNccl
+    displayName: Install NCCL
+    remoteScript: |
+      LATEST_TAG=$(curl -fsSL https://api.github.com/repos/NVIDIA/nccl/releases/latest | grep tag_name | cut -d\" -f4)
+      if [ -z "$LATEST_TAG" ]; then
+        echo "Failed to fetch latest NCCL tag"
+        exit 1
+      fi
+      cd
+      git clone --branch $LATEST_TAG --depth 1 https://github.com/NVIDIA/nccl.git
+      cd nccl
+      make -j src.build NVCC_GENCODE=${{ parameters.nvccGencode }}
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunNcclAllGatherFallbaclkToNcclTest
+    displayName: Run NCCL AllGather Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_gather_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunNcclAllReduceFallbaclkToNcclTest
+    displayName: Run NCCL AllReduce Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allgather" /root/nccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunNcclBroadcastFallbaclkToNcclTest
+    displayName: Run NCCL Broadcast Test with or without Fallback to NCCL operation
+    remoteScript: |
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="broadcast" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+      mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN -x MSCCLPP_ENABLE_NCCL_FALLBACK=TRUE -x MSCCLPP_NCCL_LIB_PATH=/root/nccl/build/lib/libnccl.so -x MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION="allreduce" /root/nccl-tests/build/broadcast_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
+
+- template: stop.yml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName:     ${{ parameters.vmssName }}
