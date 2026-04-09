@@ -30,8 +30,8 @@ jobs:
   displayName: Multi nodes test
   strategy:
     matrix:
-      cuda13:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
     name: mscclpp-multi-node
   container:

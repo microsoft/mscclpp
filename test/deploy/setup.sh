@@ -17,6 +17,7 @@ if [ "${PLATFORM}" == "cuda" ]; then
     done
 fi
 
+sleep 30m
 make -C /root/mscclpp/tools/peer-access-test
 /root/mscclpp/tools/peer-access-test/peer_access_test
 make -C /root/mscclpp/tools/peer-access-test clean
