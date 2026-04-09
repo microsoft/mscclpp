@@ -17,9 +17,26 @@ if [ "${PLATFORM}" == "cuda" ]; then
     done
 fi
 
-sleep 30m
 make -C /root/mscclpp/tools/peer-access-test
+set +e
 /root/mscclpp/tools/peer-access-test/peer_access_test
+PEER_ACCESS_EXIT_CODE=$?
+set -e
+if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ]; then
+    # Exit code 2 = CUDA init failure (e.g., driver/toolkit version mismatch).
+    # Add CUDA compat libs for forward compatibility and retry.
+    CUDA_COMPAT_PATH="/usr/local/cuda/compat"
+    if [ -d "${CUDA_COMPAT_PATH}" ]; then
+        echo "Adding ${CUDA_COMPAT_PATH} to LD_LIBRARY_PATH for forward compatibility"
+        export LD_LIBRARY_PATH="${CUDA_COMPAT_PATH}:${LD_LIBRARY_PATH}"
+        /root/mscclpp/tools/peer-access-test/peer_access_test
+    else
+        echo "CUDA compat libs not found at ${CUDA_COMPAT_PATH}"
+        exit 1
+    fi
+elif [ ${PEER_ACCESS_EXIT_CODE} -ne 0 ]; then
+    exit ${PEER_ACCESS_EXIT_CODE}
+fi
 make -C /root/mscclpp/tools/peer-access-test clean
 
 if [[ "${CUDA_VERSION}" == *"11."* ]]; then
