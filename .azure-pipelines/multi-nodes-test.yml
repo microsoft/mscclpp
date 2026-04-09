@@ -16,6 +16,9 @@ pr: none
 
 
 parameters:
+- name: vmssName
+  type: string
+  default: mscclpp-h100-multinode-ci
 - name: hostEntries
   type: string
   default: |
@@ -50,17 +53,43 @@ jobs:
           echo "Entry already exists, nothing to do."
         fi
 
+  - task: Bash@3
+    displayName: Generate deploy files
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        VMSS="${{ parameters.vmssName }}"
+        DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
+        NODE0="${VMSS}000000"
+        NODE1="${VMSS}000001"
+
+        echo "Host ${NODE0}
+          Port 22345
+          IdentityFile /root/mscclpp/sshkey
+          StrictHostKeyChecking no
+        Host ${NODE1}
+          Port 22345
+          IdentityFile /root/mscclpp/sshkey
+          StrictHostKeyChecking no" > "${DEPLOY_DIR}/config"
+
+        echo "azureuser@${NODE0}
+        azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
+
+        echo "${NODE0}
+        ${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
+
   - template: templates/deploy.yml
     parameters:
       subscription:  mscclpp-ci-h100
-      vmssName:      mscclpp-h100-multinode-ci
+      vmssName:      ${{ parameters.vmssName }}
       resourceGroup: mscclpp
 
   - template: templates/run-remote-task.yml
     parameters:
       name: RunMscclppTest
       displayName: Run multi-nodes mscclpp-test
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
@@ -68,7 +97,7 @@ jobs:
     parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
@@ -76,7 +105,7 @@ jobs:
     parameters:
       name: RunMultiNodePythonTests
       displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
@@ -84,12 +113,12 @@ jobs:
     parameters:
       name: RunMultiNodePythonBenchmark
       displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
   - template: templates/stop.yml
     parameters:
       subscription:  mscclpp-ci-h100
-      vmssName:      mscclpp-h100-multinode-ci
+      vmssName:      ${{ parameters.vmssName }}
       resourceGroup: mscclpp

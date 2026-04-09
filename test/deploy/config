@@ -1,8 +1,0 @@
-Host mscclpp-h100-multinode-ci000000
-  Port 22345
-  IdentityFile /root/mscclpp/sshkey
-  StrictHostKeyChecking no
-Host mscclpp-h100-multinode-ci000001
-  Port 22345
-  IdentityFile /root/mscclpp/sshkey
-  StrictHostKeyChecking no

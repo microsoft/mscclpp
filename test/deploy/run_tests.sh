@@ -1,5 +1,6 @@
 set -e
 HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
+HEAD_HOST=$(head -1 ${HOSTFILE})
 
 function run_mscclpp_test()
 {
@@ -53,12 +54,12 @@ function run_mp_ut()
   echo "============Run multi-process unit tests on 2 nodes (np=2, npernode=1)========================="
   mpirun -allow-run-as-root -tag-output -np 2 --bind-to numa \
   -hostfile ${HOSTFILE} -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-  -npernode 1 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-h100-multinode-ci000000:20003
+  -npernode 1 /root/mscclpp/build/test/mp_unit_tests -ip_port ${HEAD_HOST}:20003
 
   echo "============Run multi-process unit tests on 2 nodes (np=16, npernode=8)========================="
   mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile ${HOSTFILE} -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port mscclpp-h100-multinode-ci000000:20003
+  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port ${HEAD_HOST}:20003
 }
 
 function run_pytests()
