@@ -159,6 +159,7 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testPingPongPerf(PingPongTestParams params);
   void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testBandwidth(PingPongTestParams params);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

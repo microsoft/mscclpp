@@ -51,7 +51,7 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
                 ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend);
+                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
   } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
@@ -74,6 +74,7 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
+    it = detail::deserialize(it, ibNoAtomic_);
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
   }
@@ -103,6 +104,7 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->pidHash_);
   if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
+    detail::serialize(data, pimpl_->ibNoAtomic_);
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }

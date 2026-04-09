@@ -4,6 +4,7 @@
 target_sources(unit_tests PRIVATE
     unit_tests_main.cc
     core_tests.cc
+    gdr_tests.cu
     gpu_utils_tests.cc
     errors_tests.cc
     fifo_tests.cu
