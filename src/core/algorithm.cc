@@ -73,7 +73,7 @@ Algorithm::Constraint NativeAlgorithm::constraint() const { return constraint_; 
 
 void NativeAlgorithm::reset() {
   contexts_.clear();
-  initialized_ = false;
+  initialized_ = true;
 }
 
 void AlgorithmCollection::registerAlgorithm(const std::string collective, const std::string algoName,

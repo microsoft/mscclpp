@@ -81,6 +81,7 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
         return self->generateAlltoallvContextKey(input, output, inputSize, outputSize, dtype);
       });
 
+  self->algo_ = alltoallvAlgo;
   return alltoallvAlgo;
 }
 
@@ -238,6 +239,14 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
     MSCCLPP_CUDATHROW(cudaMemcpyAsync(
         output, recvBuff,
         outputSize, cudaMemcpyDeviceToDevice, stream));
+  }
+
+  static int cnt;
+  if (cnt++ % 1000 == 0) {
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+    if (auto algo = algo_.lock()) {
+      algo->reset();
+    }
   }
 
   if (cudaGetLastError() == cudaSuccess) {
