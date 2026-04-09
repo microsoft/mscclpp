@@ -124,21 +124,6 @@ class IBConnection : public BaseConnection {
 
   std::unique_ptr<GdrMap> signalGdrMap_;
 
-  // Remote endpoint's signal GPU buffer MR info (destination for RDMA write-with-imm).
-  // The local host buffer (atomicSrc_ / atomicSrcTransportInfo_.ibMr) serves as the source.
-  IbMrInfo remoteSignalGpuMrInfo_;
-
-  std::unique_ptr<GdrMap> remoteUpdateDstAddrMap_;
-  std::unique_ptr<GdrMap> localSignalGpuMap_;
-  uint64_t* localSignalGpuPtr_;
-
-  // When true, recvThreadFunc reads the token from imm_data (from CQE) instead of the
-  // signal GPU buffer via GDRCopy. Enabled only when all Data Direct conditions are met:
-  // the signal GPU buffer MR is registered with MLX5DV_REG_DMABUF_ACCESS_DATA_DIRECT,
-  // and all GDRCopy mappings (local signal buffer and remoteUpdateDstAddr) are valid,
-  // so both RDMA data writes and GDRCopy token writes go through the Data Direct engine.
-  bool dataDirectEnabled_;
-
   void recvThreadFunc();
 
  public:

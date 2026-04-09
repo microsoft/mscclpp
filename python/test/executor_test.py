@@ -70,7 +70,6 @@ def bench_correctness(
 ):
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
 
-    print("collective: ", collective)
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in collective:
         coll = "all_gather"
@@ -79,7 +78,7 @@ def bench_correctness(
     elif "allreduce" in collective:
         coll = "all_reduce"
     else:
-        coll = "sendrecv"
+        coll = "all_to_all"
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -167,11 +166,9 @@ def build_bufs(
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
 
-    in_place = False
-
     test_buf = cp.zeros(nelems, dtype=dtype)
 
-    return input_buf, result_buf, test_buf, nelems
+    return input_buf, result_buf, test_buf
 
 
 def main(
@@ -193,7 +190,7 @@ def main(
     collective = execution_plan.collective
 
     dtype = parse_dtype(dtype_str)
-    input_buf, result_buf, test_buf, nelem = build_bufs(
+    input_buf, result_buf, test_buf = build_bufs(
         collective,
         size,
         in_place,
@@ -215,22 +212,6 @@ def main(
     )
 
     mscclpp_group.barrier()
-    print("size= ", size, "nelem= ", nelem)
-
-    # Sentinel fill: choose something unlikely in your pattern
-    result_buf.fill(cp.float16(123.0))
-    cp.cuda.runtime.deviceSynchronize()
-
-    # Run ONE execution (no graph), then sync
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        executor_func(stream)
-    stream.synchronize()
-
-    # Count how many elements changed
-    changed = cp.count_nonzero(result_buf != cp.float16(123.0)).item()
-    print("changed elements:", changed, "out of", result_buf.size)
-
     bench_correctness(
         collective,
         input_buf,

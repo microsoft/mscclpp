@@ -34,8 +34,6 @@ class IbMr {
   IbMrInfo getInfo() const;
   const void* getBuff() const;
   uint32_t getLkey() const;
-  bool isDmabuf() const;
-  bool isDataDirect() const;
 
  private:
   IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect);
@@ -43,8 +41,6 @@ class IbMr {
   ibv_mr* mr_;
   void* buff_;
   std::size_t size_;
-  bool isDmabuf_;
-  bool isDataDirect_;
 
   friend class IbCtx;
 };
@@ -92,7 +88,6 @@ class IbQp {
   int getRecvWcStatus(int idx) const;
   std::string getRecvWcStatusString(int idx) const;
   unsigned int getRecvWcImmData(int idx) const;
-  bool isMlx5() const { return isMlx5_; }
 
  private:
   struct SendWrInfo {

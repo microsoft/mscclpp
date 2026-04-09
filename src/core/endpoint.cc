@@ -53,21 +53,6 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
                 ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
                            config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
-
-    // Allocate a 64-bit signal GPU buffer for write-with-imm data payload (ibNoAtomic_ only).
-    if (ibNoAtomic_ && config_.device.type == DeviceType::GPU && config_.device.id >= 0) {
-      CudaDeviceGuard deviceGuard(config_.device.id);
-#if defined(MSCCLPP_DEVICE_HIP)
-      ibSignalGpuBuffer_ = detail::gpuCallocUncachedShared<uint64_t>();
-#else
-      ibSignalGpuBuffer_ = detail::gpuCallocShared<uint64_t>();
-#endif
-      ibSignalGpuMr_ =
-          contextImpl.getIbContext(config_.transport)->registerMr(ibSignalGpuBuffer_.get(), sizeof(uint64_t));
-      ibSignalGpuMrInfo_ = ibSignalGpuMr_->getInfo();
-    } else {
-      ibSignalGpuMrInfo_ = {0, 0};
-    }
   } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
     abortFlag_ = 0;

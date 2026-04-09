@@ -206,9 +206,6 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
     // This test needs only two ranks
     return;
   }
-  if (!ibCtx->supportsRdmaAtomics()) {
-    GTEST_SKIP() << "This test requires RDMA atomics support.";
-  }
 
   // Use atomic path if supported by the IB device.
   bool useAtomic = ibCtx->supportsRdmaAtomics();

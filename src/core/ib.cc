@@ -131,7 +131,6 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
     }
-    isDmabuf_ = true;
 #else   // defined(MSCCLPP_USE_ROCM)
     THROW(NET, Error, ErrorCode::InvalidUsage, "We don't support DMABUF on HIP platforms yet");
 #endif  // defined(MSCCLPP_USE_ROCM)
@@ -171,10 +170,6 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
-bool IbMr::isDmabuf() const { return isDmabuf_; }
-
-bool IbMr::isDataDirect() const { return isDataDirect_; }
-
 IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
            int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic)
     : portNum_(portNum),
@@ -211,26 +206,21 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendC
     }
   }
 
-  struct ibv_qp* qp = nullptr;
-  // mlx5dv_create_qp is only needed for special QP features (DC, AES XTS, OOO recv, etc.).
-  // For basic RC QPs, standard ibv_create_qp is sufficient even on mlx5 devices.
-  {
-    struct ibv_qp_init_attr qpInitAttr = {};
-    qpInitAttr.sq_sig_all = 0;
-    qpInitAttr.send_cq = sendCq_;
-    // Use separate recv CQ if created, otherwise use the send CQ
-    qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
-    qpInitAttr.qp_type = IBV_QPT_RC;
-    qpInitAttr.cap.max_send_wr = maxSendWr;
-    qpInitAttr.cap.max_recv_wr = maxRecvWr;
-    qpInitAttr.cap.max_send_sge = 1;
-    qpInitAttr.cap.max_recv_sge = 1;
-    qpInitAttr.cap.max_inline_data = 0;
+  struct ibv_qp_init_attr qpInitAttr = {};
+  qpInitAttr.sq_sig_all = 0;
+  qpInitAttr.send_cq = sendCq_;
+  // Use separate recv CQ if created, otherwise use the send CQ
+  qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
+  qpInitAttr.qp_type = IBV_QPT_RC;
+  qpInitAttr.cap.max_send_wr = maxSendWr;
+  qpInitAttr.cap.max_recv_wr = maxRecvWr;
+  qpInitAttr.cap.max_send_sge = 1;
+  qpInitAttr.cap.max_recv_sge = 1;
+  qpInitAttr.cap.max_inline_data = 0;
 
-    qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
-    if (qp == nullptr) {
-      THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
-    }
+  struct ibv_qp* qp = IBVerbs::ibv_create_qp(pd, &qpInitAttr);
+  if (qp == nullptr) {
+    THROW(NET, IbError, errno, "ibv_create_qp failed (errno ", errno, ")");
   }
 
   struct ibv_port_attr portAttr;
@@ -738,8 +728,6 @@ IbMr::~IbMr() {}
 IbMrInfo IbMr::getInfo() const { return IbMrInfo(); }
 const void* IbMr::getBuff() const { return nullptr; }
 uint32_t IbMr::getLkey() const { return 0; }
-bool IbMr::isDmabuf() const { return false; }
-bool IbMr::isDataDirect() const { return false; }
 
 IbQp::~IbQp() {}
 void IbQp::rtr(const IbQpInfo& /*info*/) {}
