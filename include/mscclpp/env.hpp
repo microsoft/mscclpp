@@ -116,7 +116,7 @@ class Env {
   const bool forceDisableGdr;
 
   /// Env name: `MSCCLPP_IB_GID_INDEX`. The GID index to use for IB transport.
-  /// If unset or set to -1, it defaults to `EndpointConfig::Ib::DefaultGidIndex` (0).
+  /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
   const int ibGidIndex;
 
  private:
