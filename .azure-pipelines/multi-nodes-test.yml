@@ -30,8 +30,6 @@ jobs:
   displayName: Multi nodes test
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
@@ -84,6 +82,7 @@ jobs:
       subscription:  mscclpp-ci-h100
       vmssName:      ${{ parameters.vmssName }}
       resourceGroup: mscclpp
+      gpuArch:       '90'
 
   - template: templates/run-remote-task.yml
     parameters:

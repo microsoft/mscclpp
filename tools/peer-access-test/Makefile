@@ -7,7 +7,13 @@ ifeq ($(shell which $(CUDA_HOME)/bin/nvcc 2>/dev/null),)
     ARCH_FLAG := -D__HIP_PLATFORM_AMD__=1
 else
     COMPILER := $(CUDA_HOME)/bin/nvcc
-    ARCH_FLAG := -arch=native
+    # Detect GPU compute capability via nvidia-smi if available, otherwise use -arch=native
+    COMPUTE_CAP := $(shell nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d '.')
+    ifneq ($(COMPUTE_CAP),)
+        ARCH_FLAG := -arch=sm_$(COMPUTE_CAP)
+    else
+        ARCH_FLAG := -arch=native
+    endif
 endif
 
 TARGET = peer_access_test
