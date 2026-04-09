@@ -60,7 +60,7 @@ jobs:
     parameters:
       name: RunMscclppTest
       displayName: Run multi-nodes mscclpp-test
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
@@ -68,7 +68,7 @@ jobs:
     parameters:
       name: RunMultiNodeUnitTest
       displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
@@ -76,7 +76,7 @@ jobs:
     parameters:
       name: RunMultiNodePythonTests
       displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
@@ -84,7 +84,7 @@ jobs:
     parameters:
       name: RunMultiNodePythonBenchmark
       displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclit-000000 --user azureuser'
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host mscclpp-h100-multinode-ci0000000 --user azureuser'
       remoteScript: |
         bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
