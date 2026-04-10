@@ -159,10 +159,34 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
     }
   } else if (transports.has(Transport::CudaIpc)) {
     auto entry = getTransportInfo(Transport::CudaIpc);
-    auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
-    // Create a memory map for the remote GPU memory. The memory map will keep the GpuIpcMem instance alive.
-    this->remoteMemMap = gpuIpcMem->map();
-    this->data = this->remoteMemMap.get();
+    bool isSameHost = (getHostHash() == this->hostHash);
+    if (isSameHost) {
+      // Same-host memory: use any available CudaIpc handle type (Fabric, PosixFd, RuntimeIpc).
+      auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
+      this->remoteMemMap = gpuIpcMem->map();
+      this->data = this->remoteMemMap.get();
+    } else {
+      // Cross-node memory: CudaIpc only works via Fabric (requires IMEX daemon).
+      // PosixFd uses unix domain sockets which are node-local.
+      // If Fabric import fails or is unavailable, fall back to IB transport.
+      bool hasFabric = (entry.gpuIpcMemHandle.typeFlags & GpuIpcMemHandle::Type::Fabric) != 0;
+      bool hasIB = (transports & AllIBTransports).any();
+      if (hasFabric) {
+        try {
+          auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
+          this->remoteMemMap = gpuIpcMem->map();
+          this->data = this->remoteMemMap.get();
+        } catch (const Error& e) {
+          if (!hasIB) {
+            throw Error("Cross-node Fabric import failed and no IB transport available: " + std::string(e.what()),
+                        ErrorCode::InvalidUsage);
+          }
+          INFO(GPU, "Cross-node Fabric import failed, falling back to IB transport");
+        }
+      } else if (!hasIB) {
+        throw Error("Cross-node memory sharing requires Fabric or IB transport", ErrorCode::InvalidUsage);
+      }
+    }
   }
   if (this->data != nullptr) {
     INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);
