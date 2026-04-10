@@ -1,7 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/nccl/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
+# LD_PRELOAD=<MSCCLPP_REPO>/build/lib/libmscclpp_nccl.so  torchrun --nnodes=1 --nproc_per_node=8 dsl_with_nccl_api.py
 
 import os
 from typing import Any, Dict
@@ -98,7 +98,7 @@ def init_dist():
     algorithm_collection_builder = mscclpp.ext.AlgorithmCollectionBuilder()
     setup_plan(algorithm_collection_builder, rank, world)
     algorithm_collection_builder.set_algorithm_selector(selector)
-    dist.init_process_group(backend="nccl", device_id=local)
+    dist.init_process_group(backend="nccl", device_id=torch.device("cuda", local))
     return rank, world, local
 
 
