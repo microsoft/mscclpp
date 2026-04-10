@@ -31,7 +31,7 @@
         ```
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
-    * (Optional, for NVIDIA platforms) [GDRCopy](https://github.com/NVIDIA/gdrcopy) >= 2.5.0
+    * (Optional, for NVIDIA platforms) [GDRCopy](https://github.com/NVIDIA/gdrcopy) >= 2.5.1
         * GDRCopy is required for IB `HostNoAtomic` mode, which uses CPU-side signal forwarding to GPU memory via BAR1 mappings. This mode is used on platforms where RDMA atomics are not available (e.g., when using Data Direct Virtual Functions).
         * Install GDRCopy from source or via packages. See the [GDRCopy installation guide](https://github.com/NVIDIA/gdrcopy#installation).
 * Others

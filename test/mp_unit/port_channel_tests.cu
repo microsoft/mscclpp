@@ -8,18 +8,32 @@
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
 
-// Skip the current test if HostNoAtomic mode is not supported.
-// On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding.
-// On ROCm, HostNoAtomic uses direct volatile writes and does not need GDRCopy.
+// Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
+// On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
+// IbMode::Default is used and the IB device does not support RDMA atomics, the endpoint falls
+// back to no-atomic mode, which also requires GDRCopy.
+// On ROCm, no-atomic mode uses direct volatile writes and does not need GDRCopy.
 #if defined(MSCCLPP_USE_CUDA)
-#define REQUIRE_HOST_NO_ATOMIC                                                         \
-  do {                                                                                 \
-    if (!mscclpp::gdrEnabled()) {                                                      \
-      SKIP_TEST() << "HostNoAtomic requires GDRCopy: " << mscclpp::gdrStatusMessage(); \
-    }                                                                                  \
-  } while (0)
+inline void requireGdrForIbMode(IbMode mode, mscclpp::Transport ibTransport) {
+  if (mscclpp::gdrEnabled()) return;  // GDRCopy available — nothing to skip.
+  if (mode == IbMode::HostNoAtomic) {
+    SKIP_TEST() << "HostNoAtomic requires GDRCopy on CUDA: " << mscclpp::gdrStatusMessage();
+  }
+  // For Host/Default modes: check whether the IB device lacks RDMA atomics,
+  // which would cause an automatic fallback to no-atomic mode.
+  if (mode == IbMode::Host || mode == IbMode::Default) {
+    std::string devName = mscclpp::getIBDeviceName(ibTransport);
+    mscclpp::IbCtx ibCtx(devName);
+    if (!ibCtx.supportsRdmaAtomics()) {
+      SKIP_TEST() << "IB device " << devName
+                  << " lacks RDMA atomics; Host mode falls back to HostNoAtomic which requires GDRCopy: "
+                  << mscclpp::gdrStatusMessage();
+    }
+  }
+}
+#define REQUIRE_GDR_FOR_IB_MODE(mode) requireGdrForIbMode((mode), ibTransport)
 #else
-#define REQUIRE_HOST_NO_ATOMIC  // No extra requirements on non-CUDA platforms.
+#define REQUIRE_GDR_FOR_IB_MODE(mode)  // No extra requirements on non-CUDA platforms.
 #endif
 
 void PortChannelOneToOneTest::SetUp() {
@@ -254,6 +268,7 @@ TEST(PortChannelOneToOneTest, PingPong) {
 
 TEST(PortChannelOneToOneTest, PingPongIbHostMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
@@ -270,6 +285,7 @@ TEST(PortChannelOneToOneTest, PingPongWithPoll) {
 
 TEST(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
 }
@@ -281,13 +297,14 @@ PERF_TEST(PortChannelOneToOneTest, PingPongPerf) {
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
-  REQUIRE_HOST_NO_ATOMIC;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
   testPingPongPerf(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
@@ -469,6 +486,7 @@ TEST(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode
 
 TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testPacketPingPong(true, IbMode::Host);
 }
 
@@ -476,25 +494,26 @@ PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(
 
 PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testPacketPingPongPerf(true, IbMode::Host);
 }
 
 PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
-  REQUIRE_HOST_NO_ATOMIC;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
   testPacketPingPongPerf(true, IbMode::HostNoAtomic);
 }
 
 TEST(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
-  REQUIRE_HOST_NO_ATOMIC;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
   testPingPong(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
 
 TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
-  REQUIRE_HOST_NO_ATOMIC;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
   testPacketPingPong(true, IbMode::HostNoAtomic);
 }
 
@@ -570,13 +589,14 @@ PERF_TEST(PortChannelOneToOneTest, Bandwidth) {
 
 PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostMode) {
   REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
   testBandwidth(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
 
 PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
-  REQUIRE_HOST_NO_ATOMIC;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
   testBandwidth(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }

@@ -56,7 +56,7 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     }
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
-                ->createQp(config_.ib.port, gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
+                ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
                            config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
   } else if (config_.transport == Transport::Ethernet) {
