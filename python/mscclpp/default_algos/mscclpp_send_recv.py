@@ -9,190 +9,82 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def send_recv_test_ring_even_ranks(name, nnodes, gpus_per_node):
-    nranks = nnodes * gpus_per_node
-
-    if nranks < 2:
-        raise ValueError("This test requires at least 2 ranks")
-    if nranks % 2 != 0:
-        raise ValueError(
-            f"This odd/even ring schedule requires an even number of ranks, got {nranks}"
-        )
-
-    collective = TestCollective(nranks, 1, 1)
-
+def send_recv_test(name, nnodes, gpus_per_node, split_mask):
+    gpu_size = nnodes * gpus_per_node
+    collective = TestCollective(gpu_size, 1, 1)
     with CollectiveProgram(
         name,
         collective,
-        nranks,
+        gpu_size,
         protocol="Simple",
         num_threads_per_block=1024,
         use_double_scratch_buffer=False,
         min_message_size=0,
         max_message_size=2**64 - 1,
-        instances=2,
+        instances=4
     ):
-        next_channels = {}
-        prev_channels = {}
+        # Creating separate port channels for next and prev directions.
+        # When prev and next are the same peer (e.g., 2-node ring), both channels go to the same peer
+        # and get distinct tags. To ensure cross-rank tag matching (rank A's prev_channel signal
+        # arrives at rank B's next_channel wait), we create channels in opposite order for the
+        # "higher" rank so that tags cross-match:
+        #   Lower rank:  [next(tag0), prev(tag1)]
+        #   Higher rank:  [prev(tag0), next(tag1)]
+        # Then lower.prev(tag1) == higher.next(tag1) ✓ and higher.prev(tag0) == lower.next(tag0) ✓
+        # When prev != next (3+ nodes), each channel targets a different peer so each gets tag 0
+        # and this ordering doesn't matter.
+        group_size = split_mask + 1
+        num_groups = gpu_size // group_size
+        next_channels = {}  # channel for sending to next rank
+        prev_channels = {}  # channel for receiving from prev rank
+        prev_next_ids = {}
+        for node in range(nnodes):
+            for gpu in range(gpus_per_node):
+                global_rank_id = gpu + gpus_per_node * node
+                position_in_group = global_rank_id & split_mask
+                group_id = global_rank_id // group_size
+                next_group_id = (group_id + 1) % num_groups
+                next_global_rank_id = next_group_id * group_size + position_in_group
+                prev_group_id = (group_id - 1 + num_groups) % num_groups
+                prev_global_rank_id = prev_group_id * group_size + position_in_group
+                if prev_global_rank_id == next_global_rank_id and global_rank_id > prev_global_rank_id:
+                    # Higher rank: create prev first, then next (swapped order)
+                    prev_channels[global_rank_id] = PortChannel(prev_global_rank_id, global_rank_id)
+                    next_channels[global_rank_id] = PortChannel(next_global_rank_id, global_rank_id)
+                else:
+                    # Lower rank or different peers: create next first, then prev
+                    next_channels[global_rank_id] = PortChannel(next_global_rank_id, global_rank_id)
+                    prev_channels[global_rank_id] = PortChannel(prev_global_rank_id, global_rank_id)
+                prev_next_ids[global_rank_id] = (prev_global_rank_id, next_global_rank_id)
 
-        # --------------------------------------------------------------
-        # Classic ring across all ranks:
-        #   prev = (rank - 1 + nranks) % nranks
-        #   next = (rank + 1) % nranks
-        # --------------------------------------------------------------
-        for rank in range(nranks):
-            prev_rank = (rank - 1 + nranks) % nranks
-            next_rank = (rank + 1) % nranks
+        # sync with the next rank and the previous rank in the group
+        for node in range(nnodes):
+            for gpu in range(gpus_per_node):
+                global_rank_id = gpu + gpus_per_node * node
+                prev_global_rank_id, next_global_rank_id = prev_next_ids[global_rank_id]
+                prev_channels[global_rank_id].signal(tb=0, data_sync=SyncType.none)
+                next_channels[global_rank_id].wait(tb=0, data_sync=SyncType.after)
 
-            # Deterministic channel creation order
-            if (rank & 1) == 0:
-                next_channels[rank] = PortChannel(next_rank, rank)
-                prev_channels[rank] = PortChannel(prev_rank, rank)
-            else:
-                prev_channels[rank] = PortChannel(prev_rank, rank)
-                next_channels[rank] = PortChannel(next_rank, rank)
+                src_rank = Rank(global_rank_id)
+                src_buffer = src_rank.get_input_buffer()
+                dst_rank = Rank(next_global_rank_id)
+                dst_buffer = dst_rank.get_output_buffer()
 
-                # --------------------------------------------------------------
-        # --------------------------------------------------------------
-        # Ring send/recv with explicit ACK
-        #
-        # Data path:
-        #   sender:   put_with_signal() to next
-        #   receiver: wait() from prev
-        #
-        # ACK path:
-        #   receiver: signal() back to prev after data is available
-        #   sender:   wait() for ACK from next before proceeding
-        #
-        # Even ranks: send first, then recv, then ACK prev, then wait ACK
-        # Odd ranks : recv first, then ACK prev, then send, then wait ACK
-        # --------------------------------------------------------------
-        for rank in range(nranks):
-            prev_rank = (rank - 1 + nranks) % nranks
-            next_rank = (rank + 1) % nranks
+                next_channels[global_rank_id].put_with_signal(dst_buffer[:], src_buffer[:], tb=0)
+                prev_channels[global_rank_id].wait(tb=0, data_sync=SyncType.none)
 
-            src_rank = Rank(rank)
-            next_rank_obj = Rank(next_rank)
-
-            src_buf = src_rank.get_input_buffer()
-            next_out_buf = next_rank_obj.get_output_buffer()
-
-            src_chunk = src_buf[0:src_buf.size]
-            dst_chunk = next_out_buf[0:next_out_buf.size]
-
-            ch_to_next = next_channels[rank]
-            ch_from_prev = prev_channels[rank]
-
-            if (rank & 1) == 0:
-                # Send data to next and signal arrival
-                ch_to_next.put_with_signal(
-                    dst_chunk,
-                    src_chunk,
-                    tb=0,
-                )
-
-                # Wait for data from prev to become visible locally
-                ch_from_prev.wait(
-                    tb=0,
-                    data_sync=SyncType.after,
-                )
-
-                # Ack back to prev that this rank has observed/consumed input
-                ch_from_prev.signal(
-                    tb=0,
-                )
-
-                # Wait for next rank to ack our outgoing transfer
-                ch_to_next.wait(
-                    tb=0,
-                )
-
-            else:
-                # Wait for data from prev first
-                ch_from_prev.wait(
-                    tb=0,
-                    data_sync=SyncType.after,
-                )
-
-                # Ack back to prev that this rank has observed/consumed input
-                ch_from_prev.signal(
-                    tb=0,
-                )
-
-                # Then send data to next
-                ch_to_next.put_with_signal(
-                    dst_chunk,
-                    src_chunk,
-                    tb=0,
-                )
-
-                # Wait for next rank to ack our outgoing transfer
-                ch_to_next.wait(
-                    tb=0,
-                )
-        # --------------------------------------------------------------
-        # Ring send/recv
-        #
-        # Even ranks: send first, then wait
-        # Odd ranks : wait first, then send
-        #
-        # This is safe for an even-sized ring and avoids the
-        # single-rank-starter wave.
-        # --------------------------------------------------------------
-        '''
-        for rank in range(nranks):
-            prev_rank = (rank - 1 + nranks) % nranks
-            next_rank = (rank + 1) % nranks
-
-            src_rank = Rank(rank)
-            next_rank_obj = Rank(next_rank)
-
-            src_buf = src_rank.get_input_buffer()
-            next_out_buf = next_rank_obj.get_output_buffer()
-
-            src_chunk = src_buf[0:src_buf.size]
-            dst_chunk = next_out_buf[0:next_out_buf.size]
-
-            ch_to_next = next_channels[rank]
-            ch_from_prev = prev_channels[rank]
-
-            if (rank & 1) == 0:
-                ch_to_next.put_with_signal_and_flush(
-                    dst_chunk,
-                    src_chunk,
-                    tb=0,
-                )
-                ch_from_prev.wait(
-                    tb=0,
-                    data_sync=SyncType.after,
-                )
-            else:
-                ch_from_prev.wait(
-                    tb=0,
-                    data_sync=SyncType.after,
-                )
-                ch_to_next.put_with_signal_and_flush(
-                    dst_chunk,
-                    src_chunk,
-                    tb=0,
-                )
-
-        '''
         print(JSON())
 
 
-# ----------------------------------------------------------------------
-# CLI
-# ----------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--name", type=str, required=True, help="name of the program")
+
+parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--nnodes", type=int, default=1, help="number of nodes")
-parser.add_argument("--gpus_per_node", type=int, required=True, help="number of GPUs per node")
+parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
+parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x3, help="split mask (e.g. 0x3)")
 
 args = parser.parse_args()
 
-send_recv_test_ring_even_ranks(
-    args.name,
-    args.nnodes,
-    args.gpus_per_node,
+send_recv_test(
+    args.name, args.nnodes, args.gpus_per_node, args.split_mask
 )
