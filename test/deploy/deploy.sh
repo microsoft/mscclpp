@@ -33,10 +33,10 @@ done
 
 set -e
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
-tar czf /tmp/mscclpp.tar.gz -C $(dirname ${ROOT_DIR}) $(basename ${ROOT_DIR})
+tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo tar xzf /tmp/mscclpp.tar.gz -C $(dirname ${DST_DIR}) && sudo rm -f /tmp/mscclpp.tar.gz"
+  "sudo mkdir -p ${DST_DIR} && sudo tar xzf /tmp/mscclpp.tar.gz -C ${DST_DIR} && sudo rm -f /tmp/mscclpp.tar.gz"
 rm -f /tmp/mscclpp.tar.gz
 
 if [ "${PLATFORM}" == "rocm" ]; then
