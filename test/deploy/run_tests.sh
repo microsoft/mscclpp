@@ -7,42 +7,42 @@ function run_mscclpp_test()
   echo "=================Run allgather_test_perf on 2 nodes========================="
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
 
   # For kernel 2, the message size must can be divided by 3
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allgather_test_perf -b 3K -e 3G -f 2 -k 2 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allgather_test_perf -b 3K -e 3G -f 2 -k 2 -o /root/mscclpp/output.jsonl
 
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allgather_test_perf -b 1K -e 1G -f 2 -k 3 -o /root/mscclpp/output.jsonl
 
   echo "==================Run allreduce_test_perf on 2 nodes========================="
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
 
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1G -f 2 -k 1 -o /root/mscclpp/output.jsonl
 
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allreduce_test_perf -b 1K -e 1M -f 2 -k 2 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 1K -e 1M -f 2 -k 2 -o /root/mscclpp/output.jsonl
 
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allreduce_test_perf -b 3K -e 3G -f 2 -k 3 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 3K -e 3G -f 2 -k 3 -o /root/mscclpp/output.jsonl
 
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/allreduce_test_perf -b 3K -e 3G -f 2 -k 4 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/allreduce_test_perf -b 3K -e 3G -f 2 -k 4 -o /root/mscclpp/output.jsonl
 
   echo "==================Run alltoall_test_perf on 2 nodes========================="
   mpirun --allow-run-as-root -np 16 --bind-to numa -hostfile ${HOSTFILE} \
     -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-    -npernode 8 /root/mscclpp/build/test/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
+    -npernode 8 /root/mscclpp/build/bin/mscclpp-test/alltoall_test_perf -b 1K -e 1G -f 2 -k 0 -o /root/mscclpp/output.jsonl
 
   echo "========================Run performance check==============================="
   python3 /root/mscclpp/test/mscclpp-test/check_perf_result.py --perf-file /root/mscclpp/output.jsonl \
@@ -54,12 +54,12 @@ function run_mp_ut()
   echo "============Run multi-process unit tests on 2 nodes (np=2, npernode=1)========================="
   mpirun -allow-run-as-root -tag-output -np 2 --bind-to numa \
   -hostfile ${HOSTFILE} -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-  -npernode 1 /root/mscclpp/build/test/mp_unit_tests -ip_port ${HEAD_HOST}:20003
+  -npernode 1 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_HOST}:20003
 
   echo "============Run multi-process unit tests on 2 nodes (np=16, npernode=8)========================="
   mpirun -allow-run-as-root -tag-output -np 16 --bind-to numa \
   -hostfile ${HOSTFILE} -x MSCCLPP_DEBUG=WARN -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:$LD_LIBRARY_PATH \
-  -npernode 8 /root/mscclpp/build/test/mp_unit_tests -ip_port ${HEAD_HOST}:20003
+  -npernode 8 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_HOST}:20003
 }
 
 function run_pytests()
