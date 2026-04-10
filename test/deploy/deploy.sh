@@ -43,6 +43,24 @@ if [ "${PLATFORM}" == "rocm" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
 fi
 
+# Install GDRCopy kernel module on host VMs (CUDA only)
+GDRCOPY_VERSION="2.5.2"
+if [ "${PLATFORM}" == "cuda" ]; then
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+    "if lsmod | grep -q gdrdrv; then
+      echo 'gdrdrv module already loaded'
+    else
+      set -e
+      sudo apt-get update -y && sudo apt-get install -y build-essential devscripts debhelper check libsubunit-dev fakeroot pkg-config dkms
+      cd /tmp && wget -q https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -O gdrcopy.tar.gz
+      tar xzf gdrcopy.tar.gz && cd gdrcopy-${GDRCOPY_VERSION}/packages
+      CUDA=/usr/local/cuda ./build-deb-packages.sh
+      sudo dpkg -i gdrdrv-dkms_${GDRCOPY_VERSION}*.deb
+      sudo modprobe gdrdrv
+      rm -rf /tmp/gdrcopy.tar.gz /tmp/gdrcopy-${GDRCOPY_VERSION}
+    fi"
+fi
+
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
