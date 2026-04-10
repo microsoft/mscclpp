@@ -1,6 +1,11 @@
 set -e
 HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
 HEAD_HOST=$(head -1 ${HOSTFILE})
+# Resolve HEAD_HOST to an IP address on eth0 to ensure bootstrap uses the correct interface
+HEAD_IP=$(ssh -o StrictHostKeyChecking=no -p 22345 -i /root/mscclpp/sshkey ${HEAD_HOST} "ip -4 addr show eth0 | grep -oP 'inet \K[0-9.]+' | head -1" 2>/dev/null)
+if [ -z "${HEAD_IP}" ]; then
+    HEAD_IP=${HEAD_HOST}
+fi
 MPI_ARGS="--allow-run-as-root --bind-to numa -hostfile ${HOSTFILE} -mca btl_tcp_if_include eth0"
 MSCCLPP_ENV="-x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH"
 
@@ -64,12 +69,12 @@ function run_mp_ut()
   echo "============Run multi-process unit tests on 2 nodes (np=2, npernode=1)========================="
   mpirun ${MPI_ARGS} -tag-output -np 2 \
   ${MSCCLPP_ENV} \
-  -npernode 1 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_HOST}:20003
+  -npernode 1 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_IP}:20003
 
   echo "============Run multi-process unit tests on 2 nodes (np=16, npernode=8)========================="
   mpirun ${MPI_ARGS} -tag-output -np 16 \
   ${MSCCLPP_ENV} \
-  -npernode 8 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_HOST}:20003
+  -npernode 8 /root/mscclpp/build/bin/mp_unit_tests -ip_port ${HEAD_IP}:20003
 }
 
 function run_pytests()
