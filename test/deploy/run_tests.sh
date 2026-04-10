@@ -4,6 +4,14 @@ HEAD_HOST=$(head -1 ${HOSTFILE})
 MPI_ARGS="--allow-run-as-root --bind-to numa -hostfile ${HOSTFILE} -mca btl_tcp_if_include eth0"
 MSCCLPP_ENV="-x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH"
 
+# Select perf baseline based on GPU type
+GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null | head -1)
+if echo "${GPU_NAME}" | grep -qi "H100"; then
+    PERF_BASELINE=/root/mscclpp/test/deploy/perf_ndmv5.jsonl
+else
+    PERF_BASELINE=/root/mscclpp/test/deploy/perf_ndmv4.jsonl
+fi
+
 function run_mscclpp_test()
 {
   echo "=================Run allgather_test_perf on 2 nodes========================="
@@ -48,7 +56,7 @@ function run_mscclpp_test()
 
   echo "========================Run performance check==============================="
   python3 /root/mscclpp/test/mscclpp-test/check_perf_result.py --perf-file /root/mscclpp/output.jsonl \
-    --baseline-file /root/mscclpp/test/deploy/perf_ndmv4.jsonl
+    --baseline-file ${PERF_BASELINE}
 }
 
 function run_mp_ut()
