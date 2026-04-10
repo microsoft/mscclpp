@@ -5,10 +5,21 @@ PLATFORM="${1:-cuda}"
 mkdir -p /root/.ssh
 mv /root/mscclpp/sshkey.pub /root/.ssh/authorized_keys
 chown root:root /root/.ssh/authorized_keys
-mv /root/mscclpp/test/deploy/config /root/.ssh/config
-chown root:root /root/.ssh/config
 chmod 400 /root/mscclpp/sshkey
 chown root:root /root/mscclpp/sshkey
+
+# Generate SSH config from hostfile_mpi
+HOSTFILE_MPI=/root/mscclpp/test/deploy/hostfile_mpi
+if [ -f "${HOSTFILE_MPI}" ]; then
+    > /root/.ssh/config
+    while IFS= read -r host; do
+        echo "Host ${host}" >> /root/.ssh/config
+        echo "  Port 22345" >> /root/.ssh/config
+        echo "  IdentityFile /root/mscclpp/sshkey" >> /root/.ssh/config
+        echo "  StrictHostKeyChecking no" >> /root/.ssh/config
+    done < "${HOSTFILE_MPI}"
+    chown root:root /root/.ssh/config
+fi
 
 if [ "${PLATFORM}" == "cuda" ]; then
     nvidia-smi -pm 1
