@@ -21,6 +21,7 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
+    displayName: Run pytests
     remoteScript: |
       python3 -m pip install .
       PLANS_DIR=/root/mscclpp/test/executor-tests/exeuction-plans
