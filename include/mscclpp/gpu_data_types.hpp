@@ -1072,6 +1072,15 @@ MSCCLPP_DEVICE_INLINE f16x2 to<f16x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
   __half2 h;
   asm("mov.b32 %0, %1;" : "=r"(*reinterpret_cast<uint32_t*>(&h)) : "r"(out0));
   return h;
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  // gfx942: same bit manipulation as CUDA, store packed fp16 bits via words[].
+  uint16_t in = v.storage.__x;
+  uint32_t a0 = ((uint32_t)(in & 0xFFu) << 8) | ((uint32_t)(in >> 8) << 24);
+  uint32_t b0 = (a0 & 0x7f007f00u) >> 1;
+  uint32_t out0 = b0 | (a0 & 0x80008000u);
+  f16x2 result;
+  result.words[0] = out0;
+  return result;
 #else
   f16x2 result;
   result.data[0] = __float2half(float(v.data[0]));
@@ -1100,6 +1109,17 @@ MSCCLPP_DEVICE_INLINE f16x4 to<f16x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   asm("mov.b32 %0, %1;" : "=r"(result.words[0]) : "r"(out0));
   asm("mov.b32 %0, %1;" : "=r"(result.words[1]) : "r"(out1));
   return result;
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  // gfx942: __byte_perm + bitwise E4→E5 shift (no lop3), store via words[].
+  uint32_t in = v.storage.__x;
+  uint32_t a0 = __byte_perm(0u, in, 0x5746u);
+  uint32_t out0 = ((a0 >> 1) & 0x3f803f80u) | (a0 & 0x80008000u);
+  uint32_t a1 = __byte_perm(a0, 0u, 0x2301u);
+  uint32_t out1 = ((a1 >> 1) & 0x3f803f80u) | (a1 & 0x80008000u);
+  f16x4 result;
+  result.words[0] = out0;
+  result.words[1] = out1;
+  return result;
 #else
   f16x4 result;
 #pragma unroll
@@ -1123,6 +1143,16 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
   alo = alo < 0x3B80u ? alo : 0x3B80u;
   ahi = ahi < 0x3B80u ? ahi : 0x3B80u;
   uint32_t a0 = alo | (ahi << 16);
+  a0 = a0 * 2u + 0x00800080u;
+  uint32_t b0 = a0 | (in0 & 0x80008000u);
+  uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
+  return bit_cast<f8_e4m3b15x2>(packed);
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  // gfx942: read packed fp16 bits, clamp via v_pk_min_u16, shift E5→E4, pack.
+  uint32_t in0 = v.words[0];
+  uint32_t abs0 = in0 & 0x7fff7fffu;
+  uint32_t a0;
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3B803B80u));
   a0 = a0 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);
   uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
@@ -1154,6 +1184,19 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   asm("lop3.b32 %0, %1, %2, %3, 0xf8;" : "=r"(b1) : "r"(a1), "r"(in1), "r"(0x80008000u));
   uint32_t packed = __byte_perm(b0, b1, 0x7531u);
   return bit_cast<f8_e4m3b15x4>(packed);
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  // gfx942: read packed fp16 bits, clamp via v_pk_min_u16, shift E5→E4, __byte_perm pack.
+  uint32_t in0 = v.words[0], in1 = v.words[1];
+  uint32_t abs0 = in0 & 0x7fff7fffu, abs1 = in1 & 0x7fff7fffu;
+  uint32_t a0, a1;
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3B803B80u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a1) : "v"(abs1), "v"(0x3B803B80u));
+  a0 = a0 * 2u + 0x00800080u;
+  a1 = a1 * 2u + 0x00800080u;
+  uint32_t b0 = a0 | (in0 & 0x80008000u);
+  uint32_t b1 = a1 | (in1 & 0x80008000u);
+  uint32_t packed = __byte_perm(b0, b1, 0x7531u);
+  return bit_cast<f8_e4m3b15x4>(packed);
 #else
   f8_e4m3b15x4 result;
 #pragma unroll
@@ -1164,8 +1207,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
 #endif
 }
 
-// --- fp8_e4m3b15 <-> f32 conversion specializations ---
-// Derived from fp16 conversions: fp8→f32 = fp8→fp16→f32, f32→fp8 = f32→fp16→fp8.
+// --- fp8_e4m3b15 <-> f32 conversion specializations (software, always available) ---
 
 /// f8_e4m3b15x2 -> f32x2.
 /// Routes through fp16: fp8→fp16 (bit manip) then fp16→f32.
@@ -1175,6 +1217,12 @@ MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, f8_e4m3b15x2>(const f8_e4m3b15x2& v) {
   f16x2 h = to<f16x2, f8_e4m3b15x2>(v);
   float2 f2 = __half22float2(h);
   return bit_cast<f32x2>(f2);
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  f16x2 h = to<f16x2, f8_e4m3b15x2>(v);
+  f32x2 result;
+  result.data[0] = __half2float(h.data[0]);
+  result.data[1] = __half2float(h.data[1]);
+  return result;
 #else
   f32x2 result;
   result.data[0] = float(v.data[0]);
@@ -1200,6 +1248,14 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e4m3b15x4>(const f8_e4m3b15x4& v) {
   result.data[2] = f1.x;
   result.data[3] = f1.y;
   return result;
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  f16x4 h = to<f16x4, f8_e4m3b15x4>(v);
+  f32x4 result;
+  result.data[0] = __half2float(h.data[0]);
+  result.data[1] = __half2float(h.data[1]);
+  result.data[2] = __half2float(h.data[2]);
+  result.data[3] = __half2float(h.data[3]);
+  return result;
 #else
   f32x4 result;
 #pragma unroll
@@ -1217,6 +1273,11 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f32x2>(const f32x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   float2 f2 = {v.data[0], v.data[1]};
   __half2 h = __float22half2_rn(f2);
+  return to<f8_e4m3b15x2, f16x2>(h);
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  f16x2 h;
+  h.data[0] = __float2half_rn(v.data[0]);
+  h.data[1] = __float2half_rn(v.data[1]);
   return to<f8_e4m3b15x2, f16x2>(h);
 #else
   f8_e4m3b15x2 result;
@@ -1238,6 +1299,11 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f32x4>(const f32x4& v) {
   f16x4 h;
   asm("mov.b32 %0, %1;" : "=r"(h.words[0]) : "r"(*reinterpret_cast<uint32_t*>(&h01)));
   asm("mov.b32 %0, %1;" : "=r"(h.words[1]) : "r"(*reinterpret_cast<uint32_t*>(&h23)));
+  return to<f8_e4m3b15x4, f16x4>(h);
+#elif defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
+  f16x4 h;
+  h.words[0] = __builtin_bit_cast(uint32_t, __builtin_amdgcn_cvt_pkrtz(v.data[0], v.data[1]));
+  h.words[1] = __builtin_bit_cast(uint32_t, __builtin_amdgcn_cvt_pkrtz(v.data[2], v.data[3]));
   return to<f8_e4m3b15x4, f16x4>(h);
 #else
   f8_e4m3b15x4 result;

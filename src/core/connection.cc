@@ -7,6 +7,7 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
@@ -197,45 +198,54 @@ void IBConnection::recvThreadFunc() {
     }
   }
 
-  // Host-side buffer to receive newValue from imm_data (need 64-bit for cudaMemcpy)
+  uint32_t lastImmData = 0;
+  uint64_t immHighBits = 0;
   uint64_t newValueHost = 0;
 
-  while (!stopRecvThread_.load(std::memory_order_relaxed)) {
-    auto qp = qp_.lock();
-    if (!qp) break;
+  auto qp = qp_.lock();
+  if (!qp) return;
 
+  while (!stopRecvThread_.load(std::memory_order_relaxed)) {
     int wcNum = qp->pollRecvCq();
     if (wcNum < 0) {
-      WARN(NET, "IBConnection recvThreadFunc: pollRecvCq failed");
+      recvThreadErrorMsg_ = "pollRecvCq failed";
+      recvThreadError_.store(true, std::memory_order_release);
+      WARN(NET, "IBConnection recvThreadFunc: ", recvThreadErrorMsg_);
       break;
     }
 
     for (int i = 0; i < wcNum; ++i) {
       int status = qp->getRecvWcStatus(i);
       if (status != static_cast<int>(WsStatus::Success)) {
-        WARN(NET, "IBConnection recvThreadFunc: recv work completion failed: ", qp->getRecvWcStatusString(i));
-        // Post another recv to replace the failed one
-        qp->stageRecv(/*wrId=*/0);
-        qp->postRecv();
-        continue;
+        // A failed recv WC typically means the QP entered error state (e.g., WR Flushed Error).
+        // All remaining WRs will also fail — no recovery without QP recreation. Exit the thread
+        // and set the error flag so the main thread can detect it.
+        recvThreadErrorMsg_ = std::string("recv work completion failed: ") + qp->getRecvWcStatusString(i);
+        recvThreadError_.store(true, std::memory_order_release);
+        WARN(NET, "IBConnection recvThreadFunc: ", recvThreadErrorMsg_);
+        return;
       }
 
-      // The imm_data contains newValue (32-bit, extended to 64-bit)
-      // Note: getRecvWcImmData already converts from network byte order via ntohl
-      unsigned int immData = qp->getRecvWcImmData(i);
-      newValueHost = static_cast<uint64_t>(immData);
+      // Read the lower 32 bits of the token from imm_data. Reconstruct the full 64-bit value
+      // using wrap-around detection: tokens increase monotonically, so if the new lower 32 bits
+      // are less than the previous value, the upper 32 bits must have incremented by 1.
+      uint32_t immData = qp->getRecvWcImmData(i);
+      if (immData < lastImmData) {
+        immHighBits += (1ULL << 32);
+      }
+      lastImmData = immData;
+      newValueHost = immHighBits | static_cast<uint64_t>(immData);
 
-      // Read dstGpuAddr from the local stored address (set by setRemoteUpdateDstAddr)
-      uint64_t dstGpuAddr = remoteUpdateDstAddr_;
-      if (dstGpuAddr != 0) {
-        uint64_t* dstPtr = reinterpret_cast<uint64_t*>(dstGpuAddr);
-
-        // Use cudaMemcpyAsync with our dedicated stream to avoid blocking on the default stream
-        MSCCLPP_CUDATHROW(
-            cudaMemcpyAsync(dstPtr, &newValueHost, sizeof(uint64_t), cudaMemcpyHostToDevice, signalStream_));
-
-        INFO(CONN, "IBConnection recvThreadFunc: updated GPU ptr ", dstPtr, " to ", newValueHost, " (immData=", immData,
-             ")");
+      // Forward the token to the semaphore's inbound token address via atomicStore
+      // through the GDRCopy BAR1 mapping. The GPU reads with system-scope acquire.
+      if (signalAddr_ != 0) {
+        if (signalGdrMap_ && signalGdrMap_->valid()) {
+          atomicStore(signalGdrMap_->hostPtr(), newValueHost, memoryOrderRelaxed);
+        } else {
+          // For HIP/ROCm.
+          // NOTE: may need a fix in the future to ensure BAR1 mapping.
+          *reinterpret_cast<volatile uint64_t*>(signalAddr_) = newValueHost;
+        }
       }
 
       // Post another recv for future messages
@@ -250,60 +260,105 @@ IBConnection::IBConnection(std::shared_ptr<Context> context, const Endpoint& loc
     : BaseConnection(context, localEndpoint),
       transport_(localEndpoint.transport()),
       remoteTransport_(remoteEndpoint.transport()),
-      dummyAtomicSource_(std::make_unique<uint64_t>(0)),
+      atomicSrc_(std::make_unique<uint64_t>(0)),
       ibNoAtomic_(getImpl(localEndpoint).ibNoAtomic_),
+      gdrSignalForwarding_(false),
       stopRecvThread_(false),
+      recvThreadError_(false),
       localGpuDeviceId_(localEndpoint.device().id),
-      signalStream_(nullptr),
-      remoteUpdateDstAddr_(0) {
+      signalAddr_(0) {
   qp_ = getImpl(localEndpoint).ibQp_;
   qp_.lock()->rtr(getImpl(remoteEndpoint).ibQpInfo_);
   qp_.lock()->rts();
-  dummyAtomicSourceMem_ = context->registerMemory(dummyAtomicSource_.get(), sizeof(uint64_t), transport_);
-  validateTransport(dummyAtomicSourceMem_, transport_);
-  dstTransportInfo_ = getImpl(dummyAtomicSourceMem_).getTransportInfo(transport_);
+  atomicSrcMem_ = context->registerMemory(atomicSrc_.get(), sizeof(uint64_t), transport_);
+  validateTransport(atomicSrcMem_, transport_);
+  atomicSrcTransportInfo_ = getImpl(atomicSrcMem_).getTransportInfo(transport_);
 
   if (ibNoAtomic_) {
-    // Create a CUDA stream for async memory copies
-    MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&signalStream_, cudaStreamNonBlocking));
+#if defined(MSCCLPP_USE_CUDA)
+    // On CUDA, HostNoAtomic requires GDRCopy for CPU→GPU signal forwarding through BAR1.
+    if (!gdrEnabled()) {
+      THROW(CONN, Error, ErrorCode::InvalidUsage,
+            "IB host-no-atomic mode on CUDA requires GDRCopy: ", gdrStatusMessage());
+    }
+    gdrSignalForwarding_ = true;
+#endif  // defined(MSCCLPP_USE_CUDA)
 
-    // Pre-post receive requests for incoming write-with-imm
+    // On platforms with a CPU-GPU bridge that reorders posted writes (e.g., Grace/GB200
+    // NVLink-C2C), HostNoAtomic requires Data Direct for correct memory ordering. Data Direct
+    // routes NIC DMA through the PCIe Data Direct engine, bypassing the bridge. It is available
+    // on Virtual Function (VF) devices. On platforms without such a bridge (x86, non-Grace
+    // aarch64), HostNoAtomic works without Data Direct.
+    //
+    // We cannot reliably detect the bridge at compile time or runtime, so we emit a warning
+    // when the device is not a VF. If data corruption occurs, switching to VF devices with
+    // Data Direct or using IbMode::Host with RDMA atomics will resolve it.
+    {
+      IbCtx* ibCtx = getImpl(*context).getIbContext(transport_);
+      if (!ibCtx->isVirtualFunction()) {
+        WARN(CONN,
+             "IB HostNoAtomic mode without a Virtual Function (VF) device may cause data corruption "
+             "on platforms with a CPU-GPU bridge that reorders posted writes (e.g., Grace/GB200). "
+             "Device ",
+             ibCtx->getDevName(),
+             " is not a VF. "
+             "If you experience data corruption, use VF devices with Data Direct or IbMode::Host.");
+      }
+    }
+
+    // Pre-post receive requests for incoming WRITE_WITH_IMM notifications.
+    // The recv CQE guarantees the preceding data WRITE has been committed to GPU memory.
     auto qp = qp_.lock();
     int maxRecvWr = localEndpoint.config().ib.maxRecvWr;
     for (int i = 0; i < maxRecvWr; ++i) {
       qp->stageRecv(/*wrId=*/0);
     }
     qp->postRecv();
-    // Start the background thread to poll recv CQ
-    recvThread_ = std::thread([this]() { this->recvThreadFunc(); });
-    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with no-atomic mode");
+    // The recv thread is started later in startSignalForwarding() when the semaphore
+    // provides the signal forwarding destination. This ensures the thread lifetime is
+    // bounded by the GdrMap lifetime (created before start, destroyed after stop).
+    INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with signal forwarding (HostNoAtomic) mode");
   } else {
     INFO(CONN, "IBConnection via ", getIBDeviceName(transport_), " created with atomic mode");
   }
 }
 
-IBConnection::~IBConnection() {
-  if (ibNoAtomic_) {
-    stopRecvThread_.store(true, std::memory_order_relaxed);
-    if (recvThread_.joinable()) {
-      recvThread_.join();
-    }
-    if (signalStream_ != nullptr) {
-      // Synchronize stream to ensure all async copies are complete before destruction
-      // Ignore errors during teardown (CUDA context may already be destroyed)
-      MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaStreamSynchronize(signalStream_));
-      MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cudaStreamDestroy(signalStream_));
-    }
-  }
-}
+IBConnection::~IBConnection() { stopSignalForwarding(); }
 
 Transport IBConnection::transport() const { return transport_; }
 
 Transport IBConnection::remoteTransport() const { return remoteTransport_; }
 
-void IBConnection::setRemoteUpdateDstAddr(uint64_t addr) {
-  remoteUpdateDstAddr_ = addr;
-  INFO(CONN, "IBConnection setRemoteUpdateDstAddr: ", (void*)addr);
+bool IBConnection::isSignalForwarding() const { return ibNoAtomic_; }
+
+void IBConnection::startSignalForwarding(std::shared_ptr<uint64_t> mem) {
+  // Set up the forwarding destination and GdrMap, then start the recv thread.
+  // Order: set address → create GdrMap → start thread.
+  signalAddr_ = reinterpret_cast<uint64_t>(mem.get());
+  if (gdrSignalForwarding_) {
+    signalGdrMap_ = std::make_unique<GdrMap>(std::move(mem), localGpuDeviceId_);
+  }
+  if (ibNoAtomic_) {
+    stopRecvThread_.store(false, std::memory_order_relaxed);
+    recvThread_ = std::thread([this]() { this->recvThreadFunc(); });
+  }
+  INFO(CONN, "IBConnection startSignalForwarding: ", (void*)signalAddr_);
+}
+
+void IBConnection::stopSignalForwarding() {
+  // Stop the recv thread, then tear down GdrMap and address.
+  // Order: stop thread → destroy GdrMap → clear address.
+  if (ibNoAtomic_) {
+    stopRecvThread_.store(true, std::memory_order_relaxed);
+    if (recvThread_.joinable()) {
+      recvThread_.join();
+    }
+  }
+  if (gdrSignalForwarding_) {
+    signalGdrMap_.reset();
+  }
+  signalAddr_ = 0;
+  INFO(CONN, "IBConnection stopSignalForwarding");
 }
 
 void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
@@ -356,25 +411,29 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
   *src = newValue;
 
   if (ibNoAtomic_) {
-    // Use RDMA write-with-imm instead of atomic operation
-    // Send only newValue in imm_data (0-byte write)
-    // The remote's recvThreadFunc will use its stored remoteUpdateDstAddr_ to write
-
-    // Put newValue in imm_data (truncated to 32-bit; semaphore counters should fit)
+    // Signal forwarding: send a 0-byte RDMA WRITE_WITH_IMM with the lower 32 bits of the
+    // token in imm_data. The receiver reconstructs the full 64-bit value using wrap-around
+    // detection (tokens are monotonically increasing, so a decrease in the lower 32 bits
+    // indicates the upper 32 bits incremented by 1).
+    if (newValue <= oldValue) {
+      WARN(CONN, "IBConnection signal forwarding: token is not monotonically increasing: ", oldValue, " -> ", newValue);
+    } else if (newValue - oldValue >= (1ULL << 32)) {
+      WARN(CONN,
+           "IBConnection signal forwarding: token increment too large for 32-bit wrap-around detection: ", oldValue,
+           " -> ", newValue, " (delta ", newValue - oldValue, " >= 2^32)");
+    }
     unsigned int immData = static_cast<unsigned int>(newValue);
-
-    // Send 0-byte write-with-imm; use dstMrInfo as target (we don't actually write anything)
     qp_.lock()->stageSendWriteWithImm(nullptr, dstMrInfo,
                                       /*size=*/0, /*wrId=*/0,
                                       /*srcOffset=*/0, /*dstOffset=*/0,
                                       /*signaled=*/true, /*immData=*/immData);
     qp_.lock()->postSend();
-    INFO(CONN, "IBConnection write-with-imm: value ", oldValue, " -> ", newValue);
+    INFO(CONN, "IBConnection signal forwarding: value ", oldValue, " -> ", newValue);
   } else {
-    qp_.lock()->stageSendAtomicAdd(dstTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
+    qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
                                    /*signaled=*/true);
     qp_.lock()->postSend();
-    INFO(CONN, "IBConnection atomic Write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
+    INFO(CONN, "IBConnection atomic write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
          " -> ", newValue);
   }
 
@@ -387,6 +446,11 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+
+  // Check if the recv thread has already reported an error (e.g., QP entered error state).
+  if (recvThreadError_.load(std::memory_order_acquire)) {
+    THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
+  }
 
   Timer timer;
   while (qp_.lock()->getNumSendCqItems()) {
