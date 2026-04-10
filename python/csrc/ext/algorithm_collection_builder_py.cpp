@@ -19,11 +19,10 @@ using AlgoMap = std::unordered_map<std::string, std::unordered_map<std::string, 
 
 static AlgoSelectFunc wrapPySelector(nb::callable pyFunc) {
   auto shared = std::make_shared<nb::callable>(std::move(pyFunc));
-  return [shared](const AlgoMap& algoMap,
-                  const CollectiveRequest& request) -> std::shared_ptr<Algorithm> {
+  return [shared](const AlgoMap& algoMap, const CollectiveRequest& request) -> std::shared_ptr<Algorithm> {
     nb::gil_scoped_acquire gil;
-    nb::object result = (*shared)(nb::cast(algoMap, nb::rv_policy::reference),
-                                  nb::cast(request, nb::rv_policy::reference));
+    nb::object result =
+        (*shared)(nb::cast(algoMap, nb::rv_policy::reference), nb::cast(request, nb::rv_policy::reference));
     if (result.is_none()) return nullptr;
     return nb::cast<std::shared_ptr<Algorithm>>(result);
   };
