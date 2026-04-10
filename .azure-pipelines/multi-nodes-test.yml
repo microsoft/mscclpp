@@ -43,13 +43,15 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        ENTRY="${{ parameters.hostEntries }}"
-        if ! grep -qxF "$ENTRY" /etc/hosts; then
-          echo "Adding to /etc/hosts"
-          echo "$ENTRY" | sudo tee -a /etc/hosts
-        else
-          echo "Entry already exists, nothing to do."
-        fi
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          if ! grep -qxF "$line" /etc/hosts; then
+            echo "Adding to /etc/hosts: $line"
+            echo "$line" | sudo tee -a /etc/hosts
+          else
+            echo "Entry already exists: $line"
+          fi
+        done <<< "${{ parameters.hostEntries }}"
 
   - task: Bash@3
     displayName: Generate deploy files
@@ -71,11 +73,9 @@ jobs:
           IdentityFile /root/mscclpp/sshkey
           StrictHostKeyChecking no" > "${DEPLOY_DIR}/config"
 
-        echo "azureuser@${NODE0}
-        azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
+        printf '%s\n%s\n' "azureuser@${NODE0}" "azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
 
-        echo "${NODE0}
-        ${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
+        printf '%s\n%s\n' "${NODE0}" "${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
 
   - template: templates/deploy.yml
     parameters:

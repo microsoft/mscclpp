@@ -33,7 +33,7 @@ set +e
 /root/mscclpp/tools/peer-access-test/peer_access_test
 PEER_ACCESS_EXIT_CODE=$?
 set -e
-if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ]; then
+if [ ${PEER_ACCESS_EXIT_CODE} -eq 2 ] && [ "${PLATFORM}" == "cuda" ]; then
     # Exit code 2 = CUDA init failure (e.g., driver/toolkit version mismatch).
     # Add CUDA compat libs for forward compatibility and retry.
     CUDA_COMPAT_PATH="/usr/local/cuda/compat"
