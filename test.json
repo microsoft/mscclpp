@@ -1,6 +1,6 @@
 {
-  "name": "send_recv_test",
-  "collective": "test",
+  "name": "sendrecv",
+  "collective": "sendrecv",
   "protocol": "Simple",
   "inplace": false,
   "reuse_resources": false,
@@ -24,7 +24,7 @@
             {
               "name": "wait",
               "channel_ids": [
-                0
+                1
               ],
               "channel_type": "port"
             },
@@ -32,7 +32,7 @@
               "name": "nop"
             },
             {
-              "name": "put",
+              "name": "pws",
               "src_buff": [
                 {
                   "type": "i",
@@ -48,17 +48,7 @@
                 }
               ],
               "channel_ids": [
-                0
-              ],
-              "channel_type": "port"
-            },
-            {
-              "name": "nop"
-            },
-            {
-              "name": "signal",
-              "channel_ids": [
-                0
+                1
               ],
               "channel_type": "port"
             },
@@ -74,6 +64,7 @@
             {
               "channel_type": "port",
               "channel_ids": [
+                1,
                 0
               ]
             }
@@ -92,6 +83,7 @@
         {
           "channel_type": "port",
           "connected_to": [
+            1,
             1
           ]
         }
@@ -126,7 +118,7 @@
             {
               "name": "wait",
               "channel_ids": [
-                0
+                1
               ],
               "channel_type": "port"
             },
@@ -134,7 +126,7 @@
               "name": "nop"
             },
             {
-              "name": "put",
+              "name": "pws",
               "src_buff": [
                 {
                   "type": "i",
@@ -150,17 +142,7 @@
                 }
               ],
               "channel_ids": [
-                0
-              ],
-              "channel_type": "port"
-            },
-            {
-              "name": "nop"
-            },
-            {
-              "name": "signal",
-              "channel_ids": [
-                0
+                1
               ],
               "channel_type": "port"
             },
@@ -176,7 +158,8 @@
             {
               "channel_type": "port",
               "channel_ids": [
-                0
+                0,
+                1
               ]
             }
           ],
@@ -194,6 +177,7 @@
         {
           "channel_type": "port",
           "connected_to": [
+            0,
             0
           ]
         }
