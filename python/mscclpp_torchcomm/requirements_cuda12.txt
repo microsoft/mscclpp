@@ -1,0 +1,8 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+#
+# Requirements for the TorchComms MSCCL++ backend (optional).
+# Install with: pip install -r python/mscclpp_torchcomm/requirements_cuda12.txt
+
+torch>=2.0.0
+pybind11
