@@ -7,8 +7,8 @@
   "gpus": [
     {
       "id": 0,
-      "input_chunks": 1,
-      "output_chunks": 1,
+      "input_chunks": 4,
+      "output_chunks": 4,
       "scratch_chunks": 0,
       "threadblocks": [
         {
@@ -64,8 +64,209 @@
             {
               "channel_type": "port",
               "channel_ids": [
-                1,
+                4,
                 0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
               ]
             }
           ],
@@ -84,6 +285,12 @@
           "channel_type": "port",
           "connected_to": [
             1,
+            1,
+            1,
+            1,
+            1,
+            1,
+            1,
             1
           ]
         }
@@ -101,8 +308,8 @@
     },
     {
       "id": 1,
-      "input_chunks": 1,
-      "output_chunks": 1,
+      "input_chunks": 4,
+      "output_chunks": 4,
       "scratch_chunks": 0,
       "threadblocks": [
         {
@@ -159,7 +366,208 @@
               "channel_type": "port",
               "channel_ids": [
                 0,
+                4
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
                 1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                1,
+                5
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                2,
+                6
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                3,
+                7
               ]
             }
           ],
@@ -177,6 +585,12 @@
         {
           "channel_type": "port",
           "connected_to": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             0,
             0
           ]
