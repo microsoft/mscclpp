@@ -21,10 +21,11 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    displayName: Run pytests
+    name: ExecutorTest
+    displayName: Run executor tests
     remoteScript: |
       python3 -m pip install .
-      PLANS_DIR=/root/mscclpp/test/executor-tests/exeuction-plans
+      PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
       TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
       mpirun -np 2 --allow-run-as-root python3 $TEST_SCRIPT -path $PLANS_DIR/transfer_pack.json --size 32M --in_place
       mpirun -np 2 --allow-run-as-root python3 $TEST_SCRIPT -path $PLANS_DIR/transfer_pack_tbg.json --size 32M --in_place

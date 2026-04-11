@@ -15,7 +15,6 @@ from mscclpp.language.rank import *
 from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
-from enum import Enum
 
 
 def reduce_pack(name, num_threads_per_block, min_message_size, max_message_size):

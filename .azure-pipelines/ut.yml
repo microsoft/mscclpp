@@ -164,7 +164,7 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/exec.yml
+  - template: templates/ut-executor.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci

@@ -39,7 +39,7 @@ def reduce_nvls(name, gpu_size, num_threads_per_block, min_message_size, max_mes
                 if peer != gpu:
                     channels[(peer, gpu)] = MemoryChannel(peer, gpu)
 
-        # Synchronization to Ensure all the Gpus are Ready
+        # Synchronization to Ensure all the GPUs are Ready
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
@@ -63,7 +63,7 @@ def reduce_nvls(name, gpu_size, num_threads_per_block, min_message_size, max_mes
                 src_chunk=input_buffer[gpu : gpu + 1], buffer_offset=buffer_offset, size=1, tb=0
             )
 
-        # Synchronization to Ensure the Gpus finished
+        # Synchronization to Ensure the GPUs finished
         for gpu in range(gpu_size):
             src_rank = gpu
             for peer in range(gpu_size):
