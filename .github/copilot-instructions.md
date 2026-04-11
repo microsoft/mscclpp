@@ -43,7 +43,7 @@ For testing after successful build:
 # To run tests with two GPUs - two is enough for most tests
 mpirun -np 2 ./build/bin/mp_unit_tests
 # To run tests excluding IB-related ones (when IB is not available)
-mpirun -np 2 ./build/bin/mp_unit_tests --gtest_filter=-*Ib*
+mpirun -np 2 ./build/bin/mp_unit_tests --filter=-*Ib*
 ```
 
 For building a Python package:

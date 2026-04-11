@@ -68,6 +68,6 @@ PERF_TEST(SemaphorePerfTest, SignalPingPong) {
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nIters << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nIters, "us/iter");
   }
 }
