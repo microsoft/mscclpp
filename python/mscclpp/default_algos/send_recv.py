@@ -11,7 +11,7 @@ from mscclpp.language.collectives import *
 
 def send_recv_test(name, nnodes, gpus_per_node, split_mask):
     gpu_size = nnodes * gpus_per_node
-    collective = TestCollective(gpu_size, 1, 1)
+    collective = SendRecv(gpu_size, 1, False)
     with CollectiveProgram(
         name,
         collective,
