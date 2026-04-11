@@ -268,7 +268,9 @@ struct Executor::Impl {
     // Create one connection (unique QP) per channel entry. Each channel gets its own
     // QP — no shared connections. This is required for HostNoAtomic IB mode where each
     // connection can only forward signals to one semaphore via setSignalForwardingDst.
-    int tag = 0;
+    // Use per-peer tag counters so that matched connections between pairs of ranks use
+    // the same tag, regardless of the order peers appear in each rank's connected_to list.
+    std::unordered_map<int, int> peerTagCounters;
     Transport ibTransport = IBs[rank % this->nranksPerNode];
     std::vector<std::shared_future<Connection>> connFutures;
     for (ChannelType channelType : {ChannelType::MEMORY, ChannelType::PORT}) {
@@ -276,14 +278,14 @@ struct Executor::Impl {
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
           Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
-          connFutures.push_back(this->comm->connect(transport, peer, tag++));
+          connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));
         }
       }
       channelInfos = plan.impl_->getUnpairedChannelInfos(nranks, channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
           Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
-          connFutures.push_back(this->comm->connect(transport, peer, tag++));
+          connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));
         }
       }
     }
