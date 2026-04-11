@@ -66,6 +66,19 @@ MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset)
   }
 }
 
+MSCCLPP_DEVICE_INLINE uint32_t calcOffset(uint32_t size, uint32_t index, uint32_t slices) {
+  constexpr uint32_t alignment = 16;
+  uint32_t nelems = size / alignment;
+  uint32_t minNelems = nelems / slices;
+  uint32_t remainder = nelems % slices;
+  uint32_t off = index * minNelems + (index < remainder ? index : remainder);
+  return off * alignment;
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t calcSize(uint32_t size, uint32_t index, uint32_t slices) {
+  return calcOffset(size, index + 1, slices) - calcOffset(size, index, slices);
+}
+
 template <typename T, typename PacketType, bool ReuseScratch = false>
 MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, T* output, T* scratch,
                                                  uint8_t* nSteps = nullptr, uint32_t offset = 0,
@@ -129,14 +142,18 @@ template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleGet(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
                                      uint32_t unitSize) {
   const uint32_t count = op.nInputs;
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
   const uint32_t* sizes = op.inputBufferSizes;
   const uint32_t* srcOffsets = op.inputOffsets;
   const uint32_t* dstOffsets = op.outputOffsets;
   for (uint32_t i = 0; i < count; i++) {
-    uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset);
-    uint32_t srcOffset =
-        srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id], offset);
     uint32_t size = min(sizes[i] - offset, unitSize);
+    uint32_t dstOffset =
+        dstOffsets[i] + getOffset<ReuseScratch>(op.outputBufferRefs[i].type, offset + calcOffset(size, tbId, tbgSize));
+    uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[i].id],
+                                                                 offset + calcOffset(size, tbId, tbgSize));
+    size = calcSize(size, tbId, tbgSize);
     char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[i].id]);
     mscclpp::copy(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[i].type)) + srcOffset,
                   remoteMemory + dstOffset, size, threadIdx.x, blockDim.x);
@@ -148,6 +165,8 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
                                      uint32_t unitSize) {
   ChannelType chType = op.channelType;
   uint32_t count = op.nOutputs;
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
   const uint8_t* channelIndexes = op.channelIndexes;
   const uint32_t* dstOffsets = op.outputOffsets;
   const uint32_t* srcOffsets = op.inputOffsets;
@@ -155,10 +174,12 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type));
   if (chType == ChannelType::MEMORY) {
     for (uint32_t i = 0; i < count; i++) {
-      uint32_t dstOffset =
-          dstOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[i].id], offset);
-      uint32_t srcOffset = srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset);
       uint32_t size = min(outputSizes[i] - offset, unitSize);
+      uint32_t dstOffset = dstOffsets[i] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[i].id],
+                                                                   offset + calcOffset(size, tbId, tbgSize));
+      uint32_t srcOffset =
+          srcOffsets[i] + getOffset<ReuseScratch>(op.inputBufferRefs[i].type, offset + calcOffset(size, tbId, tbgSize));
+      size = calcSize(size, tbId, tbgSize);
       char* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[i].id]);
       mscclpp::copy(remoteMemory + dstOffset, src + srcOffset, size, threadIdx.x, blockDim.x);
     }
@@ -188,12 +209,16 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
 template <typename T, bool ReuseScratch, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input, void* output, void* scratch,
                                                 uint32_t offset, uint32_t unitSize) {
-  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOffset = calcOffset(size, tbId, tbgSize);
+  size = calcSize(size, tbId, tbgSize);
   const uint32_t nInt4 = size / sizeof(int4);
   const uint32_t inputOffset4 =
-      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset)) / sizeof(int4);
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset + tbgOffset)) / sizeof(int4);
   const uint32_t outputOffset4 =
-      (op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset)) / sizeof(int4);
+      (op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset + tbgOffset)) / sizeof(int4);
   const uint8_t nRemoteInputs = op.nInputs - 1;
   const uint8_t nRemoteOutputs = op.nOutputs - 1;
   const uint32_t* srcOffsets = op.inputOffsets + 1;
@@ -206,7 +231,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
       int4 val;
       uint32_t srcOffset =
           (srcOffsets[index] +
-           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset + tbgOffset)) /
           sizeof(int4);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       val = mscclpp::read<int4>(remoteMemory, srcOffset + idx);
@@ -216,8 +241,8 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
     if constexpr (SendToRemote) {
       for (int index = 0; index < nRemoteOutputs; ++index) {
         uint32_t dstOffset =
-            (dstOffsets[index] +
-             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            (dstOffsets[index] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id],
+                                                         offset + tbgOffset)) /
             sizeof(int4);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
         mscclpp::write<int4>(remoteMemory, dstOffset + idx, tmp);
@@ -227,15 +252,16 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
   // handle rest of data
   uint32_t processed = nInt4 * sizeof(int4);
   const uint32_t startIdx =
-      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset) + processed) / sizeof(T);
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset + tbgOffset) + processed) /
+      sizeof(T);
   const uint32_t endIdx =
-      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset) + size) / sizeof(T);
+      (op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset + tbgOffset) + size) / sizeof(T);
   for (uint32_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     T tmp = static_cast<T*>(input)[idx];
     for (int index = 0; index < nRemoteInputs; ++index) {
       uint32_t srcOffset =
           (srcOffsets[index] +
-           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
+           getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset + tbgOffset)) /
           sizeof(T);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       tmp = tmp + mscclpp::read<T>(remoteMemory, srcOffset + idx);
@@ -244,8 +270,8 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
     if constexpr (SendToRemote) {
       for (int index = 0; index < nRemoteOutputs; ++index) {
         uint32_t dstOffset =
-            (dstOffsets[index] +
-             getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id], offset)) /
+            (dstOffsets[index] + getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.outputBufferRefs[index + 1].id],
+                                                         offset + tbgOffset)) /
             sizeof(T);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[index + 1].id]);
         mscclpp::write<T>(remoteMemory, dstOffset + idx, tmp);
@@ -258,6 +284,8 @@ template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handlePutPackets(const Operation& op, void* input, void* output, void* scratch) {
   ChannelType chType = op.channelType;
   uint16_t nDstChannels = op.nOutputs;
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
   const uint32_t* dstOffsets = op.outputOffsets;
   const uint32_t* srcOffsets = op.inputOffsets;
   const uint32_t* sizes = op.inputBufferSizes;
@@ -266,9 +294,12 @@ MSCCLPP_DEVICE_INLINE void handlePutPackets(const Operation& op, void* input, vo
   if (chType == ChannelType::MEMORY) {
     for (int index = 0; index < nDstChannels; ++index) {
       uint32_t size = sizes[index];
-      mscclpp::copyToPackets<PacketType>(
-          (char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] + (dstOffsets[index] << 1) + scratchOffset_,
-          (char*)inputBuff + srcOffsets[index], size, threadIdx.x, blockDim.x, flag_);
+      uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
+      size = calcSize(size, tbId, tbgSize);
+      mscclpp::copyToPackets<PacketType>((char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] +
+                                             ((dstOffsets[index] + tbgOff) << 1) + scratchOffset_,
+                                         (char*)inputBuff + srcOffsets[index] + tbgOff, size, threadIdx.x, blockDim.x,
+                                         flag_);
     }
   }
   if (chType == ChannelType::PORT) {
@@ -291,19 +322,23 @@ MSCCLPP_DEVICE_INLINE void handlePutPackets(const Operation& op, void* input, vo
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scratch) {
   uint32_t nOutput = op.nOutputs;
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
   const uint32_t* dstOffsets = op.outputOffsets;
   const uint32_t* srcOffsets = op.inputOffsets;
   const uint8_t* channelIndexes = op.channelIndexes;
   uint32_t size = op.inputBufferSizes[0];
+  uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
+  size = calcSize(size, tbId, tbgSize);
   ChannelType chType = op.channelType;
   if (chType == ChannelType::MEMORY) {
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
-    PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
+    PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + ((srcOffsets[0] + tbgOff) << 1));
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
       PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
       PacketType pkt(data, flag_);
       for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        size_t offset = (scratchOffset_ + (dstOffsets[idx] << 1)) / sizeof(PacketType);
+        size_t offset = (scratchOffset_ + ((dstOffsets[idx] + tbgOff) << 1)) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
       }
@@ -333,10 +368,14 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
 template <typename T, typename PacketType, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
+  size = calcSize(size, tbId, tbgSize);
   const uint32_t nSrcs = op.nInputs - 1;
   const uint32_t nDstChannels = op.nOutputs - 1;
-  const uint32_t srcOffsetByBytes = op.inputOffsets[0];
-  const uint32_t dstOffsetByBytes = op.outputOffsets[0];
+  const uint32_t srcOffsetByBytes = op.inputOffsets[0] + tbgOff;
+  const uint32_t dstOffsetByBytes = op.outputOffsets[0] + tbgOff;
   const uint32_t* inputOffsets = op.inputOffsets + 1;
   const uint32_t* outputOffsets = op.outputOffsets + 1;
   const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
@@ -351,7 +390,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
   for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
     for (uint32_t index = 0; index < nSrcs; ++index) {
-      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
+      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * (inputOffsets[index] + tbgOff));
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
       data = calVector<T, OpType>(data, val);
     }
@@ -361,7 +400,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
     if constexpr (SendToRemote) {
       PacketType pkt(data, flag_);
       for (uint32_t index = 0; index < nDstChannels; ++index) {
-        uint32_t offset = (scratchOffset_ + outputOffsets[index] * 2) / sizeof(PacketType);
+        uint32_t offset = (scratchOffset_ + (outputOffsets[index] + tbgOff) * 2) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[outputBufferRefs[index].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
       }
@@ -372,16 +411,20 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
 template <typename T, typename PacketType, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
   const uint32_t nSrcs = op.nInputs - 1;
   const uint32_t nDstChannels = op.nOutputs - 2;
-  const uint32_t srcOffsetByBytes = op.inputOffsets[0];
-  const uint32_t dstOffsetByBytes = op.outputOffsets[0];
+  const uint32_t srcOffsetByBytes = op.inputOffsets[0] + tbgOff;
+  const uint32_t dstOffsetByBytes = op.outputOffsets[0] + tbgOff;
   const uint32_t* inputOffsets = op.inputOffsets + 1;
   const uint32_t* outputOffsets = op.outputOffsets + 2;
   const BufferRef* outputBufferRefs = op.outputBufferRefs + 2;
 
-  PacketType* dstPkt =
-      (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[1].type) + 2 * op.outputOffsets[1]);
+  size = calcSize(size, tbId, tbgSize);
+  PacketType* dstPkt = (PacketType*)((char*)getBuffer(input, output, scratch, op.outputBufferRefs[1].type) +
+                                     2 * (op.outputOffsets[1] + tbgOff));
   uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
   const uint32_t srcOffset = srcOffsetByBytes / sizeof(PacketPayload<PacketType>);
   const uint32_t dstOffset = dstOffsetByBytes / sizeof(PacketPayload<PacketType>);
@@ -392,7 +435,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
   for (uint32_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = {};
     for (uint32_t index = 0; index < nSrcs; ++index) {
-      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
+      PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * (inputOffsets[index] + tbgOff));
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
       data = calVector<T, OpType>(data, val);
     }
@@ -404,7 +447,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
     if constexpr (SendToRemote) {
       PacketType pkt(data, flag_);
       for (uint32_t index = 0; index < nDstChannels; ++index) {
-        uint32_t offset = (scratchOffset_ + outputOffsets[index] * 2) / sizeof(PacketType);
+        uint32_t offset = (scratchOffset_ + (outputOffsets[index] + tbgOff) * 2) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[outputBufferRefs[index].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + idx, pkt);
       }
@@ -414,9 +457,14 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
 
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleUnpackPackets(const Operation& op, void* input, void* output, void* scratch) {
-  const uint32_t size = op.inputBufferSizes[0];
-  const uint32_t dstOffset = op.outputOffsets[0];
-  const uint32_t srcOffset = op.inputOffsets[0];
+  uint32_t size = op.inputBufferSizes[0];
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
+  const uint32_t dstOffset = op.outputOffsets[0] + tbgOff;
+  const uint32_t srcOffset = op.inputOffsets[0] + tbgOff;
+
+  size = calcSize(size, tbId, tbgSize);
   PacketType* srcPackets = (PacketType*)(static_cast<char*>(scratch) + scratchOffset_ + (srcOffset << 1));
   PacketPayload<PacketType>* result =
       (PacketPayload<PacketType>*)(static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) +
@@ -431,8 +479,12 @@ MSCCLPP_DEVICE_INLINE void handleUnpackPackets(const Operation& op, void* input,
 template <typename PacketType>
 MSCCLPP_DEVICE_INLINE void handleCopyPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
-  uint32_t dstOffset = op.outputOffsets[0];
-  uint32_t srcOffset = op.inputOffsets[0];
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
+  uint32_t dstOffset = op.outputOffsets[0] + tbgOff;
+  uint32_t srcOffset = op.inputOffsets[0] + tbgOff;
+  size = calcSize(size, tbId, tbgSize);
   dstOffset = dstOffset << 1;
   char* dst = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   char* src = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
@@ -442,7 +494,11 @@ MSCCLPP_DEVICE_INLINE void handleCopyPackets(const Operation& op, void* input, v
 template <typename T, bool ReuseScratch, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, void* output, void* scratch,
                                             uint32_t offset, uint32_t unitSize) {
-  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOffset = calcOffset(size, tbId, tbgSize);
+  size = calcSize(size, tbId, tbgSize);
   const uint32_t nInt4 = size / sizeof(int4);
   int nInput = op.nInputs - 1;
   int nOutput = op.nOutputs - 1;
@@ -450,8 +506,10 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
   const uint32_t* outputOffsets = op.outputOffsets + 1;
   const BufferRef* inputBufferRefs = op.inputBufferRefs + 1;
   const BufferRef* outputBufferRefs = op.outputBufferRefs + 1;
-  uint32_t srcOffsetByBytes = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
-  uint32_t dstOffsetByBytes = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
+  uint32_t srcOffsetByBytes =
+      op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset + tbgOffset);
+  uint32_t dstOffsetByBytes =
+      op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset + tbgOffset);
 
   const uint32_t srcOffset4 = srcOffsetByBytes / sizeof(int4);
   const uint32_t dstOffset4 = dstOffsetByBytes / sizeof(int4);
@@ -462,16 +520,18 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
     for (int index = 0; index < nInput; ++index) {
       int4* buff4 = static_cast<int4*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
       size_t buffOffset =
-          (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset)) / sizeof(int4);
+          (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset + tbgOffset)) /
+          sizeof(int4);
       int4 val = buff4[buffOffset + idx];
       tmp = calVector<T, OpType>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nOutput; ++index) {
-        size_t outOffset = (outputOffsets[index] +
-                            getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
-                           sizeof(int4);
+        size_t outOffset =
+            (outputOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset + tbgOffset)) /
+            sizeof(int4);
         void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
         mscclpp::write(remoteMemory, outOffset + idx, tmp);
       }
@@ -488,15 +548,16 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
     for (int index = 0; index < nInput; ++index) {
       T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
       uint32_t buffOffset =
-          (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
+          (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset + tbgOffset)) / sizeof(T);
       tmp = tmp + buff[buffOffset + idx];
     }
     dst[idx] = tmp;
     if constexpr (SendToRemote) {
       for (int index = 0; index < nOutput; ++index) {
-        uint32_t outOffset = (outputOffsets[index] +
-                              getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset)) /
-                             sizeof(T);
+        uint32_t outOffset =
+            (outputOffsets[index] +
+             getOffset<ReuseScratch>(memoryChannelBufferTypes_[outputBufferRefs[index].id], offset + tbgOffset)) /
+            sizeof(T);
         void* remoteMemory = memoryChannelBufferPtrs_[outputBufferRefs[index].id];
         mscclpp::write<T>(remoteMemory, outOffset + idx, tmp);
       }
@@ -508,11 +569,15 @@ template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* output, void* scratch, uint32_t offset,
                                       uint32_t unitSize) {
   uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  const uint8_t tbId = op.tbId;
+  const uint8_t tbgSize = op.tbgSize;
+  const uint32_t tbgOffset = calcOffset(size, tbId, tbgSize);
+  size = calcSize(size, tbId, tbgSize);
   if (size <= 0) {
     return;
   }
-  uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset);
-  uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.outputBufferRefs[0].type, offset + tbgOffset);
+  uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset + tbgOffset);
   char* srcData = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstData = static_cast<char*>(getBuffer(input, output, scratch, op.outputBufferRefs[0].type)) + dstOffset;
   mscclpp::copy(dstData, srcData, size, threadIdx.x, blockDim.x);
@@ -526,12 +591,17 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     return;
   } else {
     static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
-    const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+    uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+    const uint8_t tbId = op.tbId;
+    const uint8_t tbgSize = op.tbgSize;
+    const uint32_t tbgOffset = calcOffset(size, tbId, tbgSize);
+    size = calcSize(size, tbId, tbgSize);
     if (size <= 0) {
       return;
     }
-    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
-    const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset + tbgOffset);
+    const uint32_t dstOffset =
+        op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset + tbgOffset);
     assert(size % sizeof(T) == 0);
     assert(srcOffset % sizeof(T) == 0);
     assert(dstOffset % sizeof(T) == 0);
