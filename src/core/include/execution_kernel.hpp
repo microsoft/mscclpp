@@ -66,9 +66,6 @@ MSCCLPP_DEVICE_INLINE uint32_t getOffset(BufferType bufferType, uint32_t offset)
   }
 }
 
-// Mirrors ExecutionPlan::Impl::calcOffset from execution_plan.cc.
-// Computes the byte offset for the index-th slice when splitting size bytes into slices parts,
-// aligned to 16 bytes (matching the default bufferAlignment).
 MSCCLPP_DEVICE_INLINE uint32_t calcOffset(uint32_t size, uint32_t index, uint32_t slices) {
   constexpr uint32_t alignment = 16;
   uint32_t nelems = size / alignment;
@@ -78,8 +75,6 @@ MSCCLPP_DEVICE_INLINE uint32_t calcOffset(uint32_t size, uint32_t index, uint32_
   return off * alignment;
 }
 
-// Mirrors ExecutionPlan::Impl::calcSize from execution_plan.cc.
-// Computes the byte size of the index-th slice when splitting size bytes into slices parts.
 MSCCLPP_DEVICE_INLINE uint32_t calcSize(uint32_t size, uint32_t index, uint32_t slices) {
   return calcOffset(size, index + 1, slices) - calcOffset(size, index, slices);
 }
@@ -301,9 +296,10 @@ MSCCLPP_DEVICE_INLINE void handlePutPackets(const Operation& op, void* input, vo
       uint32_t size = sizes[index];
       uint32_t tbgOff = calcOffset(size, tbId, tbgSize);
       size = calcSize(size, tbId, tbgSize);
-      mscclpp::copyToPackets<PacketType>(
-          (char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] + ((dstOffsets[index] + tbgOff) << 1) + scratchOffset_,
-          (char*)inputBuff + srcOffsets[index] + tbgOff, size, threadIdx.x, blockDim.x, flag_);
+      mscclpp::copyToPackets<PacketType>((char*)memoryChannelBufferPtrs_[op.outputBufferRefs[index].id] +
+                                             ((dstOffsets[index] + tbgOff) << 1) + scratchOffset_,
+                                         (char*)inputBuff + srcOffsets[index] + tbgOff, size, threadIdx.x, blockDim.x,
+                                         flag_);
     }
   }
   if (chType == ChannelType::PORT) {

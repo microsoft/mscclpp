@@ -511,8 +511,7 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     if (op.contains("tbg_info")) {
       operation.tbId = op["tbg_info"]["tb_id"];
       operation.tbgSize = op["tbg_info"]["tbg_size"];
-    }
-    else{
+    } else {
       operation.tbId = 0;
       operation.tbgSize = 1;
     }
@@ -549,8 +548,7 @@ void ExecutionPlan::Impl::setupOperation(const nlohmann::json& op, Operation& op
     if (op.contains("tbg_info")) {
       operation.tbId = op["tbg_info"]["tb_id"];
       operation.tbgSize = op["tbg_info"]["tbg_size"];
-    }
-    else{
+    } else {
       operation.tbId = 0;
       operation.tbgSize = 1;
     }
