@@ -14,6 +14,7 @@ from mscclpp import CommGroup, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
 import os
 import struct
+from typing import Callable, Union
 
 import cupy as cp
 from mpi4py import MPI
@@ -32,13 +33,16 @@ def parse_dtype(dtype_str):
         raise ValueError(f"Unknown data type: {dtype_str}")
 
 
-def bench_time(n_iters: int, n_graph_iters: int, func):
-    # capture cuda graph for n_iters of the kernel launch
+def bench_time(n_iters: int, n_graph_iters: int, func: Union[Callable, list[Callable]]):
+    """Benchmark execution time. func can be a single callable or a list of 2 for double-buffer."""
     stream = cp.cuda.Stream(non_blocking=True)
     with stream:
         stream.begin_capture()
         for i in range(n_iters):
-            func(stream)
+            if isinstance(func, list):
+                func[i % 2](stream)
+            else:
+                func(stream)
         graph = stream.end_capture()
 
     # now run a warm up round
@@ -59,18 +63,19 @@ def bench_time(n_iters: int, n_graph_iters: int, func):
 
 def bench_correctness(
     collective: str,
-    input_buf: cp.ndarray,
-    result_buf: cp.ndarray,
-    test_buf: cp.ndarray,
+    input_buf: Union[cp.ndarray, list[cp.ndarray]],
+    result_buf: Union[cp.ndarray, list[cp.ndarray]],
+    test_buf: Union[cp.ndarray, list[cp.ndarray]],
     dtype_str: str,
     rank: int,
     num_ranks: int,
     n_iters: int,
-    func,
+    func: Union[Callable, list[Callable]],
 ):
+    """Validate correctness. For sendrecv, buffers and func are lists of 2 for double-buffer."""
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
+    double_buf = isinstance(input_buf, list)
 
-    print("collective: ", collective)
     fill_data_kernel_name = "fill_data_%s" % dtype_str
     if "allgather" in collective:
         coll = "all_gather"
@@ -78,8 +83,10 @@ def bench_correctness(
         coll = "reduce_scatter"
     elif "allreduce" in collective:
         coll = "all_reduce"
+    elif "sendrecv" in collective:
+        coll = "send_recv"
     else:
-        coll = "sendrecv"
+        raise ValueError(f"Unknown collective: {collective}")
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -96,11 +103,25 @@ def bench_correctness(
     with stream:
         stream.begin_capture()
         for i in range(n_iters):
-            fill_data_params = pack(input_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(rank, i)
+            if double_buf:
+                idx = i % 2
+                cur_input = input_buf[idx]
+                cur_result = result_buf[idx]
+                cur_test = test_buf[idx]
+                cur_func = func[idx]
+            else:
+                cur_input = input_buf
+                cur_result = result_buf
+                cur_test = test_buf
+                cur_func = func
+
+            fill_data_params = pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i)
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
-            func(stream)
+            cur_func(stream)
             test_data_params = (
-                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, rank, i)
+                pack(cur_result, cur_test)
+                + struct.pack("Q", cur_input.nbytes // type_size)
+                + pack(num_ranks, rank, i)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
@@ -143,6 +164,13 @@ def build_bufs(
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
 
+    # Sendrecv uses double buffering: return lists of 2 buffers
+    if "sendrecv" in collective:
+        input_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(2)]
+        result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(2)]
+        test_bufs = [cp.zeros(nelems, dtype=dtype) for _ in range(2)]
+        return input_bufs, result_bufs, test_bufs, nelems
+
     if "allgather" in collective:
         assert (nelems % num_ranks) == 0, "nelems %d not multiple of num_ranks %d" % (nelems, num_ranks)
         nelems_input = nelems if in_place else nelems // num_ranks
@@ -166,8 +194,6 @@ def build_bufs(
             input_buf = result_buf
     else:
         input_buf = GpuBuffer(nelems_input, dtype=dtype)
-
-    in_place = False
 
     test_buf = cp.zeros(nelems, dtype=dtype)
 
@@ -202,37 +228,38 @@ def main(
         mscclpp_group.nranks,
     )
 
-    executor_func = lambda stream: executor.execute(
-        mscclpp_group.my_rank,
-        input_buf.data.ptr,
-        result_buf.data.ptr,
-        input_buf.nbytes,
-        result_buf.nbytes,
-        dtype_to_mscclpp_dtype(dtype),
-        execution_plan,
-        stream.ptr,
-        packet_type,
-    )
+    sendrecv_mode = "sendrecv" in collective
+
+    if sendrecv_mode:
+        # Double-buffer: create two executor funcs, one per buffer pair
+        executor_funcs = []
+        for idx in range(2):
+            func = lambda stream, i=idx: executor.execute(
+                mscclpp_group.my_rank,
+                input_buf[i].data.ptr,
+                result_buf[i].data.ptr,
+                input_buf[i].nbytes,
+                result_buf[i].nbytes,
+                dtype_to_mscclpp_dtype(dtype),
+                execution_plan,
+                stream.ptr,
+                packet_type,
+            )
+            executor_funcs.append(func)
+    else:
+        executor_func = lambda stream: executor.execute(
+            mscclpp_group.my_rank,
+            input_buf.data.ptr,
+            result_buf.data.ptr,
+            input_buf.nbytes,
+            result_buf.nbytes,
+            dtype_to_mscclpp_dtype(dtype),
+            execution_plan,
+            stream.ptr,
+            packet_type,
+        )
 
     mscclpp_group.barrier()
-    print("size= ", size, "nelem= ", nelem)
-
-    # Sentinel fill: choose something unlikely in your pattern
-    result_buf.fill(cp.float16(123.0))
-    cp.cuda.runtime.deviceSynchronize()
-
-    # Run ONE execution (no graph), then sync
-    stream = cp.cuda.Stream(non_blocking=True)
-    with stream:
-        executor_func(stream)
-    stream.synchronize()
-
-    # Count how many elements changed
-    changed = cp.count_nonzero(result_buf != cp.float16(123.0)).item()
-    print("changed elements:", changed, "out of", result_buf.size)
-    cp.cuda.runtime.deviceSynchronize()
-    mscclpp_group.barrier()
-
     bench_correctness(
         collective,
         input_buf,
@@ -242,18 +269,20 @@ def main(
         mscclpp_group.my_rank,
         mscclpp_group.nranks,
         n_iters,
-        executor_func,
+        executor_funcs if sendrecv_mode else executor_func,
     )
 
     mscclpp_group.barrier()
-    execution_time = bench_time(n_iters, n_graph_iters, executor_func)
+    execution_time = bench_time(n_iters, n_graph_iters, executor_funcs if sendrecv_mode else executor_func)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
+
+    result_nbytes = result_buf[0].nbytes if sendrecv_mode else result_buf.nbytes
     print(
         f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
-        f"data size: {result_buf.nbytes} bytes data type: {dtype().dtype.name} "
-        f"bandwidth: {result_buf.nbytes / (execution_time * 1e-6) / (1024**3):.2f} GB/s, "
+        f"data size: {result_nbytes} bytes data type: {dtype().dtype.name} "
+        f"bandwidth: {result_nbytes / (execution_time * 1e-6) / (1024**3):.2f} GB/s, "
         f"packet type: {packet_type}"
     )
     executor = None
