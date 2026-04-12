@@ -7,13 +7,13 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "api.h"
-#include "atomic.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
 #include "gpu_utils_internal.hpp"
@@ -43,10 +43,7 @@ const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& me
 Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
 MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-    : context_(context),
-      localEndpoint_(localEndpoint),
-      maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()),
-      gpuFlushDonePos_(detail::gpuCallocHostShared<uint64_t>()) {}
+    : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
 
 MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
@@ -68,6 +65,10 @@ MSCCLPP_API_CPP void Connection::updateAndSync(RegisteredMemory dst, uint64_t ds
   impl_->updateAndSync(dst, dstOffset, src, newValue);
 }
 
+MSCCLPP_API_CPP void Connection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  impl_->atomicAdd(dst, dstOffset, value);
+}
+
 MSCCLPP_API_CPP void Connection::flush(int64_t timeoutUsec) { impl_->flush(timeoutUsec); }
 
 MSCCLPP_API_CPP Transport Connection::transport() const { return impl_->transport(); }
@@ -85,17 +86,6 @@ MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->get
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
     : BaseConnection(context, localEndpoint) {
-  // Log fabric/MNNVL availability exactly once per process so any later cross-node CudaIpc failure
-  // is easy to triage. C++11 magic statics make this thread-safe without an explicit mutex.
-  // NOTE: assigning the message to a std::string first avoids the logger's pointer-formatting
-  // overload from kicking in on the const char* result of the ternary.
-  [[maybe_unused]] static const bool fabricAvailable_ = []() {
-    const bool avail = isFabricMemHandleAvailable();
-    const std::string status = avail ? "available (cross-node CudaIpc via MNNVL/IMEX is supported)"
-                                     : "NOT available (CudaIpc is restricted to intra-node ranks on this system)";
-    INFO(CONN, "CudaIpc transport selected: fabric handles ", status);
-    return avail;
-  }();
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
     THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
@@ -192,6 +182,13 @@ void CudaIpcConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_CUDA_IPC_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+}
+
+void CudaIpcConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  validateTransport(dst, remoteTransport());
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.data()) + dstOffset);
+  stream_->atomicAdd(dstPtr, value);
+  INFO(CONN, "CudaIpcConnection atomicAdd: dst ", dstPtr, ", value ", value);
 }
 
 // IBConnection
@@ -492,33 +489,22 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #endif
 }
 
-void IBConnection::requestFlush() {
-  // No-op: IB sends were already posted by prior conn.write() calls in handleTrigger.
-  // progressFlush() drives completion by polling the send CQ.
-}
-
-bool IBConnection::progressFlush() {
-  if (recvThreadError_.load(std::memory_order_acquire)) {
-    THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
+void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  validateTransport(dst, remoteTransport());
+  auto dstTransportInfo = getImpl(dst).getTransportInfo(remoteTransport());
+  if (dstTransportInfo.ibLocal) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "dst is local, which is not supported");
   }
+  auto dstMrInfo = dstTransportInfo.ibMrInfo;
 
-  auto qp = qp_.lock();
-  if (!qp || qp->getNumSendCqItems() == 0) {
-    return true;  // QP expired or CQ already drained.
+  if (ibNoAtomic_) {
+    THROW(CONN, Error, ErrorCode::InvalidUsage, "atomicAdd is not supported in IB no-atomic mode");
   }
 
-  int wcNum = qp->pollSendCq();
-  if (wcNum < 0) {
-    THROW(NET, IbError, errno, "pollSendCq failed in progressFlush");
-  }
-  for (int i = 0; i < wcNum; ++i) {
-    int status = qp->getSendWcStatus(i);
-    if (status != static_cast<int>(WsStatus::Success)) {
-      THROW(NET, Error, ErrorCode::SystemError,
-            "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
-    }
-  }
-  return qp->getNumSendCqItems() == 0;
+  qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset,
+                                 static_cast<uint64_t>(value), /*signaled=*/true);
+  qp_.lock()->postSend();
+  INFO(CONN, "IBConnection atomicAdd: dst ", (uint8_t*)dstMrInfo.addr + dstOffset, ", value ", value);
 }
 
 // EthernetConnection
@@ -666,13 +652,41 @@ void EthernetConnection::flush(int64_t) {
 #endif
 }
 
+void EthernetConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) {
+  validateTransport(dst, remoteTransport());
+
+  // Use the same wire format as write(): [dstPtr(8B)] [size(8B)] [data(size B)]
+  // Set the MSB of size to signal atomicAdd to the receiver.
+  uint64_t* dstPtr = reinterpret_cast<uint64_t*>(reinterpret_cast<char*>(dst.originalDataPtr()) + dstOffset);
+  constexpr uint64_t atomicAddFlag = uint64_t{1} << uint64_t{63};
+  uint64_t dataSize = sizeof(uint64_t) | atomicAddFlag;
+  uint64_t messageSize = 0;
+
+  char* dstPtrBytes = reinterpret_cast<char*>(&dstPtr);
+  std::copy(dstPtrBytes, dstPtrBytes + sizeof(dstPtr), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(dstPtr);
+
+  char* sizeBytes = reinterpret_cast<char*>(&dataSize);
+  std::copy(sizeBytes, sizeBytes + sizeof(dataSize), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(dataSize);
+
+  char* valueBytes = reinterpret_cast<char*>(&value);
+  std::copy(valueBytes, valueBytes + sizeof(value), sendBuffer_.data() + messageSize);
+  messageSize += sizeof(value);
+
+  sendSocket_->send(sendBuffer_.data(), messageSize);
+
+  INFO(CONN, "EthernetConnection atomicAdd: dst ", dstPtr, ", value ", value);
+}
+
 void EthernetConnection::recvMessages() {
-  // Declarating Variables
+  // Declaring Variables
   char* ptr;
   uint64_t size;
   uint64_t recvSize;
   int closed = 0;
   bool received = true;
+  constexpr uint64_t atomicAddFlag = uint64_t{1} << uint64_t{63};
 
   // Receiving Messages Until Connection is Closed
   while (recvSocket_->getState() != SocketStateClosed) {
@@ -684,9 +698,14 @@ void EthernetConnection::recvMessages() {
     if (closed == 0) recvSocket_->recvUntilEnd(&ptr, sizeof(char*), &closed);
     received &= !closed;
 
-    // Receiving data size
+    // Receiving data size (MSB may indicate atomicAdd)
     if (closed == 0) recvSocket_->recvUntilEnd(&size, sizeof(uint64_t), &closed);
     received &= !closed;
+
+    bool isAtomicAdd = (size & atomicAddFlag) != 0;
+    if (isAtomicAdd) {
+      size &= ~atomicAddFlag;  // Clear flag to get actual data size
+    }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_META_EXIT)
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_META_EXIT, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
@@ -696,16 +715,29 @@ void EthernetConnection::recvMessages() {
     NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_ETH_RECV_DATA_ENTRY, uint32_t(size), 0, *NpKit::GetCpuTimestamp(), 1);
 #endif
 
-    // Receiving Data and Copying Data yo GPU
-    recvSize = 0;
-    while (recvSize < size && closed == 0) {
-      uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
-      recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
+    if (isAtomicAdd && received && size == sizeof(int64_t)) {
+      // Atomic add: receive the value, read-modify-write on GPU memory
+      int64_t addValue;
+      recvSocket_->recvUntilEnd(&addValue, sizeof(int64_t), &closed);
       received &= !closed;
+      if (received) {
+        int64_t current;
+        mscclpp::gpuMemcpy(reinterpret_cast<char*>(&current), ptr, sizeof(int64_t), cudaMemcpyDeviceToHost);
+        current += addValue;
+        mscclpp::gpuMemcpy(ptr, reinterpret_cast<char*>(&current), sizeof(int64_t), cudaMemcpyHostToDevice);
+      }
+    } else {
+      // Regular write: receive data and copy to GPU
+      recvSize = 0;
+      while (recvSize < size && closed == 0) {
+        uint64_t messageSize = std::min(recvBufferSize_, (size - recvSize) / sizeof(char)) * sizeof(char);
+        recvSocket_->recvUntilEnd(recvBuffer_.data(), messageSize, &closed);
+        received &= !closed;
 
-      if (received)
-        mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
-      recvSize += messageSize;
+        if (received)
+          mscclpp::gpuMemcpy(ptr + (recvSize / sizeof(char)), recvBuffer_.data(), messageSize, cudaMemcpyHostToDevice);
+        recvSize += messageSize;
+      }
     }
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_ETH_RECV_DATA_EXIT)
