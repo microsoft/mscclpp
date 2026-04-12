@@ -600,3 +600,128 @@ PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
   testBandwidth(PingPongTestParams{
       .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }
+
+// Concurrent atomicAdd test kernel.
+// Each rank launches numBlocks thread blocks. Every block atomicAdds +1 to the remote buffer.
+// Block 0 polls the local buffer (written by the remote) until it reaches the expected value,
+// then releases all blocks for the next iteration. This creates a ping-pong pattern where
+// both ranks simultaneously send numBlocks atomic adds per iteration.
+__global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTries, mscclpp::DeviceSyncer* syncer,
+                                                     int* ret) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  const int numBlocks = gridDim.x;
+
+  for (int iter = 0; iter < nTries; iter++) {
+    // Step 1: Every block atomicAdds +1 to the remote buffer via port channel.
+    portChan.atomicAdd(0, (int64_t)1);
+
+    // Step 2: Grid barrier — all blocks must have pushed their atomicAdd.
+    syncer->sync(numBlocks);
+
+    // Step 3: Block 0 signals remote that all adds are done, flushes, then waits for remote.
+    if (blockIdx.x == 0) {
+      portChan.signal();
+      portChan.flush();
+      portChan.wait();
+    }
+
+    // Step 4: Grid barrier — ensure signal/wait complete before next iteration.
+    syncer->sync(numBlocks);
+  }
+
+  // Verify final value: each of nTries iterations adds numBlocks from the remote.
+  if (blockIdx.x == 0) {
+    int64_t expected = (int64_t)nTries * numBlocks;
+    if (*localBuff != expected) {
+      printf("buff = %lld, expected = %lld\n", (long long)*localBuff, (long long)expected);
+      *ret = 1;
+    }
+  }
+}
+
+void PortChannelOneToOneTest::testAtomicAdd(bool useIPC, bool useIb, bool useEthernet, IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int nElem = 1;
+  const int numBlocks = 64;
+  const int nTries = 50;
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  auto buff = mscclpp::GpuBuffer<int64_t>(nElem);
+  MSCCLPP_CUDATHROW(cudaMemset(buff.memory().get(), 0, nElem * sizeof(int64_t)));
+
+  setupMeshConnections(portChannels, useIPC, useIb, useEthernet, buff.memory().get(), nElem * sizeof(int64_t), nullptr,
+                       0, ibMode);
+
+  ASSERT_EQ(portChannels.size(), 1);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  // Allocate DeviceSyncer for grid barrier (device memory, zero-initialized).
+  auto syncer = mscclpp::detail::gpuCallocShared<mscclpp::DeviceSyncer>();
+
+  proxyService->startProxy();
+
+  auto ret = mscclpp::detail::gpuCallocHostShared<int>();
+  *ret = 0;
+
+  // Use a dedicated stream + cudaStreamSynchronize instead of cudaDeviceSynchronize
+  // to avoid deadlocking the proxy's atomicAdd kernel (which runs on a separate stream).
+  cudaStream_t testStream;
+  MSCCLPP_CUDATHROW(cudaStreamCreateWithFlags(&testStream, cudaStreamNonBlocking));
+  kernelPortChannelAtomicAddConcurrent<<<numBlocks, 1, 0, testStream>>>(buff.memory().get(), nTries, syncer.get(),
+                                                                        ret.get());
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(testStream));
+  MSCCLPP_CUDATHROW(cudaStreamDestroy(testStream));
+
+  EXPECT_EQ(*ret, 0);
+
+  proxyService->stopProxy();
+}
+
+TEST(PortChannelOneToOneTest, AtomicAdd) { testAtomicAdd(true, false, false); }
+
+TEST(PortChannelOneToOneTest, AtomicAddIb) {
+  REQUIRE_IBVERBS;
+  testAtomicAdd(false, true, false, IbMode::Host);
+}
+
+TEST(PortChannelOneToOneTest, AtomicAddEthernet) { testAtomicAdd(false, false, true); }
+
+TEST(PortChannelOneToOneTest, AtomicAddIbHostNoAtomicRejected) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int peer = 1 - gEnv->rank;
+  auto buff = mscclpp::GpuBuffer<int64_t>(1).memory();
+  mscclpp::RegisteredMemory localMem;
+  mscclpp::RegisteredMemory remoteMem;
+
+  mscclpp::EndpointConfig cfg;
+  cfg.transport = ibTransport;
+  cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+  cfg.ib.mode = IbMode::HostNoAtomic;
+
+  auto connFuture = communicator->connect(cfg, peer);
+  localMem = communicator->registerMemory(buff.get(), sizeof(int64_t), ibTransport);
+  communicator->sendMemory(localMem, peer, /*tag=*/77);
+  auto remoteFuture = communicator->recvMemory(peer, /*tag=*/77);
+
+  auto conn = connFuture.get();
+  remoteMem = remoteFuture.get();
+  registeredMemories.push_back(localMem);
+
+  try {
+    conn.atomicAdd(remoteMem, 0, 1);
+    FAIL() << "Expected atomicAdd in IB HostNoAtomic mode to throw InvalidUsage";
+  } catch (const mscclpp::Error& e) {
+    EXPECT_TRUE(e.getErrorCode() == mscclpp::ErrorCode::InvalidUsage);
+  }
+
+  communicator->bootstrap()->barrier();
+}
