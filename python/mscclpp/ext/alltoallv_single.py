@@ -17,11 +17,11 @@ import torch
 import torch.distributed as dist
 from typing import Optional, List, Tuple
 from mscclpp._mscclpp import (
-    Communicator,
-    TcpBootstrap,
-    DataType,
-    ReduceOp,
-    CommResult,
+    CppCommunicator as Communicator,
+    CppTcpBootstrap as TcpBootstrap,
+    CppDataType as DataType,
+    CppReduceOp as ReduceOp,
+    CppCommResult as CommResult,
 )
 from mscclpp.ext.algorithm_collection_builder import AlgorithmCollectionBuilder
 
@@ -323,6 +323,7 @@ class MscclppAlltoAllV:
             None,  # executor (not needed for native algos)
             0,     # nblocks (auto)
             0,     # nthreads_per_block (auto)
+            False, # symmetric_memory
             self._extras,
         )
 

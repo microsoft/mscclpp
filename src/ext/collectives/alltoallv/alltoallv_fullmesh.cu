@@ -67,7 +67,8 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              size_t outputSize, DataType dtype, [[maybe_unused]] ReduceOp op, cudaStream_t stream,
              int nBlocks, int nThreadsPerBlock,
-             const std::unordered_map<std::string, uintptr_t>& extras) {
+             const std::unordered_map<std::string, uintptr_t>& extras,
+             [[maybe_unused]] DataType accumDtype) -> CommResult {
         return self->alltoallvKernelFunc(ctx, input, output, inputSize, outputSize, dtype, stream,
                                          nBlocks, nThreadsPerBlock, extras);
       },
@@ -77,7 +78,8 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
         return self->initAlltoallvContext(comm, input, output, inputSize, outputSize, dtype);
       },
       // Context key generation function
-      [self](const void* input, void* output, size_t inputSize, size_t outputSize, DataType dtype) {
+      [self](const void* input, void* output, size_t inputSize, size_t outputSize, DataType dtype,
+             [[maybe_unused]] bool symmetricMemory) {
         return self->generateAlltoallvContextKey(input, output, inputSize, outputSize, dtype);
       });
 

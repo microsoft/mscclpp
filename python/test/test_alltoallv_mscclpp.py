@@ -130,11 +130,11 @@ def main():
         print("=" * 60)
 
     # Import after torch.distributed init
-    from mscclpp._mscclpp import (
+    from mscclpp import (
         Communicator,
         TcpBootstrap,
-        UniqueId,
     )
+    from mscclpp._mscclpp import CppUniqueId as UniqueId
     from mscclpp.ext.alltoallv_single import MscclppAlltoAllV
     
     # Create mscclpp communicator with TcpBootstrap
