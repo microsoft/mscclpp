@@ -158,38 +158,23 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       }
     }
   } else if (transports.has(Transport::CudaIpc)) {
+    // When transports include both CudaIpc and IB (e.g., CudaIpc | IB0),
+    // try CudaIpc first and fall back to IB on failure.
     auto entry = getTransportInfo(Transport::CudaIpc);
-    bool isSameHost = (getHostHash() == this->hostHash);
-
-    auto importCudaIpc = [&]() {
+    bool hasIB = (transports & AllIBTransports).any();
+    try {
       auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
       this->remoteMemMap = gpuIpcMem->map();
       this->data = this->remoteMemMap.get();
-    };
-
-    if (isSameHost) {
-      // Same-host memory: use any available CudaIpc handle type (Fabric, PosixFd, RuntimeIpc).
-      importCudaIpc();
-    } else {
-      // Cross-node memory: CudaIpc only works via Fabric (requires IMEX daemon).
-      // PosixFd uses unix domain sockets which are node-local.
-      // When transports include both CudaIpc and IB (e.g., CudaIpc | IB0),
-      // fall back to IB if Fabric import fails (e.g., MNNVL not supported).
-      bool hasFabric = (entry.gpuIpcMemHandle.typeFlags & GpuIpcMemHandle::Type::Fabric) != 0;
-      bool hasIB = (transports & AllIBTransports).any();
-      if (hasFabric) {
-        try {
-          importCudaIpc();
-        } catch (const Error& e) {
-          // Fabric import can fail when MNNVL is not supported on the platform.
-          if (!hasIB) {
-            throw Error("Cross-node Fabric import failed and no IB transport available: " + std::string(e.what()),
-                        ErrorCode::InvalidUsage);
-          }
-          INFO(GPU, "Cross-node Fabric import failed, falling back to IB transport");
-        }
-      } else if (!hasIB) {
-        throw Error("Cross-node memory sharing requires Fabric or IB transport", ErrorCode::InvalidUsage);
+    } catch (const BaseError& e) {
+      if (!hasIB) {
+        throw;
+      }
+      bool isSameHost = (getHostHash() == this->hostHash);
+      if (isSameHost) {
+        WARN(GPU, "CudaIpc import failed on same host, falling back to IB transport: ", e.what());
+      } else {
+        INFO(GPU, "CudaIpc import failed on remote host, falling back to IB transport: ", e.what());
       }
     }
   }
