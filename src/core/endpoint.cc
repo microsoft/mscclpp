@@ -47,6 +47,11 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
       }
     }
 
+    // Resolve GID index: explicit value (>= 0) takes priority, otherwise use env
+    if (config_.ib.gidIndex < 0) {
+      config_.ib.gidIndex = env()->ibGidIndex;
+    }
+
     int maxRecvWr = ibNoAtomic_ ? config_.ib.maxRecvWr : 0;
 
     ibQp_ = contextImpl.getIbContext(config_.transport)
