@@ -4,9 +4,13 @@
 #include "endpoint.hpp"
 
 #include <algorithm>
+#include <mscclpp/env.hpp>
 
 #include "api.h"
 #include "context.hpp"
+#include "ib.hpp"
+#include "logger.hpp"
+#include "registered_memory.hpp"
 #include "serialization.hpp"
 #include "socket.h"
 #include "utils_internal.hpp"
@@ -23,9 +27,36 @@ Endpoint::Impl::Impl(const EndpointConfig& config, Context::Impl& contextImpl)
     if (config_.maxWriteQueueSize <= 0) {
       config_.maxWriteQueueSize = config_.ib.maxCqSize;
     }
+
+    // Determine if we should use no-atomics mode
+    ibNoAtomic_ = false;
+    if (config_.ib.mode == EndpointConfig::Ib::Mode::HostNoAtomic) {
+      ibNoAtomic_ = true;
+    } else if (config_.ib.mode == EndpointConfig::Ib::Mode::Default) {
+      // Use environment variable when mode is Default
+      ibNoAtomic_ = (env()->ibvMode == "host-no-atomic");
+    }
+
+    // If mode is Host (or Default resolved to host), check if atomics are supported
+    if (!ibNoAtomic_) {
+      IbCtx* ibCtx = contextImpl.getIbContext(config_.transport);
+      if (!ibCtx->supportsRdmaAtomics()) {
+        WARN(NET, "IB device ", ibCtx->getDevName(),
+             " does not support RDMA atomics. Falling back to write-with-immediate mode (HostNoAtomic).");
+        ibNoAtomic_ = true;
+      }
+    }
+
+    // Resolve GID index: explicit value (>= 0) takes priority, otherwise use env
+    if (config_.ib.gidIndex < 0) {
+      config_.ib.gidIndex = env()->ibGidIndex;
+    }
+
+    int maxRecvWr = ibNoAtomic_ ? config_.ib.maxRecvWr : 0;
+
     ibQp_ = contextImpl.getIbContext(config_.transport)
                 ->createQp(config_.ib.port, config_.ib.gidIndex, config_.ib.maxCqSize, config_.ib.maxCqPollNum,
-                           config_.ib.maxSendWr, 0, config_.ib.maxWrPerSend);
+                           config_.ib.maxSendWr, maxRecvWr, config_.ib.maxWrPerSend, ibNoAtomic_);
     ibQpInfo_ = ibQp_->getInfo();
   } else if (config_.transport == Transport::Ethernet) {
     // Configuring Ethernet Interfaces
@@ -48,6 +79,7 @@ Endpoint::Impl::Impl(const std::vector<char>& serialization) {
   if (AllIBTransports.has(config_.transport)) {
     ibLocal_ = false;
     it = detail::deserialize(it, ibQpInfo_);
+    it = detail::deserialize(it, ibNoAtomic_);
   } else if (config_.transport == Transport::Ethernet) {
     it = detail::deserialize(it, socketAddress_);
   }
@@ -77,6 +109,7 @@ MSCCLPP_API_CPP std::vector<char> Endpoint::serialize() const {
   detail::serialize(data, pimpl_->pidHash_);
   if (AllIBTransports.has(pimpl_->config_.transport)) {
     detail::serialize(data, pimpl_->ibQpInfo_);
+    detail::serialize(data, pimpl_->ibNoAtomic_);
   } else if (pimpl_->config_.transport == Transport::Ethernet) {
     detail::serialize(data, pimpl_->socketAddress_);
   }

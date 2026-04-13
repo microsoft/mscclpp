@@ -1,21 +1,21 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
-
-#include <gtest/gtest.h>
+// Licensed under the MIT License.
 
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
+#include "../framework.hpp"
+
 #define MAGIC_CONST 777
 
 __constant__ mscclpp::PortChannelDeviceHandle gPortChannel;
 
-__global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, int *ret) {
+__global__ void kernelLocalPortChannelTest(void* dst, void* src, size_t bytes, int* ret) {
   if (blockIdx.x == 0) {
     // sender
-    int *ptr = reinterpret_cast<int *>(src);
+    int* ptr = reinterpret_cast<int*>(src);
     for (size_t idx = threadIdx.x; idx < bytes / sizeof(int); idx += blockDim.x) {
       ptr[idx] = MAGIC_CONST;
     }
@@ -29,7 +29,7 @@ __global__ void kernelLocalPortChannelTest(void *dst, void *src, size_t bytes, i
       gPortChannel.wait();
     }
     __syncthreads();
-    int *ptr = reinterpret_cast<int *>(dst);
+    int* ptr = reinterpret_cast<int*>(dst);
     for (size_t idx = threadIdx.x; idx < bytes / sizeof(int); idx += blockDim.x) {
       if (ptr[idx] != MAGIC_CONST) {
         *ret = 1;  // Error: value mismatch

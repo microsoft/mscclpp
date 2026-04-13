@@ -8,12 +8,15 @@
 #include "allgather/allgather_fullmesh_2.hpp"
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/allreduce_fullmesh.hpp"
-#include "allreduce/allreduce_nvls.hpp"
+#include "allreduce/allreduce_nvls_block_pipeline.hpp"
 #include "allreduce/allreduce_nvls_packet.hpp"
-#include "allreduce/allreduce_nvls_with_copy.hpp"
-#include "allreduce/allreduce_nvls_with_copy_2.hpp"
+#include "allreduce/allreduce_nvls_warp_pipeline.hpp"
+#include "allreduce/allreduce_nvls_zero_copy.hpp"
 #include "allreduce/allreduce_packet.hpp"
 #include "alltoallv/alltoallv_fullmesh.hpp"
+#include "allreduce/allreduce_rsag.hpp"
+#include "allreduce/allreduce_rsag_pipeline.hpp"
+#include "allreduce/allreduce_rsag_zero_copy.hpp"
 #include "logger.hpp"
 
 namespace mscclpp {
@@ -50,8 +53,9 @@ AlgorithmCollection AlgorithmCollectionBuilder::build() {
 void AlgorithmCollectionBuilder::reset() { gAlgorithmCollectionBuilder_.reset(); }
 
 AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t scratchBuffer,
-                                                                       size_t scratchBufferSize, int rank) {
-  auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize);
+                                                                       size_t scratchBufferSize, uintptr_t flagBuffer,
+                                                                       size_t flagBufferSize, int rank) {
+  auto nativeCollection = buildDefaultNativeAlgorithms(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize);
   auto dslCollection = buildDefaultDslAlgorithms(rank);
   nativeCollection.extend(dslCollection);
   nativeCollection.setSelectors(algoSelector_, fallbackAlgoSelector_);
@@ -59,24 +63,39 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultAlgorithms(uintptr_t
 }
 
 AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultNativeAlgorithms(uintptr_t scratchBuffer,
-                                                                             size_t scratchBufferSize) {
+                                                                             size_t scratchBufferSize,
+                                                                             uintptr_t flagBuffer,
+                                                                             size_t flagBufferSize) {
   AlgorithmCollection collection;
-  auto allreduceAllpairPkt = std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceAllpairPkt =
+      std::make_shared<AllreduceAllpairPacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreduceAllpairPkt->collective(), allreduceAllpairPkt->name(), allreduceAllpairPkt);
-  auto allreduceNvlsPacket = std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceNvlsPacket =
+      std::make_shared<AllreduceNvlsPacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreduceNvlsPacket->collective(), allreduceNvlsPacket->name(), allreduceNvlsPacket);
-  auto allreduceNvlsWithCopy = std::make_shared<AllreduceNvlsWithCopy>(scratchBuffer, scratchBufferSize)->build();
-  collection.registerAlgorithm(allreduceNvlsWithCopy->collective(), allreduceNvlsWithCopy->name(),
-                               allreduceNvlsWithCopy);
-  auto allreduceNvlsWithCopy2 = std::make_shared<AllreduceNvlsWithCopy2>(scratchBuffer, scratchBufferSize)->build();
-  collection.registerAlgorithm(allreduceNvlsWithCopy2->collective(), allreduceNvlsWithCopy2->name(),
-                               allreduceNvlsWithCopy2);
-  auto allreducePkt = std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize)->build();
+  auto allreduceNvlsWarpPipeline =
+      std::make_shared<AllreduceNvlsWarpPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceNvlsWarpPipeline->collective(), allreduceNvlsWarpPipeline->name(),
+                               allreduceNvlsWarpPipeline);
+  auto allreduceNvlsBlockPipeline =
+      std::make_shared<AllreduceNvlsBlockPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceNvlsBlockPipeline->collective(), allreduceNvlsBlockPipeline->name(),
+                               allreduceNvlsBlockPipeline);
+  auto allreducePkt =
+      std::make_shared<AllreducePacket>(scratchBuffer, scratchBufferSize, flagBuffer, flagBufferSize)->build();
   collection.registerAlgorithm(allreducePkt->collective(), allreducePkt->name(), allreducePkt);
   auto allreduceNvls = std::make_shared<AllreduceNvls>()->build();
   collection.registerAlgorithm(allreduceNvls->collective(), allreduceNvls->name(), allreduceNvls);
   auto allreduceFullmesh = std::make_shared<AllreduceFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allreduceFullmesh->collective(), allreduceFullmesh->name(), allreduceFullmesh);
+  auto allreduceRsag = std::make_shared<AllreduceRsAg>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceRsag->collective(), allreduceRsag->name(), allreduceRsag);
+  auto allreduceRsagPipeline = std::make_shared<AllreduceRsAgPipeline>(scratchBuffer, scratchBufferSize)->build();
+  collection.registerAlgorithm(allreduceRsagPipeline->collective(), allreduceRsagPipeline->name(),
+                               allreduceRsagPipeline);
+  auto allreduceRsagZeroCopy = std::make_shared<AllreduceRsAgZeroCopy>()->build();
+  collection.registerAlgorithm(allreduceRsagZeroCopy->collective(), allreduceRsagZeroCopy->name(),
+                               allreduceRsagZeroCopy);
 
   auto allgatherFullmesh = std::make_shared<AllgatherFullmesh>(scratchBuffer, scratchBufferSize)->build();
   collection.registerAlgorithm(allgatherFullmesh->collective(), allgatherFullmesh->name(), allgatherFullmesh);
@@ -110,13 +129,13 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int ra
     return oss.str();
   };
 
-  std::string planDir = env()->executionPlanDir;
+  auto planDir = std::filesystem::path(env()->cacheDir) / "default";
   if (!std::filesystem::exists(planDir)) {
-    INFO(ALGO, "Plan directory does not exist: ", planDir);
+    INFO(ALGO, "Default plan directory does not exist: ", planDir);
     return collection;
   }
   for (const auto& config : defaultAlgoConfigs) {
-    std::string planPath = planDir + "/" + config.filename;
+    auto planPath = planDir / config.filename;
     INFO(ALGO, "Loading plan: ", planPath);
     if (!std::filesystem::exists(planPath)) {
       INFO(ALGO, "Plan file does not exist: ", planPath);

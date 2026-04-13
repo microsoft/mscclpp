@@ -29,7 +29,9 @@ class Proxy {
  public:
   /// Constructor.
   /// @param handler Handler for each FIFO trigger.
-  /// @param threadInit Optional function run in proxy thread before FIFO consumption.
+  /// @param threadInit Optional function run once in the proxy thread before FIFO consumption.
+  ///        The function should initialize thread runtime context before any CUDA API call in that thread
+  ///        (for example, set CUDA device and optionally bind NUMA affinity).
   /// @param fifoSize FIFO size (default: DEFAULT_FIFO_SIZE).
   Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize = DEFAULT_FIFO_SIZE);
 

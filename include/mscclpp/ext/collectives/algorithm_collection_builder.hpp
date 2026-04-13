@@ -47,7 +47,8 @@ class AlgorithmCollectionBuilder {
   /// @return The built AlgorithmCollection containing all registered algorithms.
   AlgorithmCollection build();
 
-  AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, int rank);
+  AlgorithmCollection buildDefaultAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize, uintptr_t flagBuffer,
+                                             size_t flagBufferSize, int rank);
 
  private:
   AlgorithmCollectionBuilder() = default;
@@ -55,7 +56,8 @@ class AlgorithmCollectionBuilder {
   AlgoSelectFunc algoSelector_ = nullptr;
   AlgoSelectFunc fallbackAlgoSelector_ = nullptr;
 
-  AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize);
+  AlgorithmCollection buildDefaultNativeAlgorithms(uintptr_t scratchBuffer, size_t scratchBufferSize,
+                                                   uintptr_t flagBuffer, size_t flagBufferSize);
   AlgorithmCollection buildDefaultDslAlgorithms(int rank);
 
   static std::shared_ptr<AlgorithmCollectionBuilder> gAlgorithmCollectionBuilder_;

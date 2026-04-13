@@ -25,7 +25,7 @@ class AllgatherFullmesh : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllgatherContext(std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output,
                                              size_t, mscclpp::DataType);
-  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType);
+  mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, mscclpp::DataType, bool);
 
   void* scratchBuffer_;
   size_t scratchBufferSize_;

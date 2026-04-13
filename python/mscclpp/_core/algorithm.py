@@ -4,18 +4,22 @@
 from __future__ import annotations
 from typing import Optional, Tuple, Dict
 from functools import cached_property
+import cupy as cp
 
 
 from mscclpp._mscclpp import (
-    Algorithm as _Algorithm,
-    DslAlgorithm as _DslAlgorithm,
-    AlgorithmType as _AlgorithmType,
-    Communicator,
-    CollectiveBufferMode,
-    DataType,
-    Executor,
-    ExecutionPlan,
-    ReduceOp,
+    CppAlgorithm,
+    CppDslAlgorithm,
+    CppAlgorithmType,
+    CppCommunicator,
+    CppCollectiveBufferMode,
+    CppDataType,
+    CppExecutor,
+    CppExecutionPlan,
+    CppReduceOp,
+    CppAlgorithmBuilder,
+    CppAlgorithmCollection,
+    cpp_get_flag_buffer,
 )
 
 __all__ = ["Algorithm", "AlgorithmBuilder", "AlgorithmCollection"]
@@ -45,7 +49,7 @@ class Algorithm:
         """
 
         def __init__(self, world_size: int = 0, n_ranks_per_node: int = 0):
-            self._constraint = _Algorithm.Constraint(world_size, n_ranks_per_node)
+            self._constraint = CppAlgorithm.Constraint(world_size, n_ranks_per_node)
 
         @property
         def world_size(self) -> int:
@@ -58,23 +62,23 @@ class Algorithm:
     def __init__(
         self,
         id: Optional[str] = None,
-        execution_plan: Optional[ExecutionPlan] = None,
-        native_handle: Optional[_Algorithm] = None,
+        execution_plan: Optional[CppExecutionPlan] = None,
+        native_handle: Optional[CppAlgorithm] = None,
         tags: Optional[Dict[str, int]] = None,
         constraint: Optional[Constraint] = None,
     ):
         if execution_plan is not None:
-            self._algorithm = _DslAlgorithm(
+            self._algorithm = CppDslAlgorithm(
                 id,
                 execution_plan,
                 tags=tags if tags is not None else {},
-                constraint=constraint._constraint if constraint is not None else _Algorithm.Constraint(),
+                constraint=constraint._constraint if constraint is not None else CppAlgorithm.Constraint(),
             )
         elif native_handle is not None:
             self._algorithm = native_handle
 
     @classmethod
-    def create_from_native_handle(cls, handle: _Algorithm):
+    def create_from_native_handle(cls, handle: CppAlgorithm):
         """Create an Algorithm instance from a native C++ algorithm handle.
 
         Args:
@@ -97,7 +101,7 @@ class Algorithm:
         Returns:
             A new Algorithm instance wrapping the algorithm from the capsule.
         """
-        handle = _Algorithm.from_native_capsule(obj)
+        handle = CppAlgorithm.from_native_capsule(obj)
         return cls(native_handle=handle)
 
     @cached_property
@@ -110,10 +114,23 @@ class Algorithm:
         """The collective operation this algorithm implements (e.g., "allreduce", "allgather")."""
         return self._algorithm.collective
 
-    @cached_property
+    @property
     def message_size_range(self) -> Tuple[int, int]:
         """The valid message size range (min_size, max_size) in bytes."""
         return (self._algorithm.message_range[0], self._algorithm.message_range[1])
+
+    def set_message_size_range(self, min_message_size: int, max_message_size: int):
+        """Set the valid message size range in bytes.
+
+        Args:
+            min_message_size: Minimum supported message size in bytes.
+            max_message_size: Maximum supported message size in bytes.
+
+        Only supported for native algorithms. Raises TypeError for DSL algorithms.
+        """
+        if self.is_dsl_algorithm():
+            raise TypeError("set_message_size_range is only supported for native algorithms")
+        self._algorithm.set_message_size_range(min_message_size, max_message_size)
 
     @cached_property
     def tags(self) -> Dict[str, int]:
@@ -121,7 +138,7 @@ class Algorithm:
         return self._algorithm.tags
 
     @cached_property
-    def buffer_mode(self) -> CollectiveBufferMode:
+    def buffer_mode(self) -> CppCollectiveBufferMode:
         """The buffer mode supported by this algorithm (IN_PLACE, OUT_OF_PLACE, or ANY)."""
         return self._algorithm.buffer_mode
 
@@ -131,7 +148,7 @@ class Algorithm:
         Returns:
             True if this algorithm is defined using DSL/execution plan, False otherwise.
         """
-        if self._algorithm.type == _AlgorithmType.DSL:
+        if self._algorithm.type == CppAlgorithmType.DSL:
             return True
         return False
 
@@ -141,24 +158,26 @@ class Algorithm:
         Returns:
             True if this algorithm is implemented natively, False otherwise.
         """
-        if self._algorithm.type == _AlgorithmType.NATIVE:
+        if self._algorithm.type == CppAlgorithmType.NATIVE:
             return True
         return False
 
     def execute(
         self,
-        comm: Communicator,
+        comm: CppCommunicator,
         input_buffer: int,
         output_buffer: int,
         input_size: int,
         output_size: int,
-        dtype: DataType,
-        op: ReduceOp = ReduceOp.NOP,
+        dtype: CppDataType,
+        op: CppReduceOp = CppReduceOp.NOP,
         stream: int = 0,
-        executor: Optional[Executor] = None,
+        executor: Optional[CppExecutor] = None,
         nblocks=0,
         nthreads_per_block=0,
+        symmetric_memory: bool = False,
         extras: Optional[Dict[str, int]] = None,
+        accum_dtype: Optional[CppDataType] = None,
     ) -> int:
         """Execute the collective algorithm.
 
@@ -174,11 +193,16 @@ class Algorithm:
             executor: The executor for DSL algorithms (required for DSL, optional for native).
             nblocks: Number of CUDA blocks (0 for auto-selection).
             nthreads_per_block: Number of threads per block (0 for auto-selection).
+            symmetric_memory: Whether to use symmetric memory optimization (default: False).
             extras: Additional algorithm-specific parameters.
+            accum_dtype: Data type for accumulation during reduction. If None, defaults to
+                         the same as dtype. Use DataType.float32 for high-precision FP8 accumulation.
 
         Returns:
             The result code (0 for success).
         """
+        merged_extras = dict(extras) if extras is not None else {}
+        accum_dtype = accum_dtype if accum_dtype is not None else dtype
         return self._algorithm.execute(
             comm,
             int(input_buffer),
@@ -191,12 +215,18 @@ class Algorithm:
             executor,
             nblocks,
             nthreads_per_block,
-            extras if extras is not None else {},
+            symmetric_memory,
+            merged_extras,
+            int(accum_dtype),
         )
+
+    def reset(self):
+        """Reset the internal state of the algorithm, if applicable."""
+        self._algorithm.reset()
 
 
 class AlgorithmBuilder:
-    def __init__(self, algorithm_builder: _AlgorithmBuilder):
+    def __init__(self, algorithm_builder: CppAlgorithmBuilder):
         self._algorithm_builder = algorithm_builder
 
     def build(self) -> Algorithm:
@@ -204,7 +234,7 @@ class AlgorithmBuilder:
 
 
 class AlgorithmCollection:
-    def __init__(self, native_collection: _AlgorithmCollection):
+    def __init__(self, native_collection: CppAlgorithmCollection):
         self._native_collection = native_collection
         self._algorithms = [Algorithm.create_from_native_handle(algo) for algo in self._native_collection.to_list()]
 
@@ -228,3 +258,24 @@ class AlgorithmCollection:
         """Register an algorithm for a collective operation."""
         self._native_collection.register_algorithm(collective, algo_name, algorithm._algorithm)
         self._algorithms.append(algorithm)
+
+
+_flag_buffer_cache = None
+
+
+def get_flag_buffer() -> cp.ndarray:
+    """Get the default flag buffer for algorithm selection.
+
+    This buffer is used internally by default algorithms to store selection flags.
+    It is allocated as a shared GPU buffer and can be accessed from Python.
+    The result is cached so all callers share the same buffer.
+
+    Returns:
+        A CuPy array representing the flag buffer on the GPU.
+    """
+    global _flag_buffer_cache
+    if _flag_buffer_cache is None:
+        buffer_ptr, buffer_size, owner = cpp_get_flag_buffer()
+        memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer_ptr, buffer_size, owner), 0)
+        _flag_buffer_cache = cp.ndarray((buffer_size // 4,), dtype=cp.uint32, memptr=memptr)
+    return _flag_buffer_cache

@@ -34,6 +34,19 @@ static DLDataType getDlType(std::string type) {
     return DLDataType{kDLBfloat, 16, 1};
   } else if (type == "torch.float16") {
     return DLDataType{kDLFloat, 16, 1};
+  } else if (type == "torch.float8_e4m3fn") {
+    return DLDataType{kDLFloat8_e4m3fn, 8, 1};
+  } else if (type == "torch.float8_e4m3fnuz") {
+    return DLDataType{kDLFloat8_e4m3fnuz, 8, 1};
+  } else if (type == "torch.float8_e5m2") {
+    return DLDataType{kDLFloat8_e5m2, 8, 1};
+  } else if (type == "torch.float8_e5m2fnuz") {
+    return DLDataType{kDLFloat8_e5m2fnuz, 8, 1};
+  } else if (type == "torch.uint8") {
+    return DLDataType{kDLUInt, 8, 1};
+  } else if (type == "fp8_e4m3b15") {
+    // No standard DLPack code for fp8_e4m3b15; store as raw uint8 bytes.
+    return DLDataType{kDLUInt, 8, 1};
   } else {
     throw Error("Unsupported type: " + type, ErrorCode::InvalidUsage);
   }
@@ -101,7 +114,7 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
 void register_gpu_utils(nb::module_& m) {
   m.def("is_nvls_supported", &isNvlsSupported);
 
-  nb::class_<GpuBuffer<char>>(m, "RawGpuBuffer")
+  nb::class_<GpuBuffer<char>>(m, "CppRawGpuBuffer")
       .def(nb::init<size_t>(), nb::arg("nelems"))
       .def("nelems", &GpuBuffer<char>::nelems)
       .def("bytes", &GpuBuffer<char>::bytes)

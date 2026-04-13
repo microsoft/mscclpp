@@ -1,11 +1,40 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
 
+#include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
+
+// Skip the current test if the given IB mode will require GDRCopy on CUDA but it is unavailable.
+// On CUDA, HostNoAtomic requires GDRCopy for BAR1 signal forwarding. When IbMode::Host or
+// IbMode::Default is used and the IB device does not support RDMA atomics, the endpoint falls
+// back to no-atomic mode, which also requires GDRCopy.
+// On ROCm, no-atomic mode uses direct volatile writes and does not need GDRCopy.
+#if defined(MSCCLPP_USE_CUDA)
+inline void requireGdrForIbMode(IbMode mode, mscclpp::Transport ibTransport) {
+  if (mscclpp::gdrEnabled()) return;  // GDRCopy available — nothing to skip.
+  if (mode == IbMode::HostNoAtomic) {
+    SKIP_TEST() << "HostNoAtomic requires GDRCopy on CUDA: " << mscclpp::gdrStatusMessage();
+  }
+  // For Host/Default modes: check whether the IB device lacks RDMA atomics,
+  // which would cause an automatic fallback to no-atomic mode.
+  if (mode == IbMode::Host || mode == IbMode::Default) {
+    std::string devName = mscclpp::getIBDeviceName(ibTransport);
+    mscclpp::IbCtx ibCtx(devName);
+    if (!ibCtx.supportsRdmaAtomics()) {
+      SKIP_TEST() << "IB device " << devName
+                  << " lacks RDMA atomics; Host mode falls back to HostNoAtomic which requires GDRCopy: "
+                  << mscclpp::gdrStatusMessage();
+    }
+  }
+}
+#define REQUIRE_GDR_FOR_IB_MODE(mode) requireGdrForIbMode((mode), ibTransport)
+#else
+#define REQUIRE_GDR_FOR_IB_MODE(mode)  // No extra requirements on non-CUDA platforms.
+#endif
 
 void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks
@@ -18,7 +47,7 @@ void PortChannelOneToOneTest::TearDown() { CommunicatorTestBase::TearDown(); }
 
 void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC,
                                                    bool useIb, bool useEthernet, void* sendBuff, size_t sendBuffBytes,
-                                                   void* recvBuff, size_t recvBuffBytes) {
+                                                   void* recvBuff, size_t recvBuffBytes, IbMode ibMode) {
   const int rank = communicator->bootstrap()->getRank();
   const int worldSize = communicator->bootstrap()->getNranks();
   const bool isInPlace = (recvBuff == nullptr);
@@ -47,6 +76,7 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
     } else if (useIb) {
       cfg.transport = ibTransport;
       cfg.ib.gidIndex = std::stoi(gEnv->args["ib_gid_index"]);
+      cfg.ib.mode = ibMode;
     } else if (useEthernet) {
       cfg.transport = mscclpp::Transport::Ethernet;
     }
@@ -162,7 +192,8 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
 
   std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -176,26 +207,12 @@ void PortChannelOneToOneTest::testPingPong(PingPongTestParams params) {
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 1024 * 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-
-  kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, 4 * 1024 * 1024, params.waitWithPoll, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {1, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelProxyPingPong<<<1, 1024>>>(buff.get(), gEnv->rank, nElem, params.waitWithPoll, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 
   proxyService->stopProxy();
 }
@@ -207,7 +224,8 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   std::vector<mscclpp::PortChannel> portChannels;
   std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(nElem).memory();
-  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int));
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), nElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
 
   std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
   for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
@@ -220,8 +238,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000;
 
   // Warm-up
@@ -238,54 +255,63 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
   }
 
   proxyService->stopProxy();
 }
 
-TEST_F(PortChannelOneToOneTest, PingPong) {
-  testPingPong(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false});
+TEST(PortChannelOneToOneTest, PingPong) {
+  testPingPong(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIb) {
-#if defined(USE_IBVERBS)
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongEthernet) {
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+TEST(PortChannelOneToOneTest, PingPongEthernet) {
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongWithPoll) {
-  testPingPong(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true});
+TEST(PortChannelOneToOneTest, PingPongWithPoll) {
+  testPingPong(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongIbWithPoll) {
-#if defined(USE_IBVERBS)
-  testPingPong(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Host});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerf) {
-  testPingPongPerf(PingPongTestParams{.useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false});
+PERF_TEST(PortChannelOneToOneTest, PingPongPerf) {
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfIb) {
-#if defined(USE_IBVERBS)
-  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false});
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
 }
 
-TEST_F(PortChannelOneToOneTest, PingPongPerfEthernet) {
-  testPingPongPerf(PingPongTestParams{.useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false});
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
+}
+
+PERF_TEST(PortChannelOneToOneTest, PingPongPerfEthernet) {
+  testPingPongPerf(PingPongTestParams{
+      .useIPC = false, .useIB = false, .useEthernet = true, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
 
 __device__ mscclpp::DeviceSyncer gChannelOneToOneTestPortChansSyncer;
@@ -354,7 +380,7 @@ __global__ void kernelProxyLLPingPong(int* buff, mscclpp::LLPacket* putPktBuf, m
   }
 }
 
-void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
+void PortChannelOneToOneTest::testPacketPingPong(bool useIb, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -367,7 +393,7 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
   setupMeshConnections(portChannels, !useIb, useIb, false, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
 
@@ -387,41 +413,21 @@ void PortChannelOneToOneTest::testPacketPingPong(bool useIb) {
   std::shared_ptr<int> ret = mscclpp::detail::gpuCallocHostShared<int>();
 
   const int nTries = 1000;
-
   // The least nelem is 2 for packet ping pong
-  kernelProxyLLPingPong<true>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 2, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true>
-      <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true><<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank,
-                                           1024 * 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
-  *ret = 0;
-
-  kernelProxyLLPingPong<true><<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank,
-                                           4 * 1024 * 1024, nTries, ret.get());
-  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
-
-  EXPECT_EQ(*ret, 0);
+  for (int nElem : {2, 1024, 1024 * 1024, 4 * 1024 * 1024}) {
+    *ret = 0;
+    kernelProxyLLPingPong<true>
+        <<<1, 1024>>>(buff.get(), putPacketBuffer.get(), getPacketBuffer.get(), gEnv->rank, nElem, nTries, ret.get());
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    EXPECT_EQ(*ret, 0);
+  }
 
   communicator->bootstrap()->barrier();
 
   proxyService->stopProxy();
 }
 
-void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
+void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) {
   if (gEnv->rank >= numRanksToUse) return;
 
   const int nElem = 4 * 1024 * 1024;
@@ -434,7 +440,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
   auto getPacketBuffer = mscclpp::GpuBuffer<mscclpp::LLPacket>(nPacket).memory();
 
   setupMeshConnections(portChannels, !useIb, useIb, false, putPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket),
-                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket));
+                       getPacketBuffer.get(), nPacket * sizeof(mscclpp::LLPacket), ibMode);
 
   ASSERT_EQ(portChannels.size(), 1);
 
@@ -451,8 +457,7 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
 
   proxyService->startProxy();
 
-  auto* testInfo = ::testing::UnitTest::GetInstance()->current_test_info();
-  const std::string testName = std::string(testInfo->test_suite_name()) + "." + std::string(testInfo->name());
+  const std::string testName = ::mscclpp::test::currentTestName();
   const int nTries = 1000000;
 
   // Warm-up
@@ -471,28 +476,127 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb) {
   communicator->bootstrap()->barrier();
 
   if (gEnv->rank == 0) {
-    std::cout << testName << ": " << std::setprecision(4) << (float)timer.elapsed() / (float)nTries << " us/iter\n";
+    ::mscclpp::test::reportPerfResult("latency", (float)timer.elapsed() / (float)nTries, "us/iter");
   }
 
   proxyService->stopProxy();
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false); }
+TEST(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongIb) {
-#if defined(USE_IBVERBS)
-  testPacketPingPong(true);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testPacketPingPong(true, IbMode::Host);
 }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false); }
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
 
-TEST_F(PortChannelOneToOneTest, PacketPingPongPerfIb) {
-#if defined(USE_IBVERBS)
-  testPacketPingPongPerf(true);
-#else   // !defined(USE_IBVERBS)
-  GTEST_SKIP() << "This test requires IBVerbs that the current build does not support.";
-#endif  // !defined(USE_IBVERBS)
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testPacketPingPongPerf(true, IbMode::Host);
+}
+
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testPacketPingPongPerf(true, IbMode::HostNoAtomic);
+}
+
+TEST(PortChannelOneToOneTest, PingPongIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testPingPong(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
+}
+
+TEST(PortChannelOneToOneTest, PacketPingPongIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testPacketPingPong(true, IbMode::HostNoAtomic);
+}
+
+// Bandwidth test: bidirectional bulk transfer matching the tutorial pattern.
+// Both ranks do signal+wait+putWithSignal+wait per iteration.
+__global__ void kernelBandwidthBidir(int* buff, int nElem, int nIters, int rank) {
+  DeviceHandle<mscclpp::PortChannel>& portChan = gChannelOneToOneTestConstPortChans;
+  if (threadIdx.x != 0) return;
+  const uint64_t srcOffset = rank * nElem * sizeof(int);
+  const uint64_t dstOffset = srcOffset;
+  for (int i = 0; i < nIters; i++) {
+    portChan.signal();
+    portChan.wait();
+    portChan.putWithSignal(dstOffset, srcOffset, nElem * sizeof(int));
+    portChan.wait();
+  }
+}
+
+void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  const int maxElem = 32 * 1024 * 1024;  // 128 MB per direction
+  const int bufElem = maxElem * 2;       // 2x for bidirectional
+
+  std::vector<mscclpp::PortChannel> portChannels;
+  std::shared_ptr<int> buff = mscclpp::GpuBuffer<int>(bufElem).memory();
+  setupMeshConnections(portChannels, params.useIPC, params.useIB, params.useEthernet, buff.get(), bufElem * sizeof(int),
+                       nullptr, 0, params.ibMode);
+
+  std::vector<DeviceHandle<mscclpp::PortChannel>> portChannelHandles;
+  for (auto& ch : portChannels) portChannelHandles.push_back(ch.deviceHandle());
+
+  ASSERT_EQ(portChannels.size(), 1);
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gChannelOneToOneTestConstPortChans, portChannelHandles.data(),
+                                       sizeof(DeviceHandle<mscclpp::PortChannel>)));
+
+  proxyService->startProxy();
+
+  const std::string testName = ::mscclpp::test::currentTestName();
+  const int nIters = 1000;
+
+  for (int nElem : {256, 16 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024}) {
+    // Warm-up
+    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, 10, gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    communicator->bootstrap()->barrier();
+
+    // Measure
+    mscclpp::Timer timer;
+    kernelBandwidthBidir<<<1, 1024>>>(buff.get(), nElem, nIters, gEnv->rank);
+    MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+    double elapsedUs = timer.elapsed();
+    communicator->bootstrap()->barrier();
+
+    if (gEnv->rank == 0) {
+      double copyBytes = (double)nElem * sizeof(int);
+      double elapsedMsPerIter = elapsedUs / 1e3 / nIters;
+      double gbps = copyBytes / elapsedMsPerIter * 1e-6;
+      double sizeKB = copyBytes / 1024.0;
+      std::string label =
+          (sizeKB >= 1024.0) ? (std::to_string((int)(sizeKB / 1024.0)) + " MB") : (std::to_string((int)sizeKB) + " KB");
+      ::mscclpp::test::reportPerfResult(label, gbps, "GB/s");
+    }
+  }
+
+  proxyService->stopProxy();
+}
+
+PERF_TEST(PortChannelOneToOneTest, Bandwidth) {
+  testBandwidth(PingPongTestParams{
+      .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Host});
+}
+
+PERF_TEST(PortChannelOneToOneTest, BandwidthIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testBandwidth(PingPongTestParams{
+      .useIPC = false, .useIB = true, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::HostNoAtomic});
 }

@@ -54,18 +54,20 @@ Env::Env()
       logFile(readEnv<std::string>("MSCCLPP_LOG_FILE", "")),
       hcaDevices(readEnv<std::string>("MSCCLPP_HCA_DEVICES", "")),
       ibvSo(readEnv<std::string>("MSCCLPP_IBV_SO", "")),
+      ibvMode(readEnv<std::string>("MSCCLPP_IBV_MODE", "host")),
       hostid(readEnv<std::string>("MSCCLPP_HOSTID", "")),
       socketFamily(readEnv<std::string>("MSCCLPP_SOCKET_FAMILY", "")),
       socketIfname(readEnv<std::string>("MSCCLPP_SOCKET_IFNAME", "")),
       commId(readEnv<std::string>("MSCCLPP_COMM_ID", "")),
-      executionPlanDir(readEnv<std::string>("MSCCLPP_EXECUTION_PLAN_DIR",
-                                            readEnv<std::string>("HOME", "~") + "/.cache/mscclpp_default")),
+      cacheDir(readEnv<std::string>("MSCCLPP_CACHE_DIR", readEnv<std::string>("HOME", "~") + "/.cache/mscclpp")),
       npkitDumpDir(readEnv<std::string>("MSCCLPP_NPKIT_DUMP_DIR", "")),
       cudaIpcUseDefaultStream(readEnv<bool>("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", false)),
       ncclSharedLibPath(readEnv<std::string>("MSCCLPP_NCCL_LIB_PATH", "")),
       forceNcclFallbackOperation(readEnv<std::string>("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", "")),
-      disableChannelCache(readEnv<bool>("MSCCLPP_DISABLE_CHANNEL_CACHE", false)),
-      forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)) {}
+      ncclSymmetricMemory(readEnv<bool>("MSCCLPP_NCCL_SYMMETRIC_MEMORY", false)),
+      forceDisableNvls(readEnv<bool>("MSCCLPP_FORCE_DISABLE_NVLS", false)),
+      forceDisableGdr(readEnv<bool>("MSCCLPP_FORCE_DISABLE_GDR", false)),
+      ibGidIndex(readEnv<int>("MSCCLPP_IB_GID_INDEX", 0)) {}
 
 std::shared_ptr<Env> env() {
   static std::shared_ptr<Env> globalEnv = std::shared_ptr<Env>(new Env());
@@ -81,17 +83,20 @@ std::shared_ptr<Env> env() {
     logEnv("MSCCLPP_LOG_FILE", globalEnv->logFile);
     logEnv("MSCCLPP_HCA_DEVICES", globalEnv->hcaDevices);
     logEnv("MSCCLPP_IBV_SO", globalEnv->ibvSo);
+    logEnv("MSCCLPP_IBV_MODE", globalEnv->ibvMode);
     logEnv("MSCCLPP_HOSTID", globalEnv->hostid);
     logEnv("MSCCLPP_SOCKET_FAMILY", globalEnv->socketFamily);
     logEnv("MSCCLPP_SOCKET_IFNAME", globalEnv->socketIfname);
     logEnv("MSCCLPP_COMM_ID", globalEnv->commId);
-    logEnv("MSCCLPP_EXECUTION_PLAN_DIR", globalEnv->executionPlanDir);
+    logEnv("MSCCLPP_CACHE_DIR", globalEnv->cacheDir);
     logEnv("MSCCLPP_NPKIT_DUMP_DIR", globalEnv->npkitDumpDir);
     logEnv("MSCCLPP_CUDAIPC_USE_DEFAULT_STREAM", globalEnv->cudaIpcUseDefaultStream);
     logEnv("MSCCLPP_NCCL_LIB_PATH", globalEnv->ncclSharedLibPath);
     logEnv("MSCCLPP_FORCE_NCCL_FALLBACK_OPERATION", globalEnv->forceNcclFallbackOperation);
-    logEnv("MSCCLPP_DISABLE_CHANNEL_CACHE", globalEnv->disableChannelCache);
+    logEnv("MSCCLPP_NCCL_SYMMETRIC_MEMORY", globalEnv->ncclSymmetricMemory);
     logEnv("MSCCLPP_FORCE_DISABLE_NVLS", globalEnv->forceDisableNvls);
+    logEnv("MSCCLPP_FORCE_DISABLE_GDR", globalEnv->forceDisableGdr);
+    logEnv("MSCCLPP_IB_GID_INDEX", globalEnv->ibGidIndex);
   }
   return globalEnv;
 }

@@ -54,6 +54,12 @@ class Env {
   /// default libibverbs library found in the system.
   const std::string ibvSo;
 
+  /// Env name: `MSCCLPP_IBV_MODE`. Selects the IB stack implementation for PortChannel.
+  /// Allowed values:
+  /// - "host": use the host stack with RDMA atomics (default).
+  /// - "host-no-atomic": use the host stack with write-with-immediate signaling (no RDMA atomics).
+  const std::string ibvMode;
+
   /// Env name: `MSCCLPP_HOSTID`. A string that uniquely identifies the host. If unset, it will use the hostname.
   /// This is used to determine whether the host is the same across different processes.
   const std::string hostid;
@@ -70,9 +76,9 @@ class Env {
   /// Env name: `MSCCLPP_COMM_ID`. To be deprecated; don't use this.
   const std::string commId;
 
-  /// Env name: `MSCCLPP_EXECUTION_PLAN_DIR`. The directory to find execution plans from. This should be set to
-  /// use execution plans for the NCCL API. Unset by default.
-  const std::string executionPlanDir;
+  /// Env name: `MSCCLPP_CACHE_DIR`. The directory to use for caching execution plans and other temporary files.
+  /// If unset, it defaults to `~/.cache/mscclpp`.
+  const std::string cacheDir;
 
   /// Env name: `MSCCLPP_NPKIT_DUMP_DIR`. The directory to dump NPKIT traces to. If this is set, NPKIT will be
   /// enabled and will dump traces to this directory. Unset by default.
@@ -92,16 +98,26 @@ class Env {
   /// debugging purposes. Currently supports `all`, `broadcast`, `allreduce`, `reducescatter`, and `allgather`.
   const std::string forceNcclFallbackOperation;
 
-  /// Env name: `MSCCLPP_DISABLE_CHANNEL_CACHE`. If set to true, it will disable the channel cache for NCCL APIs.
-  /// Currently, this should be set to true if the application may call NCCL APIs on the same local buffer with
-  /// different remote buffers, e.g., in the case of a dynamic communicator. If CUDA/HIP graphs are used, disabling
-  /// the channel cache won't affect the performance, but otherwise it may lead to performance degradation.
+  /// Env name: `MSCCLPP_NCCL_SYMMETRIC_MEMORY`. If set to true, it indicates that the application uses symmetric memory
+  /// allocation across all ranks, making it safe to cache memory handles for all NCCL algorithms. If set to false, the
+  /// system will either use non-zero-copy algorithms (when CUDA/HIP graphs are not enabled) or set up new connections
+  /// every time (when CUDA/HIP graphs are enabled). This should be set to false if the application may call NCCL APIs
+  /// on the same local buffer with different remote buffers, e.g., in the case of a dynamic communicator.
   /// Default is false.
-  const bool disableChannelCache;
+  const bool ncclSymmetricMemory;
 
   /// Env name: `MSCCLPP_FORCE_DISABLE_NVLS`. If set to true, it will disable the NVLS support in MSCCL++.
   /// Default is false.
   const bool forceDisableNvls;
+
+  /// Env name: `MSCCLPP_FORCE_DISABLE_GDR`. If set to true, it will disable the GDRCopy support in MSCCL++.
+  /// When false (default), GDRCopy is auto-detected and enabled if the gdrcopy driver is loaded.
+  /// Default is false.
+  const bool forceDisableGdr;
+
+  /// Env name: `MSCCLPP_IB_GID_INDEX`. The GID index to use for IB transport.
+  /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
+  const int ibGidIndex;
 
  private:
   Env();

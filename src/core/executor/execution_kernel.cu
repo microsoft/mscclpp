@@ -34,6 +34,17 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       );
 #endif
       break;
+    case DataType::UINT8:
+      executionKernel<uint8_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+          rank, (uint8_t*)src, (uint8_t*)dst, (uint8_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+          localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+          ,
+          NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+      );
+#endif
+      break;
     case DataType::FLOAT16:
       executionKernel<half, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
           rank, (half*)src, (half*)dst, (half*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
@@ -67,9 +78,15 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       );
 #endif
       break;
-    case DataType::FP8_E4M3:
-    case DataType::FP8_E5M2:
+    case DataType::FLOAT8_E4M3:
+    case DataType::FLOAT8_E5M2:
       // FP8 is not supported in CUDA execution kernel.
+      break;
+    case DataType::FLOAT8_E4M3B15:
+      // fp8_e4m3b15 is a software type not supported in the CUDA execution kernel.
+      break;
+    case DataType::AUTO:
+      // AUTO is a sentinel resolved before reaching this point; nothing to do.
       break;
   }
 }

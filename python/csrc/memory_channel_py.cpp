@@ -11,20 +11,20 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_memory_channel(nb::module_& m) {
-  nb::class_<BaseMemoryChannel>(m, "BaseMemoryChannel")
+  nb::class_<BaseMemoryChannel>(m, "CppBaseMemoryChannel")
       .def(nb::init<>())
       .def(nb::init<std::shared_ptr<MemoryDevice2DeviceSemaphore>>(), nb::arg("semaphore"))
       .def(nb::init<const Semaphore&>(), nb::arg("semaphore"))
       .def("device_handle", &BaseMemoryChannel::deviceHandle);
 
-  nb::class_<BaseMemoryChannel::DeviceHandle>(m, "BaseMemoryChannelDeviceHandle")
+  nb::class_<BaseMemoryChannel::DeviceHandle>(m, "CppBaseMemoryChannelDeviceHandle")
       .def(nb::init<>())
       .def_rw("semaphore_", &BaseMemoryChannel::DeviceHandle::semaphore_)
       .def_prop_ro("raw", [](const BaseMemoryChannel::DeviceHandle& self) -> nb::bytes {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-  nb::class_<MemoryChannel>(m, "MemoryChannel")
+  nb::class_<MemoryChannel>(m, "CppMemoryChannel")
       .def(nb::init<>())
       .def(
           "__init__",
@@ -42,7 +42,7 @@ void register_memory_channel(nb::module_& m) {
           nb::arg("semaphore"), nb::arg("dst"), nb::arg("src"), nb::arg("packet_buffer") = 0)
       .def("device_handle", &MemoryChannel::deviceHandle);
 
-  nb::class_<MemoryChannel::DeviceHandle>(m, "MemoryChannelDeviceHandle")
+  nb::class_<MemoryChannel::DeviceHandle>(m, "CppMemoryChannelDeviceHandle")
       .def(nb::init<>())
       .def_rw("semaphore_", &MemoryChannel::DeviceHandle::semaphore_)
       .def_rw("dst_", &MemoryChannel::DeviceHandle::dst_)

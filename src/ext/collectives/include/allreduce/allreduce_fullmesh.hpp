@@ -16,11 +16,11 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
                                  DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                 const std::unordered_map<std::string, uintptr_t>& extras);
+                                 const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype);
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllreduceContextKey(const void*, void*, size_t, DataType, bool);
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   std::shared_ptr<Communicator> comm_;
@@ -32,6 +32,7 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   RegisteredMemory localScratchMemory_;
   std::unordered_map<const void*, std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>
       memoryChannelsMap_;
+  bool symmetricMemory_ = false;
 };
 }  // namespace collective
 }  // namespace mscclpp

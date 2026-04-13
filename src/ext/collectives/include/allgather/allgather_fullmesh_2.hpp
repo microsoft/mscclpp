@@ -11,11 +11,11 @@ namespace collective {
 
 class AllgatherFullmesh2 : public AlgorithmBuilder {
  public:
-  AllgatherFullmesh2();
+  AllgatherFullmesh2() = default;
   std::shared_ptr<Algorithm> build() override;
 
  private:
-  bool disableChannelCache_;
+  bool symmetricMemory_;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   const int nChannelsPerConnection_ = 35;
@@ -27,7 +27,7 @@ class AllgatherFullmesh2 : public AlgorithmBuilder {
 
   std::shared_ptr<void> initAllgatherContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);
-  AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType);
+  AlgorithmCtxKey generateAllgatherContextKey(const void*, void*, size_t, DataType, bool);
 };
 
 }  // namespace collective

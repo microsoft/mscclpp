@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_ENDPOINT_HPP_
 #define MSCCLPP_ENDPOINT_HPP_
 
+#include <memory>
 #include <mscclpp/core.hpp>
 #include <vector>
 
@@ -24,6 +25,7 @@ struct Endpoint::Impl {
 
   // The following are only used for IB and are undefined for other transports.
   bool ibLocal_;
+  bool ibNoAtomic_;
   std::shared_ptr<IbQp> ibQp_;
   IbQpInfo ibQpInfo_;
 

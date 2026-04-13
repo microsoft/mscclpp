@@ -56,8 +56,11 @@ python3 -m mscclpp --install
 
 After installation, the generated JSON execution plan can be found at:
 ```
-~/.cache/mscclpp_default/
+~/.cache/mscclpp/default/
 ```
+
+If `MSCCLPP_CACHE_DIR` is set, bundled default plans are installed under `MSCCLPP_CACHE_DIR/default/`.
+`MSCCLPP_CACHE_DIR` specifies the cache root directory, so it should be set without `default` in the path.
 
 **Performance Results:**
 

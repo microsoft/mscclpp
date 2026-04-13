@@ -17,356 +17,7 @@
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "execution_common.hpp"
-
-namespace {
-#if defined(MSCCLPP_DEVICE_COMPILE)
-template <typename To, typename From>
-MSCCLPP_DEVICE_INLINE To bit_cast(const From& src) {
-  static_assert(sizeof(To) == sizeof(From), "Size mismatch for bit_cast");
-
-  union {
-    From f;
-    To t;
-  } u;
-  u.f = src;
-  return u.t;
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE T add_elements(T a, T b) {
-  return a + b;
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __half2 add_elements(__half2 a, __half2 b) {
-  return __hadd2(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __bfloat16 add_elements(__bfloat16 a, __bfloat16 b) {
-  return __hadd(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __bfloat162 add_elements(__bfloat162 a, __bfloat162 b) {
-  return __hadd2(a, b);
-}
-
-#if defined(__FP8_TYPES_EXIST__)
-// FP8 E4M3 addition using __hadd (single element)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8_e4m3 add_elements(__fp8_e4m3 a, __fp8_e4m3 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // Optimized assembly for gfx942
-  float2 v;
-  uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2"
-               : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.x, ival, false);
-#else
-  return __fp8_e4m3(__hadd(__half(a), __half(b)));
-#endif
-}
-
-// FP8 E5M2 addition using __hadd (single element) - must come before helper functions
-template <>
-MSCCLPP_DEVICE_INLINE __fp8_e5m2 add_elements(__fp8_e5m2 a, __fp8_e5m2 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // Optimized assembly for gfx942 (bfloat8)
-  float2 v;
-  uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2"
-               : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a.__x, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b.__x, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.x, ival, false);
-#else
-  return __fp8_e5m2(__hadd(__half(a), __half(b)));
-#endif
-}
-
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-// HIP gfx942 platform: Helper functions for vectorized FP8 operations
-// We use separate function names because __fp8x2_e4m3 and __fp8x2_e5m2 are both uint16_t
-
-// E4M3 vectorized addition for 2 elements
-MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e4m3(uint16_t a, uint16_t b) {
-  float2 v;
-  uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2"
-               : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_fp8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_fp8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_fp8_f32(v.x, v.y, ival, false);
-}
-
-// E4M3 vectorized addition for 4 elements
-MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e4m3(uint32_t a, uint32_t b) {
-  uint16_t a_low = a & 0xFFFF;
-  uint16_t a_high = (a >> 16) & 0xFFFF;
-  uint16_t b_low = b & 0xFFFF;
-  uint16_t b_high = (b >> 16) & 0xFFFF;
-  uint16_t result_low = add_fp8x2_e4m3(a_low, b_low);
-  uint16_t result_high = add_fp8x2_e4m3(a_high, b_high);
-  return (static_cast<uint32_t>(result_high) << 16) | result_low;
-}
-
-// E5M2 vectorized addition for 2 elements
-MSCCLPP_DEVICE_INLINE uint16_t add_fp8x2_e5m2(uint16_t a, uint16_t b) {
-  float2 v;
-  uint32_t ival = 0;
-  asm volatile("v_pk_add_f32 %0, %1, %2"
-               : "=v"(v)
-               : "v"(__builtin_amdgcn_cvt_pk_f32_bf8(a, 0)), "v"(__builtin_amdgcn_cvt_pk_f32_bf8(b, 0)));
-  return __builtin_amdgcn_cvt_pk_bf8_f32(v.x, v.y, ival, false);
-}
-
-// E5M2 vectorized addition for 4 elements
-MSCCLPP_DEVICE_INLINE uint32_t add_fp8x4_e5m2(uint32_t a, uint32_t b) {
-  uint16_t a_low = a & 0xFFFF;
-  uint16_t a_high = (a >> 16) & 0xFFFF;
-  uint16_t b_low = b & 0xFFFF;
-  uint16_t b_high = (b >> 16) & 0xFFFF;
-  uint16_t result_low = add_fp8x2_e5m2(a_low, b_low);
-  uint16_t result_high = add_fp8x2_e5m2(a_high, b_high);
-  return (static_cast<uint32_t>(result_high) << 16) | result_low;
-}
-#endif
-
-#if !defined(MSCCLPP_DEVICE_HIP)
-// CUDA platform: Template specializations for vectorized FP8 operations
-
-// FP8 E4M3 vectorized addition using __hadd2 for 2 elements (CUDA only)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8x2_e4m3 add_elements(__fp8x2_e4m3 a, __fp8x2_e4m3 b) {
-  return __fp8x2_e4m3(__hadd2(__half2(a), __half2(b)));
-}
-
-// FP8 E4M3 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e4m3)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8x4_e4m3 add_elements(__fp8x4_e4m3 a, __fp8x4_e4m3 b) {
-  __fp8x2_e4m3* a_pair = reinterpret_cast<__fp8x2_e4m3*>(&a);
-  __fp8x2_e4m3* b_pair = reinterpret_cast<__fp8x2_e4m3*>(&b);
-
-  __fp8x2_e4m3 result[2];
-  result[0] = add_elements(a_pair[0], b_pair[0]);
-  result[1] = add_elements(a_pair[1], b_pair[1]);
-
-  return *reinterpret_cast<__fp8x4_e4m3*>(result);
-}
-
-// FP8 E5M2 vectorized addition for 2 elements (CUDA only)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8x2_e5m2 add_elements(__fp8x2_e5m2 a, __fp8x2_e5m2 b) {
-  return __fp8x2_e5m2(__hadd2(__half2(a), __half2(b)));
-}
-
-// FP8 E5M2 vectorized addition for 4 elements (CUDA only - via 2x __fp8x2_e5m2)
-template <>
-MSCCLPP_DEVICE_INLINE __fp8x4_e5m2 add_elements(__fp8x4_e5m2 a, __fp8x4_e5m2 b) {
-  __fp8x2_e5m2* a_pair = reinterpret_cast<__fp8x2_e5m2*>(&a);
-  __fp8x2_e5m2* b_pair = reinterpret_cast<__fp8x2_e5m2*>(&b);
-
-  __fp8x2_e5m2 result[2];
-  result[0] = add_elements(a_pair[0], b_pair[0]);
-  result[1] = add_elements(a_pair[1], b_pair[1]);
-
-  return *reinterpret_cast<__fp8x4_e5m2*>(result);
-}
-#endif
-#endif  // __FP8_TYPES_EXIST__
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE int4 add_vectors_helper(int4 a, int4 b) {
-  int4 ret;
-  ret.w = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.w), bit_cast<T, int>(b.w)));
-  ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  ret.z = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.z), bit_cast<T, int>(b.z)));
-  return ret;
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE int4 add_vectors(int4 a, int4 b) {
-  return add_vectors_helper<T>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__half>(int4 a, int4 b) {
-  return add_vectors_helper<__half2>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__bfloat16>(int4 a, int4 b) {
-  return add_vectors_helper<__bfloat162>(a, b);
-}
-
-#if defined(__FP8_TYPES_EXIST__)
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e4m3>(int4 a, int4 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // HIP gfx942: Use helper functions that work with storage types
-  int4 ret;
-  ret.w = add_fp8x4_e4m3(a.w, b.w);
-  ret.x = add_fp8x4_e4m3(a.x, b.x);
-  ret.y = add_fp8x4_e4m3(a.y, b.y);
-  ret.z = add_fp8x4_e4m3(a.z, b.z);
-  return ret;
-#else
-  return add_vectors_helper<__fp8x4_e4m3>(a, b);
-#endif
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE int4 add_vectors<__fp8_e5m2>(int4 a, int4 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // HIP gfx942: Use helper functions that work with storage types
-  int4 ret;
-  ret.w = add_fp8x4_e5m2(a.w, b.w);
-  ret.x = add_fp8x4_e5m2(a.x, b.x);
-  ret.y = add_fp8x4_e5m2(a.y, b.y);
-  ret.z = add_fp8x4_e5m2(a.z, b.z);
-  return ret;
-#else
-  return add_vectors_helper<__fp8x4_e5m2>(a, b);
-#endif
-}
-#endif  // __FP8_TYPES_EXIST__
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors_helper(uint2 a, uint2 b) {
-  uint2 ret;
-  ret.x = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.x), bit_cast<T, int>(b.x)));
-  ret.y = bit_cast<int, T>(add_elements(bit_cast<T, int>(a.y), bit_cast<T, int>(b.y)));
-  return ret;
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE uint2 add_vectors(uint2 a, uint2 b) {
-  return add_vectors_helper<T>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__half>(uint2 a, uint2 b) {
-  return add_vectors_helper<__half2>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__bfloat16>(uint2 a, uint2 b) {
-  return add_vectors_helper<__bfloat162>(a, b);
-}
-
-#if defined(__FP8_TYPES_EXIST__)
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e4m3>(uint2 a, uint2 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // HIP gfx942: Use helper functions that work with storage types
-  uint2 ret;
-  ret.x = add_fp8x4_e4m3(a.x, b.x);
-  ret.y = add_fp8x4_e4m3(a.y, b.y);
-  return ret;
-#else
-  return add_vectors_helper<__fp8x4_e4m3>(a, b);
-#endif
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) uint2 add_vectors<__fp8_e5m2>(uint2 a, uint2 b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  // HIP gfx942: Use helper functions that work with storage types
-  uint2 ret;
-  ret.x = add_fp8x4_e5m2(a.x, b.x);
-  ret.y = add_fp8x4_e5m2(a.y, b.y);
-  return ret;
-#else
-  return add_vectors_helper<__fp8x4_e5m2>(a, b);
-#endif
-}
-#endif  // __FP8_TYPES_EXIST__
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE int add_vectors_helper(int a, int b) {
-  return bit_cast<int, T>(add_elements(bit_cast<T, int>(a), bit_cast<T, int>(b)));
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE int add_vectors(int a, int b) {
-  return add_vectors_helper<T>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__half>(int a, int b) {
-  return add_vectors_helper<__half2>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__bfloat16>(int a, int b) {
-  return add_vectors_helper<__bfloat162>(a, b);
-}
-
-#if defined(__FP8_TYPES_EXIST__)
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e4m3>(int a, int b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  return add_fp8x4_e4m3(a, b);
-#else
-  return add_vectors_helper<__fp8x4_e4m3>(a, b);
-#endif
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE __attribute__((unused)) int add_vectors<__fp8_e5m2>(int a, int b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  return add_fp8x4_e5m2(a, b);
-#else
-  return add_vectors_helper<__fp8x4_e5m2>(a, b);
-#endif
-}
-#endif  // __FP8_TYPES_EXIST__
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors_helper(uint32_t a, uint32_t b) {
-  return bit_cast<uint32_t, T>(add_elements(bit_cast<T, uint32_t>(a), bit_cast<T, uint32_t>(b)));
-}
-
-template <typename T>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors(uint32_t a, uint32_t b) {
-  return add_vectors_helper<T>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__half>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__half2>(a, b);
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__bfloat16>(uint32_t a, uint32_t b) {
-  return add_vectors_helper<__bfloat162>(a, b);
-}
-
-#if defined(__FP8_TYPES_EXIST__)
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e4m3>(uint32_t a, uint32_t b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  return add_fp8x4_e4m3(a, b);
-#else
-  return add_vectors_helper<__fp8x4_e4m3>(a, b);
-#endif
-}
-
-template <>
-MSCCLPP_DEVICE_INLINE uint32_t add_vectors<__fp8_e5m2>(uint32_t a, uint32_t b) {
-#if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
-  return add_fp8x4_e5m2(a, b);
-#else
-  return add_vectors_helper<__fp8x4_e5m2>(a, b);
-#endif
-}
-#endif  // __FP8_TYPES_EXIST__
-
-#endif  // MSCCLPP_DEVICE_COMPILE
-
-}  // namespace
-
+#include "reduce_kernel.hpp"
 namespace mscclpp {
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
@@ -534,7 +185,7 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
   }
 }
 
-template <typename T, bool ReuseScratch, bool SendToRemote = true>
+template <typename T, bool ReuseScratch, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input, void* output, void* scratch,
                                                 uint32_t offset, uint32_t unitSize) {
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
@@ -559,7 +210,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
           sizeof(int4);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
       val = mscclpp::read<int4>(remoteMemory, srcOffset + idx);
-      tmp = add_vectors<T>(tmp, val);
+      tmp = calVector<T, OpType>(tmp, val);
     }
     output4[outputOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
@@ -587,7 +238,7 @@ MSCCLPP_DEVICE_INLINE void handleReadReduceSend(const Operation& op, void* input
            getOffset<ReuseScratch>(memoryChannelBufferTypes_[op.inputBufferRefs[index + 1].id], offset)) /
           sizeof(T);
       void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.inputBufferRefs[index + 1].id]);
-      tmp = add_elements(tmp, mscclpp::read<T>(remoteMemory, srcOffset + idx));
+      tmp = tmp + mscclpp::read<T>(remoteMemory, srcOffset + idx);
     }
     static_cast<T*>(output)[idx] = tmp;
     if constexpr (SendToRemote) {
@@ -647,11 +298,11 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
   ChannelType chType = op.channelType;
   if (chType == ChannelType::MEMORY) {
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
+    PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
+      PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
+      PacketType pkt(data, flag_);
       for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        PacketPayload<PacketType> data = pkts[pktIdx].read(flag_);
-        PacketType pkt(data, flag_);
         size_t offset = (scratchOffset_ + (dstOffsets[idx] << 1)) / sizeof(PacketType);
         void* remoteMemory = static_cast<char*>(memoryChannelBufferPtrs_[op.outputBufferRefs[idx].id]);
         mscclpp::write<PacketType>(remoteMemory, offset + pktIdx, pkt);
@@ -661,10 +312,8 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
     // Ensuring Data Is Ready
     size_t nPackets = size / sizeof(PacketPayload<PacketType>);
     for (size_t pktIdx = threadIdx.x; pktIdx < nPackets; pktIdx += blockDim.x) {
-      for (uint32_t idx = 0; idx < nOutput; ++idx) {
-        PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[idx] << 1));
-        pkts[pktIdx].read(flag_);
-      }
+      PacketType* pkts = (PacketType*)((char*)scratch + scratchOffset_ + (srcOffsets[0] << 1));
+      pkts[pktIdx].read(flag_);
     }
     __syncthreads();
 
@@ -674,14 +323,14 @@ MSCCLPP_DEVICE_INLINE void handleReadPutPackets(const Operation& op, void* scrat
       return;
     }
     uint32_t dstOffset = (dstOffsets[chIdx] << 1) + scratchOffset_;
-    uint32_t srcOffset = (srcOffsets[chIdx] << 1) + scratchOffset_;
+    uint32_t srcOffset = (srcOffsets[0] << 1) + scratchOffset_;
     MemoryId dstMemoryId = portChannelBufferIds_[op.outputBufferRefs[chIdx].id];
     portChannels_[channelIndexes[chIdx]].put(
         dstMemoryId, dstOffset, static_cast<MemoryId>(BufferType::SCRATCH) + localMemoryIdBegin_, srcOffset, size << 1);
   }
 }
 
-template <typename T, typename PacketType, bool SendToRemote = true>
+template <typename T, typename PacketType, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
   const uint32_t nSrcs = op.nInputs - 1;
@@ -704,9 +353,9 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
     for (uint32_t index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
-      data = add_vectors<T>(data, val);
+      data = calVector<T, OpType>(data, val);
     }
-    data = add_vectors<T>(data, srcPacketPayload[idx]);
+    data = calVector<T, OpType>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
 
     if constexpr (SendToRemote) {
@@ -720,7 +369,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSendPackets(const Operation& op, void* in
   }
 }
 
-template <typename T, typename PacketType, bool SendToRemote = true>
+template <typename T, typename PacketType, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void* input, void* output, void* scratch) {
   uint32_t size = op.inputBufferSizes[0];
   const uint32_t nSrcs = op.nInputs - 1;
@@ -745,9 +394,9 @@ MSCCLPP_DEVICE_INLINE void handleReduceCopySendPackets(const Operation& op, void
     for (uint32_t index = 0; index < nSrcs; ++index) {
       PacketType* pkt = (PacketType*)((char*)scratch + scratchOffset_ + 2 * inputOffsets[index]);
       PacketPayload<PacketType> val = pkt[idx].read(flag_);
-      data = add_vectors<T>(data, val);
+      data = calVector<T, OpType>(data, val);
     }
-    data = add_vectors<T>(data, srcPacketPayload[idx]);
+    data = calVector<T, OpType>(data, srcPacketPayload[idx]);
     dstPacketPayload[idx] = data;
     PacketType* dst_val = &dstPkt[idx];
     dst_val->write(data, flag_);
@@ -790,7 +439,7 @@ MSCCLPP_DEVICE_INLINE void handleCopyPackets(const Operation& op, void* input, v
   mscclpp::copyToPackets<PacketType>(dst, src, size, threadIdx.x, blockDim.x, flag_);
 }
 
-template <typename T, bool ReuseScratch, bool SendToRemote = true>
+template <typename T, bool ReuseScratch, bool SendToRemote = true, ReduceOp OpType = SUM>
 MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, void* output, void* scratch,
                                             uint32_t offset, uint32_t unitSize) {
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
@@ -815,7 +464,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
       size_t buffOffset =
           (inputOffsets[index] + getOffset<ReuseScratch>(outputBufferRefs[index].type, offset)) / sizeof(int4);
       int4 val = buff4[buffOffset + idx];
-      tmp = add_vectors<T>(tmp, val);
+      tmp = calVector<T, OpType>(tmp, val);
     }
     dst4[dstOffset4 + idx] = tmp;
     if constexpr (SendToRemote) {
@@ -840,7 +489,7 @@ MSCCLPP_DEVICE_INLINE void handleReduceSend(const Operation& op, void* input, vo
       T* buff = static_cast<T*>(getBuffer(input, output, scratch, inputBufferRefs[index].type));
       uint32_t buffOffset =
           (inputOffsets[index] + getOffset<ReuseScratch>(inputBufferRefs[index].type, offset)) / sizeof(T);
-      tmp = add_elements(tmp, buff[buffOffset + idx]);
+      tmp = tmp + buff[buffOffset + idx];
     }
     dst[idx] = tmp;
     if constexpr (SendToRemote) {
@@ -872,51 +521,56 @@ MSCCLPP_DEVICE_INLINE void handleCopy(const Operation& op, void* input, void* ou
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
 template <typename T, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint32_t offset, uint32_t unitSize) {
-  static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
-  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
-  if (size <= 0) {
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    assert(false && "MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
     return;
-  }
-  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
-  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
-  assert(size % sizeof(T) == 0);
-  assert(srcOffset % sizeof(T) == 0);
-  assert(dstOffset % sizeof(T) == 0);
-
-  T* src = (T*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
-  T* dst = (T*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
-  if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
-    const size_t nElem = size / sizeof(T);
-    const size_t srcOffsetElem = srcOffset / sizeof(T);
-    const size_t dstOffsetElem = dstOffset / sizeof(T);
-    VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
-    VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
-    for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
-      auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
-    }
   } else {
-    // handle data in 16-byte unit
-    using Type16 = typename mscclpp::VectorType<T, 16 / sizeof(T)>;
-    const size_t nType16 = size / sizeof(Type16);
-    const size_t srcOffset16 = srcOffset / sizeof(Type16);
-    const size_t dstOffset16 = dstOffset / sizeof(Type16);
-    Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
-    Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
-    for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
-      Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+    static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
+    const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+    if (size <= 0) {
+      return;
     }
-    // handle rest of data
-    constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
-    using TypeRest = typename mscclpp::VectorType<T, RedBytes / sizeof(T)>;
-    const size_t processed = nType16 * sizeof(Type16);
-    const size_t nRest = (size - processed) / sizeof(TypeRest);
-    TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
-    TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
-    for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
-      TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
-      SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.nvlsInputBufferType, offset);
+    const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+    assert(size % sizeof(T) == 0);
+    assert(srcOffset % sizeof(T) == 0);
+    assert(dstOffset % sizeof(T) == 0);
+
+    T* src = (T*)nvlsChannels_[op.nvlsInputIndex].mcPtr;
+    T* dst = (T*)nvlsChannels_[op.nvlsOutputIndex].mcPtr;
+    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
+      const size_t nElem = size / sizeof(T);
+      const size_t srcOffsetElem = srcOffset / sizeof(T);
+      const size_t dstOffsetElem = dstOffset / sizeof(T);
+      VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(src + srcOffsetElem);
+      VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dst + dstOffsetElem);
+      for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
+        auto val = SwitchChannelDeviceHandle::multimemLoadReduce(srcElem + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
+      }
+    } else {
+      // handle data in 16-byte unit
+      using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
+      const size_t nType16 = size / sizeof(Type16);
+      const size_t srcOffset16 = srcOffset / sizeof(Type16);
+      const size_t dstOffset16 = dstOffset / sizeof(Type16);
+      Type16* src16 = reinterpret_cast<Type16*>(src) + srcOffset16;
+      Type16* dst16 = reinterpret_cast<Type16*>(dst) + dstOffset16;
+      for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
+        Type16 val = SwitchChannelDeviceHandle::multimemLoadReduce(src16 + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+      }
+      // handle rest of data
+      constexpr int RedBytes = (sizeof(T) == 8) ? 8 : 4;
+      using TypeRest = mscclpp::VectorType<T, RedBytes / sizeof(T)>;
+      const size_t processed = nType16 * sizeof(Type16);
+      const size_t nRest = (size - processed) / sizeof(TypeRest);
+      TypeRest* srcR = reinterpret_cast<TypeRest*>(src + srcOffset + processed);
+      TypeRest* dstR = reinterpret_cast<TypeRest*>(dst + dstOffset + processed);
+      for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
+        TypeRest val = SwitchChannelDeviceHandle::multimemLoadReduce(srcR + idx);
+        SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+      }
     }
   }
 }
@@ -1222,7 +876,7 @@ class ExecutionKernel {
 #endif
         break;
 #if defined(__FP8_TYPES_EXIST__)
-      case DataType::FP8_E4M3:
+      case DataType::FLOAT8_E4M3:
         executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -1233,7 +887,7 @@ class ExecutionKernel {
         );
 #endif
         break;
-      case DataType::FP8_E5M2:
+      case DataType::FLOAT8_E5M2:
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -1245,6 +899,32 @@ class ExecutionKernel {
 #endif
         break;
 #endif  // __FP8_TYPES_EXIST__
+      case DataType::FLOAT8_E4M3B15:
+        executionKernel<__fp8_e4m3b15, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3b15*)src, (__fp8_e4m3b15*)dst, (__fp8_e4m3b15*)scratch, scratchOffset, scratchChunkSize,
+            plan, semaphores, localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::UINT8:
+        executionKernel<uint8_t, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (uint8_t*)src, (uint8_t*)dst, (uint8_t*)scratch, scratchOffset, scratchChunkSize, plan, semaphores,
+            localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+        break;
+      case DataType::AUTO:
+        // AUTO is a sentinel that must be resolved before reaching this point.
+        assert(false && "DataType::AUTO must be resolved before kernel launch");
+        break;
     }
   }
 #else   // !defined(MSCCLPP_DEVICE_HIP)

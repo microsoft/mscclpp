@@ -19,11 +19,11 @@
 #else  // defined(DEBUG_BUILD)
 
 #if defined(MSCCLPP_DEVICE_HIP)
-extern "C" __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                         const char *__function);
+extern "C" __device__ void __assert_fail(const char* __assertion, const char* __file, unsigned int __line,
+                                         const char* __function);
 #else   // !defined(MSCCLPP_DEVICE_HIP)
-extern "C" __host__ __device__ void __assert_fail(const char *__assertion, const char *__file, unsigned int __line,
-                                                  const char *__function) __THROW;
+extern "C" __host__ __device__ void __assert_fail(const char* __assertion, const char* __file, unsigned int __line,
+                                                  const char* __function) __THROW;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
 
 /// Assert a condition on the device and print a message if the condition is false.

@@ -101,15 +101,17 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
         "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize, size_t outputSize,
                mscclpp::DataType dtype, [[maybe_unused]] mscclpp::ReduceOp op, cudaStream_t stream, int nBlocks,
-               int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+               int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+               [[maybe_unused]] mscclpp::DataType accumDtype) {
           return self->allgatherKernelFunc(ctx, input, output, inputSize, stream);
         },
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
                size_t outputSize,
                mscclpp::DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
-        [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype) {
+        [self](const void* input, void* output, size_t inputSize, size_t outputSize, mscclpp::DataType dtype,
+               bool symmetricMemory) {
           return self->generateAllgatherContextKey(input, output, inputSize, outputSize,
-                                                   static_cast<ncclDataType_t>(dtype));
+                                                   static_cast<ncclDataType_t>(dtype), symmetricMemory);
         });
     return allgatherAlgo;
   }
@@ -191,7 +193,7 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
   }
 
   mscclpp::AlgorithmCtxKey generateAllgatherContextKey(const void* input, void* output, size_t inputSize,
-                                                       size_t outputSize, ncclDataType_t dtype) {
+                                                       size_t outputSize, ncclDataType_t dtype, bool) {
     return {(void*)input, output, inputSize, outputSize, 0};
   }
 };

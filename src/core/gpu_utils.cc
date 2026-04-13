@@ -5,48 +5,7 @@
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
-#include "debug.h"
-
-static inline bool isCudaTeardownError(cudaError_t err) {
-#if defined(MSCCLPP_USE_ROCM)
-  return err == cudaErrorContextIsDestroyed || err == cudaErrorInvalidDevice;
-#else   // !defined(MSCCLPP_USE_ROCM)
-  return err == cudaErrorCudartUnloading || err == cudaErrorContextIsDestroyed || err == cudaErrorInitializationError ||
-         err == cudaErrorInvalidDevice || err == cudaErrorLaunchFailure || err == cudaErrorDeviceUninitialized;
-#endif  // !defined(MSCCLPP_USE_ROCM)
-}
-
-[[maybe_unused]] static inline bool isCuTeardownError(CUresult r) {
-  return r == CUDA_ERROR_DEINITIALIZED || r == CUDA_ERROR_CONTEXT_IS_DESTROYED || r == CUDA_ERROR_LAUNCH_FAILED;
-}
-
-#define MSCCLPP_CUDATHROW_IGNORE_TEARDOWN(cmd) \
-  do {                                         \
-    cudaError_t __e = cmd;                     \
-    if (isCudaTeardownError(__e)) {            \
-      (void)cudaGetLastError();                \
-    } else {                                   \
-      MSCCLPP_CUDATHROW(__e);                  \
-    }                                          \
-  } while (false)
-
-#define MSCCLPP_CUTHROW_IGNORE_TEARDOWN(cmd) \
-  do {                                       \
-    CUresult __e = cmd;                      \
-    if (!isCuTeardownError(__e)) {           \
-      MSCCLPP_CUTHROW(__e);                  \
-    }                                        \
-  } while (false)
-
-#define MSCCLPP_CUTHROW_IGNORE(cmd)                                        \
-  do {                                                                     \
-    CUresult __e = cmd;                                                    \
-    if (__e != CUDA_SUCCESS) {                                             \
-      const char* errStr;                                                  \
-      cuGetErrorString(__e, &errStr);                                      \
-      WARN("%s:%d Cuda failure %d '%s'", __FILE__, __LINE__, __e, errStr); \
-    }                                                                      \
-  } while (false)
+#include "gpu_utils_internal.hpp"
 
 namespace mscclpp {
 

@@ -3,13 +3,16 @@
 [![Latest Release](https://img.shields.io/github/release/microsoft/mscclpp.svg)](https://github.com/microsoft/mscclpp/releases/latest)
 [![License](https://img.shields.io/github/license/microsoft/mscclpp.svg)](LICENSE)
 [![CodeQL](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/microsoft/mscclpp/actions/workflows/codeql-analysis.yml)
-[![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yaml/badge.svg)](https://microsoft.github.io/mscclpp/)
+[![Docs Build](https://github.com/microsoft/mscclpp/actions/workflows/doc-build.yml/badge.svg)](https://microsoft.github.io/mscclpp/)
+[![codecov](https://codecov.io/gh/microsoft/mscclpp/graph/badge.svg?token=DAV9DGHAY2)](https://codecov.io/gh/microsoft/mscclpp)
 
 | Testing Pipelines        | Build Status      |
 |--------------------------|-------------------|
-| Unit Tests (CUDA)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
-| Integration Tests (CUDA) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test?branchName=main)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398479&branchName=main) |
-| Integration Tests (ROCm) | [![Build Status](https://dev.azure.com/msazure/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test-rocm?branchName=main)](https://dev.azure.com/msazure/One/_build/latest?definitionId=399295&branchName=main) |
+| Unit Tests (CUDA)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main&jobName=UnitTestH100)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
+| Unit Tests (ROCm)        | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-ut?branchName=main&jobName=UnitTestMI300X)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398325&branchName=main) |
+| Integration Tests (CUDA) | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-test?branchName=main&jobName=Integration%20test%20H100)](https://msazure.visualstudio.com/One/_build/latest?definitionId=398479&branchName=main) |
+| NCCL Tests               | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-nccl?repoName=microsoft%2Fmscclpp&branchName=main&jobName=Run%20MSCCLPP%20over%20NCCL%20Test%20(H100))](https://msazure.visualstudio.com/One/_build/latest?definitionId=320665&repoName=microsoft%2Fmscclpp&branchName=main) |
+| RCCL Tests               | [![Build Status](https://msazure.visualstudio.com/One/_apis/build/status%2FCustom%2FMSCCLPP%2Fmscclpp-rccl?branchName=main&jobName=Run%20MSCCLPP%20over%20RCCL%20Test%20(MI300X))](https://msazure.visualstudio.com/One/_build/latest?definitionId=448013&branchName=main) |
 
 A GPU-driven communication stack for scalable AI applications.
 

@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 cmake_minimum_required(VERSION 3.25)
 project(mscclpp LANGUAGES CXX)
@@ -47,7 +47,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Options
 option(MSCCLPP_ENABLE_TRACE "Enable tracing" OFF)
-option(MSCCLPP_BUILD_TESTS "Build tests" ON)
+option(MSCCLPP_BUILD_TESTS "Build tests" OFF)
 option(MSCCLPP_BUILD_PYTHON_BINDINGS "Build Python bindings" ON)
 option(MSCCLPP_BUILD_EXT_NCCL "Build NCCL interfaces" ON)
 option(MSCCLPP_BUILD_EXT_COLLECTIVES "Build collective algorithms" ON)
@@ -56,6 +56,8 @@ option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
+option(MSCCLPP_ENABLE_COVERAGE "Enable code coverage" OFF)
+option(MSCCLPP_DISABLE_NB_LEAK_WARNINGS "Disable Nanobind leak warnings" ON)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -96,6 +98,62 @@ else()
         set(MSCCLPP_USE_ROCM ON)
     else()
         message(FATAL_ERROR "No compatible GPU found. Set MSCCLPP_USE_CUDA or MSCCLPP_USE_ROCM to ON.")
+    endif()
+endif()
+
+# Code coverage setup
+if(MSCCLPP_ENABLE_COVERAGE)
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        message(WARNING "Code coverage results with an optimized (non-Debug) build may be misleading")
+    endif()
+    
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        message(STATUS "Code coverage enabled")
+        
+        # Add coverage flags to C++ targets only (not CUDA)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--coverage>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
+        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
+        add_link_options($<$<LINK_LANGUAGE:CXX>:--coverage>)
+        
+        # Find lcov
+        find_program(LCOV_PATH lcov)
+        
+        if(NOT LCOV_PATH)
+            message(WARNING "lcov not found. Install lcov to generate coverage reports.")
+        endif()
+        
+        if(LCOV_PATH)
+            # Add coverage target
+            add_custom_target(coverage
+                COMMAND ${CMAKE_COMMAND} -E echo "Removing old coverage data..."
+                COMMAND ${LCOV_PATH} --directory . --zerocounters
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Running tests..."
+                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Collecting coverage data..."
+                COMMAND ${LCOV_PATH} --directory . --capture --output-file coverage.info
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Filtering coverage data..."
+                COMMAND ${LCOV_PATH} --remove coverage.info '/usr/*' '*/test/*' '*/build/*' --output-file coverage.info
+                
+                COMMAND ${CMAKE_COMMAND} -E echo "Coverage report generated in coverage.info"
+                
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                COMMENT "Generating code coverage report"
+            )
+            
+            # Add coverage clean target
+            add_custom_target(coverage-clean
+                COMMAND ${CMAKE_COMMAND} -E remove coverage.info
+                COMMAND ${LCOV_PATH} --directory . --zerocounters
+                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                COMMENT "Cleaning coverage data"
+            )
+        endif()
+    else()
+        message(WARNING "Code coverage is only supported with GCC or Clang compilers")
     endif()
 endif()
 if(MSCCLPP_GPU_ARCHS)
@@ -166,12 +224,35 @@ if(MSCCLPP_USE_IB)
     if(NOT IBVERBS_FOUND)
         message(FATAL_ERROR "IBVerbs not found. Install libibverbs-dev or rdma-core-devel. If you want to disable InfiniBand, add `-DMSCCLPP_USE_IB=OFF` in your cmake command.")
     endif()
+    find_package(MLX5)
+    if(MLX5_FOUND)
+        message(STATUS "MLX5 Direct Verbs found: ${MLX5_LIBRARIES}")
+    else()
+        message(STATUS "MLX5 Direct Verbs not found, mlx5dv optimizations disabled")
+    endif()
 endif()
 find_package(NUMA REQUIRED)
 find_package(Threads REQUIRED)
 
+option(MSCCLPP_USE_GDRCOPY "Use GDRCopy for direct GPU memory access from host." ON)
+if(MSCCLPP_USE_ROCM)
+    set(MSCCLPP_USE_GDRCOPY OFF)
+endif()
+if(MSCCLPP_USE_GDRCOPY)
+    find_package(GDRCopy)
+    if(NOT GDRCOPY_FOUND)
+        message(STATUS "GDRCopy not found, disabling GDRCopy support")
+        set(MSCCLPP_USE_GDRCOPY OFF)
+    else()
+        message(STATUS "GDRCopy found: ${GDRCOPY_LIBRARIES}")
+    endif()
+endif()
+
 include(FetchContent)
-FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+)
 FetchContent_MakeAvailable(json)
 
 if("${INSTALL_PREFIX}" STREQUAL "")

@@ -6,7 +6,7 @@ from typing import Union, Tuple
 
 import cupy as cp
 import numpy as np
-from mscclpp._mscclpp import RawGpuBuffer
+from mscclpp._mscclpp import CppRawGpuBuffer
 
 __all__ = ["GpuBuffer"]
 
@@ -25,6 +25,6 @@ class GpuBuffer(cp.ndarray):
         if any(s <= 0 for s in shape):
             raise ValueError("Shape must be positive.")
         # Create the buffer
-        buffer = RawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize)
+        buffer = CppRawGpuBuffer(np.prod(shape) * np.dtype(dtype).itemsize)
         memptr = cp.cuda.MemoryPointer(cp.cuda.UnownedMemory(buffer.data(), buffer.bytes(), buffer), 0)
         return cp.ndarray(shape, dtype=dtype, strides=strides, order=order, memptr=memptr)
