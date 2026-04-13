@@ -122,13 +122,14 @@ TEST_DATA_ALL_TO_ALL(float16, __half)
 TEST_DATA_ALL_TO_ALL(float32, float)
 TEST_DATA_ALL_TO_ALL(int32, int)
 
-// Sendrecv verification: ring receive from prev rank.
+// Sendrecv verification: receive from prev rank in the ring.
 // Replays the same PRNG sequence that fill_data used on the sender (prev_rank).
+// prev_rank is passed explicitly since the ring topology depends on split_mask.
 #define TEST_DATA_SEND_RECV(FuncNameType, DataType)                                                       \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_send_recv_##FuncNameType(               \
-      DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {  \
-    int peer_rank = (my_rank - 1 + num_ranks) % num_ranks;                                                \
-    unsigned int seed = (unsigned int)(blockIdx.x * blockDim.x + threadIdx.x + peer_rank + seq);          \
+      DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq,    \
+      int prev_rank) {                                                                                    \
+    unsigned int seed = (unsigned int)(blockIdx.x * blockDim.x + threadIdx.x + prev_rank + seq);          \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) { \
       seed = ranqd1(seed);                                                                                \
       test_buf[i] = DataType(seed % blockDim.x) / DataType(blockDim.x);                                  \

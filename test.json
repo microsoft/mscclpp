@@ -1,5 +1,5 @@
 {
-  "name": "sendrecv",
+  "name": "send_recv",
   "collective": "sendrecv",
   "protocol": "Simple",
   "inplace": false,
@@ -284,20 +284,20 @@
         {
           "channel_type": "port",
           "connected_to": [
-            1,
-            1,
-            1,
-            1,
-            3,
-            3,
-            3,
-            3
+            4,
+            4,
+            4,
+            4,
+            12,
+            12,
+            12,
+            12
           ]
         }
       ],
       "remote_buffers": [
         {
-          "rank": 1,
+          "rank": 4,
           "type": "o",
           "access_channel_types": [
             "port"
@@ -585,20 +585,20 @@
         {
           "channel_type": "port",
           "connected_to": [
-            2,
-            2,
-            2,
-            2,
-            0,
-            0,
-            0,
-            0
+            5,
+            5,
+            5,
+            5,
+            13,
+            13,
+            13,
+            13
           ]
         }
       ],
       "remote_buffers": [
         {
-          "rank": 2,
+          "rank": 5,
           "type": "o",
           "access_channel_types": [
             "port"
@@ -886,20 +886,20 @@
         {
           "channel_type": "port",
           "connected_to": [
-            3,
-            3,
-            3,
-            3,
-            1,
-            1,
-            1,
-            1
+            6,
+            6,
+            6,
+            6,
+            14,
+            14,
+            14,
+            14
           ]
         }
       ],
       "remote_buffers": [
         {
-          "rank": 3,
+          "rank": 6,
           "type": "o",
           "access_channel_types": [
             "port"
@@ -1187,10 +1187,913 @@
         {
           "channel_type": "port",
           "connected_to": [
+            7,
+            7,
+            7,
+            7,
+            15,
+            15,
+            15,
+            15
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 7,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 4,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            8,
+            8,
+            8,
+            8,
             0,
             0,
             0,
-            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 8,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 5,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            9,
+            9,
+            9,
+            9,
+            1,
+            1,
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 9,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 6,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            10,
+            10,
+            10,
+            10,
             2,
             2,
             2,
@@ -1200,7 +2103,2716 @@
       ],
       "remote_buffers": [
         {
+          "rank": 10,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 7,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            11,
+            11,
+            11,
+            11,
+            3,
+            3,
+            3,
+            3
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 11,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 8,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            12,
+            12,
+            12,
+            12,
+            4,
+            4,
+            4,
+            4
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 12,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 9,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            13,
+            13,
+            13,
+            13,
+            5,
+            5,
+            5,
+            5
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 13,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 10,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            14,
+            14,
+            14,
+            14,
+            6,
+            6,
+            6,
+            6
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 14,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 11,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            15,
+            15,
+            15,
+            15,
+            7,
+            7,
+            7,
+            7
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 15,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 12,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            0,
+            0,
+            0,
+            0,
+            8,
+            8,
+            8,
+            8
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
           "rank": 0,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 13,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            1,
+            1,
+            1,
+            1,
+            9,
+            9,
+            9,
+            9
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 14,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            2,
+            2,
+            2,
+            2,
+            10,
+            10,
+            10,
+            10
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 2,
+          "type": "o",
+          "access_channel_types": [
+            "port"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 15,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 0,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                4,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                5,
+                1
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                6,
+                2
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "ops": [
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "pws",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 3,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "port"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "port"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "port",
+              "channel_ids": [
+                7,
+                3
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "port",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "port",
+          "connected_to": [
+            3,
+            3,
+            3,
+            3,
+            11,
+            11,
+            11,
+            11
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 3,
           "type": "o",
           "access_channel_types": [
             "port"

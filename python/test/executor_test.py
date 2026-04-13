@@ -61,6 +61,26 @@ def bench_time(n_iters: int, n_graph_iters: int, func: Union[Callable, list[Call
     return cp.cuda.get_elapsed_time(start, end) / n_iters * 1000.0 / n_graph_iters
 
 
+def get_prev_rank(my_rank: int, num_ranks: int, split_mask: int) -> int:
+    """Determine the previous rank in the ring based on the split_mask topology."""
+    group_size = split_mask + 1
+    num_groups = num_ranks // group_size
+    position_in_group = my_rank & split_mask
+    group_id = my_rank // group_size
+    prev_group_id = (group_id - 1 + num_groups) % num_groups
+    return prev_group_id * group_size + position_in_group
+
+
+def get_next_rank(my_rank: int, num_ranks: int, split_mask: int) -> int:
+    """Determine the next rank in the ring based on the split_mask topology."""
+    group_size = split_mask + 1
+    num_groups = num_ranks // group_size
+    position_in_group = my_rank & split_mask
+    group_id = my_rank // group_size
+    next_group_id = (group_id + 1) % num_groups
+    return next_group_id * group_size + position_in_group
+
+
 def bench_correctness(
     collective: str,
     input_buf: Union[cp.ndarray, list[cp.ndarray]],
@@ -71,6 +91,7 @@ def bench_correctness(
     num_ranks: int,
     n_iters: int,
     func: Union[Callable, list[Callable]],
+    split_mask: int = 0,
 ):
     """Validate correctness. For sendrecv, buffers and func are lists of 2 for double-buffer."""
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
@@ -123,6 +144,9 @@ def bench_correctness(
                 + struct.pack("Q", cur_input.nbytes // type_size)
                 + pack(num_ranks, rank, i)
             )
+            if "sendrecv" in collective:
+                prev_rank = get_prev_rank(rank, num_ranks, split_mask)
+                test_data_params += pack(prev_rank)
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
     graph.launch(stream)
@@ -208,6 +232,7 @@ def main(
     packet_type: PacketType = PacketType.LL16,
     n_iters: int = 10,
     n_graph_iters: int = 10,
+    split_mask: int = 0,
 ):
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
@@ -270,6 +295,7 @@ def main(
         mscclpp_group.nranks,
         n_iters,
         executor_funcs if sendrecv_mode else executor_func,
+        split_mask=split_mask,
     )
 
     mscclpp_group.barrier()
@@ -298,6 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--n_iters", type=int, default=10)
     parser.add_argument("--n_graph_iters", type=int, default=10)
+    parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x0, help="split mask for sendrecv (e.g. 0x3)")
     args = parser.parse_args()
 
     packet_type = PacketType.LL16
@@ -313,4 +340,5 @@ if __name__ == "__main__":
         packet_type,
         args.n_iters,
         args.n_graph_iters,
+        args.split_mask,
     )
