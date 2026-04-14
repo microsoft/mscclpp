@@ -44,6 +44,7 @@ jobs:
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
+      gpuArch:          '80'
       nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
 
 - job: NcclTestH100
@@ -64,4 +65,5 @@ jobs:
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
+      gpuArch:          '90'
       nvccGencode:      "-gencode=arch=compute_90,code=sm_90"
