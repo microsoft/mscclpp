@@ -14,11 +14,6 @@ baseImageTable=(
 
 declare -A extraLdPathTable
 extraLdPathTable=(
-    ["cuda11.8"]="/usr/local/cuda-11.8/compat"
-    ["cuda12.4"]="/usr/local/cuda-12.4/compat"
-    ["cuda12.8"]="/usr/local/cuda-12.8/compat"
-    ["cuda12.9"]="/usr/local/cuda-12.9/compat"
-    ["cuda13.0"]="/usr/local/cuda-13.0/compat"
     ["rocm6.2"]="/opt/rocm/lib"
 )
 
