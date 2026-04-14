@@ -1,0 +1,773 @@
+{
+  "name": "reduce_tbg",
+  "collective": "allreduce",
+  "protocol": "Simple",
+  "inplace": true,
+  "reuse_resources": false,
+  "gpus": [
+    {
+      "id": 0,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory",
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "res",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0,
+                1
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rres",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 0,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "get",
+              "src_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_ids": [
+                1
+              ],
+              "channel_type": "memory",
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "res",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "type": "s",
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 1,
+                  "size": 1
+                },
+                {
+                  "buffer_id": 1,
+                  "index": 1,
+                  "size": 1
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0,
+                1
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            1,
+            1
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 1,
+          "type": "s",
+          "access_channel_types": [
+            "memory"
+          ]
+        },
+        {
+          "rank": 1,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
+    },
+    {
+      "id": 1,
+      "input_chunks": 4,
+      "output_chunks": 4,
+      "scratch_chunks": 4,
+      "threadblocks": [
+        {
+          "id": 0,
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "channel_type": "memory",
+              "tbg_info": {
+                "tb_id": 0,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "id": 1,
+          "ops": [
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 0,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 0,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "rre",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                },
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "channel_type": "memory",
+              "reduce_op": "sum",
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "copy",
+              "src_buff": [
+                {
+                  "type": "i",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "put",
+              "src_buff": [
+                {
+                  "type": "s",
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "dst_buff": [
+                {
+                  "buffer_id": 0,
+                  "index": 2,
+                  "size": 2
+                }
+              ],
+              "channel_type": "memory",
+              "tbg_info": {
+                "tb_id": 1,
+                "tbg_size": 2
+              }
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "signal",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            },
+            {
+              "name": "wait",
+              "channel_ids": [
+                0
+              ],
+              "channel_type": "memory"
+            },
+            {
+              "name": "nop"
+            }
+          ],
+          "channels": [
+            {
+              "channel_type": "memory",
+              "channel_ids": [
+                1,
+                0
+              ]
+            }
+          ],
+          "remote_buffer_refs": [
+            {
+              "access_channel_type": "memory",
+              "remote_buffer_ids": [
+                0
+              ]
+            }
+          ]
+        }
+      ],
+      "channels": [
+        {
+          "channel_type": "memory",
+          "connected_to": [
+            0,
+            0
+          ]
+        }
+      ],
+      "remote_buffers": [
+        {
+          "rank": 0,
+          "type": "i",
+          "access_channel_types": [
+            "memory"
+          ]
+        }
+      ],
+      "semaphores": []
+    }
+  ],
+  "num_threads_per_block": 1024,
+  "use_double_scratch_buffer": false,
+  "buffer_alignment": 16,
+  "min_message_size": 0,
+  "max_message_size": 18446744073709551615
+}
