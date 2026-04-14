@@ -53,6 +53,26 @@ default_algo_configs = [
         ),
         "additional_kwargs": {"thread_block_group_size": 4},
     },
+    {
+        "filename": "allgather_mrc.json",
+        "function": def_algo.allgather_mrc,
+        "spec": AlgoSpec(
+            name="allgather_mrc",
+            collective=AllGather(2, 1, True),
+            nranks_per_node=1,
+            world_size=2,
+            in_place=True,
+            instances=1,
+            protocol="Simple",
+            auto_sync=True,
+            num_threads_per_block=1024,
+            reuse_resources=False,
+            use_double_scratch_buffer=False,
+            min_message_size=1 << 10,
+            max_message_size=8 << 30,
+            tags={"default": 1},
+        )
+    }
 ]
 
 

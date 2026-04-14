@@ -8,23 +8,13 @@ from mscclpp.language.general import *
 from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 from mscclpp.language.loop import LoopIterationContext
+from mscclpp.language.utils import AlgoSpec
 
 
-def allgather_hierarchical(name, gpus, num_threads_per_block, min_message_size, max_message_size):
-    size = gpus
-    chunksperloop = 1
-    collective = AllGather(size, chunksperloop, True)
-    with CollectiveProgram(
-        name,
-        collective,
-        size,
-        protocol="Simple",
-        num_threads_per_block=num_threads_per_block,
-        instances=1,
-        use_double_scratch_buffer=False,
-        min_message_size=min_message_size,
-        max_message_size=max_message_size,
-    ):
+def allgather_mrc(spec: AlgoSpec) -> CollectiveProgram:
+   size = spec.world_size
+   
+   with CollectiveProgram.from_spec(spec) as prog:
         # Port channels for inter-node communication
         port_channels = {}
         for n in range(size):
@@ -65,18 +55,4 @@ def allgather_hierarchical(name, gpus, num_threads_per_block, min_message_size, 
                 recv_src_chunk = Rank(src_rank).get_output_buffer()[recv_offset:recv_offset + 1]
                 ch_from_prev.wait(tb=0)
 
-        print(JSON())
-
-
-parser = argparse.ArgumentParser()
-parser.add_argument("--name", type=str, help="name of the program")
-parser.add_argument("--num_gpus", type=int, help="number of gpus")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
-parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
-parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
-
-args = parser.parse_args()
-
-allgather_hierarchical(
-    args.name, args.num_gpus, args.num_threads_per_block, args.min_message_size, args.max_message_size
-)
+        return prog
