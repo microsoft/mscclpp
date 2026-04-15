@@ -17,7 +17,7 @@ dependencies = [
     "numpy",
     "blake3",
     "pybind11",
-    "sortedcontainers @ git+https://github.com/grantjenks/python-sortedcontainers.git@3ac358631f58c1347f1d6d2d92784117db0f38ed",
+    "sortedcontainers",
 ]
 
 [project.optional-dependencies]
