@@ -6,10 +6,6 @@ PLATFORM="${3:-cuda}"
 
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
-if [ "${TEST_NAME}" == "nccltest-single-node" ]; then
-  ROOT_DIR="${ROOT_DIR}/mscclpp"
-  SYSTEM_DEFAULTWORKINGDIRECTORY="${SYSTEM_DEFAULTWORKINGDIRECTORY}/mscclpp"
-fi
 DST_DIR="/tmp/mscclpp"
 if [ "${TEST_NAME}" == "nccltest-single-node" ] || [ "${TEST_NAME}" == "single-node-test" ]; then
   HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
