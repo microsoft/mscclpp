@@ -65,6 +65,8 @@ if [[ "${CUDA_VERSION}" == *"11."* ]]; then
     pip3 install ".[cuda11,benchmark,test]"
 elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
     pip3 install ".[cuda12,benchmark,test]"
+elif [[ "${CUDA_VERSION}" == *"13."* ]]; then
+    pip3 install ".[cuda13,benchmark,test]"
 elif [ "${PLATFORM}" == "rocm" ]; then
     pip3 install ".[rocm6,benchmark,test]"
 else

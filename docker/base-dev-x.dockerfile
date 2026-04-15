@@ -89,7 +89,7 @@ RUN target_type=$(echo $TARGET | sed 's/\.[0-9]*$//') && \
         export CUPY_INSTALL_USE_HIP=1 && export ROCM_HOME=/opt/rocm; \
     fi && \
     pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir ".[$target_type]" && \
+    pip install --no-cache-dir -r python/requirements_${target_type}.txt && \
     pip install --no-cache-dir coverage xlsxwriter
 
 # Cleanup

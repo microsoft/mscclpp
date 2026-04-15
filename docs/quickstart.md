@@ -25,9 +25,9 @@
         ```bash
         sudo apt-get install libnuma-dev
         ```
-    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.8 and Python Development Package
+    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.10 and Python Development Package
         ```bash
-        sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
+        sudo apt-get satisfy "python3 (>=3.10), python3-dev (>=3.10)"
         ```
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
@@ -100,19 +100,24 @@ There are a few optional CMake options you can set:
 (install-from-source-python-module)=
 ## Install from Source (Python Module)
 
-Python 3.8 or later is required.
+Python 3.10 or later is required.
 
 ```bash
-# For NVIDIA platforms (basic install)
-$ python -m pip install .
-# For AMD platforms, set the C++ compiler to HIPCC
-$ CXX=/opt/rocm/bin/hipcc python -m pip install .
+# For NVIDIA platforms (specify your CUDA version)
+$ python -m pip install ".[cuda12]"
+# For AMD platforms
+$ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 ```
 
+> **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
+> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source,
+> which requires ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+
 Optional extras can be installed by specifying them in brackets. Available extras:
-- **`cuda11`**, **`cuda12`**, **`cuda13`**, **`rocm6`**: Install the appropriate CuPy package for your platform.
+- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
+- **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
-- **`test`**: Install test dependencies (pytest).
+- **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
 
 ```bash
 # Example: install with CUDA 12 and benchmark extras
