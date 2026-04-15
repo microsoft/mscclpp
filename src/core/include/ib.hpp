@@ -36,7 +36,7 @@ class IbMr {
   uint32_t getLkey() const;
 
  private:
-  IbMr(ibv_pd* pd, void* buff, std::size_t size);
+  IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect);
 
   ibv_mr* mr_;
   void* buff_;
@@ -101,7 +101,7 @@ class IbQp {
   };
 
   IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-       int maxRecvWr, int maxWrPerSend);
+       int maxRecvWr, int maxWrPerSend, bool noAtomic);
   SendWrInfo getNewSendWrInfo();
   RecvWrInfo getNewRecvWrInfo();
 
@@ -128,6 +128,7 @@ class IbQp {
   const int maxSendWr_;
   const int maxWrPerSend_;
   const int maxRecvWr_;
+  const bool noAtomic_;
 
   friend class IbCtx;
 };
@@ -139,18 +140,24 @@ class IbCtx {
   ~IbCtx();
 
   std::shared_ptr<IbQp> createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
-                                 int maxRecvWr, int maxWrPerSend);
+                                 int maxRecvWr, int maxWrPerSend, bool noAtomic);
   std::unique_ptr<const IbMr> registerMr(void* buff, std::size_t size);
   bool supportsRdmaAtomics() const;
+  bool isMlx5() const;
+  bool isDataDirect() const;
+  bool isVirtualFunction() const;
 #else
   IbCtx([[maybe_unused]] const std::string& devName) {}
   ~IbCtx() {}
 
-  std::shared_ptr<IbQp> createQp(int, int, int, int, int, int, int) { return nullptr; }
+  std::shared_ptr<IbQp> createQp(int, int, int, int, int, int, int, bool) { return nullptr; }
   std::unique_ptr<const IbMr> registerMr([[maybe_unused]] void* buff, [[maybe_unused]] std::size_t size) {
     return nullptr;
   }
   bool supportsRdmaAtomics() const { return false; }
+  bool isMlx5() const { return false; }
+  bool isDataDirect() const { return false; }
+  bool isVirtualFunction() const { return false; }
 #endif
 
   const std::string& getDevName() const { return devName_; };
@@ -163,6 +170,9 @@ class IbCtx {
   ibv_context* ctx_;
   ibv_pd* pd_;
   bool supportsRdmaAtomics_;
+  bool isMlx5_;
+  bool isDataDirect_;
+  bool isVF_;
 };
 
 }  // namespace mscclpp

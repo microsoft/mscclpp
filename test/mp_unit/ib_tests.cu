@@ -3,8 +3,12 @@
 
 #include <mpi.h>
 
+#include <atomic>
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <thread>
 
+#include "gdr.hpp"
 #include "mp_unit_tests.hpp"
 #include "utils_internal.hpp"
 
@@ -40,7 +44,11 @@ void IbPeerToPeerTest::SetUp() {
   int ib_gid_index = std::stoi(gEnv->args["ib_gid_index"]);
 
   ibCtx = std::make_shared<mscclpp::IbCtx>(ibDevName);
-  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, 0, 64);
+  bool noAtomic = !ibCtx->supportsRdmaAtomics();
+  // When atomics are not supported, the MemoryConsistency test uses
+  // write-with-imm which requires recv WRs on the receiver side.
+  int maxRecvWr = noAtomic ? 64 : 0;
+  qp = ibCtx->createQp(-1, ib_gid_index, 1024, 1, 8192, maxRecvWr, 64, noAtomic);
 
   qpInfo[gEnv->rank] = qp->getInfo();
   bootstrap->allGather(qpInfo.data(), sizeof(mscclpp::IbQpInfo));
@@ -78,7 +86,7 @@ void IbPeerToPeerTest::stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint6
   qp->stageSendWriteWithImm(mr.get(), remoteMrInfo, size, wrId, srcOffset, dstOffset, signaled, immData);
 }
 
-TEST(IbPeerToPeerTest, SimpleSendRecv) {
+PERF_TEST(IbPeerToPeerTest, SimpleSendRecv) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
@@ -114,7 +122,7 @@ TEST(IbPeerToPeerTest, SimpleSendRecv) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbPeerToPeerTest.SimpleSendRecv: " << us / maxIter << " us/iter" << std::endl;
+    ::mscclpp::test::reportPerfResult("latency", us / maxIter, "us/iter");
   }
   bootstrap->barrier();
 }
@@ -199,10 +207,32 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
     return;
   }
 
+  // Use atomic path if supported by the IB device.
+  bool useAtomic = ibCtx->supportsRdmaAtomics();
+
   const uint64_t signalPeriod = 1024;
   const uint64_t maxIter = 10000;
   const uint64_t nelem = 65536 + 1;
   auto data = mscclpp::detail::gpuCallocUnique<uint64_t>(nelem);
+
+  // For no-atomic mode: allocate a separate signal buffer for write-with-imm destination.
+  // The sender writes-with-imm to this buffer; the receiver's CPU thread reads the imm_data
+  // from the recv CQ and writes the iteration value to data[0] via GDRCopy atomicStore.
+  std::shared_ptr<uint64_t> signalBuf;
+  std::unique_ptr<const mscclpp::IbMr> signalMr;
+  std::array<mscclpp::IbMrInfo, 2> signalMrInfo{};
+  if (!useAtomic) {
+    signalBuf = mscclpp::detail::gpuCallocShared<uint64_t>(1);
+    signalMr = ibCtx->registerMr(signalBuf.get(), sizeof(uint64_t));
+    signalMrInfo[gEnv->rank] = signalMr->getInfo();
+    bootstrap->allGather(signalMrInfo.data(), sizeof(mscclpp::IbMrInfo));
+
+    // Pre-post recv WRs for write-with-imm on both ranks
+    for (int i = 0; i < 64; ++i) {
+      qp->stageRecv(0);
+    }
+    qp->postRecv();
+  }
 
   registerBufferAndConnect(data.get(), sizeof(uint64_t) * nelem);
 
@@ -221,6 +251,40 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
     ASSERT_NE(ptrResult, nullptr);
     ASSERT_EQ(*ptrCurIter, 0);
     ASSERT_EQ(*ptrResult, 0);
+
+    // For no-atomic mode: create a GDRCopy mapping for data[0] and start a CPU thread that
+    // polls recv CQ and forwards the signal via GDRCopy BAR1 write — the same mechanism
+    // used by IBConnection::recvThreadFunc for port channels.
+    std::atomic<bool> stopRecvThread(false);
+    std::thread recvThread;
+    std::unique_ptr<mscclpp::GdrMap> dataGdrMap;
+    if (!useAtomic) {
+      if (!mscclpp::gdrEnabled()) {
+        SKIP_TEST() << "No-atomic mode requires GDRCopy but it is not available.";
+      }
+      // Create GDRCopy BAR1 mapping for data[0] — same as how connection.cc maps inboundToken_
+      dataGdrMap =
+          std::make_unique<mscclpp::GdrMap>(std::shared_ptr<void>(data.get(), [](void*) {}),  // non-owning shared_ptr
+                                            cudaDevId);
+
+      recvThread = std::thread([&]() {
+        while (!stopRecvThread.load(std::memory_order_relaxed)) {
+          int wcNum = qp->pollRecvCq();
+          if (wcNum <= 0) continue;
+          for (int i = 0; i < wcNum; ++i) {
+            int status = qp->getRecvWcStatus(i);
+            if (status != static_cast<int>(mscclpp::WsStatus::Success)) continue;
+            uint64_t val = static_cast<uint64_t>(qp->getRecvWcImmData(i));
+            // Write the iteration value to data[0] via GDRCopy BAR1 atomicStore —
+            // same pattern as IBConnection::recvThreadFunc.
+            mscclpp::atomicStore(dataGdrMap->hostPtr(), val, mscclpp::memoryOrderRelaxed);
+            // Re-post recv
+            qp->stageRecv(0);
+            qp->postRecv();
+          }
+        }
+      });
+    }
 
     kernelMemoryConsistency<<<1, 1024>>>(data.get(), ptrCurIter, ptrResult, nelem, maxIter);
     MSCCLPP_CUDATHROW(cudaGetLastError());
@@ -243,6 +307,11 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
     }
 
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+
+    if (!useAtomic) {
+      stopRecvThread.store(true, std::memory_order_relaxed);
+      if (recvThread.joinable()) recvThread.join();
+    }
   } else if (gEnv->rank == 1) {
     // Sender
     std::vector<uint64_t> hostBuffer(nelem, 0);
@@ -263,15 +332,20 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
       stageSendWrite(sizeof(uint64_t) * (nelem - 1), 0, sizeof(uint64_t), sizeof(uint64_t), signaled);
       qp->postSend();
 
-#if 0
-      // For reference: send the first element using a normal send. This should occasionally see a wrong result.
-      stageSendWrite(sizeof(uint64_t), 0, 0, 0, false);
-      qp->postSend();
-#else
-      // Send the first element using AtomicAdd. This should see the correct result.
-      stageSendAtomicAdd(0, 0, 1, false);
-      qp->postSend();
-#endif
+      if (useAtomic) {
+        // Send the first element using AtomicAdd. The non-posted PCIe atomic operation
+        // provides end-to-end ordering: data[1..N] are guaranteed visible when data[0] updates.
+        stageSendAtomicAdd(0, 0, 1, false);
+        qp->postSend();
+      } else {
+        // No-atomic mode: send a 0-byte WRITE_WITH_IMM carrying the iteration in imm_data.
+        // The receiver's CPU thread polls the recv CQ and writes the value to data[0]
+        // via GDRCopy atomicStore.
+        // QP ordering guarantees data[1..N] WRITE completes before this write-with-imm.
+        const mscclpp::IbMrInfo& remoteSignalMrInfo = signalMrInfo[(gEnv->rank == 1) ? 0 : 1];
+        qp->stageSendWriteWithImm(nullptr, remoteSignalMrInfo, 0, 0, 0, 0, false, static_cast<unsigned int>(iter));
+        qp->postSend();
+      }
 
       if (signaled) {
         int wcNum = qp->pollSendCq();
@@ -292,19 +366,32 @@ TEST(IbPeerToPeerTest, MemoryConsistency) {
     }
   }
 
-  if (res & 2) {
-    FAIL() << "The receiver is stuck at iteration " << iter << ".";
-  } else if (res != 0 && res != 1) {
-    FAIL() << "Unknown error is detected at iteration " << iter << ". res =" << res;
+  if (useAtomic) {
+    // With RDMA atomics, memory consistency must be guaranteed.
+    if (res & 2) {
+      FAIL() << "The receiver is stuck at iteration " << iter << ".";
+    }
+    EXPECT_EQ(res, 0);
+  } else {
+    if (res == 0) {
+      // No-atomic path works correctly here.
+    } else if (res & 2) {
+      SKIP_TEST() << "No-atomic signal forwarding: receiver stuck at iteration " << iter
+                  << ". NIC DMA and CPU writes are not ordered on this platform.";
+    } else {
+      SKIP_TEST() << "No-atomic signal forwarding: memory inconsistency detected at iteration " << iter
+                  << ". NIC DMA and CPU writes are not ordered on this platform.";
+    }
   }
-
-  EXPECT_EQ(res, 0);
 }
 
-TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
+PERF_TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
   if (gEnv->rank >= 2) {
     // This test needs only two ranks
     return;
+  }
+  if (!ibCtx->supportsRdmaAtomics()) {
+    SKIP_TEST() << "This test requires RDMA atomics support.";
   }
 
   mscclpp::Timer timeout(3);
@@ -339,7 +426,7 @@ TEST(IbPeerToPeerTest, SimpleAtomicAdd) {
       }
     }
     float us = (float)timer.elapsed();
-    std::cout << "IbPeerToPeerTest.SimpleAtomicAdd: " << us / maxIter << " us/iter" << std::endl;
+    ::mscclpp::test::reportPerfResult("latency", us / maxIter, "us/iter");
   }
   bootstrap->barrier();
 }

@@ -38,7 +38,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, cuda::memory_o
   return cuda::atomic_ref<T, Scope>{*ptr}.fetch_add(val, memoryOrder);
 }
 
-#elif defined(MSCCLPP_DEVICE_HIP)
+#else  // !defined(MSCCLPP_DEVICE_CUDA)
 
 constexpr auto memoryOrderRelaxed = __ATOMIC_RELAXED;
 constexpr auto memoryOrderAcquire = __ATOMIC_ACQUIRE;
@@ -46,7 +46,6 @@ constexpr auto memoryOrderRelease = __ATOMIC_RELEASE;
 constexpr auto memoryOrderAcqRel = __ATOMIC_ACQ_REL;
 constexpr auto memoryOrderSeqCst = __ATOMIC_SEQ_CST;
 
-// HIP does not have thread scope enums like CUDA
 constexpr auto scopeSystem = 0;
 constexpr auto scopeDevice = 0;
 
@@ -65,7 +64,7 @@ MSCCLPP_HOST_DEVICE_INLINE T atomicFetchAdd(T* ptr, const T& val, int memoryOrde
   return __atomic_fetch_add(ptr, val, memoryOrder);
 }
 
-#endif  // defined(MSCCLPP_DEVICE_HIP)
+#endif  // !defined(MSCCLPP_DEVICE_CUDA)
 
 }  // namespace mscclpp
 
