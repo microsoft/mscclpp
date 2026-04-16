@@ -17,6 +17,21 @@ namespace mscclpp {
 CudaIpcStream::CudaIpcStream(int deviceId)
     : stream_(std::make_shared<CudaStreamWithFlags>()), deviceId_(deviceId), dirty_(false) {}
 
+CudaIpcStream::~CudaIpcStream() {
+#if !defined(MSCCLPP_DEVICE_HIP)
+  if (proxyAtomicCtx_) {
+    cuCtxPushCurrent(proxyAtomicCtx_);
+    if (proxyAtomicStream_) cudaStreamDestroy(proxyAtomicStream_);
+    cuCtxPopCurrent(nullptr);
+    cuCtxDestroy(proxyAtomicCtx_);
+  }
+#else
+  if (proxyAtomicStream_) {
+    cudaStreamDestroy(proxyAtomicStream_);
+  }
+#endif
+}
+
 void CudaIpcStream::setStreamIfNeeded() {
   if (!env()->cudaIpcUseDefaultStream && stream_->empty()) {
     stream_->set(cudaStreamNonBlocking);
@@ -44,6 +59,10 @@ void CudaIpcStream::sync() {
     MSCCLPP_CUDATHROW(cudaStreamSynchronize(*stream_));
     dirty_ = false;
   }
+  // Note: proxyAtomicStream_ is NOT synced here. The atomicAdd kernels are fire-and-forget
+  // operations that complete asynchronously on the GPU. Syncing them here would deadlock
+  // because sync() is called from the proxy thread while the main thread may hold the
+  // device context via cudaStreamSynchronize() on the test kernel's stream.
 }
 
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
