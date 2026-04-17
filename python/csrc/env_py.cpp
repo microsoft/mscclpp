@@ -28,6 +28,7 @@ void register_env(nb::module_& m) {
       .def_ro("force_nccl_fallback_operation", &Env::forceNcclFallbackOperation)
       .def_ro("nccl_symmetric_memory", &Env::ncclSymmetricMemory)
       .def_ro("force_disable_nvls", &Env::forceDisableNvls)
+      .def_ro("force_disable_gdr", &Env::forceDisableGdr)
       .def_ro("ib_gid_index", &Env::ibGidIndex);
 
   m.def("env", &env);

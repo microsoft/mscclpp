@@ -40,11 +40,11 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/nccl-test.yaml
+  - template: templates/nccl-test.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
-      sshKeySecureFile: mscclpp.pem
+      gpuArch:          '80'
       nvccGencode:      "-gencode=arch=compute_80,code=sm_80"
 
 - job: NcclTestH100
@@ -61,9 +61,9 @@ jobs:
     image: $(containerImage)
 
   steps:
-  - template: templates/nccl-test.yaml
+  - template: templates/nccl-test.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
-      sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'
       nvccGencode:      "-gencode=arch=compute_90,code=sm_90"

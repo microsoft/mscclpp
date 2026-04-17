@@ -390,7 +390,7 @@ struct EndpointConfig {
     };
 
     static constexpr int DefaultPort = -1;
-    static constexpr int DefaultGidIndex = 0;
+    static constexpr int DefaultGidIndex = -1;
     static constexpr int DefaultMaxCqSize = 1024;
     static constexpr int DefaultMaxCqPollNum = 1;
     static constexpr int DefaultMaxSendWr = 8192;
@@ -419,7 +419,7 @@ struct EndpointConfig {
     /// Constructor.
     /// @param deviceIndex Device index.
     /// @param port Port number.
-    /// @param gidIndex GID index.
+    /// @param gidIndex GID index. If -1 (default), uses `MSCCLPP_IB_GID_INDEX` env variable.
     /// @param maxCqSize Maximum send completion queue size.
     /// @param maxCqPollNum Maximum send completion queue poll count.
     /// @param maxSendWr Maximum outstanding send work requests.

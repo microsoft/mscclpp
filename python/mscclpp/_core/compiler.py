@@ -192,6 +192,9 @@ class NativeCodeCompiler:
     """
 
     def __init__(self):
+        self._initialized = False
+
+    def _do_init(self):
         self._is_hip = cp.cuda.runtime.is_hip
         self._device_arch = get_device_arch()
         self._compiler = self._get_compiler()
@@ -226,6 +229,7 @@ class NativeCodeCompiler:
         ]
         self._cache_dir = Path(env().cache_dir) / "native"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._initialized = True
 
     def _get_compiler(self) -> str:
         """Get the path to the appropriate compiler.
@@ -246,6 +250,8 @@ class NativeCodeCompiler:
         Returns:
             str: The GPU architecture string (e.g., "sm_90" for NVIDIA or "gfx90a" for AMD).
         """
+        if not self._initialized:
+            self._do_init()
         return self._device_arch
 
     def __call__(self, name: str, file: str, **kwds):
@@ -290,6 +296,8 @@ class NativeCodeCompiler:
             >>> # Use the module to create an algorithm
             >>> algo = module.create_allreduce_algorithm(comm, buffer, size)
         """
+        if not self._initialized:
+            self._do_init()
         if not os.path.isfile(file):
             raise FileNotFoundError(f"The specified source file does not exist: {file}")
 

@@ -37,17 +37,16 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut.yaml
+  - template: templates/ut.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          '80'
 
 - job: UnitTestWithNpKitA100
@@ -59,17 +58,16 @@ jobs:
       cuda11:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-npkit.yaml
+  - template: templates/ut-npkit.yml
     parameters:
       subscription:     mscclpp-ci
       vmssName:         mscclpp-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          '80'
 
 - job: UnitTestH100
@@ -79,17 +77,16 @@ jobs:
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut.yaml
+  - template: templates/ut.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          '90'
 
 - job: UnitTestWithNpKitH100
@@ -99,17 +96,16 @@ jobs:
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-npkit.yaml
+  - template: templates/ut-npkit.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
-      sshKeySecureFile: mscclpp.pem
       gpuArch:          '90'
 
 - job: UnitTestNoIBEnv
@@ -121,15 +117,55 @@ jobs:
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
 
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/ut-no-ib-env.yaml
+  - template: templates/ut-no-ib-env.yml
     parameters:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
-      sshKeySecureFile: mscclpp.pem
+      gpuArch:          '90'
+
+- job: UnitTestMI300X
+  timeoutInMinutes: 40
+  pool:
+    name: msccl-ci-mi300x
+  strategy:
+    matrix:
+      rocm6_2:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut.yml
+    parameters:
+      subscription:     mscclpp-ci-mi300x
+      vmssName:         mscclpp-mi300x-ci
+      platform:         rocm
+      gpuArch:          gfx942
+
+- job: UnitTestExecutor
+  timeoutInMinutes: 60
+  displayName: Test DSL Executor
+  pool:
+    name: msccl-ci-h100
+
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+
+  container:
+    image: $(containerImage)
+
+  steps:
+  - template: templates/ut-executor.yml
+    parameters:
+      subscription:     mscclpp-ci-h100
+      vmssName:         mscclpp-h100-ci
       gpuArch:          '90'

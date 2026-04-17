@@ -1,0 +1,31 @@
+parameters:
+- name: name
+  type: string
+  default: ''
+- name: displayName
+  type: string
+- name: runRemoteArgs
+  type: string
+  default: ''
+- name: remoteScript
+  type: string
+- name: workingDirectory
+  type: string
+  default: '$(System.DefaultWorkingDirectory)'
+- name: continueOnError
+  type: boolean
+  default: false
+
+steps:
+- task: Bash@3
+  ${{ if ne(parameters.name, '') }}:
+    name: ${{ parameters.name }}
+  displayName: ${{ parameters.displayName }}
+  continueOnError: ${{ parameters.continueOnError }}
+  inputs:
+    targetType: 'inline'
+    script: |
+      test/deploy/run-remote.sh ${{ parameters.runRemoteArgs }} <<'REMOTE_CMD'
+      ${{ parameters.remoteScript }}
+      REMOTE_CMD
+    workingDirectory: ${{ parameters.workingDirectory }}
