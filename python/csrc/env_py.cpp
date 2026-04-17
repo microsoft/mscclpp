@@ -24,6 +24,11 @@ void register_env(nb::module_& m) {
       .def_ro("cache_dir", &Env::cacheDir)
       .def_ro("npkit_dump_dir", &Env::npkitDumpDir)
       .def_ro("cuda_ipc_use_default_stream", &Env::cudaIpcUseDefaultStream)
+      .def_ro("nccl_shared_lib_path", &Env::ncclSharedLibPath)
+      .def_ro("force_nccl_fallback_operation", &Env::forceNcclFallbackOperation)
+      .def_ro("nccl_symmetric_memory", &Env::ncclSymmetricMemory)
+      .def_ro("force_disable_nvls", &Env::forceDisableNvls)
+      .def_ro("force_disable_gdr", &Env::forceDisableGdr)
       .def_ro("ib_gid_index", &Env::ibGidIndex);
 
   m.def("env", &env);
