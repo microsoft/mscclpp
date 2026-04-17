@@ -50,12 +50,6 @@ elif [ ${PEER_ACCESS_EXIT_CODE} -ne 0 ]; then
 fi
 make -C /root/mscclpp/tools/peer-access-test clean
 
-if [[ "${CUDA_VERSION}" == *"11."* ]]; then
-    pip3 install -r /root/mscclpp/python/requirements_cuda11.txt
-elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
-    pip3 install -r /root/mscclpp/python/requirements_cuda12.txt
-fi
-
 if [ "${PLATFORM}" == "rocm" ]; then
     export CXX=/opt/rocm/bin/hipcc
 fi
@@ -65,7 +59,19 @@ if [ -f "${PIP_CMAKE_ARGS_FILE}" ]; then
     export CMAKE_ARGS="$(cat ${PIP_CMAKE_ARGS_FILE})"
     echo "Using CMAKE_ARGS: ${CMAKE_ARGS}"
 fi
-cd /root/mscclpp && pip3 install .
+
+cd /root/mscclpp
+if [[ "${CUDA_VERSION}" == *"11."* ]]; then
+    pip3 install ".[cuda11,benchmark,test]"
+elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
+    pip3 install ".[cuda12,benchmark,test]"
+elif [[ "${CUDA_VERSION}" == *"13."* ]]; then
+    pip3 install ".[cuda13,benchmark,test]"
+elif [ "${PLATFORM}" == "rocm" ]; then
+    pip3 install ".[rocm6,benchmark,test]"
+else
+    pip3 install ".[benchmark,test]"
+fi
 pip3 install setuptools_scm
 python3 -m setuptools_scm --force-write-version-files
 
