@@ -95,6 +95,7 @@ There are a few optional CMake options you can set:
 - `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF`: Don't build the Python module.
 - `-DMSCCLPP_BUILD_TESTS=OFF`: Don't build the tests.
 - `-DMSCCLPP_BUILD_APPS_NCCL=OFF`: Don't build the NCCL API.
+- `-DMSCCLPP_BUILD_EXT_TORCHCOMMS=ON`: Build [TorchComms](https://github.com/meta-pytorch/torchcomms) support for MSCCL++ (off by default). Requires PyTorch and pybind11.
 ```
 
 (install-from-source-python-module)=
@@ -224,6 +225,78 @@ On AMD platforms, you need to add `RCCL_MSCCL_ENABLE=0` to avoid conflicts with 
 export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
 export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
 torchrun --nnodes=1 --nproc_per_node=8 your_script.py
+```
+
+(torchcomms-support)=
+### TorchComms Support
+
+MSCCL++ integrates with [TorchComms](https://github.com/meta-pytorch/torchcomms), enabling PyTorch users to use MSCCL++ collectives through the TorchComms API. This is the recommended way to use MSCCL++ in PyTorch training for mixed-backend setups (e.g., MSCCL++ for allreduce, NCCL for broadcast/barrier).
+
+#### Building
+
+Prerequisites: PyTorch, pybind11, and [torchcomms](https://github.com/meta-pytorch/torchcomms) (`pip install --pre torchcomms`).
+
+```bash
+$ mkdir -p build && cd build
+$ cmake -DCMAKE_BUILD_TYPE=Release \
+      -DMSCCLPP_BUILD_EXT_TORCHCOMMS=ON \
+      ..
+$ make -j$(nproc)
+$ cd ..
+```
+
+This produces `_comms_mscclpp.*.so` in the build output. TorchComms discovers MSCCL++ via the `TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP` environment variable, where `MSCCLPP_BUILD` is your MSCCL++ build directory.
+
+#### Usage
+
+```bash
+$ export TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP=$MSCCLPP_BUILD/lib/_comms_mscclpp.cpython-*.so
+$ torchrun --nproc_per_node=8 your_script.py
+```
+
+```python
+import torch
+import torchcomms
+
+# Create an MSCCL++ communicator
+comm = torchcomms.new_comm("mscclpp", torch.device(f"cuda:{local_rank}"), name="my_comm")
+
+# Run allreduce (MSCCL++ automatically selects the best algorithm)
+comm.all_reduce(tensor, torchcomms.ReduceOp.SUM, False)
+
+# Cleanup
+comm.finalize()
+```
+
+#### Supported Collectives
+
+| Collective | Status | Notes |
+|---|---|---|
+| AllReduce | Supported | SUM, MIN. Auto-selects from ~10 native algorithms by message size and topology |
+| AllGather | Supported | Fullmesh algorithms |
+| ReduceScatter | Dispatched | Requires a registered DSL algorithm |
+| AllToAll | Dispatched | Requires a registered DSL algorithm |
+| All others | Not supported | Throws with guidance to use a separate NCCL/RCCL communicator |
+
+#### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP` | **Required.** Path to the built `_comms_mscclpp.*.so` module |
+
+#### Running Tests
+
+```bash
+$ export TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP=$MSCCLPP_BUILD/lib/_comms_mscclpp.cpython-*.so
+$ torchrun --nproc_per_node=8 test/torchcomms/test_correctness.py --all
+```
+
+#### Running Benchmarks
+
+```bash
+$ export TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP=$MSCCLPP_BUILD/lib/_comms_mscclpp.cpython-*.so
+$ torchrun --nproc_per_node=8 test/torchcomms/bench_torchcomms.py --collective allreduce --warmup 100 --iters 200
+$ torchrun --nproc_per_node=8 test/torchcomms/bench_torchcomms.py --collective allgather --warmup 100 --iters 200
 ```
 
 ## Version Tracking
