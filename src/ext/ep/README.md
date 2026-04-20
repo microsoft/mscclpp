@@ -18,17 +18,37 @@ A port of DeepEP's MoE `dispatch`/`combine` primitives into MSCCL++, targeting:
 | `intranode_combine` (NVLink)       | ✅ ported                       |
 | `internode_dispatch` (NVLink+RDMA) | ✅ ported (pending H100 test)   |
 | `internode_combine` (NVLink+RDMA)  | ✅ ported (pending H100 test)   |
-| `low_latency_dispatch` (pure RDMA) | ❌ stub                         |
-| `low_latency_combine` (pure RDMA)  | ❌ stub                         |
+| `low_latency_dispatch` (pure RDMA) | ⚠️ structural port, untested    |
+| `low_latency_combine` (pure RDMA)  | ⚠️ structural port, untested    |
 | `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp   |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT paths                |
+| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths          |
 | pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally          |
 
 Internode HT is code-complete but unverified on real hardware — the
 `sync()` path replaces DeepEP's NVSHMEM symmetric-heap allocation with
 `cudaMalloc` + `bootstrap->barrier()`, and the kernels use the new
 `PortChannelDeviceHandle::atomicAdd` instead of the old raw-trigger
-pattern. The low-latency path is the only remaining stub.
+pattern.
+
+The low-latency port is **structural**: the DeepEP LL kernels (pure
+IBGDA) have been mechanically translated to MSCCL++ port-channel ops.
+Semantic mapping:
+
+| DeepEP / IBGDA                           | MSCCL++ replacement                                          |
+|------------------------------------------|--------------------------------------------------------------|
+| `nvshmemx_barrier_all_block()`           | signal+wait ring across `port_channel_handles[peer_rank]`    |
+| `nvshmemi_ibgda_put_nbi_warp(...)`       | lane-0 `port_channel_handles[qp*N+dst].put(dst_off, src_off, n)` |
+| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `port_channel_handles[qp*N+dst].atomicAdd(off, int64)` |
+
+**Known limitations**:
+
+* LL performance will NOT match IBGDA — the MSCCL++ port channel uses a
+  CPU proxy. The port is for functional parity, not latency.
+* `Buffer::sync()` in `low_latency_mode=True` only connects peers sharing
+  the same local GPU ID (DeepEP convention). LL kernels therefore assume
+  one-GPU-per-node topology, i.e. `num_ranks == num_rdma_ranks`. Running
+  with >1 GPU per node in LL mode will fail to reach cross-GPU peers.
+* Multi-node H100 validation is still pending.
 
 ## Build
 
@@ -58,7 +78,6 @@ src/ext/ep/
 ├── buffer.hpp / buffer.cc      — host-side Buffer, sync(), dispatch/combine
 ├── config.hpp / event.hpp      — Config, EventHandle
 ├── bindings.cpp                — PYBIND11_MODULE definition
-├── internode_stub.cc           — stubs for not-yet-ported LL launchers
 └── kernels/
     ├── api.cuh                 — host-callable kernel prototypes
     ├── configs.cuh             — compile-time constants (GPU-only)
@@ -67,8 +86,9 @@ src/ext/ep/
     ├── launch.cuh              — SETUP_LAUNCH_CONFIG / SWITCH_* macros
     ├── utils.cuh               — device inline helpers
     ├── runtime.cu              — intranode::barrier launcher
-    ├── intranode_kernel.cu     — notify_dispatch / dispatch / combine kernels
-    └── internode_layout.cu     — get_dispatch_layout (CPU-safe subset)
+    ├── intranode_kernel.cu     — intranode dispatch/combine kernels
+    ├── internode.cu            — internode HT dispatch/combine + layout
+    └── internode_ll.cu         — internode LL dispatch/combine (structural)
 
 python/mscclpp/ext/ep/
 ├── __init__.py                 — reexports Buffer / Config / EventHandle

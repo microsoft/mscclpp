@@ -129,12 +129,41 @@ void combine(cudaDataType_t type,
 }  // namespace internode
 
 // ===========================================================================
-// Internode low-latency (pure RDMA) kernels. Not ported yet.
+// Internode low-latency (pure RDMA) kernels. Ported from DeepEP
+// `csrc/kernels/internode_ll.cu` with NVSHMEM/IBGDA device ops replaced by
+// MSCCL++ port-channel primitives (`put`, `atomicAdd`, signal/wait barrier).
 // ===========================================================================
 namespace internode_ll {
 
-void clean_low_latency_buffer(int* clean_0, int num_clean_int_0, int* clean_1, int num_clean_int_1,
+void clean_low_latency_buffer(int* clean_0, int num_clean_int_0,
+                              int* clean_1, int num_clean_int_1,
+                              int rank, int num_ranks,
+                              mscclpp::PortChannelDeviceHandle* port_channel_handles,
                               cudaStream_t stream);
+
+void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
+              int* packed_recv_src_info, int64_t* packed_recv_layout_range,
+              int* packed_recv_count,
+              void* rdma_recv_x, int* rdma_recv_count, void* rdma_x,
+              const void* x, const int64_t* topk_idx,
+              int* next_clean, int num_next_clean_int,
+              int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
+              int num_topk, int num_experts, int rank, int num_ranks, bool use_fp8,
+              void* workspace, cudaStream_t stream, int phases,
+              void* rdma_buffer_ptr,
+              mscclpp::PortChannelDeviceHandle* port_channel_handles);
+
+void combine(void* combined_x,
+             void* rdma_recv_x, int* rdma_recv_flag, void* rdma_send_x,
+             const void* x, const int64_t* topk_idx, const float* topk_weights,
+             const int* src_info, const int64_t* layout_range,
+             int* next_clean, int num_next_clean_int,
+             int num_combined_tokens, int hidden, int num_max_dispatch_tokens_per_rank,
+             int num_topk, int num_experts, int rank, int num_ranks,
+             void* workspace, cudaStream_t stream,
+             int phases, bool zero_copy,
+             void* rdma_buffer_ptr,
+             mscclpp::PortChannelDeviceHandle* port_channel_handles);
 
 }  // namespace internode_ll
 

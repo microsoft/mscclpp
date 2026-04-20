@@ -41,7 +41,6 @@ endif()
 
 file(GLOB_RECURSE EP_SOURCES CONFIGURE_DEPENDS
     buffer.cc
-    internode_stub.cc
     bindings.cpp
     kernels/*.cu
 )
