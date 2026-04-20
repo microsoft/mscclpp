@@ -8,3 +8,7 @@ endif()
 if(MSCCLPP_BUILD_EXT_NCCL)
     add_subdirectory(nccl)
 endif()
+
+if(MSCCLPP_BUILD_EXT_EP)
+    add_subdirectory(ep)
+endif()
