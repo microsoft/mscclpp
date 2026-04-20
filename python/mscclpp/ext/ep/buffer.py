@@ -13,8 +13,9 @@ Current status (see ``src/ext/ep/README.md``):
 
 * Intranode (NVLink-only) dispatch and combine are fully ported.
 * ``get_dispatch_layout`` is ported.
-* Internode HT and low-latency methods raise from C++ — they still need
-  the NVSHMEM/IBGDA -> MSCCL++ PortChannel migration.
+* Internode HT (MSCCL++ PortChannel + MemoryChannel) is ported.
+* Internode low-latency kernels are ported structurally (NVSHMEM/IBGDA ->
+  MSCCL++ PortChannel) but **untested on multi-node H100**.
 """
 
 from __future__ import annotations
@@ -49,10 +50,11 @@ class Buffer:
     num_nvl_bytes:
         Size of the NVLink-accessible scratch buffer (shared via CUDA IPC).
     num_rdma_bytes:
-        Size of the RDMA scratch buffer. Must be 0 until internode/LL
-        support is landed.
+        Size of the RDMA scratch buffer. Required (>0) for internode HT and
+        low-latency modes.
     low_latency_mode:
-        Reserved — must be ``False`` until the LL path is ported.
+        Enable the low-latency dispatch/combine path (structural port,
+        untested).
     num_qps_per_rank:
         Ignored for intranode mode.
     """
@@ -68,13 +70,6 @@ class Buffer:
         low_latency_mode: bool = False,
         num_qps_per_rank: int = 12,
     ) -> None:
-        if low_latency_mode:
-            raise NotImplementedError(
-                "mscclpp.ext.ep.Buffer: low-latency mode is not yet ported. "
-                "Set low_latency_mode=False. See src/ext/ep/README.md for the "
-                "migration plan."
-            )
-
         self.rank: int = group.rank()
         self.group_size: int = group.size()
         self.group = group

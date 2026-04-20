@@ -33,19 +33,14 @@ def test_low_latency_size_hint():
     assert _cpp.get_low_latency_rdma_size_hint(128, 7168, 8, 256) > 0
 
 
-def test_low_latency_rejected():
-    # Low-latency (pure RDMA) path is not ported yet; Python frontend must
-    # refuse to construct a Buffer with low_latency_mode=True. We test the
-    # underlying C++ constructor directly so this does not depend on the
-    # full `mscclpp` Python package being installed.
+def test_low_latency_buffer_construct():
+    # Low-latency kernels are structurally ported. At construction time the
+    # C++ Buffer must accept low_latency_mode=True; runtime requires a real
+    # multi-node setup (see tests in tests/test_low_latency.py when ported).
     import torch
 
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
-    # The C++ Buffer allows low_latency_mode at construction; the enforcement
-    # lives in the Python frontend (`mscclpp.ext.ep.buffer.Buffer.__init__`).
-    # Verify the C++ side does NOT reject it, so the guarantee sits at the
-    # Python layer where it belongs.
     buf = _cpp.Buffer(rank=0, num_ranks=1, num_nvl_bytes=0, num_rdma_bytes=0, low_latency_mode=True)
     assert not buf.is_available()
