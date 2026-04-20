@@ -102,9 +102,8 @@ __global__ void __launch_bounds__(1024)
     // Signal and wait (thread 0 only)
     if (threadIdx.x == 0) {
       memoryChannels[memChIdx].signal();
-      if (recvCounts[peer] > 0) {
-        memoryChannels[memChIdx].wait();
-      }
+      memoryChannels[memChIdx].wait();
+      __threadfence_system();
     }
   } else {
     // Inter-node: PortChannel — single-threaded FIFO push
@@ -218,10 +217,14 @@ __global__ void __launch_bounds__(1024)
   // signals and waits. Wait latencies overlap: O(max) instead of O(sum).
   if (threadIdx.x == 0 && localBlockIdx == 0) {
     memoryChannels[myPeerIdx].signal();
-    if (recvCounts[peer] > 0) {
-      memoryChannels[myPeerIdx].wait();
-    }
+    memoryChannels[myPeerIdx].wait();
   }
+
+  // ALL threads/blocks must execute the fence before kernel exit.
+  // Only the primary block does signal/wait, but ALL blocks did put() —
+  // their NVLink writes may still be in flight. The fence ensures every
+  // SM's write buffer is flushed before the kernel is marked "complete".
+  __threadfence_system();
 }
 
 

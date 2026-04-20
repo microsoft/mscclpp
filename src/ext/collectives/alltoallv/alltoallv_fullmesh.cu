@@ -241,13 +241,12 @@ CommResult AlltoallvFullmesh::alltoallvKernelFunc(
         outputSize, cudaMemcpyDeviceToDevice, stream));
   }
 
-  static int cnt;
-  if (cnt++ % 1000 == 0) {
-    MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
-    if (auto algo = algo_.lock()) {
-      algo->reset();
-    }
-  }
+  // NOTE: Do NOT reset() here.  The periodic reset was destroying the
+  // cached context (MemoryChannels, semaphores) while inter-GPU signaling
+  // was still in progress, causing semaphore epoch mismatch and eventually
+  // illegal memory access.  With persistent fixed-size buffers the context
+  // key is stable, so the cached context is valid for the lifetime of the
+  // communicator.
 
   if (cudaGetLastError() == cudaSuccess) {
     return CommResult::CommSuccess;
