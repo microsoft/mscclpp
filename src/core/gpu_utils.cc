@@ -273,8 +273,8 @@ bool isNvlsSupported() {
   if (env()->forceDisableNvls) {
     return false;
   }
-  static bool result = false;
-  static bool isChecked = false;
+  [[maybe_unused]] static bool result = false;
+  [[maybe_unused]] static bool isChecked = false;
 #if (CUDA_NVLS_API_AVAILABLE)
   if (!isChecked) {
     int deviceId;
