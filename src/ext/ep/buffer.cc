@@ -241,7 +241,6 @@ void Buffer::sync(const std::vector<int> &device_ids,
         }
         for (int i = 0; i < num_nvl_ranks; ++i) {
             if (i == nvl_rank) continue;
-            auto r = i + rdma_rank * num_nvl_ranks;
             auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, connections[i]);
             memory_channels.emplace_back(sema, remote_mem_futures[i].get(), buffer_mem);
         }
@@ -282,17 +281,21 @@ void Buffer::sync(const std::vector<int> &device_ids,
         memory_ids[rank] = proxy_service->addMemory(local_rdma_buffer_mem);
 
         // Send local memory to other ranks. If low_latency_mode == true, only send to ranks with the same GPU ID.
+        // Use tag=1 to disambiguate from the NVL phase's tag=0 traffic with same-node peers.
+        constexpr int kRdmaTag = 1;
         for (int r = 0; r < num_ranks; ++r) {
             if (r == rank) continue;
             if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
-            communicator->sendMemory(local_rdma_buffer_mem, r, 0);
+            communicator->sendMemory(local_rdma_buffer_mem, r, kRdmaTag);
         }
 
         // Receive remote memory from other ranks.
         for (int r = 0; r < num_ranks; ++r) {
             if (r == rank) continue;
             if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
-            memory_ids[r] = proxy_service->addMemory(communicator->recvMemory(r, 0).get());
+            auto f = communicator->recvMemory(r, kRdmaTag);
+            auto mem = f.get();
+            memory_ids[r] = proxy_service->addMemory(std::move(mem));
         }
 
         // Rank -> vector of connections
@@ -301,7 +304,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
         const mscclpp::EndpointConfig ib_cfg(ib_transport);
 
         // Self connection for local memory (CUDA IPC).
-        connections[rank].emplace_back(communicator->connect(ipc_cfg, rank, 0).get());
+        connections[rank].emplace_back(communicator->connect(ipc_cfg, rank, kRdmaTag).get());
 
         // Remote IB connections (multi-QP per peer).
         const int num_ib_connections_per_rank = 12;  // #QPs per rank (mirrors DeepEP).
@@ -310,16 +313,21 @@ void Buffer::sync(const std::vector<int> &device_ids,
             std::vector<std::shared_future<mscclpp::Connection>> futures;
             futures.reserve(num_ib_connections_per_rank);
             for (int i = 0; i < num_ib_connections_per_rank; ++i) {
-                futures.emplace_back(communicator->connect(ib_cfg, r, 0));
+                futures.emplace_back(communicator->connect(ib_cfg, r, kRdmaTag));
             }
             for (auto& f : futures) connections[r].emplace_back(f.get());
         }
 
-        // Rank -> vector of semaphore IDs
+        // Rank -> vector of semaphore IDs. Iterate peers in sorted rank order so
+        // semaphore pairings between nodes line up deterministically.
         std::unordered_map<int, std::vector<mscclpp::SemaphoreId>> sema_ids;
         const int num_semaphores_per_rank = 16;
         for (int i = 0; i < num_semaphores_per_rank; ++i) {
-            for (auto& [r, conns] : connections) {
+            for (int r = 0; r < num_ranks; ++r) {
+                if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
+                auto conn_it = connections.find(r);
+                EP_HOST_ASSERT(conn_it != connections.end());
+                auto& conns = conn_it->second;
                 auto& conn = conns[i % conns.size()];
                 auto sema_id = proxy_service->buildAndAddSemaphore(*communicator, conn);
                 sema_ids[r].emplace_back(sema_id);
@@ -327,10 +335,23 @@ void Buffer::sync(const std::vector<int> &device_ids,
         }
 
         // Create port channels + device handles.
+        //
+        // The kernels index `port_channel_handles[channel_id * num_ranks + peer_rank]`
+        // where peer_rank is a GLOBAL rank in [0..num_ranks). So the outer stride must
+        // be num_ranks with peers in ascending rank order. Iterating `memory_ids` (an
+        // `unordered_map`) yields hash order and would misroute signals, deadlocking.
         const int num_port_channels_per_rank = num_semaphores_per_rank;
         std::vector<mscclpp::PortChannelDeviceHandle> port_channel_handles;
         for (int i = 0; i < num_port_channels_per_rank; ++i) {
-            for (auto& [r, memory_id] : memory_ids) {
+            for (int r = 0; r < num_ranks; ++r) {
+                if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) {
+                    // Not connected in LL mode; push a default handle as placeholder.
+                    port_channel_handles.emplace_back(mscclpp::PortChannelDeviceHandle{});
+                    continue;
+                }
+                auto mem_it = memory_ids.find(r);
+                EP_HOST_ASSERT(mem_it != memory_ids.end());
+                auto memory_id = mem_it->second;
                 auto sema_id = sema_ids[r][i % sema_ids[r].size()];
                 auto port_channel = proxy_service->portChannel(sema_id, memory_id, memory_ids[rank]);
                 port_channels.emplace_back(std::move(port_channel));
