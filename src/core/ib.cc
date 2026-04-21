@@ -3,6 +3,7 @@
 
 #include "ib.hpp"
 
+#include <arpa/inet.h>
 #include <malloc.h>
 #include <unistd.h>
 
@@ -20,6 +21,9 @@
 #include "context.hpp"
 #if defined(USE_IBVERBS)
 #include "ibverbs_wrapper.hpp"
+#if defined(MSCCLPP_USE_MLX5DV)
+#include "mlx5dv_wrapper.hpp"
+#endif  // defined(MSCCLPP_USE_MLX5DV)
 #endif  // defined(USE_IBVERBS)
 #include "logger.hpp"
 
@@ -63,7 +67,7 @@ static inline bool isDmabufSupportedByGpu(int gpuId) {
   return ret;
 }
 
-IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff), size_(0) {
+IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nullptr), buff_(buff), size_(0) {
   if (size == 0) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid MR size: 0");
   }
@@ -79,13 +83,50 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size) : mr_(nullptr), buff_(buff)
   bool isGpuBuff = (gpuId != -1);
   if (isGpuBuff && isDmabufSupportedByGpu(gpuId)) {
 #if !defined(MSCCLPP_USE_ROCM)
-    int fd;
-    MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, pages * pageSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+    int fd = -1;
+    size_t rangeSize = pages * pageSize;
 
+    // Obtain a DMA-BUF file descriptor for the GPU memory range. On platforms with a CPU-GPU
+    // bridge that reorders posted writes (e.g., Grace/GB200 NVLink-C2C), the PCIe mapping flag
+    // routes DMA through the Data Direct engine for correct ordering and higher throughput.
+    // Fall back to the default (non-PCIe) mapping if the flag is unsupported.
+#if (CUDA_VERSION >= 12030)
+    CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
+                                                   CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
+    if (cuRes != CUDA_SUCCESS || fd < 0) {
+      if (fd >= 0) ::close(fd);
+      fd = -1;
+    }
+    bool usedPcieFlag = (fd >= 0);
+#endif  // CUDA_VERSION >= 12030
+    if (fd < 0) {
+      MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+    }
+
+    // Register the DMA-BUF memory region. When Data Direct is available, use the mlx5dv API
+    // which enables hardware-level Data Direct routing for the MR. Otherwise use standard verbs.
     size_t offsetInDmaBuf = buffIntPtr % pageSize;
-    mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd,
-                                     IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
-                                         IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC);
+    int accessFlags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ |
+                      IBV_ACCESS_RELAXED_ORDERING | IBV_ACCESS_REMOTE_ATOMIC;
+
+#if defined(MSCCLPP_USE_MLX5DV)
+    if (isDataDirect) {
+      mr_ = MLX5DV::mlx5dv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+    }
+#endif
+    if (mr_ == nullptr) {
+      mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+    }
+
+    // If MR registration failed with a PCIe-mapped fd, retry with the default mapping.
+#if (CUDA_VERSION >= 12030)
+    if (mr_ == nullptr && usedPcieFlag) {
+      ::close(fd);
+      MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
+      mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
+    }
+#endif  // CUDA_VERSION >= 12030
+
     ::close(fd);
     if (mr_ == nullptr) {
       THROW(NET, IbError, errno, "ibv_reg_dmabuf_mr failed (errno ", errno, ")");
@@ -129,30 +170,47 @@ const void* IbMr::getBuff() const { return buff_; }
 
 uint32_t IbMr::getLkey() const { return mr_->lkey; }
 
-IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
-           int maxRecvWr, int maxWrPerSend)
+IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxSendCqSize, int maxSendCqPollNum,
+           int maxSendWr, int maxRecvWr, int maxWrPerSend, bool noAtomic)
     : portNum_(portNum),
       gidIndex_(gidIndex),
       info_(),
       qp_(nullptr),
-      cq_(nullptr),
-      wcs_(),
-      wrs_(),
-      sges_(),
-      wrn_(0),
-      numSignaledPostedItems_(0),
-      numSignaledStagedItems_(0),
-      maxCqPollNum_(maxCqPollNum),
-      maxWrPerSend_(maxWrPerSend) {
-  cq_ = IBVerbs::ibv_create_cq(ctx, maxCqSize, nullptr, nullptr, 0);
-  if (cq_ == nullptr) {
+      sendCq_(nullptr),
+      recvCq_(nullptr),
+      sendWcs_(),
+      recvWcs_(),
+      sendWrs_(),
+      sendSges_(),
+      recvWrs_(),
+      recvSges_(),
+      numStagedSend_(0),
+      numStagedRecv_(0),
+      numPostedSignaledSend_(0),
+      numStagedSignaledSend_(0),
+      maxSendCqPollNum_(maxSendCqPollNum),
+      maxSendWr_(maxSendWr),
+      maxWrPerSend_(maxWrPerSend),
+      maxRecvWr_(maxRecvWr),
+      noAtomic_(noAtomic) {
+  sendCq_ = IBVerbs::ibv_create_cq(ctx, maxSendCqSize, nullptr, nullptr, 0);
+  if (sendCq_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
+  }
+
+  // Only create recv CQ if maxRecvWr > 0
+  if (maxRecvWr > 0) {
+    recvCq_ = IBVerbs::ibv_create_cq(ctx, maxRecvWr, nullptr, nullptr, 0);
+    if (recvCq_ == nullptr) {
+      THROW(NET, IbError, errno, "ibv_create_cq failed (errno ", errno, ")");
+    }
   }
 
   struct ibv_qp_init_attr qpInitAttr = {};
   qpInitAttr.sq_sig_all = 0;
-  qpInitAttr.send_cq = cq_;
-  qpInitAttr.recv_cq = cq_;
+  qpInitAttr.send_cq = sendCq_;
+  // Use separate recv CQ if created, otherwise use the send CQ
+  qpInitAttr.recv_cq = (recvCq_ != nullptr) ? recvCq_ : sendCq_;
   qpInitAttr.qp_type = IBV_QPT_RC;
   qpInitAttr.cap.max_send_wr = maxSendWr;
   qpInitAttr.cap.max_recv_wr = maxRecvWr;
@@ -173,9 +231,9 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSiz
   info_.linkLayer = portAttr.link_layer;
   info_.qpn = qp->qp_num;
   info_.mtu = portAttr.active_mtu;
-  info_.is_grh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
+  info_.isGrh = (portAttr.flags & IBV_QPF_GRH_REQUIRED);
 
-  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.is_grh) {
+  if (portAttr.link_layer != IBV_LINK_LAYER_INFINIBAND || info_.isGrh) {
     if (gidIndex_ >= portAttr.gid_tbl_len) {
       THROW(NET, Error, ErrorCode::InvalidUsage, "invalid GID index ", gidIndex_, " for port ", portNum_,
             " (max index is ", portAttr.gid_tbl_len - 1, ")");
@@ -194,19 +252,28 @@ IbQp::IbQp(ibv_context* ctx, ibv_pd* pd, int portNum, int gidIndex, int maxCqSiz
   qpAttr.qp_state = IBV_QPS_INIT;
   qpAttr.pkey_index = 0;
   qpAttr.port_num = portNum_;
-  qpAttr.qp_access_flags = IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC;
+  qpAttr.qp_access_flags = noAtomic_ ? IBV_ACCESS_REMOTE_WRITE
+                                     : (IBV_ACCESS_REMOTE_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_ATOMIC);
   if (IBVerbs::ibv_modify_qp(qp, &qpAttr, IBV_QP_STATE | IBV_QP_PKEY_INDEX | IBV_QP_PORT | IBV_QP_ACCESS_FLAGS) != 0) {
     THROW(NET, IbError, errno, "ibv_modify_qp failed (errno ", errno, ")");
   }
   qp_ = qp;
-  wrs_ = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend_);
-  sges_ = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend_);
-  wcs_ = std::make_shared<std::vector<ibv_wc>>(maxCqPollNum_);
+  sendWrs_ = std::make_shared<std::vector<ibv_send_wr>>(maxWrPerSend_);
+  sendSges_ = std::make_shared<std::vector<ibv_sge>>(maxWrPerSend_);
+  sendWcs_ = std::make_shared<std::vector<ibv_wc>>(maxSendCqPollNum_);
+  recvWcs_ = std::make_shared<std::vector<ibv_wc>>(maxRecvWr_);
+  if (maxRecvWr_ > 0) {
+    recvWrs_ = std::make_shared<std::vector<ibv_recv_wr>>(maxRecvWr_);
+    recvSges_ = std::make_shared<std::vector<ibv_sge>>(maxRecvWr_);
+  }
 }
 
 IbQp::~IbQp() {
   IBVerbs::ibv_destroy_qp(qp_);
-  IBVerbs::ibv_destroy_cq(cq_);
+  IBVerbs::ibv_destroy_cq(sendCq_);
+  if (recvCq_ != nullptr) {
+    IBVerbs::ibv_destroy_cq(recvCq_);
+  }
 }
 
 void IbQp::rtr(const IbQpInfo& info) {
@@ -215,9 +282,9 @@ void IbQp::rtr(const IbQpInfo& info) {
   qp_attr.path_mtu = static_cast<ibv_mtu>(info.mtu);
   qp_attr.dest_qp_num = info.qpn;
   qp_attr.rq_psn = 0;
-  qp_attr.max_dest_rd_atomic = 1;
+  qp_attr.max_dest_rd_atomic = noAtomic_ ? 0 : 1;
   qp_attr.min_rnr_timer = 0x12;
-  if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.is_grh) {
+  if (info.linkLayer == IBV_LINK_LAYER_ETHERNET || info.isGrh) {
     qp_attr.ah_attr.is_global = 1;
     qp_attr.ah_attr.grh.dgid.global.subnet_prefix = info.spn;
     qp_attr.ah_attr.grh.dgid.global.interface_id = info.iid;
@@ -247,7 +314,7 @@ void IbQp::rts() {
   qp_attr.retry_cnt = 7;
   qp_attr.rnr_retry = 7;
   qp_attr.sq_psn = 0;
-  qp_attr.max_rd_atomic = 1;
+  qp_attr.max_rd_atomic = noAtomic_ ? 0 : 1;
   int ret = IBVerbs::ibv_modify_qp(
       qp_, &qp_attr,
       IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT | IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC);
@@ -256,25 +323,25 @@ void IbQp::rts() {
   }
 }
 
-IbQp::WrInfo IbQp::getNewWrInfo() {
-  if (wrn_ >= maxWrPerSend_) {
-    THROW(NET, Error, ErrorCode::InvalidUsage, "too many outstanding work requests. limit is ", maxWrPerSend_);
+IbQp::SendWrInfo IbQp::getNewSendWrInfo() {
+  if (numStagedSend_ >= maxWrPerSend_) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "too many staged work requests. limit is ", maxWrPerSend_);
   }
-  ibv_send_wr* wr_ = &wrs_->data()[wrn_];
-  ibv_sge* sge_ = &sges_->data()[wrn_];
+  ibv_send_wr* wr_ = &sendWrs_->data()[numStagedSend_];
+  ibv_sge* sge_ = &sendSges_->data()[numStagedSend_];
   wr_->sg_list = sge_;
   wr_->num_sge = 1;
   wr_->next = nullptr;
-  if (wrn_ > 0) {
-    (*wrs_)[wrn_ - 1].next = wr_;
+  if (numStagedSend_ > 0) {
+    (*sendWrs_)[numStagedSend_ - 1].next = wr_;
   }
-  wrn_++;
-  return IbQp::WrInfo{wr_, sge_};
+  numStagedSend_++;
+  return IbQp::SendWrInfo{wr_, sge_};
 }
 
-void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                     uint64_t dstOffset, bool signaled) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendWrite(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                          uint64_t dstOffset, bool signaled) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -283,12 +350,12 @@ void IbQp::stageSend(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64
   wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
   wrInfo.sge->length = size;
   wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  if (signaled) numStagedSignaledSend_++;
 }
 
-void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
-                          bool signaled) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, uint64_t dstOffset, uint64_t addVal,
+                              bool signaled) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_ATOMIC_FETCH_AND_ADD;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
@@ -298,62 +365,149 @@ void IbQp::stageAtomicAdd(const IbMr* mr, const IbMrInfo& info, uint64_t wrId, u
   wrInfo.sge->addr = (uint64_t)(mr->getBuff());
   wrInfo.sge->length = sizeof(uint64_t);  // atomic op is always on uint64_t
   wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  if (signaled) numStagedSignaledSend_++;
 }
 
-void IbQp::stageSendWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
-                            uint64_t dstOffset, bool signaled, unsigned int immData) {
-  auto wrInfo = this->getNewWrInfo();
+void IbQp::stageSendWriteWithImm(const IbMr* mr, const IbMrInfo& info, uint32_t size, uint64_t wrId, uint64_t srcOffset,
+                                 uint64_t dstOffset, bool signaled, unsigned int immData) {
+  auto wrInfo = this->getNewSendWrInfo();
   wrInfo.wr->wr_id = wrId;
   wrInfo.wr->opcode = IBV_WR_RDMA_WRITE_WITH_IMM;
   wrInfo.wr->send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wrInfo.wr->wr.rdma.remote_addr = (uint64_t)(info.addr) + dstOffset;
   wrInfo.wr->wr.rdma.rkey = info.rkey;
-  wrInfo.wr->imm_data = immData;
-  wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
-  wrInfo.sge->length = size;
-  wrInfo.sge->lkey = mr->getLkey();
-  if (signaled) numSignaledStagedItems_++;
+  wrInfo.wr->imm_data = htonl(immData);
+  if (mr != nullptr) {
+    wrInfo.sge->addr = (uint64_t)(mr->getBuff()) + srcOffset;
+    wrInfo.sge->length = size;
+    wrInfo.sge->lkey = mr->getLkey();
+  } else {
+    // 0-byte write-with-imm: no source buffer needed
+    wrInfo.sge->addr = 0;
+    wrInfo.sge->length = 0;
+    wrInfo.sge->lkey = 0;
+  }
+  if (signaled) numStagedSignaledSend_++;
 }
 
 void IbQp::postSend() {
-  if (wrn_ == 0) {
+  if (numStagedSend_ == 0) {
     return;
   }
   struct ibv_send_wr* bad_wr;
-  int err = IBVerbs::ibv_post_send(qp_, wrs_->data(), &bad_wr);
+  int err = IBVerbs::ibv_post_send(qp_, sendWrs_->data(), &bad_wr);
   if (err != 0) {
     THROW(NET, IbError, err, "ibv_post_send failed (errno ", err, ")");
   }
-  wrn_ = 0;
-  numSignaledPostedItems_ += numSignaledStagedItems_;
-  numSignaledStagedItems_ = 0;
-  if (numSignaledPostedItems_ + 4 > cq_->cqe) {
-    WARN(NET, "IB: CQ is almost full ( ", numSignaledPostedItems_, " / ", cq_->cqe,
+  numStagedSend_ = 0;
+  numPostedSignaledSend_ += numStagedSignaledSend_;
+  numStagedSignaledSend_ = 0;
+  if (numPostedSignaledSend_ + 4 > sendCq_->cqe) {
+    WARN(NET, "IB: CQ is almost full ( ", numPostedSignaledSend_, " / ", sendCq_->cqe,
          " ). The connection needs to be flushed to prevent timeout errors.");
   }
 }
 
-int IbQp::pollCq() {
-  int wcNum = IBVerbs::ibv_poll_cq(cq_, maxCqPollNum_, wcs_->data());
+IbQp::RecvWrInfo IbQp::getNewRecvWrInfo() {
+  if (numStagedRecv_ >= maxRecvWr_) {
+    THROW(NET, Error, ErrorCode::InvalidUsage, "too many outstanding recv work requests. limit is ", maxRecvWr_);
+  }
+  ibv_recv_wr* wr = &recvWrs_->data()[numStagedRecv_];
+  ibv_sge* sge = &recvSges_->data()[numStagedRecv_];
+  wr->next = nullptr;
+  if (numStagedRecv_ > 0) {
+    (*recvWrs_)[numStagedRecv_ - 1].next = wr;
+  }
+  numStagedRecv_++;
+  return IbQp::RecvWrInfo{wr, sge};
+}
+
+void IbQp::stageRecv(uint64_t wrId) {
+  auto wrInfo = this->getNewRecvWrInfo();
+  // For RDMA write-with-imm, data goes to remote_addr specified by sender.
+  // We only need the recv WR to get the completion notification with imm_data.
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.wr->sg_list = nullptr;
+  wrInfo.wr->num_sge = 0;
+}
+
+void IbQp::stageRecv(const IbMr* mr, uint64_t wrId, uint32_t size, uint64_t offset) {
+  auto wrInfo = this->getNewRecvWrInfo();
+  wrInfo.wr->wr_id = wrId;
+  wrInfo.sge->addr = reinterpret_cast<uint64_t>(mr->getBuff()) + offset;
+  wrInfo.sge->length = size;
+  wrInfo.sge->lkey = mr->getLkey();
+  wrInfo.wr->sg_list = wrInfo.sge;
+  wrInfo.wr->num_sge = 1;
+}
+
+void IbQp::postRecv() {
+  if (numStagedRecv_ == 0) return;
+  struct ibv_recv_wr* bad_wr;
+  int err = IBVerbs::ibv_post_recv(qp_, recvWrs_->data(), &bad_wr);
+  if (err != 0) {
+    THROW(NET, IbError, err, "ibv_post_recv failed (errno ", err, ")");
+  }
+  numStagedRecv_ = 0;
+}
+
+int IbQp::pollSendCq() {
+  int wcNum = IBVerbs::ibv_poll_cq(sendCq_, maxSendCqPollNum_, sendWcs_->data());
   if (wcNum > 0) {
-    numSignaledPostedItems_ -= wcNum;
+    numPostedSignaledSend_ -= wcNum;
   }
   return wcNum;
 }
 
-int IbQp::getWcStatus(int idx) const { return (*wcs_)[idx].status; }
+int IbQp::pollRecvCq() {
+  int wcNum = IBVerbs::ibv_poll_cq(recvCq_, maxRecvWr_, recvWcs_->data());
+  return wcNum;
+}
 
-std::string IbQp::getWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*wcs_)[idx].status); }
+int IbQp::getSendWcStatus(int idx) const { return (*sendWcs_)[idx].status; }
 
-int IbQp::getNumCqItems() const { return numSignaledPostedItems_; }
+std::string IbQp::getSendWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*sendWcs_)[idx].status); }
 
-IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_(nullptr) {
+int IbQp::getNumSendCqItems() const { return numPostedSignaledSend_; }
+
+int IbQp::getRecvWcStatus(int idx) const { return (*recvWcs_)[idx].status; }
+
+std::string IbQp::getRecvWcStatusString(int idx) const { return IBVerbs::ibv_wc_status_str((*recvWcs_)[idx].status); }
+
+unsigned int IbQp::getRecvWcImmData(int idx) const { return ntohl((*recvWcs_)[idx].imm_data); }
+
+IbCtx::IbCtx(const std::string& devName)
+    : devName_(devName),
+      ctx_(nullptr),
+      pd_(nullptr),
+      supportsRdmaAtomics_(false),
+      isMlx5_(false),
+      isDataDirect_(false),
+      isVF_(false) {
   int num;
   struct ibv_device** devices = IBVerbs::ibv_get_device_list(&num);
   for (int i = 0; i < num; ++i) {
     if (std::string(devices[i]->name) == devName_) {
       ctx_ = IBVerbs::ibv_open_device(devices[i]);
+
+      // Detect if this IB device is a Virtual Function (VF).
+      // VFs have a 'physfn' sysfs symlink pointing to their parent PF; PFs do not.
+      {
+        std::string physfnPath = "/sys/class/infiniband/" + devName_ + "/device/physfn";
+        isVF_ = (access(physfnPath.c_str(), F_OK) == 0);
+        if (isVF_) {
+          INFO(NET, "IB device ", devName_, " is a Virtual Function (Data Direct ordering available)");
+        }
+      }
+
+#if defined(MSCCLPP_USE_MLX5DV)
+      if (MLX5DV::isAvailable()) {
+        isMlx5_ = MLX5DV::mlx5dv_is_supported(devices[i]);
+        if (isMlx5_) {
+          INFO(NET, "IB device ", devName_, " supports mlx5 Direct Verbs");
+        }
+      }
+#endif  // defined(MSCCLPP_USE_MLX5DV)
       break;
     }
   }
@@ -364,6 +518,26 @@ IbCtx::IbCtx(const std::string& devName) : devName_(devName), ctx_(nullptr), pd_
   pd_ = IBVerbs::ibv_alloc_pd(ctx_);
   if (pd_ == nullptr) {
     THROW(NET, IbError, errno, "ibv_alloc_pd failed (errno ", errno, ")");
+  }
+
+  // Detect Data Direct support via mlx5dv_get_data_direct_sysfs_path
+#if defined(MSCCLPP_USE_MLX5DV)
+  if (isMlx5_ && MLX5DV::isAvailable()) {
+    char sysfsPath[256];
+    int ret = MLX5DV::mlx5dv_get_data_direct_sysfs_path(ctx_, sysfsPath, sizeof(sysfsPath));
+    if (ret == 0) {
+      isDataDirect_ = true;
+      INFO(NET, "IB device ", devName_, " supports Data Direct (sysfs: ", sysfsPath, ")");
+    } else {
+      INFO(NET, "IB device ", devName_, " does not support Data Direct");
+    }
+  }
+#endif  // defined(MSCCLPP_USE_MLX5DV)
+
+  // Query and cache RDMA atomics capability
+  struct ibv_device_attr attr = {};
+  if (IBVerbs::ibv_query_device(ctx_, &attr) == 0) {
+    supportsRdmaAtomics_ = (attr.atomic_cap == IBV_ATOMIC_HCA || attr.atomic_cap == IBV_ATOMIC_GLOB);
   }
 }
 
@@ -419,8 +593,8 @@ int IbCtx::getAnyUsablePort(int gidIndex) const {
   return -1;
 }
 
-std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxCqSize, int maxCqPollNum, int maxSendWr,
-                                      int maxRecvWr, int maxWrPerSend) {
+std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxSendCqSize, int maxSendCqPollNum, int maxSendWr,
+                                      int maxRecvWr, int maxWrPerSend, bool noAtomic) {
   if (port == -1) {
     port = this->getAnyUsablePort(gidIndex);
     if (port == -1) {
@@ -429,13 +603,21 @@ std::shared_ptr<IbQp> IbCtx::createQp(int port, int gidIndex, int maxCqSize, int
   } else if (!this->isPortUsable(port, gidIndex)) {
     THROW(NET, Error, ErrorCode::InvalidUsage, "invalid IB port: ", port);
   }
-  return std::shared_ptr<IbQp>(
-      new IbQp(ctx_, pd_, port, gidIndex, maxCqSize, maxCqPollNum, maxSendWr, maxRecvWr, maxWrPerSend));
+  return std::shared_ptr<IbQp>(new IbQp(ctx_, pd_, port, gidIndex, maxSendCqSize, maxSendCqPollNum, maxSendWr,
+                                        maxRecvWr, maxWrPerSend, noAtomic));
 }
 
 std::unique_ptr<const IbMr> IbCtx::registerMr(void* buff, std::size_t size) {
-  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size));
+  return std::unique_ptr<const IbMr>(new IbMr(pd_, buff, size, isDataDirect_));
 }
+
+bool IbCtx::supportsRdmaAtomics() const { return supportsRdmaAtomics_; }
+
+bool IbCtx::isMlx5() const { return isMlx5_; }
+
+bool IbCtx::isDataDirect() const { return isDataDirect_; }
+
+bool IbCtx::isVirtualFunction() const { return isVF_; }
 
 MSCCLPP_API_CPP int getIBDeviceCount() {
   int num;
@@ -541,6 +723,34 @@ MSCCLPP_API_CPP int getIBDeviceCount() { return 0; }
 MSCCLPP_API_CPP std::string getIBDeviceName(Transport) { return ""; }
 
 MSCCLPP_API_CPP Transport getIBTransportByDeviceName(const std::string&) { return Transport::Unknown; }
+
+IbMr::~IbMr() {}
+IbMrInfo IbMr::getInfo() const { return IbMrInfo(); }
+const void* IbMr::getBuff() const { return nullptr; }
+uint32_t IbMr::getLkey() const { return 0; }
+
+IbQp::~IbQp() {}
+void IbQp::rtr(const IbQpInfo& /*info*/) {}
+void IbQp::rts() {}
+void IbQp::stageSendWrite(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint32_t /*size*/, uint64_t /*wrId*/,
+                          uint64_t /*srcOffset*/, uint64_t /*dstOffset*/, bool /*signaled*/) {}
+void IbQp::stageSendAtomicAdd(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint64_t /*wrId*/, uint64_t /*dstOffset*/,
+                              uint64_t /*addVal*/, bool /*signaled*/) {}
+void IbQp::stageSendWriteWithImm(const IbMr* /*mr*/, const IbMrInfo& /*info*/, uint32_t /*size*/, uint64_t /*wrId*/,
+                                 uint64_t /*srcOffset*/, uint64_t /*dstOffset*/, bool /*signaled*/,
+                                 unsigned int /*immData*/) {}
+void IbQp::postSend() {}
+void IbQp::stageRecv(uint64_t /*wrId*/) {}
+void IbQp::stageRecv(const IbMr* /*mr*/, uint64_t /*wrId*/, uint32_t /*size*/, uint64_t /*offset*/) {}
+void IbQp::postRecv() {}
+int IbQp::pollSendCq() { return 0; }
+int IbQp::pollRecvCq() { return 0; }
+int IbQp::getSendWcStatus(int /*idx*/) const { return 0; }
+std::string IbQp::getSendWcStatusString(int /*idx*/) const { return ""; }
+int IbQp::getNumSendCqItems() const { return 0; }
+int IbQp::getRecvWcStatus(int /*idx*/) const { return 0; }
+std::string IbQp::getRecvWcStatusString(int /*idx*/) const { return ""; }
+unsigned int IbQp::getRecvWcImmData(int /*idx*/) const { return 0; }
 
 #endif  // !defined(USE_IBVERBS)
 

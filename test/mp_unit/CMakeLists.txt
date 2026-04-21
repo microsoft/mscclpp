@@ -8,6 +8,7 @@ target_sources(mp_unit_tests PRIVATE
     communicator_tests.cu
     port_channel_tests.cu
     memory_channel_tests.cu
+    semaphore_perf_tests.cu
     switch_channel_tests.cu
     executor_tests.cc
 )

@@ -24,11 +24,11 @@ def _a2av_dbg(msg: str):
     if _DEBUG_A2AV:
         print(msg, file=sys.stderr, flush=True)
 from mscclpp._mscclpp import (
-    Communicator,
-    TcpBootstrap,
-    DataType,
-    ReduceOp,
-    CommResult,
+    CppCommunicator as Communicator,
+    CppTcpBootstrap as TcpBootstrap,
+    CppDataType as DataType,
+    CppReduceOp as ReduceOp,
+    CppCommResult as CommResult,
 )
 from mscclpp.ext.algorithm_collection_builder import AlgorithmCollectionBuilder
 
@@ -375,6 +375,7 @@ class MscclppAlltoAllV:
             None,  # executor (not needed for native algos)
             0,     # nblocks (auto)
             0,     # nthreads_per_block (auto)
+            False, # symmetric_memory
             self._extras,
         )
 

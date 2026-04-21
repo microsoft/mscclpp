@@ -9,7 +9,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
@@ -25,6 +25,10 @@ __global__ void __launch_bounds__(512, 1)
   int4* buff4 = reinterpret_cast<int4*>(buff);
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   int4* resultBuff4 = reinterpret_cast<int4*>(resultBuff);
+
+  // AccumVec: wider vector for mixed-precision accumulation. When AccumT==T, this is just int4 (no-op).
+  constexpr int nElemsPerInt4 = sizeof(int4) / sizeof(T);
+  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nElemsPerInt4>>;
 
   // Distribute `nInt4PerRank` across all blocks with the unit size `unitNInt4`
   constexpr size_t unitNInt4 = 512;
@@ -81,12 +85,14 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
 
     for (size_t idx = threadIdx.x; idx < nInt4PerChunk; idx += blockDim.x) {
-      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vectors<T, OpType>(val, data);
+        acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, val);
       }
+      int4 data = mscclpp::downcastVector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -121,12 +127,14 @@ __global__ void __launch_bounds__(512, 1)
     __syncthreads();
 
     for (size_t idx = threadIdx.x; idx < restNInt4; idx += blockDim.x) {
-      int4 data = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      int4 rawData = buff4[nInt4PerRank * rank + idx + offsetOfThisBlock];
+      AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(rawData);
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         const int remoteRank = (peerIdx < rank) ? peerIdx : peerIdx + 1;
         int4 val = scratch4[chunkSizePerRank * remoteRank + blockOffset + idx];
-        data = cal_vectors<T, OpType>(val, data);
+        acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, val);
       }
+      int4 data = mscclpp::downcastVector<T, AccumT, int4>(acc);
       resultBuff4[nInt4PerRank * rank + idx + offsetOfThisBlock] = data;
       for (int peerIdx = 0; peerIdx < nPeer; peerIdx++) {
         outChannels[peerIdx].write(nInt4PerRank * rank + idx + offsetOfThisBlock + channelOutDataOffset / sizeof(int4),
@@ -144,17 +152,18 @@ __global__ void __launch_bounds__(512, 1)
   }
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t,
                           size_t channelOutDataOffset, size_t, int rank, int nRanksPerNode, int worldSize,
-                          size_t inputSize, cudaStream_t stream, void*, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          size_t inputSize, cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks,
+                          int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0) nBlocks = 35;
     if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
-    allreduceFullmesh<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreduceFullmesh<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
         channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
     return cudaGetLastError();
@@ -173,15 +182,18 @@ void AllreduceFullmesh::initialize(std::shared_ptr<Communicator> comm) {
   localScratchMemory_ = std::move(localMemory);
 }
 
-CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input, void* output,
-                                                  size_t inputSize, DataType dtype, ReduceOp op, cudaStream_t stream,
-                                                  int nBlocks, int nThreadsPerBlock,
-                                                  const std::unordered_map<std::string, uintptr_t>&) {
+CommResult AllreduceFullmesh::allreduceKernelFunc(
+    const std::shared_ptr<void> ctx_void, const void* input, void* output, size_t inputSize, DataType dtype,
+    ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+    [[maybe_unused]] const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  size_t channelOutOffset = (char*)output - (char*)recvBasePtr;
+  size_t channelOutOffset = 0;
+  if (symmetricMemory_) {
+    MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+    channelOutOffset = (char*)output - (char*)recvBasePtr;
+  }
   std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles;
   if (this->memoryChannelsMap_.find(input) != this->memoryChannelsMap_.end()) {
     inputChannelHandles = this->memoryChannelsMap_[input].second;
@@ -194,17 +206,24 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   }
   inputChannelHandles = this->memoryChannelsMap_[input].second;
 
-  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", static_cast<int>(op),
          static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > 64) {
+    WARN("AllreduceFullmesh: number of blocks exceeds maximum supported blocks, which is 64");
+    return mscclpp::CommResult::CommInvalidArgument;
+  }
+  if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
+    numBlocksAndThreads = {35, 512};
+  }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
                 nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, nullptr, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -212,19 +231,21 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(const std::shared_ptr<void> ct
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType) {
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType,
+                                                               bool symmetricMemory) {
   static int tag = 0;
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  if (env()->disableChannelCache) {
+  symmetricMemory_ = symmetricMemory;
+  if (!symmetricMemory_) {
     return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, tag++};
   }
   return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
 }
 
 std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
-                                                              void* output, size_t, DataType) {
+                                                              void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
@@ -236,6 +257,10 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   size_t recvBytes;
   CUdeviceptr recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  if (!symmetricMemory_) {
+    recvBytes = size;
+    recvBasePtr = (CUdeviceptr)output;
+  }
   RegisteredMemory localMemory = comm->registerMemory((void*)recvBasePtr, recvBytes, Transport::CudaIpc);
   ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
   ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,
@@ -251,15 +276,17 @@ std::shared_ptr<Algorithm> AllreduceFullmesh::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllreduceContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllreduceContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllreduceContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

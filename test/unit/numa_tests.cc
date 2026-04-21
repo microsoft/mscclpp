@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
-
-#include <gtest/gtest.h>
+// Licensed under the MIT License.
 
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
+
+#include "../framework.hpp"
 
 TEST(NumaTest, Basic) {
   int num;

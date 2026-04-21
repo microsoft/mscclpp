@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
 
@@ -40,19 +41,21 @@ NativeAlgorithm::NativeAlgorithm(std::string name, std::string collective, InitF
 CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output,
                                     size_t inputSize, size_t outputSize, DataType dtype, ReduceOp op,
                                     cudaStream_t stream, std::shared_ptr<Executor>, int nBlocks, int nThreadsPerBlock,
-                                    const std::unordered_map<std::string, uintptr_t>& extras) {
+                                    bool symmetricMemory, const std::unordered_map<std::string, uintptr_t>& extras,
+                                    DataType accumDtype) {
+  if (accumDtype == DataType::AUTO) accumDtype = dtype;
   if (!initialized_) {
     initFunc_(comm);
     initialized_ = true;
   }
-  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype);
+  AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
     contexts_[ctxKey] = ctx;
   }
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
-                           nThreadsPerBlock, extras);
+                           nThreadsPerBlock, extras, accumDtype);
 }
 
 const std::string& NativeAlgorithm::name() const { return name_; }
@@ -63,6 +66,11 @@ const std::pair<size_t, size_t>& NativeAlgorithm::messageRange() const {
   static std::pair<size_t, size_t> range;
   range = {minMessageSize_, maxMessageSize_};
   return range;
+}
+
+void NativeAlgorithm::setMessageSizeRange(size_t minMessageSize, size_t maxMessageSize) {
+  minMessageSize_ = minMessageSize;
+  maxMessageSize_ = maxMessageSize;
 }
 
 const std::unordered_map<std::string, uint64_t>& NativeAlgorithm::tags() const { return tags_; }
@@ -142,6 +150,10 @@ const std::pair<size_t, size_t>& DslAlgorithm::messageRange() const {
   return range;
 }
 
+void DslAlgorithm::setMessageSizeRange(size_t, size_t) {
+  THROW(EXEC, Error, ErrorCode::InvalidUsage, "setMessageSizeRange is only supported for native algorithms");
+}
+
 const std::unordered_map<std::string, uint64_t>& DslAlgorithm::tags() const { return tags_; }
 
 const CollectiveBufferMode& DslAlgorithm::bufferMode() const {
@@ -155,8 +167,8 @@ Algorithm::Constraint DslAlgorithm::constraint() const { return constraint_; }
 
 CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
                                  size_t outputSize, DataType dtype, ReduceOp, cudaStream_t stream,
-                                 std::shared_ptr<Executor> executor, int, int,
-                                 const std::unordered_map<std::string, uintptr_t>&) {
+                                 std::shared_ptr<Executor> executor, int, int, bool,
+                                 const std::unordered_map<std::string, uintptr_t>&, DataType) {
   if (!executor) {
     THROW(EXEC, Error, ErrorCode::InvalidUsage, "Executor is null in DslAlgorithm::execute");
   }
@@ -173,15 +185,19 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
-    case DataType::FP8_E4M3:
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FP8_E4M3, plan_,
-                        stream);
+    case DataType::FLOAT8_E4M3:
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3,
+                        plan_, stream);
       break;
-    case DataType::FP8_E5M2:
-      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FP8_E5M2, plan_,
-                        stream);
+    case DataType::FLOAT8_E5M2:
+      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FLOAT8_E5M2,
+                        plan_, stream);
       break;
 #endif
+    case DataType::FLOAT8_E4M3B15:
+      executor->execute(rank, (__fp8_e4m3b15*)input, (__fp8_e4m3b15*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E4M3B15, plan_, stream);
+      break;
     case DataType::INT32:
     case DataType::UINT32:
       executor->execute(rank, (int*)input, (int*)output, inputSize, outputSize, DataType::UINT32, plan_, stream);
@@ -197,5 +213,24 @@ std::shared_ptr<Algorithm> DslAlgorithm::build() { return shared_from_this(); }
 
 // TODO: implement this
 void DslAlgorithm::reset() {}
+
+static uint32_t* gDefaultFlagBuffer = nullptr;
+static std::weak_ptr<void> gDefaultFlagBufferWeak;
+static size_t gDefaultFlagCount = 128;
+
+std::pair<std::shared_ptr<void>, size_t> getFlagBuffer() {
+  auto ptr = gDefaultFlagBufferWeak.lock();
+  if (!ptr) {
+    if (!gDefaultFlagBuffer) {
+      // Intentionally never freed — CUDA driver reclaims GPU memory at process exit.
+      gDefaultFlagBuffer = static_cast<uint32_t*>(mscclpp::detail::gpuCalloc(gDefaultFlagCount * sizeof(uint32_t)));
+      std::vector<uint32_t> initFlags(gDefaultFlagCount, 1);
+      mscclpp::gpuMemcpy(gDefaultFlagBuffer, initFlags.data(), gDefaultFlagCount, cudaMemcpyHostToDevice);
+    }
+    ptr = std::shared_ptr<void>(gDefaultFlagBuffer, [](void*) {});
+    gDefaultFlagBufferWeak = ptr;
+  }
+  return {ptr, gDefaultFlagCount * sizeof(uint32_t)};
+}
 
 }  // namespace mscclpp

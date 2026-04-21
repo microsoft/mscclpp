@@ -32,7 +32,6 @@ constexpr int NUM_SEMAPHORES = 64;
 constexpr int MAX_NRANKS_PER_NODE = 8;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
-static bool mscclppDisableChannelCache = env()->disableChannelCache;
 
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
@@ -117,12 +116,12 @@ class AlgorithmCtx {
   std::vector<MemoryChannel> memoryChannels;
   std::vector<SwitchChannel> switchChannels;
   std::vector<PortChannel> portChannels;
-  std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   std::shared_ptr<DeviceHandle<MemoryChannel>> memoryChannelDeviceHandles;
   std::shared_ptr<DeviceHandle<SwitchChannel>> switchChannelDeviceHandles;
   std::shared_ptr<DeviceHandle<PortChannel>> portChannelDeviceHandles;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores;
   std::vector<std::shared_ptr<Host2DeviceSemaphore>> hostSemaphores;
+  std::shared_ptr<void*> remoteMemoryHandles;
   std::unordered_map<std::string, std::shared_ptr<void>> extras;
 };
 

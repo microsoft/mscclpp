@@ -4,8 +4,6 @@
 #ifndef MSCCLPP_MP_UNIT_TESTS_HPP_
 #define MSCCLPP_MP_UNIT_TESTS_HPP_
 
-#include <gtest/gtest.h>
-
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
@@ -13,10 +11,18 @@
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "../framework.hpp"
 #include "ib.hpp"
 #include "utils_internal.hpp"
 
-class MultiProcessTestEnv : public ::testing::Environment {
+// Skip the current test if IBVerbs is not available in this build
+#if defined(USE_IBVERBS)
+#define REQUIRE_IBVERBS
+#else
+#define REQUIRE_IBVERBS SKIP_TEST() << "This test requires IBVerbs that the current build does not support."
+#endif
+
+class MultiProcessTestEnv : public ::mscclpp::test::Environment {
  public:
   MultiProcessTestEnv(int argc, const char** argv);
 
@@ -37,7 +43,7 @@ mscclpp::Transport ibIdToTransport(int id);
 int rankToLocalRank(int rank);
 int rankToNode(int rank);
 
-class MultiProcessTest : public ::testing::Test {
+class MultiProcessTest : public ::mscclpp::test::TestCase {
  protected:
   void TearDown() override;
 };
@@ -71,12 +77,12 @@ class IbPeerToPeerTest : public IbTestBase {
 
   void registerBufferAndConnect(void* buf, size_t size);
 
-  void stageSend(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
+  void stageSendWrite(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled);
 
-  void stageAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
+  void stageSendAtomicAdd(uint64_t wrId, uint64_t dstOffset, uint64_t addVal, bool signaled);
 
-  void stageSendWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
-                        unsigned int immData);
+  void stageSendWriteWithImm(uint32_t size, uint64_t wrId, uint64_t srcOffset, uint64_t dstOffset, bool signaled,
+                             unsigned int immData);
 
   std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
   std::shared_ptr<mscclpp::IbCtx> ibCtx;
@@ -131,6 +137,8 @@ class CommunicatorTest : public CommunicatorTestBase {
 template <class T>
 using DeviceHandle = mscclpp::DeviceHandle<T>;
 
+using IbMode = mscclpp::EndpointConfig::Ib::Mode;
+
 class PortChannelOneToOneTest : public CommunicatorTestBase {
  protected:
   struct PingPongTestParams {
@@ -138,17 +146,20 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
     bool useIB;
     bool useEthernet;
     bool waitWithPoll;
+    IbMode ibMode;
   };
 
   void SetUp() override;
   void TearDown() override;
 
   void setupMeshConnections(std::vector<mscclpp::PortChannel>& portChannels, bool useIPC, bool useIb, bool useEthernet,
-                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0);
+                            void* sendBuff, size_t sendBuffBytes, void* recvBuff = nullptr, size_t recvBuffBytes = 0,
+                            IbMode ibMode = IbMode::Default);
   void testPingPong(PingPongTestParams params);
   void testPingPongPerf(PingPongTestParams params);
-  void testPacketPingPong(bool useIbOnly);
-  void testPacketPingPongPerf(bool useIbOnly);
+  void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
+  void testBandwidth(PingPongTestParams params);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };
@@ -164,6 +175,12 @@ class MemoryChannelOneToOneTest : public CommunicatorTestBase {
   void packetPingPongTest(const std::string testName, PacketPingPongKernelWrapper kernelWrapper);
 
   std::unordered_map<int, std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores;
+};
+
+class SemaphorePerfTest : public CommunicatorTestBase {
+ protected:
+  void SetUp() override;
+  void TearDown() override;
 };
 
 class SwitchChannelTest : public CommunicatorTestBase {

@@ -15,11 +15,11 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 void register_nvls(nb::module_& m) {
-  nb::class_<SwitchChannel>(m, "SwitchChannel")
+  nb::class_<SwitchChannel>(m, "CppSwitchChannel")
       .def("get_device_ptr", [](SwitchChannel* self) { return (uintptr_t)self->getDevicePtr(); })
       .def("device_handle", &SwitchChannel::deviceHandle);
 
-  nb::class_<SwitchChannel::DeviceHandle>(m, "DeviceHandle")
+  nb::class_<SwitchChannel::DeviceHandle>(m, "CppSwitchChannelDeviceHandle")
       .def(nb::init<>())
       .def_rw("device_ptr", &SwitchChannel::DeviceHandle::devicePtr)
       .def_rw("mc_ptr", &SwitchChannel::DeviceHandle::mcPtr)
@@ -28,7 +28,7 @@ void register_nvls(nb::module_& m) {
         return nb::bytes(reinterpret_cast<const char*>(&self), sizeof(self));
       });
 
-  nb::class_<NvlsConnection>(m, "NvlsConnection")
+  nb::class_<NvlsConnection>(m, "CppNvlsConnection")
       .def("bind_allocated_memory", &NvlsConnection::bindAllocatedMemory, nb::arg("device_ptr"), nb::arg("size"));
 
   m.def("connect_nvls_collective", &connectNvlsCollective, nb::arg("communicator"), nb::arg("all_ranks"),

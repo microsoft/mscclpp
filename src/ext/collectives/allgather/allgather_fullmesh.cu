@@ -170,7 +170,7 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
   return ctx;
 }
 
-AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void*, void*, size_t, DataType) {
+AlgorithmCtxKey AllgatherFullmesh::generateAllgatherContextKey(const void*, void*, size_t, DataType, bool) {
   // always return same key, non-zero copy algo
   return AlgorithmCtxKey{nullptr, nullptr, 0, 0, 0};
 }
@@ -183,14 +183,16 @@ std::shared_ptr<Algorithm> AllgatherFullmesh::build() {
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, [[maybe_unused]] DataType dtype, [[maybe_unused]] ReduceOp op,
              cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-             const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             const std::unordered_map<std::string, uintptr_t>& extras,
+             [[maybe_unused]] DataType accumDtype) -> CommResult {
         return self->allgatherKernelFunc(ctx, input, output, inputSize, stream, nBlocks, nThreadsPerBlock, extras);
       },
       [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,
              DataType dtype) { return self->initAllgatherContext(comm, input, output, inputSize, dtype); },
-      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype) {
-        return self->generateAllgatherContextKey(input, output, inputSize, dtype);
+      [self](const void* input, void* output, size_t inputSize, [[maybe_unused]] size_t outputSize, DataType dtype,
+             bool symmetricMemory) {
+        return self->generateAllgatherContextKey(input, output, inputSize, dtype, symmetricMemory);
       });
 }
 }  // namespace collective

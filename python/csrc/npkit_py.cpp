@@ -8,8 +8,8 @@
 
 namespace nb = nanobind;
 
-void register_npkit(nb::module_ &m) {
-  nb::module_ sub_m = m.def_submodule("npkit", "NPKit functions");
+void register_npkit(nb::module_& m) {
+  nb::module_ sub_m = m.def_submodule("cpp_npkit", "NPKit functions");
   sub_m.def("init", &NpKit::Init);
   sub_m.def("dump", &NpKit::Dump);
   sub_m.def("shutdown", &NpKit::Shutdown);

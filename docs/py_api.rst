@@ -7,6 +7,4 @@ This reference organizes the MSCCL++ Python API.
    :toctree: py_api
    :recursive:
 
-   mscclpp.comm
-   mscclpp.utils
-   mscclpp.language
+   mscclpp
