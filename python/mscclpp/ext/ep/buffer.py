@@ -90,22 +90,23 @@ class Buffer:
         dist.all_gather_object(ipc_handles, local_ipc_handle, group)
 
         root_unique_id: Optional[bytes] = None
-        # RDMA path is guarded above; still plumb the unique-id exchange so
-        # the code is ready to turn on once internode lands.
-        if self.runtime.get_num_rdma_ranks() > 1 or low_latency_mode:
-            if num_qps_per_rank <= 0:
-                raise ValueError("num_qps_per_rank must be > 0 for RDMA")
+        # MSCCL++ requires a bootstrapped Communicator even for pure-NVLink
+        # setups because `Buffer::sync()` uses `communicator->connect(ipc)`
+        # to build MemoryChannels. We always exchange a unique id.
+        if num_qps_per_rank <= 0:
+            raise ValueError("num_qps_per_rank must be > 0")
 
-            if self.rank == 0:
-                unique_id = self.runtime.create_unique_id()
-                root_unique_id = unique_id.bytes()
-            broadcast_list = [root_unique_id]
-            dist.broadcast_object_list(broadcast_list, src=0, group=group)
-            root_unique_id = broadcast_list[0]
-            assert root_unique_id is not None
-            self.runtime.connect(_cpp.UniqueId.from_bytes(root_unique_id))
+        if self.rank == 0:
+            root_unique_id = self.runtime.create_unique_id()
+        broadcast_list = [root_unique_id]
+        dist.broadcast_object_list(broadcast_list, src=0, group=group)
+        root_unique_id = broadcast_list[0]
+        assert root_unique_id is not None
+        self.runtime.connect(root_unique_id)
 
-        self.runtime.sync(device_ids, ipc_handles, root_unique_id)
+        # sync() expects Sequence[bytearray | None] / bytearray | None.
+        ipc_handles_ba = [bytearray(h) if h is not None else None for h in ipc_handles]
+        self.runtime.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
 
     # ------------------------------------------------------------------
     # Sanity helpers
