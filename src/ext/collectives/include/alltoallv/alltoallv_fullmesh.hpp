@@ -56,7 +56,6 @@ class AlltoallvFullmesh : public AlgorithmBuilder {
   std::vector<Connection> conns_;
   int worldSize_;
   MultiNodeMode multiNodeMode_ = MultiNodeMode::SingleNode;
-  std::weak_ptr<Algorithm> algo_;  // back-ref for calling reset()
 };
 
 }  // namespace collective

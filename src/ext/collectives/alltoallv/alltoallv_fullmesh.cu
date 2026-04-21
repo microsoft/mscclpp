@@ -81,7 +81,6 @@ std::shared_ptr<Algorithm> AlltoallvFullmesh::build() {
         return self->generateAlltoallvContextKey(input, output, inputSize, outputSize, dtype);
       });
 
-  self->algo_ = alltoallvAlgo;
   return alltoallvAlgo;
 }
 
