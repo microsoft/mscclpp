@@ -34,23 +34,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def(py::init<>())
       .def("current_stream_wait", &mscclpp::ep::EventHandle::current_stream_wait);
 
-  // NOTE: `mscclpp::UniqueId` is the bootstrap id used for connecting the
-  // proxy service. We expose it as an opaque bytes-like object so Python can
-  // all-gather it across the user's process group.
-  py::class_<mscclpp::UniqueId>(m, "UniqueId")
-      .def(py::init<>())
-      .def("bytes", [](const mscclpp::UniqueId& self) {
-        return py::bytes(reinterpret_cast<const char*>(self.data()), self.size());
-      })
-      .def_static("from_bytes", [](py::bytes data) {
-        auto s = std::string(data);
-        mscclpp::UniqueId uid;
-        if (s.size() != uid.size()) {
-          throw std::runtime_error("mscclpp.ep.UniqueId.from_bytes: size mismatch");
-        }
-        std::memcpy(uid.data(), s.data(), s.size());
-        return uid;
-      });
+  // NOTE: `mscclpp::UniqueId` is `std::array<uint8_t, 128>`, which pybind11
+  // implicitly converts to a Python list. We therefore avoid exposing it as
+  // a py::class_ and convert to/from `py::bytes` at the binding boundary.
 
   py::class_<mscclpp::ep::Buffer>(m, "Buffer")
       .def(py::init<int, int, int64_t, int64_t, bool>(), py::arg("rank"), py::arg("num_ranks"),
@@ -64,8 +50,21 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       .def("get_local_ipc_handle", &mscclpp::ep::Buffer::get_local_ipc_handle)
       .def("get_local_nvshmem_unique_id", &mscclpp::ep::Buffer::get_local_nvshmem_unique_id)
       .def("get_local_buffer_tensor", &mscclpp::ep::Buffer::get_local_buffer_tensor)
-      .def("create_unique_id", &mscclpp::ep::Buffer::create_unique_id)
-      .def("connect", &mscclpp::ep::Buffer::connect)
+      .def("create_unique_id",
+           [](const mscclpp::ep::Buffer& self) {
+             auto uid = self.create_unique_id();
+             return py::bytes(reinterpret_cast<const char*>(uid.data()), uid.size());
+           })
+      .def("connect",
+           [](mscclpp::ep::Buffer& self, py::bytes data) {
+             std::string s = data;
+             mscclpp::UniqueId uid;
+             if (s.size() != uid.size()) {
+               throw std::runtime_error("mscclpp_ep_cpp.Buffer.connect: UniqueId size mismatch");
+             }
+             std::memcpy(uid.data(), s.data(), s.size());
+             self.connect(uid);
+           })
       .def("sync", &mscclpp::ep::Buffer::sync)
       .def("get_dispatch_layout", &mscclpp::ep::Buffer::get_dispatch_layout)
       .def("intranode_dispatch", &mscclpp::ep::Buffer::intranode_dispatch)

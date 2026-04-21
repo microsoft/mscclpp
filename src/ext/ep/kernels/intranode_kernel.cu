@@ -720,7 +720,7 @@ combine(dtype_t* recv_x, float* recv_topk_weights,
                     expected_head = ld_nc_global(send_head + token_idx * kNumRanks + recv_lane_id);
 
                 auto start_time = clock64();
-                while (channel_tail_idx[recv_lane_id] <= expected_head and expected_head >= 0) {
+                while (expected_head >= 0 and channel_tail_idx[recv_lane_id] <= expected_head) {
                     // Timeout check
                     if (clock64() - start_time > NUM_TIMEOUT_CYCLES) {
                         printf("DeepEP timeout for combine receivers, rank %d, responsible_channel = %d, expect = %d\n", rank, responsible_channel, expected_head);
