@@ -1,54 +1,61 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A port of DeepEP's MoE `dispatch`/`combine` primitives into MSCCL++, targeting:
+A port of DeepEP's MoE `dispatch` / `combine` primitives into MSCCL++,
+targeting:
 
 - **High-Throughput (HT) mode** from [DeepEP](https://github.com/deepseek-ai/DeepEP),
   branch `chhwang/dev-atomic-add-cleanup` — which already swaps NVSHMEM for
-  `mscclpp::PortChannel`/`MemoryChannel`.
+  `mscclpp::PortChannel` / `mscclpp::MemoryChannel`.
 - **Low-Latency (LL) mode** from [`nccl/contrib/nccl_ep`](https://github.com/NVIDIA/nccl/tree/master/contrib/nccl_ep),
   which implements pure-RDMA dispatch/combine on top of the NCCL Device API.
 
 ## Status
 
-| Feature                            | Status                          |
-|------------------------------------|---------------------------------|
-| `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)       |
-| `get_dispatch_layout`              | ✅ ported                       |
-| `intranode_dispatch` (NVLink)      | ✅ ported                       |
-| `intranode_combine` (NVLink)       | ✅ ported                       |
-| `internode_dispatch` (NVLink+RDMA) | ✅ ported (pending H100 test)   |
-| `internode_combine` (NVLink+RDMA)  | ✅ ported (pending H100 test)   |
-| `low_latency_dispatch` (pure RDMA) | ⚠️ structural port, untested    |
-| `low_latency_combine` (pure RDMA)  | ⚠️ structural port, untested    |
-| `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp   |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths          |
-| pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally          |
+| Feature                            | Status                                      |
+|------------------------------------|---------------------------------------------|
+| `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)                   |
+| `get_dispatch_layout`              | ✅ ported                                   |
+| `intranode_dispatch` (NVLink)      | ✅ ported, validated (8 ranks, 1 node)     |
+| `intranode_combine` (NVLink)       | ✅ ported, validated (8 ranks, 1 node)     |
+| `internode_dispatch` (NVLink+RDMA) | ✅ ported, validated (16 ranks, 2×H100×8)  |
+| `internode_combine` (NVLink+RDMA)  | ✅ ported, validated (16 ranks, 2×H100×8)  |
+| `low_latency_dispatch` (pure RDMA) | ⚠️ structural port, untested                |
+| `low_latency_combine` (pure RDMA)  | ⚠️ structural port, untested                |
+| `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp               |
+| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                      |
+| pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally                     |
 
-Internode HT is code-complete but unverified on real hardware — the
-`sync()` path replaces DeepEP's NVSHMEM symmetric-heap allocation with
-`cudaMalloc` + `bootstrap->barrier()`, and the kernels use the new
-`PortChannelDeviceHandle::atomicAdd` instead of the old raw-trigger
-pattern.
+Internode HT was validated end-to-end on two H100×8 nodes connected over
+Infiniband using [`test/python/ext/ep/test_internode_multirank.py`](../../../test/python/ext/ep/test_internode_multirank.py).
+All 16 ranks complete dispatch followed by combine with exact (zero-diff)
+recovery of the per-rank token payloads.
 
 The low-latency port is **structural**: the DeepEP LL kernels (pure
 IBGDA) have been mechanically translated to MSCCL++ port-channel ops.
 Semantic mapping:
 
-| DeepEP / IBGDA                           | MSCCL++ replacement                                          |
-|------------------------------------------|--------------------------------------------------------------|
-| `nvshmemx_barrier_all_block()`           | signal+wait ring across `port_channel_handles[peer_rank]`    |
+| DeepEP / IBGDA                           | MSCCL++ replacement                                              |
+|------------------------------------------|------------------------------------------------------------------|
+| `nvshmemx_barrier_all_block()`           | signal + wait ring across `port_channel_handles[peer_rank]`      |
 | `nvshmemi_ibgda_put_nbi_warp(...)`       | lane-0 `port_channel_handles[qp*N+dst].put(dst_off, src_off, n)` |
-| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `port_channel_handles[qp*N+dst].atomicAdd(off, int64)` |
+| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `port_channel_handles[qp*N+dst].atomicAdd(off, int64)`    |
 
-**Known limitations**:
+### Known limitations
 
-* LL performance will NOT match IBGDA — the MSCCL++ port channel uses a
+- LL performance will NOT match IBGDA — the MSCCL++ port channel uses a
   CPU proxy. The port is for functional parity, not latency.
-* `Buffer::sync()` in `low_latency_mode=True` only connects peers sharing
+- `Buffer::sync()` in `low_latency_mode=True` only connects peers sharing
   the same local GPU ID (DeepEP convention). LL kernels therefore assume
   one-GPU-per-node topology, i.e. `num_ranks == num_rdma_ranks`. Running
   with >1 GPU per node in LL mode will fail to reach cross-GPU peers.
-* Multi-node H100 validation is still pending.
+- Multi-node H100 validation of LL mode is still pending.
+- The internode HT functional test inserts an explicit
+  `torch.cuda.synchronize()` + `dist.barrier()` between dispatch and
+  combine. Without it, fast ranks can launch combine while peers still
+  have in-flight dispatch proxy traffic, deadlocking the combine NVL
+  forwarder. Folding this barrier into
+  `Buffer::internode_dispatch` / `Buffer::internode_combine` (or
+  `cached_notify`) is tracked in the test's `XXX` comment.
 
 ## Build
 
@@ -67,7 +74,7 @@ The Python frontend picks it up automatically:
 
 ```python
 from mscclpp.ext import ep
-buf = ep.Buffer(group, num_nvl_bytes=..., num_rdma_bytes=0)
+buf = ep.Buffer(group, num_nvl_bytes=..., num_rdma_bytes=...)
 ```
 
 ## Layout
@@ -95,7 +102,34 @@ python/mscclpp/ext/ep/
 └── buffer.py                   — torch.distributed-aware frontend
 
 test/python/ext/ep/
-└── test_ep_smoke.py            — size-hint + rejection smoke test
+├── test_ep_smoke.py                   — size-hint + rejection smoke test
+├── test_intranode_multirank.py        — NVLink dispatch+combine, 8 ranks
+└── test_internode_multirank.py        — HT dispatch+combine, 16 ranks (2×8)
+```
+
+## Running the tests
+
+Intranode (single node, 8 GPUs):
+
+```bash
+torchrun --nnodes=1 --nproc_per_node=8 \
+    test/python/ext/ep/test_intranode_multirank.py
+```
+
+Internode HT (2 nodes × 8 GPUs):
+
+```bash
+# node 0 (master)
+NCCL_SOCKET_IFNAME=eth0 MSCCLPP_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0 \
+torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
+    --master_addr=<master_ip> --master_port=29600 \
+    test/python/ext/ep/test_internode_multirank.py
+
+# node 1 (worker)
+NCCL_SOCKET_IFNAME=eth0 MSCCLPP_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0 \
+torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
+    --master_addr=<master_ip> --master_port=29600 \
+    test/python/ext/ep/test_internode_multirank.py
 ```
 
 ## Migration plan
@@ -105,29 +139,26 @@ test/python/ext/ep/
 - [x] Copy DeepEP kernel headers (configs / buffer / utils / launch / exception).
 - [x] Port intranode kernels + runtime (NVLink only).
 - [x] Port `get_dispatch_layout` (host-safe subset of internode kernels).
-- [x] Port host Buffer: ctor, sync, get_dispatch_layout, intranode dispatch/combine.
+- [x] Port host Buffer: ctor, sync, get_dispatch_layout, intranode
+      dispatch/combine.
 - [x] pybind11 `mscclpp_ep_cpp` module + Python frontend.
 
-### Phase 2 — internode HT (NVLink + RDMA)
+### Phase 2 — internode HT (NVLink + RDMA) — DONE
 
-Port the rest of `DeepEP/csrc/kernels/internode.cu` (`notify_dispatch`,
-`dispatch`, `cached_notify`, `combine`). Because we are starting from the
-`chhwang/dev-atomic-add-cleanup` branch, the NVSHMEM -> MSCCL++ substitution
-is already done upstream — just copy the kernel bodies and wire them through
-`api.cuh`. The launchers need `PortChannelDeviceHandle*` /
-`MemoryChannelDeviceHandle*` arguments that `Buffer::sync()` already builds
-(see the `num_rdma_bytes > 0` branch — currently throws, but the code
-populating `port_channel_handles_device_ptr` and
-`memory_channel_handles_device_ptr` is ready). Finally replace the stubs in
-`buffer.cc` (`internode_dispatch`, `internode_combine`) with the real bodies
-from DeepEP.
+- [x] Port `notify_dispatch`, `dispatch`, `cached_notify`, `combine` kernels.
+- [x] Wire `Buffer::internode_dispatch` / `Buffer::internode_combine` host
+      orchestration.
+- [x] `Buffer::sync()` builds `port_channel_handles_device_ptr` and
+      `memory_channel_handles_device_ptr`, with port channels ordered by
+      peer rank (so kernel-side indexing by `peer_rank` is consistent).
+- [x] Validated on 2×H100×8 with `test_internode_multirank.py`.
 
-### Phase 3 — Low-Latency (pure RDMA)
+### Phase 3 — Low-Latency (pure RDMA) — STRUCTURAL PORT
 
 Port `DeepEP/csrc/kernels/internode_ll.cu` and cross-reference
 `nccl/contrib/nccl_ep/device/low_latency.cu`. The nccl_ep reference is
-modular (see `device_primitives.cuh`, `hybrid_ep.cuh`) and uses NCCL Device
-API; the translation table is:
+modular (see `device_primitives.cuh`, `hybrid_ep.cuh`) and uses NCCL
+Device API; the translation table is:
 
 | nccl_ep / DeepEP primitive              | MSCCL++ replacement                             |
 |-----------------------------------------|-------------------------------------------------|
@@ -140,107 +171,13 @@ API; the translation table is:
 | NVSHMEM symmetric heap                  | `cudaMalloc` + `ProxyService::addMemory`        |
 | NVSHMEM barrier                         | `bootstrap->barrier()` or `intranode::barrier`  |
 
-Finally fill in `buffer.cc::low_latency_dispatch` / `low_latency_combine`
-from the DeepEP bodies (already translated on the `chhwang/...` branch).
+Bodies of `Buffer::low_latency_dispatch` / `low_latency_combine` have been
+translated from DeepEP but are **untested on real hardware**.
 
 ### Phase 4 — Validation
 
-- Port `DeepEP/tests/test_{intranode,internode,low_latency}.py` into
-  `test/python/ext/ep/`.
-- Run on the same H100/H800 reference rig DeepEP uses; compare throughput.
-# MSCCL++ Expert-Parallel (EP) extension — migration plan
-
-This directory is a **scaffolding-only** port of the Mixture-of-Experts (MoE)
-`dispatch` / `combine` primitives from:
-
-- **High-Throughput (HT) mode** — [DeepEP](https://github.com/deepseek-ai/DeepEP),
-  branch `chhwang/dev-atomic-add-cleanup`. That branch has already replaced
-  NVSHMEM / IBGDA primitives with `mscclpp::PortChannel` and
-  `mscclpp::MemoryChannel`, so the port is largely mechanical.
-- **Low-Latency (LL) mode** — [`nccl/contrib/nccl_ep`](https://github.com/NVIDIA/nccl),
-  which implements a pure-RDMA dispatch/combine on top of the NCCL Device API
-  (GIN put/signal + LSA load/store). The kernels need to be re-expressed in
-  terms of MSCCL++ device handles.
-
-## Layout
-
-| Path | Purpose |
-|------|---------|
-| [`include/mscclpp/ext/ep/config.hpp`](../../../include/mscclpp/ext/ep/config.hpp) | Public host-side config + size hints (`EpConfig`). |
-| [`include/mscclpp/ext/ep/event.hpp`](../../../include/mscclpp/ext/ep/event.hpp)   | RAII wrapper around `cudaEvent_t`. |
-| [`include/mscclpp/ext/ep/buffer.hpp`](../../../include/mscclpp/ext/ep/buffer.hpp) | Public `Buffer` class; dispatch/combine entry points. |
-| [`include/mscclpp/ext/ep/api.hpp`](../../../include/mscclpp/ext/ep/api.hpp)       | Umbrella include. |
-| [`src/ext/ep/buffer.cc`](buffer.cc)                 | Host-side orchestration. Constructor + proxy service wired up; `sync()` / kernel stubs `TODO`. |
-| [`src/ext/ep/config.cc`](config.cc)                 | `EpConfig` method bodies. |
-| [`src/ext/ep/event.cc`](event.cc)                   | `EventHandle` implementation. |
-| [`src/ext/ep/intranode.cu`](intranode.cu)           | **STUB** — HT NVLink-only dispatch/combine. |
-| [`src/ext/ep/internode.cu`](internode.cu)           | **STUB** — HT NVLink+RDMA dispatch/combine. |
-| [`src/ext/ep/internode_ll.cu`](internode_ll.cu)    | **STUB** — LL pure-RDMA dispatch/combine. |
-| [`src/ext/ep/kernels/api.cuh`](kernels/api.cuh)    | Private kernel-facing API (prototypes only for now). |
-| [`src/ext/ep/kernels/exception.cuh`](kernels/exception.cuh) | `EP_HOST_ASSERT` / `EP_DEVICE_ASSERT` / `EP_CUDA_CHECK`. |
-| [`python/csrc/ext/ep/ep_py.cpp`](../../../python/csrc/ext/ep/ep_py.cpp) | nanobind bindings (submodule `mscclpp._mscclpp.ep`). |
-| [`python/mscclpp/ext/ep/`](../../../python/mscclpp/ext/ep/) | Python frontend (`ep.Buffer`). |
-| [`test/python/ext/ep/test_ep_skeleton.py`](../../../test/python/ext/ep/test_ep_skeleton.py) | Unit test placeholder. |
-
-## Build
-
-The extension is **off by default**. Enable it with:
-
-```bash
-cmake -S . -B build -DMSCCLPP_BUILD_EXT_EP=ON
-cmake --build build -j
-```
-
-This produces `libmscclpp_ep.so` and, when Python bindings are built, exposes
-`mscclpp._mscclpp.ep` and `mscclpp.ext.ep`.
-
-## Migration plan (in order)
-
-1. **HT intranode.** Port `DeepEP/csrc/kernels/intranode.cu` into
-   [`intranode.cu`](intranode.cu). All communication is via peer IPC pointers,
-   so only `include` paths and `torch::Tensor` -> `TensorRef` marshalling need
-   to change. Flesh out `Buffer::sync()` so that
-   `nvlBufferPeers_[peer] = cudaIpcOpenMemHandle(...)` is populated and the
-   table is uploaded to `nvlBufferPeersDevice_`.
-2. **HT internode.** Port `DeepEP/csrc/kernels/internode.cu` into
-   [`internode.cu`](internode.cu). Most of the heavy lifting (NVSHMEM ->
-   MSCCL++) is already done on the DeepEP `chhwang/dev-atomic-add-cleanup`
-   branch; copy the kernel bodies as-is and add the launchers. Ensure the
-   custom trigger type `0x0` atomicAdd path in `EpProxyService` (see
-   [`buffer.cc`](buffer.cc)) is in place.
-3. **LL mode.** Port from `nccl/contrib/nccl_ep/device/low_latency.cu` (or
-   DeepEP `internode_ll.cu`) into [`internode_ll.cu`](internode_ll.cu). The
-   translation table lives in the file header; the critical substitution is
-   `ncclGinPutSignal` / `nvshmemi_ibgda_*` -> `PortChannelDeviceHandle::put`
-   + `signal` + `wait`, and `ncclGetPeerPointer` -> the `nvlBufferPeersDevice_`
-   offset table.
-4. **TensorRef marshalling.** Extend [`ep_py.cpp`](../../../python/csrc/ext/ep/ep_py.cpp)
-   to accept DLPack / `torch.Tensor` for the dispatch/combine entry points.
-   The `TensorRef` type in [`buffer.hpp`](../../../include/mscclpp/ext/ep/buffer.hpp)
-   is intentionally Torch-free so the C++ core can be reused from
-   non-PyTorch callers.
-5. **Tests.** Grow
-   [`test/python/ext/ep/`](../../../test/python/ext/ep/) by porting the
-   scenarios from `DeepEP/tests/test_{intranode,internode,low_latency}.py`.
-
-## API mapping cheatsheet
-
-| DeepEP / nccl_ep primitive                         | MSCCL++ replacement                                       |
-|----------------------------------------------------|-----------------------------------------------------------|
-| `nvshmemi_ibgda_put_nbi_warp`                      | `PortChannelDeviceHandle::put` + `signal`                 |
-| `nvshmem_signal_wait_until`                        | `PortChannelDeviceHandle::wait`                           |
-| `ncclGinPutSignal`                                 | `PortChannelDeviceHandle::put` + `signal`                 |
-| `ncclGinWaitSignal`                                | `PortChannelDeviceHandle::wait`                           |
-| `ncclGetPeerPointer` / `cudaIpcOpenMemHandle`      | `Buffer::nvlBufferPeersDevice_[peer]` + byte offset       |
-| `ncclTeamLsa` locality check                       | `Buffer::numNvlRanks_` per-rdma-rank group                |
-| NVSHMEM symmetric heap allocation                  | `cudaMalloc` + proxy-registered memory (`ProxyService`)   |
-| NVSHMEM barrier                                    | `bootstrap_->barrier()` or `intranode::barrier` kernel    |
-
-## Status
-
-- Headers, CMake targets, Python bindings, and the frontend compile (build
-  verification has not been run in this session).
-- All dispatch/combine entry points throw from C++ or raise `NotImplementedError`
-  from Python. Constructor, proxy-service startup, and buffer-size hints are
-  real; `sync()` only flips the `available_` flag and does **not** yet open
-  peer IPC handles or build MSCCL++ connections.
+- [x] `test_intranode_multirank.py` — NVLink round-trip validated.
+- [x] `test_internode_multirank.py` — HT round-trip validated on 2×H100×8.
+- [ ] `test_low_latency.py` — port from `DeepEP/tests/test_low_latency.py`
+      and validate on real hardware.
+- [ ] Throughput benchmarks against DeepEP upstream.

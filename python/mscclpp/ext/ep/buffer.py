@@ -11,11 +11,14 @@ DeepEP users can port with minimal changes.
 
 Current status (see ``src/ext/ep/README.md``):
 
-* Intranode (NVLink-only) dispatch and combine are fully ported.
-* ``get_dispatch_layout`` is ported.
-* Internode HT (MSCCL++ PortChannel + MemoryChannel) is ported.
-* Internode low-latency kernels are ported structurally (NVSHMEM/IBGDA ->
-  MSCCL++ PortChannel) but **untested on multi-node H100**.
+* Intranode (NVLink-only) dispatch and combine: ported and validated on
+  one node with 8 GPUs.
+* ``get_dispatch_layout``: ported.
+* Internode HT (MSCCL++ PortChannel + MemoryChannel) dispatch and combine:
+  ported and validated on 2 nodes x 8 H100 GPUs with
+  ``test/python/ext/ep/test_internode_multirank.py``.
+* Internode low-latency kernels: structural port (NVSHMEM/IBGDA ->
+  MSCCL++ PortChannel), **untested on multi-node H100**.
 """
 
 from __future__ import annotations
@@ -54,7 +57,7 @@ class Buffer:
         low-latency modes.
     low_latency_mode:
         Enable the low-latency dispatch/combine path (structural port,
-        untested).
+        untested on multi-node hardware).
     num_qps_per_rank:
         Ignored for intranode mode.
     """
