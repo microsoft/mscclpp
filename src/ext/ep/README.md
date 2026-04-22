@@ -44,11 +44,22 @@ Semantic mapping:
 
 - LL performance will NOT match IBGDA — the MSCCL++ port channel uses a
   CPU proxy. The port is for functional parity, not latency.
-- `Buffer::sync()` in `low_latency_mode=True` only connects peers sharing
-  the same local GPU ID (DeepEP convention). LL kernels therefore assume
-  one-GPU-per-node topology, i.e. `num_ranks == num_rdma_ranks`. Running
-  with >1 GPU per node in LL mode will fail to reach cross-GPU peers.
-- Multi-node H100 validation of LL mode is still pending.
+- Unlike DeepEP, this port drives LL dispatch/combine through
+  `PortChannel` rather than NVSHMEM, so `Buffer::sync()` connects every
+  peer (not just same-GPU-ID peers) even in `low_latency_mode=True`.
+- **LL dispatch/combine hangs for intra-node 8-GPU (single host)
+  configurations** with the current `PortChannel`-over-IB setup: with
+  `num_nvl_bytes=0` every peer-to-peer transfer goes through the CPU
+  proxy's IB verbs path, and IB loopback between two distinct HCAs on
+  the same host does not deliver atomics reliably. Using `CudaIpc` for
+  same-node peers instead surfaces a 64-bit `atomicAdd` vs. 32-bit
+  counter alignment mismatch in `CudaIpcConnection::atomicAdd` which
+  corrupts adjacent counter slots. A proper fix requires either (a) a
+  mixed-transport LL variant that uses `MemoryChannel` (IPC, no proxy)
+  for same-node peers like HT does, or (b) widening `rdma_recv_count`
+  slots to 64 bits. See [`test/python/ext/ep/test_low_latency_multirank.py`](../../../test/python/ext/ep/test_low_latency_multirank.py).
+- H100 cross-node validation of LL mode (1 GPU per node, DeepEP's
+  recommended topology) is still pending.
 - The internode HT functional test inserts an explicit
   `torch.cuda.synchronize()` + `dist.barrier()` between dispatch and
   combine. Without it, fast ranks can launch combine while peers still
@@ -104,7 +115,8 @@ python/mscclpp/ext/ep/
 test/python/ext/ep/
 ├── test_ep_smoke.py                   — size-hint + rejection smoke test
 ├── test_intranode_multirank.py        — NVLink dispatch+combine, 8 ranks
-└── test_internode_multirank.py        — HT dispatch+combine, 16 ranks (2×8)
+├── test_internode_multirank.py        — HT dispatch+combine, 16 ranks (2×8)
+└── test_low_latency_multirank.py      — LL dispatch+combine (intra-node hang; see limitations)
 ```
 
 ## Running the tests
@@ -178,6 +190,5 @@ translated from DeepEP but are **untested on real hardware**.
 
 - [x] `test_intranode_multirank.py` — NVLink round-trip validated.
 - [x] `test_internode_multirank.py` — HT round-trip validated on 2×H100×8.
-- [ ] `test_low_latency.py` — port from `DeepEP/tests/test_low_latency.py`
-      and validate on real hardware.
+- [ ] `test_low_latency_multirank.py` — LL round-trip port in place; intra-node 8-GPU hangs (see Known limitations), cross-node (1 GPU / node) pending hardware validation.
 - [ ] Throughput benchmarks against DeepEP upstream.

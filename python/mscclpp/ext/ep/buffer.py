@@ -56,8 +56,10 @@ class Buffer:
         Size of the RDMA scratch buffer. Required (>0) for internode HT and
         low-latency modes.
     low_latency_mode:
-        Enable the low-latency dispatch/combine path (structural port,
-        untested on multi-node hardware).
+        Enable the low-latency dispatch/combine path. This mode uses only
+        the RDMA buffer (``num_rdma_bytes``) and drives every peer through
+        MSCCL++ ``PortChannel``; consequently, it works cross-node with any
+        topology but is still pending H100 hardware validation.
     num_qps_per_rank:
         Ignored for intranode mode.
     """

@@ -282,19 +282,31 @@ void Buffer::sync(const std::vector<int> &device_ids,
         auto local_rdma_buffer_mem = communicator->registerMemory(rdma_buffer_ptr, num_rdma_bytes, all_transport);
         memory_ids[rank] = proxy_service->addMemory(local_rdma_buffer_mem);
 
-        // Send local memory to other ranks. If low_latency_mode == true, only send to ranks with the same GPU ID.
+        // Send local memory to other ranks.
+        //
+        // NOTE: DeepEP filters this to same-GPU-ID peers in low_latency_mode
+        // because LL there uses NVSHMEM, not port channels. This port drives
+        // LL kernels through PortChannel, so every peer must have a real
+        // memory/connection/semaphore/port channel entry. Treat LL and HT
+        // sync identically: always connect all peers.
+        //
+        // Caveat: for a pure intra-node LL launch (``num_nvl_bytes == 0`` with
+        // every peer on the same host) the resulting port channels go through
+        // the CPU proxy over IB loopback between different HCAs, which on
+        // this platform does not deliver atomics reliably and currently
+        // deadlocks LL dispatch. See `src/ext/ep/README.md` for the full
+        // discussion. Cross-node LL (DeepEP's recommended 1-GPU-per-node
+        // topology) is unaffected.
         // Use tag=1 to disambiguate from the NVL phase's tag=0 traffic with same-node peers.
         constexpr int kRdmaTag = 1;
         for (int r = 0; r < num_ranks; ++r) {
             if (r == rank) continue;
-            if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
             communicator->sendMemory(local_rdma_buffer_mem, r, kRdmaTag);
         }
 
         // Receive remote memory from other ranks.
         for (int r = 0; r < num_ranks; ++r) {
             if (r == rank) continue;
-            if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
             auto f = communicator->recvMemory(r, kRdmaTag);
             auto mem = f.get();
             memory_ids[r] = proxy_service->addMemory(std::move(mem));
@@ -310,7 +322,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
 
         // Remote IB connections (multi-QP per peer).
         const int num_ib_connections_per_rank = 12;  // #QPs per rank (mirrors DeepEP).
-        for (auto& [r, memory_id] : memory_ids) {
+        for (int r = 0; r < num_ranks; ++r) {
             if (r == rank) continue;
             std::vector<std::shared_future<mscclpp::Connection>> futures;
             futures.reserve(num_ib_connections_per_rank);
@@ -326,7 +338,6 @@ void Buffer::sync(const std::vector<int> &device_ids,
         const int num_semaphores_per_rank = 16;
         for (int i = 0; i < num_semaphores_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
-                if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) continue;
                 auto conn_it = connections.find(r);
                 EP_HOST_ASSERT(conn_it != connections.end());
                 auto& conns = conn_it->second;
@@ -346,11 +357,6 @@ void Buffer::sync(const std::vector<int> &device_ids,
         std::vector<mscclpp::PortChannelDeviceHandle> port_channel_handles;
         for (int i = 0; i < num_port_channels_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
-                if (low_latency_mode && ((r % NUM_MAX_NVL_PEERS) != (rank % NUM_MAX_NVL_PEERS))) {
-                    // Not connected in LL mode; push a default handle as placeholder.
-                    port_channel_handles.emplace_back(mscclpp::PortChannelDeviceHandle{});
-                    continue;
-                }
                 auto mem_it = memory_ids.find(r);
                 EP_HOST_ASSERT(mem_it != memory_ids.end());
                 auto memory_id = mem_it->second;
