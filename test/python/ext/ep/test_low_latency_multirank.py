@@ -203,6 +203,89 @@ def main():
     if rank == 0:
         print("PASS", flush=True)
 
+    # ------------------------------------------------------------------
+    # Optional benchmark (enable with MSCCLPP_EP_BENCH=1). Times dispatch
+    # and combine separately, reporting per-iter latency (max across ranks)
+    # and aggregate effective bandwidth (sum across ranks).
+    # ------------------------------------------------------------------
+    if os.environ.get("MSCCLPP_EP_BENCH", "0") != "1":
+        return
+
+    warmup = int(os.environ.get("MSCCLPP_EP_BENCH_WARMUP", "5"))
+    iters = int(os.environ.get("MSCCLPP_EP_BENCH_ITERS", "20"))
+
+    def _dispatch():
+        return buf.low_latency_dispatch(
+            x, topk_idx, num_tokens, num_experts,
+            False, False, False,  # use_fp8, async, return_recv_hook
+        )
+
+    def _combine(dout):
+        (recv_x, _scales, _cnt, src_info_, layout_range_, _ev, _hk) = dout
+        out_ = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        buf.low_latency_combine(
+            recv_x.clone(), topk_idx, topk_weights,
+            src_info_, layout_range_,
+            num_tokens, num_experts,
+            False, False, False,
+            out_,
+        )
+
+    for _ in range(warmup):
+        _combine(_dispatch())
+    torch.cuda.synchronize()
+    dist.barrier(group=group)
+
+    start_ev = torch.cuda.Event(enable_timing=True)
+    end_ev = torch.cuda.Event(enable_timing=True)
+    start_ev.record()
+    dout = None
+    for _ in range(iters):
+        dout = _dispatch()
+    end_ev.record()
+    torch.cuda.synchronize()
+    disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+    recv_tokens = int(dout[2].sum().item())  # packed_recv_count summed over local experts
+
+    dist.barrier(group=group)
+    start_ev.record()
+    for _ in range(iters):
+        _combine(dout)
+    end_ev.record()
+    torch.cuda.synchronize()
+    comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+
+    # Dispatch payload: recv_tokens × hidden × bf16 (received on this rank).
+    # Combine payload: num_tokens × hidden × bf16 (sent from each local expert
+    # back to the owning rank; one token's worth of bytes per reduction).
+    disp_bytes = recv_tokens * hidden * 2
+    comb_bytes = num_tokens * hidden * 2
+    disp_bw = disp_bytes / (disp_us * 1e-6) / 1e9
+    comb_bw = comb_bytes / (comb_us * 1e-6) / 1e9
+
+    disp_us_t = torch.tensor([disp_us], dtype=torch.float64, device="cuda")
+    comb_us_t = torch.tensor([comb_us], dtype=torch.float64, device="cuda")
+    disp_bw_t = torch.tensor([disp_bw], dtype=torch.float64, device="cuda")
+    comb_bw_t = torch.tensor([comb_bw], dtype=torch.float64, device="cuda")
+    dist.all_reduce(disp_us_t, op=dist.ReduceOp.MAX, group=group)
+    dist.all_reduce(comb_us_t, op=dist.ReduceOp.MAX, group=group)
+    dist.all_reduce(disp_bw_t, op=dist.ReduceOp.SUM, group=group)
+    dist.all_reduce(comb_bw_t, op=dist.ReduceOp.SUM, group=group)
+    if rank == 0:
+        print(
+            f"[bench LL] num_ranks={num_ranks} tokens={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} warmup={warmup} iters={iters}",
+            flush=True,
+        )
+        print(
+            f"  dispatch: {disp_us_t.item():.1f}us (max)  agg_bw={disp_bw_t.item():.2f} GB/s",
+            flush=True,
+        )
+        print(
+            f"  combine : {comb_us_t.item():.1f}us (max)  agg_bw={comb_bw_t.item():.2f} GB/s",
+            flush=True,
+        )
+
 
 if __name__ == "__main__":
     try:
