@@ -161,8 +161,10 @@ pybind11::bytearray Buffer::get_local_ipc_handle() const {
 }
 
 pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
-    // NVSHMEM support is not yet ported; see stub at bottom of this file.
-    throw std::runtime_error("mscclpp::ep::Buffer::get_local_nvshmem_unique_id: NVSHMEM support not yet ported");
+    // The MSCCL++ EP port replaces NVSHMEM with PortChannel/MemoryChannel,
+    // so there is no NVSHMEM unique id to expose. Kept for ABI parity with
+    // DeepEP's Python frontend; callers should use the MSCCL++ bootstrap.
+    throw std::runtime_error("mscclpp::ep::Buffer::get_local_nvshmem_unique_id: not applicable (NVSHMEM is not used in mscclpp_ep)");
 }
 
 torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer) const {
@@ -761,10 +763,12 @@ Buffer::intranode_combine(const torch::Tensor& x, const std::optional<torch::Ten
 }
 
 // -----------------------------------------------------------------------------
-// Internode (NVLink + RDMA) high-throughput path. Ported verbatim from
-// DeepEP `csrc/deep_ep.cpp`; the kernels it drives are in
-// `src/ext/ep/kernels/internode.cu`. Low-latency (pure RDMA) paths below
-// are still stubbed.
+// Internode (NVLink + RDMA) high-throughput path. Ported from DeepEP
+// `csrc/deep_ep.cpp`; the kernels it drives are in
+// `src/ext/ep/kernels/internode.cu`. Validated end-to-end on 2 x H100 x 8
+// via `test/python/ext/ep/test_internode_multirank.py`. The low-latency
+// (pure RDMA) paths further below are a structural port and have not
+// been validated on real hardware.
 // -----------------------------------------------------------------------------
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::vector<int>, torch::Tensor, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>
