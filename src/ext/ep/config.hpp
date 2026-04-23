@@ -96,16 +96,20 @@ struct LowLatencyBuffer {
 
     void* dispatch_rdma_send_buffer = nullptr;
     void* dispatch_rdma_recv_data_buffer = nullptr;
-    int* dispatch_rdma_recv_count_buffer = nullptr;
+    // NOTE: signaling buffers are int64_t (not int) so that IB atomic ops
+    // (IBV_WR_ATOMIC_FETCH_AND_ADD is a 64-bit, 8-byte-aligned op) always
+    // target an 8-byte-aligned address. Using int32 slots produced unaligned
+    // atomics at odd indices that the NIC silently drops.
+    int64_t* dispatch_rdma_recv_count_buffer = nullptr;
 
     void* combine_rdma_send_buffer = nullptr;
     void* combine_rdma_recv_data_buffer = nullptr;
-    int* combine_rdma_recv_flag_buffer = nullptr;
+    int64_t* combine_rdma_recv_flag_buffer = nullptr;
 
     void* combine_rdma_send_buffer_data_start = nullptr;
     size_t num_bytes_per_combine_msg = 0;
 
-    std::pair<int*, int> clean_meta() {
+    std::pair<int64_t*, int> clean_meta() {
         EP_HOST_ASSERT(dispatch_rdma_recv_count_buffer == combine_rdma_recv_flag_buffer);
         return {dispatch_rdma_recv_count_buffer, num_clean_int};
     }
@@ -149,8 +153,8 @@ struct LowLatencyLayout {
         EP_HOST_ASSERT(recv_buffer_bytes % sizeof(int4) == 0);
         total_bytes += recv_buffer_bytes * 2;
 
-        // Symmetric signaling buffers
-        size_t dispatch_recv_count_buffer_bytes = num_experts * sizeof(int);
+        // Symmetric signaling buffers (int64_t slots for 8-byte-aligned IB atomics).
+        size_t dispatch_recv_count_buffer_bytes = num_experts * sizeof(int64_t);
         size_t combine_recv_flag_buffer_bytes = dispatch_recv_count_buffer_bytes;
         size_t signaling_buffer_bytes = std::max(dispatch_recv_count_buffer_bytes, combine_recv_flag_buffer_bytes);
         total_bytes += signaling_buffer_bytes * 2;
@@ -160,13 +164,13 @@ struct LowLatencyLayout {
         // so you may see some parameters are duplicated
         for (int i = 0; i < 2; ++ i) {
             buffers[i] = {
-                static_cast<int>(signaling_buffer_bytes / sizeof(int)),
+                static_cast<int>(signaling_buffer_bytes / sizeof(int64_t)),
                 advance(rdma_buffer, send_buffer_bytes * i),
                 advance(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * i),
-                advance<int*>(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * 2 + signaling_buffer_bytes * i),
+                advance<int64_t*>(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * 2 + signaling_buffer_bytes * i),
                 advance(rdma_buffer, send_buffer_bytes * i),
                 advance(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * i),
-                advance<int*>(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * 2 + signaling_buffer_bytes * i),
+                advance<int64_t*>(rdma_buffer, send_buffer_bytes * 2 + recv_buffer_bytes * 2 + signaling_buffer_bytes * i),
                 advance(rdma_buffer, send_buffer_bytes * i),
                 num_bytes_per_combine_msg
             };
