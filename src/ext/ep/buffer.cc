@@ -312,11 +312,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
             memory_ids[r] = proxy_service->addMemory(std::move(mem));
         }
 
-        // Rank -> vector of connections. Keep a self CUDA-IPC connection
-        // because other code paths assume every rank is represented in the
-        // connections map. The self slot in the semaphore/port-channel loops
-        // below is skipped so the kernel indexing still hits peer handles
-        // only (the same-rank kernel branch uses a direct warp copy).
+        // Rank -> vector of connections
         std::unordered_map<int, std::vector<mscclpp::Connection>> connections;
         const mscclpp::EndpointConfig ipc_cfg(ipc_transport);
         const mscclpp::EndpointConfig ib_cfg(ib_transport);
@@ -337,14 +333,11 @@ void Buffer::sync(const std::vector<int> &device_ids,
         }
 
         // Rank -> vector of semaphore IDs. Iterate peers in sorted rank order so
-        // semaphore pairings between nodes line up deterministically. Skip self:
-        // the kernel's same-rank path uses a direct warp copy and the self
-        // port-channel slot is filled with a zero-initialized placeholder.
+        // semaphore pairings between nodes line up deterministically.
         std::unordered_map<int, std::vector<mscclpp::SemaphoreId>> sema_ids;
         const int num_semaphores_per_rank = 16;
         for (int i = 0; i < num_semaphores_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
-                if (r == rank) continue;
                 auto conn_it = connections.find(r);
                 EP_HOST_ASSERT(conn_it != connections.end());
                 auto& conns = conn_it->second;
@@ -358,16 +351,12 @@ void Buffer::sync(const std::vector<int> &device_ids,
         //
         // The kernels index `port_channel_handles[channel_id * num_ranks + peer_rank]`
         // where peer_rank is a GLOBAL rank in [0..num_ranks). So the outer stride must
-        // be num_ranks with peers in ascending rank order. The self slot is filled
-        // with a zero-initialized placeholder handle that the kernels never touch.
+        // be num_ranks with peers in ascending rank order. Iterating `memory_ids` (an
+        // `unordered_map`) yields hash order and would misroute signals, deadlocking.
         const int num_port_channels_per_rank = num_semaphores_per_rank;
         std::vector<mscclpp::PortChannelDeviceHandle> port_channel_handles;
         for (int i = 0; i < num_port_channels_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
-                if (r == rank) {
-                    port_channel_handles.emplace_back(mscclpp::PortChannelDeviceHandle{});
-                    continue;
-                }
                 auto mem_it = memory_ids.find(r);
                 EP_HOST_ASSERT(mem_it != memory_ids.end());
                 auto memory_id = mem_it->second;
