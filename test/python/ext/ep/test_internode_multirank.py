@@ -338,11 +338,15 @@ def main():
             flush=True,
         )
         print(
-            f"  dispatch: {disp_us_t.item():.1f}us (max)  agg_bw={disp_bw_t.item():.2f} GB/s",
+            f"  dispatch: {disp_us_t.item():.1f}us (max)  "
+            f"per_rank_bw={disp_bw_t.item() / num_ranks:.2f} GB/s  "
+            f"agg_bw={disp_bw_t.item():.2f} GB/s",
             flush=True,
         )
         print(
-            f"  combine : {comb_us_t.item():.1f}us (max)  agg_bw={comb_bw_t.item():.2f} GB/s",
+            f"  combine : {comb_us_t.item():.1f}us (max)  "
+            f"per_rank_bw={comb_bw_t.item() / num_ranks:.2f} GB/s  "
+            f"agg_bw={comb_bw_t.item():.2f} GB/s",
             flush=True,
         )
 
