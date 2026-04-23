@@ -118,6 +118,18 @@ Buffer::~Buffer() noexcept(false) {
         // failed, so there is nothing to tear down.
     }
 
+    // Intra-node LL IPC fast-path teardown.
+    if (ll_ipc_ready) {
+        for (int i = 0; i < num_ranks; ++i) {
+            if (i == rank or peer_rdma_bases[i] == nullptr) continue;
+            CUDA_CHECK(cudaIpcCloseMemHandle(peer_rdma_bases[i]));
+        }
+        if (peer_rdma_bases_gpu != nullptr) {
+            CUDA_CHECK(cudaFree(peer_rdma_bases_gpu));
+            peer_rdma_bases_gpu = nullptr;
+        }
+    }
+
     proxy_service->stopProxy();
 
     // Free cuBLAS handle, workspace and MoE counter
@@ -372,6 +384,80 @@ void Buffer::sync(const std::vector<int> &device_ids,
         mscclpp::gpuMemcpy<mscclpp::PortChannelDeviceHandle>(
             port_channel_handles_device_ptr.get(), port_channel_handles.data(), port_channel_handles.size(),
             cudaMemcpyHostToDevice);
+
+        // ------------------------------------------------------------------
+        // Intra-node LL fast path setup.
+        //
+        // When all ranks sit on the same host (num_rdma_ranks == 1), LL dispatch
+        // and combine still go through `PortChannel` above — which internally
+        // uses the proxy service over IB loopback between different HCAs on
+        // this platform. That path is correct but slow (caps at ~170 GB/s vs.
+        // NVLink's multi-TB/s). We additionally set up CUDA-IPC peer pointers
+        // to each peer's `rdma_buffer_ptr` plus a set of per-peer MemoryChannels
+        // for a barrier ring. The LL kernels select this path at launch time.
+        // Cross-node LL is unaffected: this block is a no-op there.
+        // ------------------------------------------------------------------
+        if (low_latency_mode and num_rdma_ranks == 1) {
+            EP_HOST_ASSERT(num_ranks == num_nvl_ranks);
+            EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS);
+
+            // 1. Exchange CUDA IPC handles for rdma_buffer_ptr via bootstrap.
+            CUDA_CHECK(cudaIpcGetMemHandle(&rdma_ipc_handles[rank], rdma_buffer_ptr));
+            std::vector<cudaIpcMemHandle_t> all_rdma_handles(num_ranks);
+            all_rdma_handles[rank] = rdma_ipc_handles[rank];
+            bootstrap->allGather(all_rdma_handles.data(), sizeof(cudaIpcMemHandle_t));
+
+            peer_rdma_bases[rank] = rdma_buffer_ptr;
+            for (int r = 0; r < num_ranks; ++r) {
+                if (r == rank) continue;
+                rdma_ipc_handles[r] = all_rdma_handles[r];
+                CUDA_CHECK(cudaIpcOpenMemHandle(&peer_rdma_bases[r], rdma_ipc_handles[r],
+                                                cudaIpcMemLazyEnablePeerAccess));
+            }
+            CUDA_CHECK(cudaMalloc(&peer_rdma_bases_gpu, sizeof(void*) * NUM_MAX_NVL_PEERS));
+            CUDA_CHECK(cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases,
+                                  sizeof(void*) * NUM_MAX_NVL_PEERS, cudaMemcpyHostToDevice));
+
+            // 2. Build MemoryChannels for the per-peer barrier ring. These use
+            //    CUDA IPC connections (distinct tag from the existing port-channel
+            //    machinery) so setup does not interfere with cross-node fallback.
+            constexpr int kLlIpcTag = 2;
+            auto rdma_mem_ipc = communicator->registerMemory(rdma_buffer_ptr, num_rdma_bytes, ipc_transport);
+            std::vector<std::shared_future<mscclpp::RegisteredMemory>> remote_futures(num_ranks);
+            for (int r = 0; r < num_ranks; ++r) {
+                if (r == rank) continue;
+                communicator->sendMemory(rdma_mem_ipc, r, kLlIpcTag);
+                remote_futures[r] = communicator->recvMemory(r, kLlIpcTag);
+            }
+            std::vector<mscclpp::Connection> ll_ipc_conns(num_ranks);
+            {
+                std::vector<std::shared_future<mscclpp::Connection>> conn_futures(num_ranks);
+                mscclpp::EndpointConfig cfg(ipc_transport);
+                for (int r = 0; r < num_ranks; ++r) {
+                    if (r == rank) continue;
+                    conn_futures[r] = communicator->connect(cfg, r, kLlIpcTag);
+                }
+                for (int r = 0; r < num_ranks; ++r) {
+                    if (r == rank) continue;
+                    ll_ipc_conns[r] = conn_futures[r].get();
+                }
+            }
+
+            std::vector<mscclpp::MemoryChannelDeviceHandle> ll_handles(num_ranks);
+            for (int r = 0; r < num_ranks; ++r) {
+                if (r == rank) continue;
+                auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, ll_ipc_conns[r]);
+                ll_memory_channels.emplace_back(sema, remote_futures[r].get(), rdma_mem_ipc);
+                ll_handles[r] = ll_memory_channels.rbegin()->deviceHandle();
+            }
+            ll_memory_channel_handles_device_ptr =
+                mscclpp::detail::gpuCallocShared<mscclpp::MemoryChannelDeviceHandle>(num_ranks);
+            mscclpp::gpuMemcpy<mscclpp::MemoryChannelDeviceHandle>(
+                ll_memory_channel_handles_device_ptr.get(), ll_handles.data(), num_ranks,
+                cudaMemcpyHostToDevice);
+
+            ll_ipc_ready = true;
+        }
     }
 
     // Ready to use
@@ -1175,6 +1261,9 @@ void Buffer::clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank, int 
                                            clean_meta_1.first, clean_meta_1.second,
                                            rank, num_ranks,
                                            port_channel_handles_device_ptr.get(),
+                                           ll_memory_channel_handles_device_ptr ?
+                                               ll_memory_channel_handles_device_ptr.get() : nullptr,
+                                           ll_ipc_ready,
                                            at::cuda::getCurrentCUDAStream());
 }
 
@@ -1223,6 +1312,10 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
 
     auto next_clean_meta = next_buffer.clean_meta();
     auto port_handles = port_channel_handles_device_ptr.get();
+    auto mem_handles = ll_memory_channel_handles_device_ptr ?
+                       ll_memory_channel_handles_device_ptr.get() : nullptr;
+    auto peer_bases = peer_rdma_bases_gpu;
+    const bool use_ipc = ll_ipc_ready;
     auto rdma_base = rdma_buffer_ptr;
     auto launcher = [=](int phases) {
         internode_ll::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr,
@@ -1235,7 +1328,8 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
                                num_tokens, hidden, num_max_dispatch_tokens_per_rank,
                                num_topk, num_experts, rank, num_ranks, use_fp8,
                                workspace, launch_stream, phases,
-                               rdma_base, port_handles);
+                               rdma_base, port_handles,
+                               peer_bases, mem_handles, use_ipc);
     };
     launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
 
@@ -1303,6 +1397,10 @@ Buffer::low_latency_combine(const torch::Tensor& x, const torch::Tensor& topk_id
 
     auto next_clean_meta = next_buffer.clean_meta();
     auto port_handles = port_channel_handles_device_ptr.get();
+    auto mem_handles = ll_memory_channel_handles_device_ptr ?
+                       ll_memory_channel_handles_device_ptr.get() : nullptr;
+    auto peer_bases = peer_rdma_bases_gpu;
+    const bool use_ipc = ll_ipc_ready;
     auto rdma_base = rdma_buffer_ptr;
     auto launcher = [=](int phases) {
         internode_ll::combine(combined_x.data_ptr(),
@@ -1315,7 +1413,8 @@ Buffer::low_latency_combine(const torch::Tensor& x, const torch::Tensor& topk_id
                               num_topk, num_experts, rank, num_ranks,
                               workspace, launch_stream,
                               phases, zero_copy,
-                              rdma_base, port_handles);
+                              rdma_base, port_handles,
+                              peer_bases, mem_handles, use_ipc);
     };
     launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
 
