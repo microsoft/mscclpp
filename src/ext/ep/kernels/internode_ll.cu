@@ -440,7 +440,21 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
     EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroups * kNumWarpsPerGroup, "Too many top-k selections");
 
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
-    const auto num_sms = cell_div(num_experts, kNumWarpGroups);
+    const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
+    // LL dispatch/combine are latency-bound at small problem sizes; grid=
+    // cell_div(num_experts,3) leaves most SMs idle. Extra blocks beyond the
+    // expert-owning ones skip the send/count phases (gated by
+    // `responsible_expert_idx < num_experts`) and only participate in the
+    // token-striding recv/combine bodies, where more blocks speed up the
+    // per-token work linearly. Cap at the device SM count because the launch
+    // is cooperative and `__launch_bounds__(num_warps*32, 1)` allows 1
+    // block/SM.
+    int device_num_sms = 0;
+    int cur_dev = 0;
+    cudaGetDevice(&cur_dev);
+    cudaDeviceGetAttribute(&device_num_sms, cudaDevAttrMultiProcessorCount, cur_dev);
+    const auto num_sms = std::max<int>(num_sms_base,
+                                       std::min<int>(device_num_sms, std::max<int>(num_tokens, num_sms_base)));
     EP_HOST_ASSERT(num_topk <= kNumMaxTopK);
 
     auto atomic_counter_per_expert = reinterpret_cast<int*>(workspace);
@@ -671,7 +685,17 @@ void combine(void* combined_x,
     constexpr int kNumMaxTopk = 9;
 
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
-    const auto num_sms = cell_div(num_experts, kNumWarpGroups);
+    const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
+    // See the comment in `dispatch()` above: combine-recv's per-token loop
+    // strides by `sm_id`, so extra blocks parallelize the weighted reduction
+    // linearly. Scale grid by `num_combined_tokens` and cap at device SMs.
+    int device_num_sms = 0;
+    int cur_dev = 0;
+    cudaGetDevice(&cur_dev);
+    cudaDeviceGetAttribute(&device_num_sms, cudaDevAttrMultiProcessorCount, cur_dev);
+    const auto num_sms = std::max<int>(num_sms_base,
+                                       std::min<int>(device_num_sms,
+                                                     std::max<int>(num_combined_tokens, num_sms_base)));
 
     auto atomic_clean_flag = reinterpret_cast<int*>(workspace);
     EP_HOST_ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);
