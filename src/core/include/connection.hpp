@@ -35,6 +35,8 @@ class BaseConnection {
 
   virtual void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) = 0;
 
+  virtual void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) = 0;
+
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
   /// Start signal forwarding to the given memory address.
@@ -91,6 +93,7 @@ class CudaIpcConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 };
@@ -147,6 +150,7 @@ class IBConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 };
@@ -178,6 +182,7 @@ class EthernetConnection : public BaseConnection {
   void write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMemory src, uint64_t srcOffset,
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
+  void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
 
   void flush(int64_t timeoutUsec) override;
 };
