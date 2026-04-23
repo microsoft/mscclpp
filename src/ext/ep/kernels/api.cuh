@@ -139,6 +139,8 @@ void clean_low_latency_buffer(int64_t* clean_0, int num_clean_int_0,
                               int64_t* clean_1, int num_clean_int_1,
                               int rank, int num_ranks,
                               mscclpp::PortChannelDeviceHandle* port_channel_handles,
+                              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+                              bool use_ipc_path,
                               cudaStream_t stream);
 
 void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
@@ -151,7 +153,10 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
               int num_topk, int num_experts, int rank, int num_ranks, bool use_fp8,
               void* workspace, cudaStream_t stream, int phases,
               void* rdma_buffer_ptr,
-              mscclpp::PortChannelDeviceHandle* port_channel_handles);
+              mscclpp::PortChannelDeviceHandle* port_channel_handles,
+              void* const* peer_rdma_bases,
+              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+              bool use_ipc_path);
 
 void combine(void* combined_x,
              void* rdma_recv_x, int64_t* rdma_recv_flag, void* rdma_send_x,
@@ -163,7 +168,10 @@ void combine(void* combined_x,
              void* workspace, cudaStream_t stream,
              int phases, bool zero_copy,
              void* rdma_buffer_ptr,
-             mscclpp::PortChannelDeviceHandle* port_channel_handles);
+             mscclpp::PortChannelDeviceHandle* port_channel_handles,
+             void* const* peer_rdma_bases,
+             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+             bool use_ipc_path);
 
 }  // namespace internode_ll
 

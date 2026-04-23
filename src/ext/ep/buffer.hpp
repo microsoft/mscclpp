@@ -82,6 +82,18 @@ private:
     std::shared_ptr<mscclpp::PortChannelDeviceHandle> port_channel_handles_device_ptr;
     std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> memory_channel_handles_device_ptr;
 
+    // Intra-node LL only: peer-mapped RDMA buffer pointers (CUDA IPC).
+    // ``peer_rdma_bases[r]`` aliases rank ``r``'s ``rdma_buffer_ptr`` via
+    // ``cudaIpcOpenMemHandle`` (lazy peer access). Populated in ``sync()`` when
+    // ``low_latency_mode && num_rdma_ranks == 1``; null otherwise.
+    cudaIpcMemHandle_t rdma_ipc_handles[NUM_MAX_NVL_PEERS];
+    void* peer_rdma_bases[NUM_MAX_NVL_PEERS] = {nullptr};
+    void** peer_rdma_bases_gpu = nullptr;
+    // MemoryChannels over CUDA IPC used only for the LL barrier ring.
+    std::vector<mscclpp::MemoryChannel> ll_memory_channels;
+    std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
+    bool ll_ipc_ready = false;
+
 private:
     void move_fifo_slots(int num_slots = 1);
 
