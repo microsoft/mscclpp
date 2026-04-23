@@ -312,15 +312,17 @@ void Buffer::sync(const std::vector<int> &device_ids,
             memory_ids[r] = proxy_service->addMemory(std::move(mem));
         }
 
-        // Rank -> vector of connections. Skip self: the kernel's same-rank
-        // path uses a direct warp copy (see internode_ll.cu `dst_rank != rank`
-        // check) and never dereferences the self-slot port channel. Creating
-        // a self CUDA-IPC connection + self semaphore previously skewed the
-        // cross-rank `buildAndAddSemaphore` handshake sequence between ranks,
-        // leading to asymmetric semaphore pairings that prevented atomicAdd
-        // signals from being delivered in one direction during LL dispatch.
+        // Rank -> vector of connections. Keep a self CUDA-IPC connection
+        // because other code paths assume every rank is represented in the
+        // connections map. The self slot in the semaphore/port-channel loops
+        // below is skipped so the kernel indexing still hits peer handles
+        // only (the same-rank kernel branch uses a direct warp copy).
         std::unordered_map<int, std::vector<mscclpp::Connection>> connections;
+        const mscclpp::EndpointConfig ipc_cfg(ipc_transport);
         const mscclpp::EndpointConfig ib_cfg(ib_transport);
+
+        // Self connection for local memory (CUDA IPC).
+        connections[rank].emplace_back(communicator->connect(ipc_cfg, rank, kRdmaTag).get());
 
         // Remote IB connections (multi-QP per peer).
         const int num_ib_connections_per_rank = 12;  // #QPs per rank (mirrors DeepEP).
@@ -335,9 +337,9 @@ void Buffer::sync(const std::vector<int> &device_ids,
         }
 
         // Rank -> vector of semaphore IDs. Iterate peers in sorted rank order so
-        // semaphore pairings between nodes line up deterministically. Self is
-        // skipped so both sides see an identical sequence of cross-rank
-        // `buildAndAddSemaphore` calls.
+        // semaphore pairings between nodes line up deterministically. Skip self:
+        // the kernel's same-rank path uses a direct warp copy and the self
+        // port-channel slot is filled with a zero-initialized placeholder.
         std::unordered_map<int, std::vector<mscclpp::SemaphoreId>> sema_ids;
         const int num_semaphores_per_rank = 16;
         for (int i = 0; i < num_semaphores_per_rank; ++i) {
@@ -363,7 +365,6 @@ void Buffer::sync(const std::vector<int> &device_ids,
         for (int i = 0; i < num_port_channels_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
                 if (r == rank) {
-                    // Placeholder; indexed but never dispatched by kernels.
                     port_channel_handles.emplace_back(mscclpp::PortChannelDeviceHandle{});
                     continue;
                 }
