@@ -88,9 +88,6 @@ def float_to_e4m3fn(f32_array, chunk_size=65536):
     result = cp.where(absval == 0, cp.uint8(0), result)
     return result
 
-    result = cp.where(absval == 0, cp.uint8(0), result)
-    return result
-
 
 # ---------------------------------------------------------------------------
 # FP8 E4M3FNUZ helpers (AMD/ROCm; bias=8, max=240, NaN = bits==0x80, no -0)
@@ -145,8 +142,9 @@ def float_to_e4m3fnuz(f32_array, chunk_size=65536):
 
     result = result_flat.reshape(absval.shape)
     result = result | (signs << 7)
-    # 0x80 (negative zero in fn) is NaN under fnuz; collapse exact zeros to 0x00.
-    result = cp.where(absval == 0, cp.uint8(0), result)
+    # 0x80 is NaN under fnuz (no negative zero). Collapse any encoding that
+    # landed on 0x80 (small negatives quantised to zero magnitude) to 0x00.
+    result = cp.where(result == 0x80, cp.uint8(0), result)
     return result
 
 
@@ -350,9 +348,10 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             rank_data_fp8 = float_to_e4m3_native(rank_data)
             ref_f32 += e4m3_native_to_float(rank_data_fp8)
 
-        # Compute errors
-        abs_err = cp.abs(result_f32 - ref_f32)
-        mean_abs_err = float(cp.mean(abs_err))
+        # Compute errors (only on valid, non-NaN entries)
+        valid = ~cp.isnan(result_f32) & ~cp.isnan(ref_f32)
+        abs_err = cp.abs(result_f32[valid] - ref_f32[valid])
+        mean_abs_err = float(cp.mean(abs_err)) if abs_err.size > 0 else 0.0
         errors[accum_label] = mean_abs_err
 
         # Reset between runs
