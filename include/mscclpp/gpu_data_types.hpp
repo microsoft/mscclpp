@@ -537,7 +537,9 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3_fnuz operator+(const __fp8_e4m3_fnuz& a, const 
   return UseClip ? clip(result) : result;
 #endif
 }
-#else
+#endif
+
+#if defined(__FP8_E4M3_FN_EXISTS__)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8_e4m3_fn operator+(const __fp8_e4m3_fn& a, const __fp8_e4m3_fn& b) {
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -545,7 +547,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e4m3_fn operator+(const __fp8_e4m3_fn& a, const __fp
   __fp8_e4m3_fn result = __fp8_e4m3_fn(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #else
-  // Fallback for other devices
+  // Fallback (e.g., AMD-OCP)
   __fp8_e4m3_fn result = __fp8_e4m3_fn(float(a) + float(b));
   return UseClip ? clip(result) : result;
 #endif
@@ -649,7 +651,9 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2_fnuz operator+(const __fp8_e5m2_fnuz& a, const 
   return UseClip ? clip(result) : result;
 #endif
 }
-#else
+#endif
+
+#if defined(__FP8_E5M2_EXISTS__)
 template <bool UseClip = true>
 MSCCLPP_DEVICE_INLINE __fp8_e5m2 operator+(const __fp8_e5m2& a, const __fp8_e5m2& b) {
 #if defined(MSCCLPP_DEVICE_CUDA)
@@ -657,6 +661,7 @@ MSCCLPP_DEVICE_INLINE __fp8_e5m2 operator+(const __fp8_e5m2& a, const __fp8_e5m2
   __fp8_e5m2 result = __fp8_e5m2(__hadd(__half(a), __half(b)));
   return UseClip ? clip(result) : result;
 #else
+  // Fallback (e.g., AMD-OCP)
   __fp8_e5m2 result = __fp8_e5m2(float(a) + float(b));
   return UseClip ? clip(result) : result;
 #endif
