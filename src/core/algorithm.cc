@@ -183,22 +183,22 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
-    case DataType::FLOAT8_E4M3_FN:
+    case DataType::FLOAT8_E4M3FN:
 #if defined(__FP8_E4M3_IS_FNUZ__)
       THROW(EXEC, Error, ErrorCode::InvalidUsage,
-            "FLOAT8_E4M3_FN is not natively supported on this platform (only FNUZ is)");
+            "FLOAT8_E4M3FN is not natively supported on this platform (only FNUZ is)");
 #else
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3_FN,
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3FN,
                         plan_, stream);
 #endif
       break;
-    case DataType::FLOAT8_E4M3_FNUZ:
+    case DataType::FLOAT8_E4M3FNUZ:
 #if defined(__FP8_E4M3_IS_FNUZ__)
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize,
-                        DataType::FLOAT8_E4M3_FNUZ, plan_, stream);
+      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3FNUZ,
+                        plan_, stream);
 #else
       THROW(EXEC, Error, ErrorCode::InvalidUsage,
-            "FLOAT8_E4M3_FNUZ is not natively supported on this platform (only FN is)");
+            "FLOAT8_E4M3FNUZ is not natively supported on this platform (only FN is)");
 #endif
       break;
     case DataType::FLOAT8_E5M2:
@@ -210,13 +210,13 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         plan_, stream);
 #endif
       break;
-    case DataType::FLOAT8_E5M2_FNUZ:
+    case DataType::FLOAT8_E5M2FNUZ:
 #if defined(__FP8_E5M2_IS_FNUZ__)
-      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize,
-                        DataType::FLOAT8_E5M2_FNUZ, plan_, stream);
+      executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FLOAT8_E5M2FNUZ,
+                        plan_, stream);
 #else
       THROW(EXEC, Error, ErrorCode::InvalidUsage,
-            "FLOAT8_E5M2_FNUZ is not natively supported on this platform (only OCP is)");
+            "FLOAT8_E5M2FNUZ is not natively supported on this platform (only OCP is)");
 #endif
       break;
 #endif

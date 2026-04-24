@@ -29,13 +29,13 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
 #ifdef __FP8_TYPES_EXIST__
     case ncclFloat8e4m3:
 #if defined(__FP8_E4M3_IS_FNUZ__)
-      return mscclpp::DataType::FLOAT8_E4M3_FNUZ;
+      return mscclpp::DataType::FLOAT8_E4M3FNUZ;
 #else
-      return mscclpp::DataType::FLOAT8_E4M3_FN;
+      return mscclpp::DataType::FLOAT8_E4M3FN;
 #endif
     case ncclFloat8e5m2:
 #if defined(__FP8_E5M2_IS_FNUZ__)
-      return mscclpp::DataType::FLOAT8_E5M2_FNUZ;
+      return mscclpp::DataType::FLOAT8_E5M2FNUZ;
 #else
       return mscclpp::DataType::FLOAT8_E5M2;
 #endif
@@ -50,10 +50,10 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
 inline size_t getDataTypeSize(mscclpp::DataType dtype) {
   switch (dtype) {
     case mscclpp::DataType::UINT8:
-    case mscclpp::DataType::FLOAT8_E4M3_FN:
-    case mscclpp::DataType::FLOAT8_E4M3_FNUZ:
+    case mscclpp::DataType::FLOAT8_E4M3FN:
+    case mscclpp::DataType::FLOAT8_E4M3FNUZ:
     case mscclpp::DataType::FLOAT8_E5M2:
-    case mscclpp::DataType::FLOAT8_E5M2_FNUZ:
+    case mscclpp::DataType::FLOAT8_E5M2FNUZ:
     case mscclpp::DataType::FLOAT8_E4M3B15:
       return 1;
     case mscclpp::DataType::FLOAT16:
@@ -83,11 +83,11 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
     case mscclpp::DataType::BFLOAT16:
       return ncclBfloat16;
 #ifdef __FP8_TYPES_EXIST__
-    case mscclpp::DataType::FLOAT8_E4M3_FN:
-    case mscclpp::DataType::FLOAT8_E4M3_FNUZ:
+    case mscclpp::DataType::FLOAT8_E4M3FN:
+    case mscclpp::DataType::FLOAT8_E4M3FNUZ:
       return ncclFloat8e4m3;
     case mscclpp::DataType::FLOAT8_E5M2:
-    case mscclpp::DataType::FLOAT8_E5M2_FNUZ:
+    case mscclpp::DataType::FLOAT8_E5M2FNUZ:
       return ncclFloat8e5m2;
 #endif
     case mscclpp::DataType::FLOAT8_E4M3B15:

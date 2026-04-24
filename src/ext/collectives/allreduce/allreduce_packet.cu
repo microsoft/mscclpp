@@ -200,8 +200,8 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
   {
     bool isFp8 = dtype == DataType::FLOAT8_E4M3B15;
 #if defined(__FP8_TYPES_EXIST__)
-    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3_FN || dtype == DataType::FLOAT8_E4M3_FNUZ ||
-            dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E5M2_FNUZ;
+    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ ||
+            dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E5M2FNUZ;
 #endif
     if (isFp8) {
       if (inputSize < (64 << 10)) {

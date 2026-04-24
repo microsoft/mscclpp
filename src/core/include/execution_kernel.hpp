@@ -876,16 +876,16 @@ class ExecutionKernel {
 #endif
         break;
 #if defined(__FP8_TYPES_EXIST__)
-      case DataType::FLOAT8_E4M3_FN:
-      case DataType::FLOAT8_E4M3_FNUZ:
+      case DataType::FLOAT8_E4M3FN:
+      case DataType::FLOAT8_E4M3FNUZ:
 #if defined(__FP8_E4M3_IS_FNUZ__)
-        if (dataType == DataType::FLOAT8_E4M3_FN) {
-          throw Error("FLOAT8_E4M3_FN is not natively supported on this platform (only FNUZ is)",
+        if (dataType == DataType::FLOAT8_E4M3FN) {
+          throw Error("FLOAT8_E4M3FN is not natively supported on this platform (only FNUZ is)",
                       ErrorCode::InvalidUsage);
         }
 #else
-        if (dataType == DataType::FLOAT8_E4M3_FNUZ) {
-          throw Error("FLOAT8_E4M3_FNUZ is not natively supported on this platform (only FN is)",
+        if (dataType == DataType::FLOAT8_E4M3FNUZ) {
+          throw Error("FLOAT8_E4M3FNUZ is not natively supported on this platform (only FN is)",
                       ErrorCode::InvalidUsage);
         }
 #endif
@@ -900,14 +900,14 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT8_E5M2:
-      case DataType::FLOAT8_E5M2_FNUZ:
+      case DataType::FLOAT8_E5M2FNUZ:
 #if defined(__FP8_E5M2_IS_FNUZ__)
         if (dataType == DataType::FLOAT8_E5M2) {
           throw Error("FLOAT8_E5M2 is not natively supported on this platform (only FNUZ is)", ErrorCode::InvalidUsage);
         }
 #else
-        if (dataType == DataType::FLOAT8_E5M2_FNUZ) {
-          throw Error("FLOAT8_E5M2_FNUZ is not natively supported on this platform (only OCP is)",
+        if (dataType == DataType::FLOAT8_E5M2FNUZ) {
+          throw Error("FLOAT8_E5M2FNUZ is not natively supported on this platform (only OCP is)",
                       ErrorCode::InvalidUsage);
         }
 #endif

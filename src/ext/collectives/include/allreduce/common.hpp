@@ -102,14 +102,14 @@ AllreduceFunc dispatchByDtype(mscclpp::DataType dtype, mscclpp::DataType accumDt
 #endif
 #if defined(__FP8_TYPES_EXIST__)
 #if defined(__FP8_E4M3_IS_FNUZ__)
-  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3_FNUZ) {
+  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3FNUZ) {
     return dispatchFp8Accum<Op, __fp8_e4m3, Adapter>(accumDtype, dtype);
 #else
-  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3_FN) {
+  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3FN) {
     return dispatchFp8Accum<Op, __fp8_e4m3, Adapter>(accumDtype, dtype);
 #endif
 #if defined(__FP8_E5M2_IS_FNUZ__)
-  } else if (dtype == mscclpp::DataType::FLOAT8_E5M2_FNUZ) {
+  } else if (dtype == mscclpp::DataType::FLOAT8_E5M2FNUZ) {
     return dispatchFp8Accum<Op, __fp8_e5m2, Adapter>(accumDtype, dtype);
 #else
   } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {

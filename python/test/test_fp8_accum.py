@@ -296,7 +296,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     # FP8 E4M3 native dtype differs by platform: AMD/ROCm (MI300X) provides
     # the fnuz variant, while NVIDIA provides the OCP `fn` variant.
-    fp8_native_dtype = DataType.float8_e4m3_fnuz if _is_hip else DataType.float8_e4m3_fn
+    fp8_native_dtype = DataType.float8_e4m3fnuz if _is_hip else DataType.float8_e4m3fn
 
     accum_configs = [
         ("fp8_native", fp8_native_dtype),

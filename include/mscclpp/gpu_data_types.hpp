@@ -204,18 +204,18 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,             // 32-bit signed integer.
-  UINT32,            // 32-bit unsigned integer.
-  FLOAT16,           // IEEE 754 half precision.
-  FLOAT32,           // IEEE 754 single precision.
-  BFLOAT16,          // bfloat16 precision.
-  FLOAT8_E4M3_FN,    // float8 E4M3, OCP variant (NV; AMD HIP > 6 with OCP enabled).
-  FLOAT8_E4M3_FNUZ,  // float8 E4M3, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
-  FLOAT8_E5M2,       // float8 E5M2, OCP variant (NV; AMD HIP > 6 with OCP enabled).
-  FLOAT8_E5M2_FNUZ,  // float8 E5M2, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
-  UINT8,             // 8-bit unsigned integer.
-  FLOAT8_E4M3B15,    // float8 with E4M3 layout, bias=15 (software, no HW accel).
-  AUTO = 255,        // Sentinel: resolve to the input dtype at runtime.
+  INT32,            // 32-bit signed integer.
+  UINT32,           // 32-bit unsigned integer.
+  FLOAT16,          // IEEE 754 half precision.
+  FLOAT32,          // IEEE 754 single precision.
+  BFLOAT16,         // bfloat16 precision.
+  FLOAT8_E4M3FN,    // float8 E4M3, OCP variant (NV; AMD HIP > 6 with OCP enabled).
+  FLOAT8_E4M3FNUZ,  // float8 E4M3, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
+  FLOAT8_E5M2,      // float8 E5M2, OCP variant (NV; AMD HIP > 6 with OCP enabled).
+  FLOAT8_E5M2FNUZ,  // float8 E5M2, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
+  UINT8,            // 8-bit unsigned integer.
+  FLOAT8_E4M3B15,   // float8 with E4M3 layout, bias=15 (software, no HW accel).
+  AUTO = 255,       // Sentinel: resolve to the input dtype at runtime.
 };
 
 /// Word array.

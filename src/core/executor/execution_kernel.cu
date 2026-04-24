@@ -78,10 +78,10 @@ void ExecutionKernel::launchKernel(int rank, int nthreadblocks, int nthreads, vo
       );
 #endif
       break;
-    case DataType::FLOAT8_E4M3_FN:
-    case DataType::FLOAT8_E4M3_FNUZ:
+    case DataType::FLOAT8_E4M3FN:
+    case DataType::FLOAT8_E4M3FNUZ:
     case DataType::FLOAT8_E5M2:
-    case DataType::FLOAT8_E5M2_FNUZ:
+    case DataType::FLOAT8_E5M2FNUZ:
       // FP8 is not supported in CUDA execution kernel.
       break;
     case DataType::FLOAT8_E4M3B15:
