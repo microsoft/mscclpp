@@ -88,6 +88,76 @@ def float_to_e4m3fn(f32_array, chunk_size=65536):
     result = cp.where(absval == 0, cp.uint8(0), result)
     return result
 
+    result = cp.where(absval == 0, cp.uint8(0), result)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# FP8 E4M3FNUZ helpers (AMD/ROCm; bias=8, max=240, NaN = bits==0x80, no -0)
+# ---------------------------------------------------------------------------
+
+
+def e4m3fnuz_to_float(uint8_array):
+    """Decode a cupy uint8 array of E4M3FNUZ bit patterns to float32."""
+    bits = uint8_array.astype(cp.int32)
+    sign = (bits >> 7) & 1
+    exp = (bits >> 3) & 0xF
+    mant = bits & 0x7
+
+    # Normal: (-1)^s * 2^(exp-8) * (1 + mant/8)
+    normal_val = cp.ldexp(cp.float32(1.0) + mant.astype(cp.float32) / cp.float32(8.0), (exp - 8).astype(cp.int32))
+    # Subnormal (exp==0): (-1)^s * 2^(-7) * (mant/8)
+    subnormal_val = cp.ldexp(mant.astype(cp.float32) / cp.float32(8.0), cp.int32(-7))
+
+    result = cp.where(exp == 0, subnormal_val, normal_val)
+    result = cp.where(sign == 1, -result, result)
+    # Zero is only 0x00; the 0x80 encoding is reserved for NaN under fnuz.
+    result = cp.where(uint8_array.astype(cp.int32) == 0, cp.float32(0.0), result)
+    nan_mask = uint8_array.astype(cp.int32) == 0x80
+    result = cp.where(nan_mask, cp.float32(float("nan")), result)
+    return result
+
+
+def float_to_e4m3fnuz(f32_array, chunk_size=65536):
+    """Encode a cupy float32 array to uint8 E4M3FNUZ bit patterns.
+
+    Same lookup-table approach as float_to_e4m3fn but using the fnuz table.
+    """
+    all_bytes = cp.arange(128, dtype=cp.uint8)
+    all_floats = e4m3fnuz_to_float(all_bytes)
+    all_floats = cp.where(cp.isnan(all_floats), cp.float32(float("inf")), all_floats)
+
+    clamped = f32_array.astype(cp.float32)
+    clamped = cp.clip(clamped, -240.0, 240.0)
+    signs = (clamped < 0).astype(cp.uint8)
+    absval = cp.abs(clamped)
+
+    result = cp.zeros(absval.shape, dtype=cp.uint8)
+    n = absval.size
+    absval_flat = absval.ravel()
+    result_flat = result.ravel()
+
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = absval_flat[start:end]
+        diffs = cp.abs(chunk[:, None] - all_floats[None, :])
+        result_flat[start:end] = cp.argmin(diffs, axis=1).astype(cp.uint8)
+
+    result = result_flat.reshape(absval.shape)
+    result = result | (signs << 7)
+    # 0x80 (negative zero in fn) is NaN under fnuz; collapse exact zeros to 0x00.
+    result = cp.where(absval == 0, cp.uint8(0), result)
+    return result
+
+
+# Platform-aware E4M3 native helpers: ROCm uses fnuz; CUDA uses fn (OCP).
+if _is_hip:
+    e4m3_native_to_float = e4m3fnuz_to_float
+    float_to_e4m3_native = float_to_e4m3fnuz
+else:
+    e4m3_native_to_float = e4m3fn_to_float
+    float_to_e4m3_native = float_to_e4m3fn
+
 
 # ---------------------------------------------------------------------------
 # FP8 E4M3B15 helpers (bias=15, max=0.9375, NaN = exp==15 or bits==0x80)
@@ -226,8 +296,12 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     buf = GpuBuffer(size, dtype=cp.uint8)
 
+    # FP8 E4M3 native dtype differs by platform: AMD/ROCm (MI300X) provides
+    # the fnuz variant, while NVIDIA provides the OCP `fn` variant.
+    fp8_native_dtype = DataType.float8_e4m3_fnuz if _is_hip else DataType.float8_e4m3_fn
+
     accum_configs = [
-        ("fp8_native", DataType.float8_e4m3),
+        ("fp8_native", fp8_native_dtype),
         ("float16", DataType.float16),
         ("float32", DataType.float32),
     ]
@@ -249,7 +323,7 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         rng = np.random.RandomState(42 + rank)
         src_f32 = cp.asarray(rng.randn(size).astype(np.float32))
         src_f32 = cp.clip(src_f32, -240.0, 240.0)
-        src_fp8 = float_to_e4m3fn(src_f32)
+        src_fp8 = float_to_e4m3_native(src_f32)
 
         # Copy into symmetric buffer
         buf[:] = src_fp8
@@ -260,12 +334,12 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             algo,
             comm_group,
             buf,
-            dtype=DataType.float8_e4m3,
+            dtype=fp8_native_dtype,
             accum_dtype=accum_dtype,
             nblocks=nb,
             nthreads_per_block=nt,
         )
-        result_f32 = e4m3fn_to_float(result)
+        result_f32 = e4m3_native_to_float(result)
 
         # Compute float32 reference: sum all ranks' quantized FP8 inputs in float32
         ref_f32 = cp.zeros(size, dtype=cp.float32)
@@ -273,8 +347,8 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             rng_r = np.random.RandomState(42 + r)
             rank_data = cp.asarray(rng_r.randn(size).astype(np.float32))
             rank_data = cp.clip(rank_data, -240.0, 240.0)
-            rank_data_fp8 = float_to_e4m3fn(rank_data)
-            ref_f32 += e4m3fn_to_float(rank_data_fp8)
+            rank_data_fp8 = float_to_e4m3_native(rank_data)
+            ref_f32 += e4m3_native_to_float(rank_data_fp8)
 
         # Compute errors
         abs_err = cp.abs(result_f32 - ref_f32)

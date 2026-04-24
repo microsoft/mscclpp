@@ -876,18 +876,34 @@ class ExecutionKernel {
 #endif
         break;
 #if defined(__FP8_TYPES_EXIST__)
-      case DataType::FLOAT8_E4M3:
-        executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
-            semaphores, localMemoryIdBegin, flag
+      case DataType::FLOAT8_E4M3_FN:
+#if defined(__FP8_E4M3_FN_EXISTS__)
+        executionKernel<__fp8_e4m3_fn, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3_fn*)src, (__fp8_e4m3_fn*)dst, (__fp8_e4m3_fn*)scratch, scratchOffset, scratchChunkSize,
+            plan, semaphores, localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
         );
 #endif
+#endif
+        break;
+      case DataType::FLOAT8_E4M3_FNUZ:
+#if defined(__FP8_E4M3_FNUZ_EXISTS__)
+        executionKernel<__fp8_e4m3_fnuz, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3_fnuz*)src, (__fp8_e4m3_fnuz*)dst, (__fp8_e4m3_fnuz*)scratch, scratchOffset,
+            scratchChunkSize, plan, semaphores, localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
+#endif
         break;
       case DataType::FLOAT8_E5M2:
+#if defined(__FP8_E5M2_EXISTS__)
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -896,6 +912,20 @@ class ExecutionKernel {
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
         );
+#endif
+#endif
+        break;
+      case DataType::FLOAT8_E5M2_FNUZ:
+#if defined(__FP8_E5M2_FNUZ_EXISTS__)
+        executionKernel<__fp8_e5m2_fnuz, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e5m2_fnuz*)src, (__fp8_e5m2_fnuz*)dst, (__fp8_e5m2_fnuz*)scratch, scratchOffset,
+            scratchChunkSize, plan, semaphores, localMemoryIdBegin, flag
+#if defined(ENABLE_NPKIT)
+            ,
+            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
+#else
+        );
+#endif
 #endif
         break;
 #endif  // __FP8_TYPES_EXIST__

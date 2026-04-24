@@ -101,10 +101,30 @@ AllreduceFunc dispatchByDtype(mscclpp::DataType dtype, mscclpp::DataType accumDt
     return Adapter<Op, __bfloat16, __bfloat16>::call;
 #endif
 #if defined(__FP8_TYPES_EXIST__)
-  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3) {
-    return dispatchFp8Accum<Op, __fp8_e4m3, Adapter>(accumDtype, dtype);
+  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3_FN) {
+#if defined(__FP8_E4M3_FN_EXISTS__)
+    return dispatchFp8Accum<Op, __fp8_e4m3_fn, Adapter>(accumDtype, dtype);
+#else
+    return nullptr;
+#endif
+  } else if (dtype == mscclpp::DataType::FLOAT8_E4M3_FNUZ) {
+#if defined(__FP8_E4M3_FNUZ_EXISTS__)
+    return dispatchFp8Accum<Op, __fp8_e4m3_fnuz, Adapter>(accumDtype, dtype);
+#else
+    return nullptr;
+#endif
   } else if (dtype == mscclpp::DataType::FLOAT8_E5M2) {
+#if defined(__FP8_E5M2_EXISTS__)
     return dispatchFp8Accum<Op, __fp8_e5m2, Adapter>(accumDtype, dtype);
+#else
+    return nullptr;
+#endif
+  } else if (dtype == mscclpp::DataType::FLOAT8_E5M2_FNUZ) {
+#if defined(__FP8_E5M2_FNUZ_EXISTS__)
+    return dispatchFp8Accum<Op, __fp8_e5m2_fnuz, Adapter>(accumDtype, dtype);
+#else
+    return nullptr;
+#endif
 #endif
   } else if (dtype == mscclpp::DataType::FLOAT8_E4M3B15) {
     return dispatchFp8Accum<Op, __fp8_e4m3b15, Adapter>(accumDtype, dtype);

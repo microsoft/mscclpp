@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
 #include "logger.hpp"
@@ -182,13 +183,37 @@ CommResult DslAlgorithm::execute(std::shared_ptr<Communicator> comm, const void*
                         stream);
       break;
 #if defined(__FP8_TYPES_EXIST__)
-    case DataType::FLOAT8_E4M3:
-      executor->execute(rank, (__fp8_e4m3*)input, (__fp8_e4m3*)output, inputSize, outputSize, DataType::FLOAT8_E4M3,
-                        plan_, stream);
+    case DataType::FLOAT8_E4M3_FN:
+#if defined(__FP8_E4M3_FN_EXISTS__)
+      executor->execute(rank, (__fp8_e4m3_fn*)input, (__fp8_e4m3_fn*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E4M3_FN, plan_, stream);
+#else
+      throw Error("FLOAT8_E4M3_FN is not natively supported on this platform", ErrorCode::InvalidUsage);
+#endif
+      break;
+    case DataType::FLOAT8_E4M3_FNUZ:
+#if defined(__FP8_E4M3_FNUZ_EXISTS__)
+      executor->execute(rank, (__fp8_e4m3_fnuz*)input, (__fp8_e4m3_fnuz*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E4M3_FNUZ, plan_, stream);
+#else
+      throw Error("FLOAT8_E4M3_FNUZ is not natively supported on this platform", ErrorCode::InvalidUsage);
+#endif
       break;
     case DataType::FLOAT8_E5M2:
+#if defined(__FP8_E5M2_EXISTS__)
       executor->execute(rank, (__fp8_e5m2*)input, (__fp8_e5m2*)output, inputSize, outputSize, DataType::FLOAT8_E5M2,
                         plan_, stream);
+#else
+      throw Error("FLOAT8_E5M2 is not natively supported on this platform", ErrorCode::InvalidUsage);
+#endif
+      break;
+    case DataType::FLOAT8_E5M2_FNUZ:
+#if defined(__FP8_E5M2_FNUZ_EXISTS__)
+      executor->execute(rank, (__fp8_e5m2_fnuz*)input, (__fp8_e5m2_fnuz*)output, inputSize, outputSize,
+                        DataType::FLOAT8_E5M2_FNUZ, plan_, stream);
+#else
+      throw Error("FLOAT8_E5M2_FNUZ is not natively supported on this platform", ErrorCode::InvalidUsage);
+#endif
       break;
 #endif
     case DataType::FLOAT8_E4M3B15:

@@ -123,7 +123,7 @@ struct NvlsWarpPipelineAdapter {
       return cudaErrorNotSupported;
     } else
 #if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-      if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+      if constexpr (std::is_same_v<T, __fp8_e4m3_fn> || std::is_same_v<T, __fp8_e5m2>) {
         return cudaErrorNotSupported;
       } else
 #endif

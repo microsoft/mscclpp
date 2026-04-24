@@ -45,8 +45,10 @@ void register_core(nb::module_& m) {
       .value("float16", DataType::FLOAT16)
       .value("float32", DataType::FLOAT32)
       .value("bfloat16", DataType::BFLOAT16)
-      .value("float8_e4m3", DataType::FLOAT8_E4M3)
+      .value("float8_e4m3_fn", DataType::FLOAT8_E4M3_FN)
+      .value("float8_e4m3_fnuz", DataType::FLOAT8_E4M3_FNUZ)
       .value("float8_e5m2", DataType::FLOAT8_E5M2)
+      .value("float8_e5m2_fnuz", DataType::FLOAT8_E5M2_FNUZ)
       .value("uint8", DataType::UINT8)
       .value("float8_e4m3b15", DataType::FLOAT8_E4M3B15);
 
