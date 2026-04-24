@@ -28,7 +28,7 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
       return mscclpp::DataType::BFLOAT16;
 #ifdef __FP8_TYPES_EXIST__
     case ncclFloat8e4m3:
-#if defined(__FP8_E4M3_FN_EXISTS__)
+#if !defined(__FP8_E4M3_IS_FNUZ__)
       return mscclpp::DataType::FLOAT8_E4M3_FN;
 #else
       throw mscclpp::Error(
@@ -36,7 +36,7 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
           mscclpp::ErrorCode::InvalidUsage);
 #endif
     case ncclFloat8e5m2:
-#if defined(__FP8_E5M2_EXISTS__)
+#if !defined(__FP8_E5M2_IS_FNUZ__)
       return mscclpp::DataType::FLOAT8_E5M2;
 #else
       throw mscclpp::Error(
@@ -87,7 +87,7 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclBfloat16;
 #ifdef __FP8_TYPES_EXIST__
     case mscclpp::DataType::FLOAT8_E4M3_FN:
-#if defined(__FP8_E4M3_FN_EXISTS__)
+#if !defined(__FP8_E4M3_IS_FNUZ__)
       return ncclFloat8e4m3;
 #else
       THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
@@ -98,7 +98,7 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
             "FLOAT8_E4M3_FNUZ has no NCCL equivalent (NCCL only exposes the OCP `fn` variant)");
     case mscclpp::DataType::FLOAT8_E5M2:
-#if defined(__FP8_E5M2_EXISTS__)
+#if !defined(__FP8_E5M2_IS_FNUZ__)
       return ncclFloat8e5m2;
 #else
       THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,

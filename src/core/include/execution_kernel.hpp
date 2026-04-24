@@ -10,6 +10,7 @@
 #endif
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/device.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
@@ -877,33 +878,40 @@ class ExecutionKernel {
         break;
 #if defined(__FP8_TYPES_EXIST__)
       case DataType::FLOAT8_E4M3_FN:
-#if defined(__FP8_E4M3_FN_EXISTS__)
-        executionKernel<__fp8_e4m3_fn, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e4m3_fn*)src, (__fp8_e4m3_fn*)dst, (__fp8_e4m3_fn*)scratch, scratchOffset, scratchChunkSize,
-            plan, semaphores, localMemoryIdBegin, flag
-#if defined(ENABLE_NPKIT)
-            ,
-            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
-#else
-        );
-#endif
-#endif
-        break;
       case DataType::FLOAT8_E4M3_FNUZ:
-#if defined(__FP8_E4M3_FNUZ_EXISTS__)
-        executionKernel<__fp8_e4m3_fnuz, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e4m3_fnuz*)src, (__fp8_e4m3_fnuz*)dst, (__fp8_e4m3_fnuz*)scratch, scratchOffset,
-            scratchChunkSize, plan, semaphores, localMemoryIdBegin, flag
+#if defined(__FP8_E4M3_IS_FNUZ__)
+        if (dataType == DataType::FLOAT8_E4M3_FN) {
+          throw Error("FLOAT8_E4M3_FN is not natively supported on this platform (only FNUZ is)",
+                      ErrorCode::InvalidUsage);
+        }
+#else
+        if (dataType == DataType::FLOAT8_E4M3_FNUZ) {
+          throw Error("FLOAT8_E4M3_FNUZ is not natively supported on this platform (only FN is)",
+                      ErrorCode::InvalidUsage);
+        }
+#endif
+        executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
+            rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
+            semaphores, localMemoryIdBegin, flag
 #if defined(ENABLE_NPKIT)
             ,
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
         );
-#endif
 #endif
         break;
       case DataType::FLOAT8_E5M2:
-#if defined(__FP8_E5M2_EXISTS__)
+      case DataType::FLOAT8_E5M2_FNUZ:
+#if defined(__FP8_E5M2_IS_FNUZ__)
+        if (dataType == DataType::FLOAT8_E5M2) {
+          throw Error("FLOAT8_E5M2 is not natively supported on this platform (only FNUZ is)", ErrorCode::InvalidUsage);
+        }
+#else
+        if (dataType == DataType::FLOAT8_E5M2_FNUZ) {
+          throw Error("FLOAT8_E5M2_FNUZ is not natively supported on this platform (only OCP is)",
+                      ErrorCode::InvalidUsage);
+        }
+#endif
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -912,20 +920,6 @@ class ExecutionKernel {
             NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
         );
-#endif
-#endif
-        break;
-      case DataType::FLOAT8_E5M2_FNUZ:
-#if defined(__FP8_E5M2_FNUZ_EXISTS__)
-        executionKernel<__fp8_e5m2_fnuz, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
-            rank, (__fp8_e5m2_fnuz*)src, (__fp8_e5m2_fnuz*)dst, (__fp8_e5m2_fnuz*)scratch, scratchOffset,
-            scratchChunkSize, plan, semaphores, localMemoryIdBegin, flag
-#if defined(ENABLE_NPKIT)
-            ,
-            NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
-#else
-        );
-#endif
 #endif
         break;
 #endif  // __FP8_TYPES_EXIST__

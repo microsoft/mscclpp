@@ -108,63 +108,28 @@ MSCCLPP_DEVICE_INLINE uint32_t calVectorHelper<f32x2, MIN>(const uint32_t& a, co
   return bit_cast<uint32_t, float>(fminf(fa, fb));
 }
 
-// Maps a scalar element type T to the packed vector type used by calVectorHelper.
-template <typename T>
-struct CompTypeOf {
-  using type = T;
-};
-template <>
-struct CompTypeOf<float> {
-  using type = f32x2;
-};
-template <>
-struct CompTypeOf<__half> {
-  using type = f16x2;
-};
-template <>
-struct CompTypeOf<__bfloat16> {
-  using type = bf16x2;
-};
-template <>
-struct CompTypeOf<uint8_t> {
-  using type = u8x4;
-};
-template <>
-struct CompTypeOf<__fp8_e4m3b15> {
-  using type = f8_e4m3b15x4;
-};
-#if defined(__FP8_E4M3_FN_EXISTS__)
-template <>
-struct CompTypeOf<__fp8_e4m3_fn> {
-  using type = f8_e4m3_fnx4;
-};
-#endif
-#if defined(__FP8_E4M3_FNUZ_EXISTS__)
-template <>
-struct CompTypeOf<__fp8_e4m3_fnuz> {
-  using type = f8_e4m3_fnuzx4;
-};
-#endif
-#if defined(__FP8_E5M2_EXISTS__)
-template <>
-struct CompTypeOf<__fp8_e5m2> {
-  using type = f8_e5m2x4;
-};
-#endif
-#if defined(__FP8_E5M2_FNUZ_EXISTS__)
-template <>
-struct CompTypeOf<__fp8_e5m2_fnuz> {
-  using type = f8_e5m2_fnuzx4;
-};
-#endif
-
 // calVector wrapper – converts scalar types to vector types and calls calVectorHelper
 template <typename T, ReduceOp OpType, typename DataType>
 MSCCLPP_DEVICE_INLINE DataType calVector(const DataType& a, const DataType& b) {
   // Define the vectorized computation type based on the element type
   static_assert(sizeof(DataType) % sizeof(T) == 0, "DataType size must be multiple of T size");
   static_assert(sizeof(DataType) >= 4, "DataType size must be at least 4 bytes");
-  using CompType = typename CompTypeOf<T>::type;
+  using CompType = typename std::conditional_t<
+      std::is_same_v<T, float>, f32x2,
+      std::conditional_t<
+          std::is_same_v<T, __half>, f16x2,
+          std::conditional_t<
+              std::is_same_v<T, __bfloat16>, bf16x2,
+              std::conditional_t<
+                  std::is_same_v<T, uint8_t>, u8x4,
+                  std::conditional_t<std::is_same_v<T, __fp8_e4m3b15>, f8_e4m3b15x4,
+#if defined(__FP8_TYPES_EXIST__)
+                                     std::conditional_t<std::is_same_v<T, __fp8_e4m3>, f8_e4m3x4,
+                                                        std::conditional_t<std::is_same_v<T, __fp8_e5m2>, f8_e5m2x4, T>>
+#else
+                                     T
+#endif
+                                     >>>>>;
   return calVectorHelper<CompType, OpType>(a, b);
 }
 
