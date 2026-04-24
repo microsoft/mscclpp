@@ -21,6 +21,13 @@ from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
 _is_hip = hasattr(cp.cuda.runtime, "is_hip") and cp.cuda.runtime.is_hip
+_gcn_arch_name = ""
+if _is_hip:
+    _gcn_arch_name = cp.cuda.runtime.getDeviceProperties(0).get("gcnArchName", b"")
+    if isinstance(_gcn_arch_name, bytes):
+        _gcn_arch_name = _gcn_arch_name.decode()
+    _gcn_arch_name = _gcn_arch_name.split(":", maxsplit=1)[0]
+_is_cdna4 = _gcn_arch_name.startswith("gfx95")
 _skip_fp8 = not _is_hip and int(cp.cuda.Device().compute_capability) < 89
 pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA")
 
@@ -148,13 +155,15 @@ def float_to_e4m3fnuz(f32_array, chunk_size=65536):
     return result
 
 
-# Platform-aware E4M3 native helpers: ROCm uses fnuz; CUDA uses fn (OCP).
-if _is_hip:
+# Platform-aware E4M3 native helpers: ROCm CDNA4 and CUDA use OCP fn; older ROCm uses fnuz.
+if _is_hip and not _is_cdna4:
     e4m3_native_to_float = e4m3fnuz_to_float
     float_to_e4m3_native = float_to_e4m3fnuz
+    fp8_native_dtype = DataType.float8_e4m3fnuz
 else:
     e4m3_native_to_float = e4m3fn_to_float
     float_to_e4m3_native = float_to_e4m3fn
+    fp8_native_dtype = DataType.float8_e4m3fn
 
 
 # ---------------------------------------------------------------------------
@@ -294,16 +303,6 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     buf = GpuBuffer(size, dtype=cp.uint8)
 
-    # FP8 E4M3 native dtype differs by platform: AMD/ROCm (MI300X) provides
-    # the fnuz variant, while NVIDIA provides the OCP `fn` variant.
-    fp8_native_dtype = DataType.float8_e4m3fnuz if _is_hip else DataType.float8_e4m3fn
-
-    accum_configs = [
-        ("fp8_native", fp8_native_dtype),
-        ("float16", DataType.float16),
-        ("float32", DataType.float32),
-    ]
-
     # rsag_zero_copy and fullmesh need explicit block/thread counts
     if "rsag" in algo_name:
         nb = max(1, min(32, size // (world_size * 32)))
@@ -314,6 +313,12 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
     else:
         nb = 0
         nt = 0
+
+    accum_configs = [
+        ("fp8_native", fp8_native_dtype),
+        ("float16", DataType.float16),
+        ("float32", DataType.float32),
+    ]
 
     errors = {}
     for accum_label, accum_dtype in accum_configs:

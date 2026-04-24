@@ -83,12 +83,32 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
     case mscclpp::DataType::BFLOAT16:
       return ncclBfloat16;
 #ifdef __FP8_TYPES_EXIST__
-    case mscclpp::DataType::FLOAT8_E4M3FN:
+#if defined(__FP8_E4M3_IS_FNUZ__)
     case mscclpp::DataType::FLOAT8_E4M3FNUZ:
       return ncclFloat8e4m3;
-    case mscclpp::DataType::FLOAT8_E5M2:
+    case mscclpp::DataType::FLOAT8_E4M3FN:
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "FLOAT8_E4M3FN is not natively supported on this platform; use FLOAT8_E4M3FNUZ for NCCL collectives");
+#else
+    case mscclpp::DataType::FLOAT8_E4M3FN:
+      return ncclFloat8e4m3;
+    case mscclpp::DataType::FLOAT8_E4M3FNUZ:
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "FLOAT8_E4M3FNUZ is not natively supported on this platform; use FLOAT8_E4M3FN for NCCL collectives");
+#endif
+#if defined(__FP8_E5M2_IS_FNUZ__)
     case mscclpp::DataType::FLOAT8_E5M2FNUZ:
       return ncclFloat8e5m2;
+    case mscclpp::DataType::FLOAT8_E5M2:
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "FLOAT8_E5M2 is not natively supported on this platform; use FLOAT8_E5M2FNUZ for NCCL collectives");
+#else
+    case mscclpp::DataType::FLOAT8_E5M2:
+      return ncclFloat8e5m2;
+    case mscclpp::DataType::FLOAT8_E5M2FNUZ:
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "FLOAT8_E5M2FNUZ is not natively supported on this platform; use FLOAT8_E5M2 for NCCL collectives");
+#endif
 #endif
     case mscclpp::DataType::FLOAT8_E4M3B15:
       // float8_e4m3b15 has no NCCL equivalent; NCCL cannot reduce this type correctly.
