@@ -28,24 +28,21 @@ inline mscclpp::DataType ncclDataTypeToMscclpp(ncclDataType_t dtype) {
       return mscclpp::DataType::BFLOAT16;
 #ifdef __FP8_TYPES_EXIST__
     case ncclFloat8e4m3:
-#if !defined(__FP8_E4M3_IS_FNUZ__)
-      return mscclpp::DataType::FLOAT8_E4M3_FN;
+#if defined(__FP8_E4M3_IS_FNUZ__)
+      return mscclpp::DataType::FLOAT8_E4M3_FNUZ;
 #else
-      throw mscclpp::Error(
-          "ncclFloat8e4m3 (OCP fn) is not natively supported on this platform; NCCL has no fnuz equivalent",
-          mscclpp::ErrorCode::InvalidUsage);
+      return mscclpp::DataType::FLOAT8_E4M3_FN;
 #endif
     case ncclFloat8e5m2:
-#if !defined(__FP8_E5M2_IS_FNUZ__)
-      return mscclpp::DataType::FLOAT8_E5M2;
+#if defined(__FP8_E5M2_IS_FNUZ__)
+      return mscclpp::DataType::FLOAT8_E5M2_FNUZ;
 #else
-      throw mscclpp::Error(
-          "ncclFloat8e5m2 (OCP) is not natively supported on this platform; NCCL has no fnuz equivalent",
-          mscclpp::ErrorCode::InvalidUsage);
+      return mscclpp::DataType::FLOAT8_E5M2;
 #endif
 #endif
     default:
-      throw mscclpp::Error("Unsupported ncclDataType_t: " + std::to_string(dtype), mscclpp::ErrorCode::InvalidUsage);
+      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+            "Unsupported ncclDataType_t: " + std::to_string(dtype));
   }
 }
 
@@ -87,26 +84,11 @@ static inline ncclDataType_t mscclppToNcclDataType(mscclpp::DataType dtype) {
       return ncclBfloat16;
 #ifdef __FP8_TYPES_EXIST__
     case mscclpp::DataType::FLOAT8_E4M3_FN:
-#if !defined(__FP8_E4M3_IS_FNUZ__)
-      return ncclFloat8e4m3;
-#else
-      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
-            "FLOAT8_E4M3_FN is not natively supported on this platform");
-#endif
     case mscclpp::DataType::FLOAT8_E4M3_FNUZ:
-      // NCCL's FP8 ABI is the OCP/IEEE-style "fn" variant; there is no fnuz equivalent.
-      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
-            "FLOAT8_E4M3_FNUZ has no NCCL equivalent (NCCL only exposes the OCP `fn` variant)");
+      return ncclFloat8e4m3;
     case mscclpp::DataType::FLOAT8_E5M2:
-#if !defined(__FP8_E5M2_IS_FNUZ__)
-      return ncclFloat8e5m2;
-#else
-      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
-            "FLOAT8_E5M2 is not natively supported on this platform");
-#endif
     case mscclpp::DataType::FLOAT8_E5M2_FNUZ:
-      THROW(mscclpp::LogSubsys::NCCL, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
-            "FLOAT8_E5M2_FNUZ has no NCCL equivalent (NCCL only exposes the OCP variant)");
+      return ncclFloat8e5m2;
 #endif
     case mscclpp::DataType::FLOAT8_E4M3B15:
       // float8_e4m3b15 has no NCCL equivalent; NCCL cannot reduce this type correctly.

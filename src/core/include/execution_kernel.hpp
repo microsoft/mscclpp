@@ -10,7 +10,6 @@
 #endif
 #include <mscclpp/concurrency_device.hpp>
 #include <mscclpp/device.hpp>
-#include <mscclpp/errors.hpp>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/packet_device.hpp>
