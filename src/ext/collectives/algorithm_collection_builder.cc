@@ -113,7 +113,8 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int ra
   };
   static const std::vector<DslAlgoConfig> defaultAlgoConfigs = {
       {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
-      {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}}};
+      {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}},
+      {"allreduce_4nodes_1K_8M.json", "allreduce", 8, 32, {{"default", 1}}}};
   AlgorithmCollection collection;
 
   static auto generateFileId = [](const std::string& input) {

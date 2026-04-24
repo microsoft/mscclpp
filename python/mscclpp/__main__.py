@@ -53,6 +53,27 @@ default_algo_configs = [
         ),
         "additional_kwargs": {"thread_block_group_size": 4},
     },
+    {
+        "filename": "allreduce_4nodes_1K_8M.json",
+        "function": def_algo.allreduce_multi_nodes,
+        "spec": AlgoSpec(
+            name="allreduce_4nodes_1K_8M",
+            collective=AllReduce(32, 1, True),
+            nranks_per_node=8,
+            world_size=32,
+            in_place=True,
+            instances=1,
+            protocol="LL",
+            auto_sync=False,
+            num_threads_per_block=1024,
+            reuse_resources=True,
+            use_double_scratch_buffer=True,
+            min_message_size=1 << 10,
+            max_message_size=8 << 20,
+            tags={"default": 1},
+        ),
+        "additional_kwargs": {"thread_block_group_size": 8},
+    }
 ]
 
 
