@@ -435,10 +435,20 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
               bool use_ipc_path) {
     constexpr int kNumMaxTopK = 9;
-    constexpr int kNumWarpsPerGroup = 32;
-    constexpr int kNumWarpGroups = 1;
-    EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroups * kNumWarpsPerGroup, "Too many top-k selections");
+    // (kNumWarpGroups, kNumWarpsPerGroup) is path-dependent. Intra-node IPC
+    // benefits from 1 expert per SM with 32 warps cooperating on the recv-side
+    // body (matches NCCL-EP's structure for num_experts <= num_sms). The
+    // PortChannel path is IB-bound and a wider grid only adds host-proxy FIFO
+    // contention and a costlier cg::this_grid().sync(), so we keep (3, 10).
+    constexpr int kNumWarpsPerGroupIpc = 32;
+    constexpr int kNumWarpGroupsIpc = 1;
+    constexpr int kNumWarpsPerGroupRdma = 10;
+    constexpr int kNumWarpGroupsRdma = 3;
+    EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsIpc * kNumWarpsPerGroupIpc, "Too many top-k selections");
+    EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsRdma * kNumWarpsPerGroupRdma, "Too many top-k selections");
 
+    const int kNumWarpGroups = use_ipc_path ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+    const int kNumWarpsPerGroup = use_ipc_path ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
     const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
     // LL dispatch/combine are latency-bound at typical problem sizes: for
@@ -466,8 +476,8 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
 
 #define DISPATCH_LAUNCH_CASE(hidden_case) { \
 if (use_ipc_path) { \
-    auto dispatch_func = use_fp8 ? dispatch<true, true, kNumWarpGroups, kNumWarpsPerGroup, hidden_case> \
-                                 : dispatch<false, true, kNumWarpGroups, kNumWarpsPerGroup, hidden_case>; \
+    auto dispatch_func = use_fp8 ? dispatch<true, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case> \
+                                 : dispatch<false, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case>; \
     LAUNCH_KERNEL(&cfg, dispatch_func, \
                   packed_recv_x, packed_recv_x_scales, \
                   packed_recv_src_info, packed_recv_layout_range, \
@@ -481,8 +491,8 @@ if (use_ipc_path) { \
                   rdma_buffer_ptr, port_channel_handles, \
                   peer_rdma_bases, memory_channel_handles); \
 } else { \
-    auto dispatch_func = use_fp8 ? dispatch<true, false, kNumWarpGroups, kNumWarpsPerGroup, hidden_case> \
-                                 : dispatch<false, false, kNumWarpGroups, kNumWarpsPerGroup, hidden_case>; \
+    auto dispatch_func = use_fp8 ? dispatch<true, false, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case> \
+                                 : dispatch<false, false, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case>; \
     LAUNCH_KERNEL(&cfg, dispatch_func, \
                   packed_recv_x, packed_recv_x_scales, \
                   packed_recv_src_info, packed_recv_layout_range, \
@@ -683,10 +693,17 @@ void combine(void* combined_x,
              void* const* peer_rdma_bases,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
              bool use_ipc_path) {
-    constexpr int kNumWarpsPerGroup = 32;
-    constexpr int kNumWarpGroups = 1;
+    // See the comment in `dispatch()`: (kNumWarpGroups, kNumWarpsPerGroup)
+    // is path-dependent. IPC uses (1, 32) to mirror NCCL-EP; PortChannel keeps
+    // (3, 10) to avoid host-proxy FIFO contention on the IB path.
+    constexpr int kNumWarpsPerGroupIpc = 32;
+    constexpr int kNumWarpGroupsIpc = 1;
+    constexpr int kNumWarpsPerGroupRdma = 10;
+    constexpr int kNumWarpGroupsRdma = 3;
     constexpr int kNumMaxTopk = 9;
 
+    const int kNumWarpGroups = use_ipc_path ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+    const int kNumWarpsPerGroup = use_ipc_path ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
     const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
     // See the comment in `dispatch()` above: combine-recv's per-token loop
@@ -710,7 +727,7 @@ void combine(void* combined_x,
 
 #define COMBINE_LAUNCH_CASE(hidden_case) { \
 if (use_ipc_path) { \
-    auto combine_func = combine<true, kNumWarpGroups, kNumWarpsPerGroup, hidden_case, kNumMaxTopk>; \
+    auto combine_func = combine<true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case, kNumMaxTopk>; \
     LAUNCH_KERNEL(&cfg, combine_func, \
                   combined_x, \
                   rdma_recv_x, rdma_recv_flag, rdma_send_x, \
@@ -724,7 +741,7 @@ if (use_ipc_path) { \
                   rdma_buffer_ptr, port_channel_handles, \
                   peer_rdma_bases, memory_channel_handles); \
 } else { \
-    auto combine_func = combine<false, kNumWarpGroups, kNumWarpsPerGroup, hidden_case, kNumMaxTopk>; \
+    auto combine_func = combine<false, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case, kNumMaxTopk>; \
     LAUNCH_KERNEL(&cfg, combine_func, \
                   combined_x, \
                   rdma_recv_x, rdma_recv_flag, rdma_send_x, \
