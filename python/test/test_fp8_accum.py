@@ -21,6 +21,13 @@ from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
 # FP8 E4M3 (hardware) requires SM >= 89 (Ada / Hopper) on NVIDIA GPUs.
 # On AMD/ROCm (e.g. MI300X), FP8 is supported natively — no skip needed.
 _is_hip = hasattr(cp.cuda.runtime, "is_hip") and cp.cuda.runtime.is_hip
+_gcn_arch_name = ""
+if _is_hip:
+    _gcn_arch_name = cp.cuda.runtime.getDeviceProperties(0).get("gcnArchName", b"")
+    if isinstance(_gcn_arch_name, bytes):
+        _gcn_arch_name = _gcn_arch_name.decode()
+    _gcn_arch_name = _gcn_arch_name.split(":", maxsplit=1)[0]
+_is_cdna4 = _gcn_arch_name.startswith("gfx95")
 _skip_fp8 = not _is_hip and int(cp.cuda.Device().compute_capability) < 89
 pytestmark = pytest.mark.skipif(_skip_fp8, reason="FP8 accum tests require SM >= 89 on CUDA")
 
@@ -90,7 +97,78 @@ def float_to_e4m3fn(f32_array, chunk_size=65536):
 
 
 # ---------------------------------------------------------------------------
-# FP8 E4M3B15 helpers (bias=15, max=0.9375, NaN = exp==15 or bits==0x80)
+# FP8 E4M3FNUZ helpers (AMD/ROCm; bias=8, max=240, NaN = bits==0x80, no -0)
+# ---------------------------------------------------------------------------
+
+
+def e4m3fnuz_to_float(uint8_array):
+    """Decode a cupy uint8 array of E4M3FNUZ bit patterns to float32."""
+    bits = uint8_array.astype(cp.int32)
+    sign = (bits >> 7) & 1
+    exp = (bits >> 3) & 0xF
+    mant = bits & 0x7
+
+    # Normal: (-1)^s * 2^(exp-8) * (1 + mant/8)
+    normal_val = cp.ldexp(cp.float32(1.0) + mant.astype(cp.float32) / cp.float32(8.0), (exp - 8).astype(cp.int32))
+    # Subnormal (exp==0): (-1)^s * 2^(-7) * (mant/8)
+    subnormal_val = cp.ldexp(mant.astype(cp.float32) / cp.float32(8.0), cp.int32(-7))
+
+    result = cp.where(exp == 0, subnormal_val, normal_val)
+    result = cp.where(sign == 1, -result, result)
+    # Zero is only 0x00; the 0x80 encoding is reserved for NaN under fnuz.
+    result = cp.where(uint8_array.astype(cp.int32) == 0, cp.float32(0.0), result)
+    nan_mask = uint8_array.astype(cp.int32) == 0x80
+    result = cp.where(nan_mask, cp.float32(float("nan")), result)
+    return result
+
+
+def float_to_e4m3fnuz(f32_array, chunk_size=65536):
+    """Encode a cupy float32 array to uint8 E4M3FNUZ bit patterns.
+
+    Same lookup-table approach as float_to_e4m3fn but using the fnuz table.
+    """
+    all_bytes = cp.arange(128, dtype=cp.uint8)
+    all_floats = e4m3fnuz_to_float(all_bytes)
+    all_floats = cp.where(cp.isnan(all_floats), cp.float32(float("inf")), all_floats)
+
+    clamped = f32_array.astype(cp.float32)
+    clamped = cp.clip(clamped, -240.0, 240.0)
+    signs = (clamped < 0).astype(cp.uint8)
+    absval = cp.abs(clamped)
+
+    result = cp.zeros(absval.shape, dtype=cp.uint8)
+    n = absval.size
+    absval_flat = absval.ravel()
+    result_flat = result.ravel()
+
+    for start in range(0, n, chunk_size):
+        end = min(start + chunk_size, n)
+        chunk = absval_flat[start:end]
+        diffs = cp.abs(chunk[:, None] - all_floats[None, :])
+        result_flat[start:end] = cp.argmin(diffs, axis=1).astype(cp.uint8)
+
+    result = result_flat.reshape(absval.shape)
+    result = result | (signs << 7)
+    # 0x80 is NaN under fnuz (no negative zero). Collapse any encoding that
+    # landed on 0x80 (small negatives quantised to zero magnitude) to 0x00.
+    result = cp.where(result == 0x80, cp.uint8(0), result)
+    return result
+
+
+# Platform-aware E4M3 native helpers: ROCm CDNA4 and CUDA use OCP fn; older ROCm uses fnuz.
+if _is_hip and not _is_cdna4:
+    e4m3_native_to_float = e4m3fnuz_to_float
+    float_to_e4m3_native = float_to_e4m3fnuz
+    fp8_native_dtype = DataType.float8_e4m3fnuz
+else:
+    e4m3_native_to_float = e4m3fn_to_float
+    float_to_e4m3_native = float_to_e4m3fn
+    fp8_native_dtype = DataType.float8_e4m3fn
+
+
+# ---------------------------------------------------------------------------
+# FP8 E4M3B15 helpers (bias=15, encode saturates to ±1.75, no NaN)
+# Matches Triton's fp8e4b15: all 256 bit patterns are finite.
 # ---------------------------------------------------------------------------
 
 
@@ -108,11 +186,6 @@ def e4m3b15_to_float(uint8_array):
 
     result = cp.where(exp == 0, subnormal_val, normal_val)
     result = cp.where(sign == 1, -result, result)
-    # Zero
-    result = cp.where((exp == 0) & (mant == 0), cp.float32(0.0), result)
-    # NaN: exp==15 or negative zero (0x80)
-    nan_mask = (exp == 15) | (uint8_array.astype(cp.int32) == 0x80)
-    result = cp.where(nan_mask, cp.float32(float("nan")), result)
     return result
 
 
@@ -120,18 +193,17 @@ def float_to_e4m3b15(f32_array, chunk_size=65536):
     """Encode a cupy float32 array to uint8 E4M3B15 bit patterns.
 
     Same lookup-table approach as float_to_e4m3fn.
+    Saturates to ±1.75 (0x7e/0xfe), matching Triton's fp8e4b15.
     """
     # Build lookup table of all 128 positive E4M3B15 values (0x00..0x7F)
     all_bytes = cp.arange(128, dtype=cp.uint8)
     all_floats = e4m3b15_to_float(all_bytes)  # (128,) float32
-    # Mark NaN entries as inf so they're never selected as nearest
-    all_floats = cp.where(cp.isnan(all_floats), cp.float32(float("inf")), all_floats)
 
-    # Clamp input and extract sign
-    clamped = f32_array.astype(cp.float32)
-    clamped = cp.clip(clamped, -0.9375, 0.9375)
-    signs = (clamped < 0).astype(cp.uint8)
-    absval = cp.abs(clamped)
+    # Clamp input and extract sign.
+    values = f32_array.astype(cp.float32)
+    signs = cp.signbit(values).astype(cp.uint8)
+    absval = cp.abs(values)
+    absval = cp.clip(absval, cp.float32(0.0), cp.float32(1.75))
 
     result = cp.zeros(absval.shape, dtype=cp.uint8)
     n = absval.size
@@ -148,8 +220,6 @@ def float_to_e4m3b15(f32_array, chunk_size=65536):
     # Combine with sign bit
     result = result_flat.reshape(absval.shape)
     result = result | (signs << 7)
-    # Handle exact zero
-    result = cp.where(absval == 0, cp.uint8(0), result)
     return result
 
 
@@ -226,12 +296,6 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     buf = GpuBuffer(size, dtype=cp.uint8)
 
-    accum_configs = [
-        ("fp8_native", DataType.float8_e4m3),
-        ("float16", DataType.float16),
-        ("float32", DataType.float32),
-    ]
-
     # rsag_zero_copy and fullmesh need explicit block/thread counts
     if "rsag" in algo_name:
         nb = max(1, min(32, size // (world_size * 32)))
@@ -243,13 +307,19 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         nb = 0
         nt = 0
 
+    accum_configs = [
+        ("fp8_native", fp8_native_dtype),
+        ("float16", DataType.float16),
+        ("float32", DataType.float32),
+    ]
+
     errors = {}
     for accum_label, accum_dtype in accum_configs:
         # Generate deterministic per-rank data (use numpy to avoid hipRAND issues on ROCm)
         rng = np.random.RandomState(42 + rank)
         src_f32 = cp.asarray(rng.randn(size).astype(np.float32))
         src_f32 = cp.clip(src_f32, -240.0, 240.0)
-        src_fp8 = float_to_e4m3fn(src_f32)
+        src_fp8 = float_to_e4m3_native(src_f32)
 
         # Copy into symmetric buffer
         buf[:] = src_fp8
@@ -260,12 +330,12 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             algo,
             comm_group,
             buf,
-            dtype=DataType.float8_e4m3,
+            dtype=fp8_native_dtype,
             accum_dtype=accum_dtype,
             nblocks=nb,
             nthreads_per_block=nt,
         )
-        result_f32 = e4m3fn_to_float(result)
+        result_f32 = e4m3_native_to_float(result)
 
         # Compute float32 reference: sum all ranks' quantized FP8 inputs in float32
         ref_f32 = cp.zeros(size, dtype=cp.float32)
@@ -273,12 +343,13 @@ def test_fp8_e4m3_accum(mpi_group: MpiGroup, algo_name: str, size: int):
             rng_r = np.random.RandomState(42 + r)
             rank_data = cp.asarray(rng_r.randn(size).astype(np.float32))
             rank_data = cp.clip(rank_data, -240.0, 240.0)
-            rank_data_fp8 = float_to_e4m3fn(rank_data)
-            ref_f32 += e4m3fn_to_float(rank_data_fp8)
+            rank_data_fp8 = float_to_e4m3_native(rank_data)
+            ref_f32 += e4m3_native_to_float(rank_data_fp8)
 
-        # Compute errors
-        abs_err = cp.abs(result_f32 - ref_f32)
-        mean_abs_err = float(cp.mean(abs_err))
+        # Compute errors (only on valid, non-NaN entries)
+        valid = ~cp.isnan(result_f32) & ~cp.isnan(ref_f32)
+        abs_err = cp.abs(result_f32[valid] - ref_f32[valid])
+        mean_abs_err = float(cp.mean(abs_err)) if abs_err.size > 0 else 0.0
         errors[accum_label] = mean_abs_err
 
         # Reset between runs
@@ -341,13 +412,10 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
 
     errors = {}
     for accum_label, accum_dtype in accum_configs:
-        # Generate deterministic per-rank random uint8 values in valid e4m3b15 range
+        # Generate deterministic per-rank random uint8 values covering the full e4m3b15 range.
+        # All 256 bit patterns are valid (no NaN in this format).
         rng = np.random.RandomState(42 + rank)
-        raw = cp.asarray(rng.randint(0, 0x78, (size,)).astype(np.uint8))
-        signs = cp.asarray(rng.randint(0, 2, (size,)).astype(np.uint8)) << 7
-        src_uint8 = raw | signs
-        # Fix negative zero -> positive zero
-        src_uint8 = cp.where(src_uint8 == 0x80, cp.uint8(0), src_uint8)
+        src_uint8 = cp.asarray(rng.randint(0, 256, (size,)).astype(np.uint8))
 
         # Copy into symmetric buffer
         buf[:] = src_uint8
@@ -371,19 +439,15 @@ def test_fp8_e4m3b15_accum(mpi_group: MpiGroup, algo_name: str, size: int):
         ref_f32 = cp.zeros(size, dtype=cp.float32)
         for r in range(world_size):
             rng_r = np.random.RandomState(42 + r)
-            raw_r = cp.asarray(rng_r.randint(0, 0x78, (size,)).astype(np.uint8))
-            signs_r = cp.asarray(rng_r.randint(0, 2, (size,)).astype(np.uint8)) << 7
-            bits_r = raw_r | signs_r
-            bits_r = cp.where(bits_r == 0x80, cp.uint8(0), bits_r)
+            bits_r = cp.asarray(rng_r.randint(0, 256, (size,)).astype(np.uint8))
             ref_f32 += e4m3b15_to_float(bits_r)
 
         # Clamp reference to e4m3b15 representable range
-        ref_f32 = cp.clip(ref_f32, -0.9375, 0.9375)
+        ref_f32 = cp.clip(ref_f32, -1.75, 1.75)
 
-        # Compute errors (only on valid entries)
-        valid = ~cp.isnan(result_f32) & ~cp.isnan(ref_f32)
-        abs_err = cp.abs(result_f32[valid] - ref_f32[valid])
-        mean_abs_err = float(cp.mean(abs_err)) if abs_err.size > 0 else 0.0
+        # Compute errors
+        abs_err = cp.abs(result_f32 - ref_f32)
+        mean_abs_err = float(cp.mean(abs_err))
         errors[accum_label] = mean_abs_err
 
         algo.reset()
