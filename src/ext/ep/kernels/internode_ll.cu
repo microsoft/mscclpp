@@ -435,8 +435,8 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
               bool use_ipc_path) {
     constexpr int kNumMaxTopK = 9;
-    constexpr int kNumWarpsPerGroup = 10;
-    constexpr int kNumWarpGroups = 3;
+    constexpr int kNumWarpsPerGroup = 32;
+    constexpr int kNumWarpGroups = 1;
     EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroups * kNumWarpsPerGroup, "Too many top-k selections");
 
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
@@ -683,8 +683,8 @@ void combine(void* combined_x,
              void* const* peer_rdma_bases,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
              bool use_ipc_path) {
-    constexpr int kNumWarpsPerGroup = 10;
-    constexpr int kNumWarpGroups = 3;
+    constexpr int kNumWarpsPerGroup = 32;
+    constexpr int kNumWarpGroups = 1;
     constexpr int kNumMaxTopk = 9;
 
     const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
