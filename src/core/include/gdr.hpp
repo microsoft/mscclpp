@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 namespace mscclpp {
 
@@ -25,7 +26,7 @@ GdrStatus gdrStatus();
 bool gdrEnabled();
 
 /// Return a human-readable error message for the current GDRCopy status.
-const char* gdrStatusMessage();
+std::string gdrStatusMessage();
 
 /// RAII wrapper for a GDRCopy BAR1 mapping of a GPU address.
 /// When GDRCopy is not available, all operations are no-ops and valid() returns false.
