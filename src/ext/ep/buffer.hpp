@@ -75,7 +75,12 @@ private:
     int* moe_recv_rdma_counter_mapped = nullptr;
 
     std::shared_ptr<mscclpp::TcpBootstrap> bootstrap;
-    std::shared_ptr<mscclpp::ProxyService> proxy_service;
+    // One ProxyService spawns a single proxy thread that drains every PortChannel
+    // FIFO it owns. With LL combine pushing thousands of triggers per iter, the
+    // single thread becomes the wall-clock bottleneck on cross-node runs. We
+    // shard channels across `proxy_services` so each gets its own thread/FIFO,
+    // increasing host-side dispatch parallelism (no kernel changes required).
+    std::vector<std::shared_ptr<mscclpp::ProxyService>> proxy_services;
     std::shared_ptr<mscclpp::Communicator> communicator;
     std::vector<mscclpp::PortChannel> port_channels;
     std::vector<mscclpp::MemoryChannel> memory_channels;
