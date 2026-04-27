@@ -52,9 +52,12 @@ __global__ void __launch_bounds__(512, 1)
   __shared__ DeviceHandle<MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   __shared__ DeviceHandle<MemoryChannel> outChannels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
-  if (lid < nPeer) {
-    channels[lid] = memoryChans[lid];
-    outChannels[lid] = memoryOutChans[lid];
+  // Each warp redundantly loads all entries (same value, benign race) so that
+  // every warp has the data its threads will read after __syncwarp(). Required
+  // when nPeer > WARP_SIZE (MNNVL/NVL72 scale).
+  for (int i = lid; i < nPeer; i += WARP_SIZE) {
+    channels[i] = memoryChans[i];
+    outChannels[i] = memoryOutChans[i];
   }
   __syncwarp();
 

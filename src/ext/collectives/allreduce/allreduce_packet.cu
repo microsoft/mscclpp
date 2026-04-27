@@ -83,8 +83,11 @@ __global__ void __launch_bounds__(1024, 1)
   // Put channels into shared memory, read channel info from global memory is unexpectable slow.
   __shared__ mscclpp::DeviceHandle<mscclpp::MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = tid % WARP_SIZE;
-  if (lid < nPeers) {
-    channels[lid] = memoryChannels[lid];
+  // Each warp redundantly loads all entries (same value, benign race) so that
+  // every warp has the data its threads will read after __syncwarp(). Required
+  // when nPeers > WARP_SIZE (MNNVL/NVL72 scale).
+  for (int i = lid; i < nPeers; i += WARP_SIZE) {
+    channels[i] = memoryChannels[i];
   }
   __syncwarp();
   // step 1: write to scratch buffer

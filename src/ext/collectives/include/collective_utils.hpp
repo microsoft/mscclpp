@@ -26,9 +26,16 @@ namespace mscclpp {
 
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
-constexpr int NUM_SEMAPHORES = 64;
+// Sized to cover MAX_NRANKS_PER_NODE-scale allreduce algos whose device-side
+// semaphore indices grow as O(nRanksPerNode) (e.g. nvls_block_pipeline uses
+// up to ~5 * nRanksPerNode entries).
+constexpr int NUM_SEMAPHORES = 512;
 
-constexpr int MAX_NRANKS_PER_NODE = 8;
+// Upper bound on the number of NVLink-reachable ranks that participate in a
+// single collective. Sized to cover Multi-Node NVLink (MNNVL) domains up to
+// GB200 NVL72 (72 GPUs sharing one NVLink fabric). Drives compile-time sizing
+// of shared-memory channel arrays in the allreduce/allgather kernels.
+constexpr int MAX_NRANKS_PER_NODE = 72;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 

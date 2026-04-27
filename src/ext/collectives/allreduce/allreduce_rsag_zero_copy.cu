@@ -35,25 +35,26 @@ __device__ mscclpp::DeviceSyncer globalSyncer;
 //
 // This approach requires registering both input and output buffers as remote
 // memories (2 * nPeers handles), but avoids scratch buffer allocation and
-// the extra copy steps of the standard RSAG. The NRanksPerNode template
-// parameter enables compile-time unrolling of peer loops (supports 4 or 8).
+// the extra copy steps of the standard RSAG. nRanksPerNode is accepted at
+// runtime, which allows the same kernel to handle any NVLink-domain size
+// (including Multi-Node NVLink fabrics up to NVL72).
 
-template <int NRanksPerNode, ReduceOp OpType, typename T, typename AccumT = T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int worldSize,
-                          size_t nelems) {
+                          DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
+                          int nRanksPerNode, int worldSize, size_t nelems) {
   int blockId = blockIdx.x;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
-  constexpr int NPeers = NRanksPerNode - 1;
+  const int NPeers = nRanksPerNode - 1;
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
-  const uint32_t outputRemoteBufferOffset = NRanksPerNode - 1;
-  uint32_t alignedNelems = ((nelems + NRanksPerNode - 1) / NRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
-                           nelemsPerInt4 * NRanksPerNode;
-  uint32_t nelemsPerRank = alignedNelems / NRanksPerNode;
+  const uint32_t outputRemoteBufferOffset = NPeers;
+  uint32_t alignedNelems = ((nelems + nRanksPerNode - 1) / nRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
+                           nelemsPerInt4 * nRanksPerNode;
+  uint32_t nelemsPerRank = alignedNelems / nRanksPerNode;
   uint32_t nInt4PerRank = nelemsPerRank / nelemsPerInt4;
   uint32_t nInt4Total = (nelems + nelemsPerInt4 - 1) / nelemsPerInt4;
 
@@ -69,12 +70,11 @@ __global__ void __launch_bounds__(1024, 1)
   }
   if (nInt4PerBlock == 0) return;
 
-  if (threadIdx.x < NPeers) {
+  if ((int)threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].relaxedSignal();
     memoryChannelsLocal[threadIdx.x].relaxedWait();
   }
   __syncthreads();
-  int4 data[NPeers];
   // AccumInt4: when AccumT != T, use a wider accumulator type.
   // For AccumT == T, this is just int4 (no-op conversion).
   constexpr int nElemsPerInt4 = sizeof(int4) / sizeof(T);
@@ -84,20 +84,17 @@ __global__ void __launch_bounds__(1024, 1)
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset >= nInt4Total) continue;
     int4 tmp_raw = buff4[offset];
-#pragma unroll
-    for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % NRanksPerNode;
-      int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
-      data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
-    }
+    int4 data;
     AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(tmp_raw);
     for (int i = 0; i < NPeers; i++) {
-      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data[i]);
+      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
+      data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data);
     }
     int4 tmp = mscclpp::downcastVector<T, AccumT, int4>(acc);
-#pragma unroll
     for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % NRanksPerNode;
+      int rankIdx = (rank + i + 1) % nRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[outputRemoteBufferOffset + peerIdx], offset, tmp);
     }
@@ -105,7 +102,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
   // Use device barrier gives better performance here.
   globalSyncer.sync(gridDim.x);
-  if (blockIdx.x == 0 && threadIdx.x < NPeers) {
+  if (blockIdx.x == 0 && (int)threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].signal();
     memoryChannelsLocal[threadIdx.x].wait();
   }
@@ -126,17 +123,9 @@ struct AllreduceRsAgZeroCopyAdapter {
         nBlocks = 128;
       }
     }
-    if (nRanksPerNode == 4) {
-      allreduceRsAgZeroCopy<4, OpType, T, AccumT>
-          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
-                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
-    } else if (nRanksPerNode == 8) {
-      allreduceRsAgZeroCopy<8, OpType, T, AccumT>
-          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
-                                                     switchChannel, remoteMemories, rank, worldSize, nelems);
-    } else {
-      THROW(ALGO, Error, ErrorCode::InvalidUsage, "Unsupported number of ranks per node: ", nRanksPerNode);
-    }
+    allreduceRsAgZeroCopy<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+        (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
+        nRanksPerNode, worldSize, nelems);
     return cudaGetLastError();
   }
 };

@@ -44,8 +44,11 @@ __global__ void __launch_bounds__(1024, 1)
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
-  if (lid < nRanksPerNode - 1) {
-    channels[lid] = memoryChans[lid];
+  // Each warp redundantly loads all entries (same value, benign race) so that
+  // every warp has the data its threads will read after __syncwarp(). Required
+  // when nPeers > WARP_SIZE (MNNVL/NVL72 → 71 peers).
+  for (int i = lid; i < nRanksPerNode - 1; i += WARP_SIZE) {
+    channels[i] = memoryChans[i];
   }
   __syncwarp();
   if (threadIdx.x < nPeers) {
