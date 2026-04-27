@@ -80,6 +80,9 @@ private:
     // single thread becomes the wall-clock bottleneck on cross-node runs. We
     // shard channels across `proxy_services` so each gets its own thread/FIFO,
     // increasing host-side dispatch parallelism (no kernel changes required).
+    // Count is resolved at construction (env `MSCCLPP_EP_NUM_PROXIES` or
+    // arch-aware default).
+    int num_proxy_services = 1;
     std::vector<std::shared_ptr<mscclpp::ProxyService>> proxy_services;
     std::shared_ptr<mscclpp::Communicator> communicator;
     std::vector<mscclpp::PortChannel> port_channels;

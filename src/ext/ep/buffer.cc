@@ -24,9 +24,37 @@ using EPProxyService = mscclpp::ProxyService;
 
 // Number of host-side proxy services (== proxy threads) the Buffer creates.
 // PortChannels are sharded across these so per-thread FIFO contention drops.
-// A single proxy thread caps cross-node LL combine at ~1.6 ms/iter on this
-// platform; using 4 threads brings it closer to NIC-bound throughput.
-static constexpr int kNumProxyServices = 4;
+// A single proxy thread caps cross-node LL combine at ~2.8 ms/iter on H100+IB
+// platforms; 8 threads bring it down to ~470 us (NIC-bound). On NVSwitch-only
+// platforms (e.g. GB200 NVL72) host proxies don't post IB WRs, so 1 is plenty.
+//
+// Resolution order:
+//   1. `MSCCLPP_EP_NUM_PROXIES` env var (clamped to >= 1) if set.
+//   2. Auto-detect from current device's compute capability:
+//        - Hopper (sm_90, H100/H200) and earlier: 8
+//        - Blackwell (sm_100+, B100/B200/GB200): 1
+//   3. Fallback: 8.
+//
+// Empirical sweep on 2x8 H100 + IB (16 ranks, t=128, h=7168, topk=8):
+//   N=1:  D 1013 us / C 2801 us
+//   N=2:  D  611 us / C  843 us
+//   N=4:  D  479 us / C  568 us
+//   N=8:  D  445 us / C  469 us  <-- knee
+//   N=12: collapses (CPU oversubscription with 8 GPUs/node).
+static int resolve_num_proxy_services() {
+    if (const char* env = std::getenv("MSCCLPP_EP_NUM_PROXIES")) {
+        int v = std::atoi(env);
+        return v > 0 ? v : 1;
+    }
+    int dev = 0;
+    if (cudaGetDevice(&dev) != cudaSuccess) return 8;
+    cudaDeviceProp prop{};
+    if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return 8;
+    // sm_100+ = Blackwell (GB200 etc.) -- NVSwitch fabric, host proxy not the
+    // bottleneck; sm_90 (Hopper) and earlier benefit from sharding for IB.
+    if (prop.major >= 10) return 1;
+    return 8;
+}
 
 Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_bytes, bool low_latency_mode):
         rank(rank), num_ranks(num_ranks),
@@ -34,9 +62,15 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
         low_latency_mode(low_latency_mode),
         comm_stream(at::cuda::getStreamFromPool(true)),
         bootstrap(std::make_shared<mscclpp::TcpBootstrap>(rank, num_ranks)) {
-    proxy_services.reserve(kNumProxyServices);
-    for (int i = 0; i < kNumProxyServices; ++i) {
+    num_proxy_services = resolve_num_proxy_services();
+    proxy_services.reserve(num_proxy_services);
+    for (int i = 0; i < num_proxy_services; ++i) {
         proxy_services.emplace_back(std::make_shared<EPProxyService>());
+    }
+    if (rank == 0) {
+        printf("[mscclpp_ep] num_proxy_services=%d (set MSCCLPP_EP_NUM_PROXIES to override)\n",
+               num_proxy_services);
+        fflush(stdout);
     }
     // Task fifo memory
     int64_t fifo_bytes = sizeof(int) * NUM_MAX_FIFO_SLOTS;
@@ -370,7 +404,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
         // up deterministically. Channels — and therefore their backing
         // semaphores — are sharded across `proxy_services`: channel at flat
         // index `i*num_ranks + r` lives on proxy `(i*num_ranks + r) %
-        // kNumProxyServices`. SemaphoreIds are local to each proxy, so we
+        // num_proxy_services`. SemaphoreIds are local to each proxy, so we
         // record (proxy_idx, sid) pairs.
         std::unordered_map<int, std::vector<std::pair<int, mscclpp::SemaphoreId>>> sema_ids;
         const int num_semaphores_per_rank = 16;
@@ -380,7 +414,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
                 EP_HOST_ASSERT(conn_it != connections.end());
                 auto& conns = conn_it->second;
                 auto& conn = conns[i % conns.size()];
-                int proxy_idx = (i * num_ranks + r) % kNumProxyServices;
+                int proxy_idx = (i * num_ranks + r) % num_proxy_services;
                 auto sema_id = proxy_services[proxy_idx]->buildAndAddSemaphore(*communicator, conn);
                 sema_ids[r].emplace_back(proxy_idx, sema_id);
             }
