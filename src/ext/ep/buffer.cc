@@ -22,13 +22,22 @@ namespace mscclpp { namespace ep {
 // request, so no subclass or private-member access is required anymore.
 using EPProxyService = mscclpp::ProxyService;
 
+// Number of host-side proxy services (== proxy threads) the Buffer creates.
+// PortChannels are sharded across these so per-thread FIFO contention drops.
+// A single proxy thread caps cross-node LL combine at ~1.6 ms/iter on this
+// platform; using 4 threads brings it closer to NIC-bound throughput.
+static constexpr int kNumProxyServices = 4;
+
 Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_bytes, bool low_latency_mode):
         rank(rank), num_ranks(num_ranks),
         num_nvl_bytes(num_nvl_bytes), num_rdma_bytes(num_rdma_bytes),
         low_latency_mode(low_latency_mode),
         comm_stream(at::cuda::getStreamFromPool(true)),
-        bootstrap(std::make_shared<mscclpp::TcpBootstrap>(rank, num_ranks)),
-        proxy_service(std::make_shared<EPProxyService>()) {
+        bootstrap(std::make_shared<mscclpp::TcpBootstrap>(rank, num_ranks)) {
+    proxy_services.reserve(kNumProxyServices);
+    for (int i = 0; i < kNumProxyServices; ++i) {
+        proxy_services.emplace_back(std::make_shared<EPProxyService>());
+    }
     // Task fifo memory
     int64_t fifo_bytes = sizeof(int) * NUM_MAX_FIFO_SLOTS;
     int64_t buffer_ptr_bytes = sizeof(void*) * NUM_MAX_NVL_PEERS;
@@ -88,7 +97,7 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
         *moe_recv_rdma_counter = -1;
     }
 
-    proxy_service->startProxy();
+    for (auto& ps : proxy_services) ps->startProxy();
 }
 
 Buffer::~Buffer() noexcept(false) {
@@ -130,7 +139,7 @@ Buffer::~Buffer() noexcept(false) {
         }
     }
 
-    proxy_service->stopProxy();
+    for (auto& ps : proxy_services) ps->stopProxy();
 
     // Free cuBLAS handle, workspace and MoE counter
     CUDA_CHECK(cudaFree(workspace));
@@ -287,12 +296,24 @@ void Buffer::sync(const std::vector<int> &device_ids,
         bootstrap->barrier();
         CUDA_CHECK(cudaDeviceSynchronize());
 
-        // Rank -> RDMA buffer IDs
+        // Rank -> RDMA buffer IDs. MemoryIds are local to each ProxyService;
+        // we register every memory in every proxy in the same global order so
+        // a single int identifies the memory across all of them.
         std::map<int, mscclpp::MemoryId> memory_ids;
+
+        auto add_memory_to_all = [&](mscclpp::RegisteredMemory mem) -> mscclpp::MemoryId {
+            mscclpp::MemoryId id = static_cast<mscclpp::MemoryId>(-1);
+            for (auto& ps : proxy_services) {
+                auto cur = ps->addMemory(mem);
+                if (id == static_cast<mscclpp::MemoryId>(-1)) id = cur;
+                EP_HOST_ASSERT(cur == id && "MemoryIds drifted across proxy services");
+            }
+            return id;
+        };
 
         // Register local memory
         auto local_rdma_buffer_mem = communicator->registerMemory(rdma_buffer_ptr, num_rdma_bytes, all_transport);
-        memory_ids[rank] = proxy_service->addMemory(local_rdma_buffer_mem);
+        memory_ids[rank] = add_memory_to_all(local_rdma_buffer_mem);
 
         // Send local memory to other ranks.
         //
@@ -321,7 +342,7 @@ void Buffer::sync(const std::vector<int> &device_ids,
             if (r == rank) continue;
             auto f = communicator->recvMemory(r, kRdmaTag);
             auto mem = f.get();
-            memory_ids[r] = proxy_service->addMemory(std::move(mem));
+            memory_ids[r] = add_memory_to_all(std::move(mem));
         }
 
         // Rank -> vector of connections
@@ -344,9 +365,14 @@ void Buffer::sync(const std::vector<int> &device_ids,
             for (auto& f : futures) connections[r].emplace_back(f.get());
         }
 
-        // Rank -> vector of semaphore IDs. Iterate peers in sorted rank order so
-        // semaphore pairings between nodes line up deterministically.
-        std::unordered_map<int, std::vector<mscclpp::SemaphoreId>> sema_ids;
+        // Rank -> vector of (proxy_idx, semaphore_id_within_proxy). Iterate
+        // peers in sorted rank order so semaphore pairings between nodes line
+        // up deterministically. Channels — and therefore their backing
+        // semaphores — are sharded across `proxy_services`: channel at flat
+        // index `i*num_ranks + r` lives on proxy `(i*num_ranks + r) %
+        // kNumProxyServices`. SemaphoreIds are local to each proxy, so we
+        // record (proxy_idx, sid) pairs.
+        std::unordered_map<int, std::vector<std::pair<int, mscclpp::SemaphoreId>>> sema_ids;
         const int num_semaphores_per_rank = 16;
         for (int i = 0; i < num_semaphores_per_rank; ++i) {
             for (int r = 0; r < num_ranks; ++r) {
@@ -354,8 +380,9 @@ void Buffer::sync(const std::vector<int> &device_ids,
                 EP_HOST_ASSERT(conn_it != connections.end());
                 auto& conns = conn_it->second;
                 auto& conn = conns[i % conns.size()];
-                auto sema_id = proxy_service->buildAndAddSemaphore(*communicator, conn);
-                sema_ids[r].emplace_back(sema_id);
+                int proxy_idx = (i * num_ranks + r) % kNumProxyServices;
+                auto sema_id = proxy_services[proxy_idx]->buildAndAddSemaphore(*communicator, conn);
+                sema_ids[r].emplace_back(proxy_idx, sema_id);
             }
         }
 
@@ -365,6 +392,9 @@ void Buffer::sync(const std::vector<int> &device_ids,
         // where peer_rank is a GLOBAL rank in [0..num_ranks). So the outer stride must
         // be num_ranks with peers in ascending rank order. Iterating `memory_ids` (an
         // `unordered_map`) yields hash order and would misroute signals, deadlocking.
+        // Each channel inherits the proxy of the semaphore it was built on, so the
+        // resulting `PortChannelDeviceHandle` routes its FIFO pushes to the correct
+        // proxy thread.
         const int num_port_channels_per_rank = num_semaphores_per_rank;
         std::vector<mscclpp::PortChannelDeviceHandle> port_channel_handles;
         for (int i = 0; i < num_port_channels_per_rank; ++i) {
@@ -372,8 +402,8 @@ void Buffer::sync(const std::vector<int> &device_ids,
                 auto mem_it = memory_ids.find(r);
                 EP_HOST_ASSERT(mem_it != memory_ids.end());
                 auto memory_id = mem_it->second;
-                auto sema_id = sema_ids[r][i % sema_ids[r].size()];
-                auto port_channel = proxy_service->portChannel(sema_id, memory_id, memory_ids[rank]);
+                auto [proxy_idx, sema_id] = sema_ids[r][i % sema_ids[r].size()];
+                auto port_channel = proxy_services[proxy_idx]->portChannel(sema_id, memory_id, memory_ids[rank]);
                 port_channels.emplace_back(std::move(port_channel));
                 port_channel_handles.emplace_back(port_channels.rbegin()->deviceHandle());
             }
