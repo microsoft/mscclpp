@@ -130,7 +130,7 @@ class CustomizedComm:
         "default_allreduce_packet": 112,
         "default_allreduce_allpair_packet": 56,
         "default_allreduce_rsag": 128,
-        "default_allreduce_rsag_zero_copy": 64,
+        "default_allreduce_rsag_zero_copy": 128,
         "default_allreduce_fullmesh": 64,
         "default_allgather_fullmesh2": 32,
     }
@@ -252,10 +252,10 @@ class CustomizedComm:
                         out.append(a)
             if size >= 512 << 10:
                 a = self._algo("allreduce", "default_allreduce_rsag_zero_copy")
-                if self.symmetric_memory and a:
+                if a:
                     out.append(a)
                 a = self._algo("allreduce", "default_allreduce_nvls_zero_copy")
-                if self._nvls and a:
+                if self._nvls and self.symmetric_memory and a:
                     out.append(a)
                 a = self._algo("allreduce", "default_allreduce_rsag")
                 if a:

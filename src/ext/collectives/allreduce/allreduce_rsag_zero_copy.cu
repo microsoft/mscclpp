@@ -153,6 +153,10 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > nChannelsPerConnection_) {
+    WARN(ALGO, "Block number ", numBlocksAndThreads.first, " exceeds the maximum limit ", nChannelsPerConnection_);
+    return CommResult::CommInvalidArgument;
+  }
   cudaError_t error =
       allreduce(input, nullptr, output, this->baseMemoryChannelHandles_.get(), algoCtx->remoteMemoryHandles.get(),
                 nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
@@ -165,9 +169,8 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
 }
 
 AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer,
-                                                                   size_t size, DataType, bool symmetricMemory) {
+                                                                    size_t size, DataType, bool symmetricMemory) {
   // For non-symmetric algorithms, we use both input and output buffer pointers in the key.
-  static int tag = 0;
   if (symmetricMemory) {
     size_t inputBytes, outputBytes;
     CUdeviceptr inputBasePtr, outputBasePtr;
@@ -175,7 +178,7 @@ AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* i
     MSCCLPP_CUTHROW(cuMemGetAddressRange(&outputBasePtr, &outputBytes, (CUdeviceptr)outputBuffer));
     return AlgorithmCtxKey{(void*)inputBasePtr, (void*)outputBasePtr, inputBytes, outputBytes, 0};
   }
-  return AlgorithmCtxKey{(void*)inputBuffer, outputBuffer, size, size, ++tag};
+  return AlgorithmCtxKey{(void*)inputBuffer, outputBuffer, size, size, 0};
 }
 
 std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_ptr<Communicator> comm, const void* input,
