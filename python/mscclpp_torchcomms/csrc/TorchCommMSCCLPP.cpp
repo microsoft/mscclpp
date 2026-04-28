@@ -104,8 +104,8 @@ void TorchCommMSCCLPP::init(at::Device device, const std::string& name, const Co
   size_ = bootstrap->getSize();
   comm_ = bootstrap->createCommunicator(name, options);
 
-  // 2. Select GPU device
-  MSCCLPP_CUDATHROW(cudaSetDevice(device_.index()));
+  // 2. Select GPU device (RAII guard restores previous device on return/exception)
+  mscclpp::CudaDeviceGuard deviceGuard(device_.index());
 
   // 3. Cache nRanksPerNode
   nRanksPerNode_ = comm_->bootstrap()->getNranksPerNode();
@@ -143,11 +143,10 @@ void TorchCommMSCCLPP::init(at::Device device, const std::string& name, const Co
 
   // Detect hardware capabilities for algorithm selection
   static const bool isNvlsSupported = mscclpp::isNvlsSupported();
-  int cudaDevice;
-  MSCCLPP_CUDATHROW(cudaGetDevice(&cudaDevice));
+  int deviceIndex = device_.index();
   int major = 0, minor = 0;
-  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, cudaDevice));
-  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, cudaDevice));
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, deviceIndex));
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, deviceIndex));
   static const std::pair<int, int> computeCapability = {major, minor};
 
   auto algoSelector =
@@ -236,9 +235,9 @@ void TorchCommMSCCLPP::finalize() {
   //      their GPU work before ANY rank destroys its communicator
   //   3. CPU-side teardown in reverse init order
   if (internal_stream_) {
-    cudaStreamSynchronize(internal_stream_);
+    MSCCLPP_CUDATHROW(cudaStreamSynchronize(internal_stream_));
   }
-  cudaStreamSynchronize(at::cuda::getCurrentCUDAStream(device_.index()).stream());
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(at::cuda::getCurrentCUDAStream(device_.index()).stream()));
 
   // All ranks rendezvous here. Once every rank returns from this barrier,
   // no NVLink-polling kernel is running anywhere, so comm_.reset() is safe.
@@ -249,7 +248,7 @@ void TorchCommMSCCLPP::finalize() {
   event_pool_.reset();
 
   if (internal_stream_) {
-    cudaStreamDestroy(internal_stream_);
+    MSCCLPP_CUDATHROW(cudaStreamDestroy(internal_stream_));
     internal_stream_ = nullptr;
   }
 
@@ -324,7 +323,7 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::all_reduce(at::Tensor& tensor, c
                                                            const AllReduceOptions& options) {
   checkInitialized();
   auto mscclppOp = torchReduceOpToMscclpp(op, "all_reduce");
-  tensor = tensor.contiguous();
+  TORCH_CHECK(tensor.is_contiguous(), "[TorchCommMSCCLPP] all_reduce requires a contiguous tensor");
 
   return executeCollective("allreduce", tensor.data_ptr(), tensor.data_ptr(), tensor.nbytes(), tensor.nbytes(),
                            torchDtypeToMscclpp(tensor.scalar_type()), mscclppOp, async_op, options.timeout);
@@ -337,14 +336,14 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::all_gather_single(at::Tensor& ou
                                                                   bool async_op,
                                                                   const AllGatherSingleOptions& options) {
   checkInitialized();
-  auto input_contig = input.contiguous();
-  output = output.contiguous();
+  TORCH_CHECK(input.is_contiguous(), "[TorchCommMSCCLPP] all_gather_single requires a contiguous input tensor");
+  TORCH_CHECK(output.is_contiguous(), "[TorchCommMSCCLPP] all_gather_single requires a contiguous output tensor");
 
-  const size_t chunk_bytes = static_cast<size_t>(input_contig.nbytes());
+  const size_t chunk_bytes = static_cast<size_t>(input.nbytes());
 
-  return executeCollective("allgather", input_contig.data_ptr(), output.data_ptr(), chunk_bytes,
-                           static_cast<size_t>(output.nbytes()), torchDtypeToMscclpp(input_contig.scalar_type()),
-                           mscclpp::NOP, async_op, options.timeout);
+  return executeCollective("allgather", input.data_ptr(), output.data_ptr(), chunk_bytes,
+                           static_cast<size_t>(output.nbytes()), torchDtypeToMscclpp(input.scalar_type()), mscclpp::NOP,
+                           async_op, options.timeout);
 }
 
 // ReduceScatterSingle: SUM-reduce input across all ranks, then scatter the
@@ -355,12 +354,12 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::reduce_scatter_single(at::Tensor
                                                                       const ReduceScatterSingleOptions& options) {
   checkInitialized();
   auto mscclppOp = torchReduceOpToMscclpp(op, "reduce_scatter_single");
-  auto input_contig = input.contiguous();
-  output = output.contiguous();
+  TORCH_CHECK(input.is_contiguous(), "[TorchCommMSCCLPP] reduce_scatter_single requires a contiguous input tensor");
+  TORCH_CHECK(output.is_contiguous(), "[TorchCommMSCCLPP] reduce_scatter_single requires a contiguous output tensor");
 
-  return executeCollective("reducescatter", input_contig.data_ptr(), output.data_ptr(),
-                           static_cast<size_t>(input_contig.nbytes()), static_cast<size_t>(output.nbytes()),
-                           torchDtypeToMscclpp(input_contig.scalar_type()), mscclppOp, async_op, options.timeout);
+  return executeCollective("reducescatter", input.data_ptr(), output.data_ptr(), static_cast<size_t>(input.nbytes()),
+                           static_cast<size_t>(output.nbytes()), torchDtypeToMscclpp(input.scalar_type()), mscclppOp,
+                           async_op, options.timeout);
 }
 
 // AllToAllSingle: each rank sends its i-th chunk to rank i and receives
@@ -368,12 +367,12 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::reduce_scatter_single(at::Tensor
 c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::all_to_all_single(at::Tensor& output, const at::Tensor& input,
                                                                   bool async_op, const AllToAllSingleOptions& options) {
   checkInitialized();
-  auto input_contig = input.contiguous();
-  output = output.contiguous();
+  TORCH_CHECK(input.is_contiguous(), "[TorchCommMSCCLPP] all_to_all_single requires a contiguous input tensor");
+  TORCH_CHECK(output.is_contiguous(), "[TorchCommMSCCLPP] all_to_all_single requires a contiguous output tensor");
 
-  return executeCollective("alltoall", input_contig.data_ptr(), output.data_ptr(),
-                           static_cast<size_t>(input_contig.nbytes()), static_cast<size_t>(output.nbytes()),
-                           torchDtypeToMscclpp(input_contig.scalar_type()), mscclpp::NOP, async_op, options.timeout);
+  return executeCollective("alltoall", input.data_ptr(), output.data_ptr(), static_cast<size_t>(input.nbytes()),
+                           static_cast<size_t>(output.nbytes()), torchDtypeToMscclpp(input.scalar_type()), mscclpp::NOP,
+                           async_op, options.timeout);
 }
 
 // --- Unsupported operations ---

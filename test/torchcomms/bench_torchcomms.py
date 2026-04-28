@@ -35,6 +35,8 @@ import sys
 import torch
 import torchcomms
 
+import mscclpp_torchcomms  # noqa: F401 — auto-registers backend .so path
+
 
 def sync_cuda():
     torch.cuda.synchronize()
@@ -70,6 +72,8 @@ def format_size(nbytes):
 # --- Curated size tables per collective ---
 # Each entry: (nbytes, expected_algorithm_name)
 
+# FIXME: why are we hardcoding the algorithms, should the
+#        selector be handling this?
 ALLREDUCE_SIZES = [
     (1024, "allpair_packet"),
     (4096, "allpair_packet"),

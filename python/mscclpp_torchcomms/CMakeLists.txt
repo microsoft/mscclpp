@@ -54,12 +54,12 @@ set(MSCCLPP_ALGO_SELECTOR_SOURCES
 pybind11_add_module(_comms_mscclpp ${TORCHCOMM_SOURCES} ${TORCHCOMMS_FRAMEWORK_SOURCES} ${MSCCLPP_ALGO_SELECTOR_SOURCES})
 
 # Find glog (required by torchcomms framework sources via Logging.hpp).
-# Derive the conda env prefix from the Python executable path so we can
-# locate glog headers and libraries installed in the same environment.
-get_filename_component(CONDA_PREFIX "${Python_EXECUTABLE}" DIRECTORY)
-get_filename_component(CONDA_PREFIX "${CONDA_PREFIX}" DIRECTORY)
-find_library(GLOG_LIBRARY glog HINTS "${CONDA_PREFIX}/lib")
-find_path(GLOG_INCLUDE_DIR glog/logging.h HINTS "${CONDA_PREFIX}/include")
+# Add the conda/venv prefix to CMAKE_PREFIX_PATH so find_package can locate
+# glog's CMake config installed alongside the Python environment.
+get_filename_component(_PYTHON_ENV_PREFIX "${Python_EXECUTABLE}" DIRECTORY)
+get_filename_component(_PYTHON_ENV_PREFIX "${_PYTHON_ENV_PREFIX}" DIRECTORY)
+list(APPEND CMAKE_PREFIX_PATH "${_PYTHON_ENV_PREFIX}")
+find_package(glog REQUIRED)
 
 target_include_directories(_comms_mscclpp SYSTEM PRIVATE
     # torchcomms headers: resolves #include <comms/torchcomms/...>
@@ -71,9 +71,6 @@ target_include_directories(_comms_mscclpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ext/nccl
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/core/include
 )
-if(GLOG_INCLUDE_DIR)
-    target_include_directories(_comms_mscclpp SYSTEM PRIVATE ${GLOG_INCLUDE_DIR})
-endif()
 
 target_link_libraries(_comms_mscclpp PRIVATE
     # MUST use the shared library (not mscclpp_static) to avoid dual-singleton:
@@ -86,10 +83,8 @@ target_link_libraries(_comms_mscclpp PRIVATE
     mscclpp_collectives
     ${TORCH_LIBRARIES}
     ${GPU_LIBRARIES}
+    glog::glog
 )
-if(GLOG_LIBRARY)
-    target_link_libraries(_comms_mscclpp PRIVATE ${GLOG_LIBRARY})
-endif()
 
 # Propagate USE_ROCM define for mscclpp/gpu.hpp portability
 target_compile_definitions(_comms_mscclpp PRIVATE
@@ -104,7 +99,10 @@ if(EXISTS "${TORCH_PYTHON_LIB}")
     target_link_libraries(_comms_mscclpp PRIVATE "${TORCH_PYTHON_LIB}")
 endif()
 
-# Copy built module to source tree for easy import
+# Install the module into the package directory for pip/scikit-build-core
+install(TARGETS _comms_mscclpp LIBRARY DESTINATION mscclpp_torchcomms COMPONENT torchcomm)
+
+# Copy built module to source tree for easy import during development
 add_custom_target(torchcomm_lib_copy ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/_comms_mscclpp*.so

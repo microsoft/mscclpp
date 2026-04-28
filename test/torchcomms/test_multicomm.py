@@ -27,6 +27,8 @@ import sys
 import torch
 import torchcomms
 
+import mscclpp_torchcomms  # noqa: F401 — auto-registers backend .so path
+
 
 def main():
     rank = int(os.environ["RANK"])
@@ -44,37 +46,39 @@ def main():
 
     try:
         # Create two independent communicators
-        comm1 = torchcomms.new_comm("mscclpp", device, name="comm_A")
-        comm2 = torchcomms.new_comm("mscclpp", device, name="comm_B")
+        mscclpp = torchcomms.new_comm("mscclpp", device, name="comm_A")
+        nccl = torchcomms.new_comm("nccl", device, name="comm_B")
 
         if rank == 0:
             print("  Both communicators created")
 
-        # Run allreduce on comm1
+        # Run allreduce on mscclpp
         tensor1 = torch.full((1024,), float(rank + 1), device=device, dtype=torch.float32)
-        comm1.all_reduce(tensor1, torchcomms.ReduceOp.SUM, False)
+        mscclpp.all_reduce(tensor1, torchcomms.ReduceOp.SUM, False)
         torch.cuda.synchronize()
 
         expected_val = world_size * (world_size + 1) / 2.0
-        assert torch.allclose(tensor1, torch.full_like(tensor1, expected_val)), f"[rank {rank}] comm1 allreduce failed"
+        assert torch.allclose(
+            tensor1, torch.full_like(tensor1, expected_val)
+        ), f"[rank {rank}] mscclpp allreduce failed"
 
         if rank == 0:
-            print("  comm1 allreduce: PASSED")
+            print("  mscclpp allreduce: PASSED")
 
-        # Run allreduce on comm2 with different data
+        # Run allreduce on nccl with different data
         tensor2 = torch.full((2048,), float(rank * 10), device=device, dtype=torch.float32)
-        comm2.all_reduce(tensor2, torchcomms.ReduceOp.SUM, False)
+        nccl.all_reduce(tensor2, torchcomms.ReduceOp.SUM, False)
         torch.cuda.synchronize()
 
         expected_val2 = sum(r * 10 for r in range(world_size))
-        assert torch.allclose(tensor2, torch.full_like(tensor2, expected_val2)), f"[rank {rank}] comm2 allreduce failed"
+        assert torch.allclose(tensor2, torch.full_like(tensor2, expected_val2)), f"[rank {rank}] nccl allreduce failed"
 
         if rank == 0:
-            print("  comm2 allreduce: PASSED")
+            print("  nccl allreduce: PASSED")
 
         # Finalize both
-        comm1.finalize()
-        comm2.finalize()
+        mscclpp.finalize()
+        nccl.finalize()
 
         if rank == 0:
             print("  Both communicators finalized")

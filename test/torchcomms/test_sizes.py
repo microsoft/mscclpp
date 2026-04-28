@@ -26,6 +26,8 @@ import sys
 import torch
 import torchcomms
 
+import mscclpp_torchcomms  # noqa: F401 — auto-registers backend .so path
+
 
 def tolerances(dtype: torch.dtype):
     if dtype in (torch.float16, torch.bfloat16):

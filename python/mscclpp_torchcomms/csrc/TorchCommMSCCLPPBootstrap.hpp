@@ -5,6 +5,7 @@
 
 #include <c10/core/Device.h>
 
+#include <atomic>
 #include <chrono>
 #include <comms/torchcomms/TorchCommOptions.hpp>
 #include <memory>
@@ -47,7 +48,7 @@ class TorchCommMSCCLPPBootstrap {
   int rank_;
   int size_;
 
-  static int counter_;
+  static std::atomic<int> counter_;
 };
 
 }  // namespace torch::comms

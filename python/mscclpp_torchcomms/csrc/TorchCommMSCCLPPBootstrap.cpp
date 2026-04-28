@@ -4,6 +4,7 @@
 #include "TorchCommMSCCLPPBootstrap.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <comms/torchcomms/utils/StoreManager.hpp>
 #include <comms/torchcomms/utils/Utils.hpp>
 #include <stdexcept>
@@ -12,7 +13,7 @@ namespace torch::comms {
 
 // Static counter ensures unique store keys when multiple communicators are
 // created with the same name in the same process (e.g., separate comm groups).
-int TorchCommMSCCLPPBootstrap::counter_ = 0;
+std::atomic<int> TorchCommMSCCLPPBootstrap::counter_{0};
 
 // Discovers rank and world size from torchrun/torchelastic environment variables
 // (RANK, WORLD_SIZE, LOCAL_RANK). query_ranksize() is a torchcomms utility.
@@ -37,7 +38,7 @@ mscclpp::UniqueId TorchCommMSCCLPPBootstrap::exchangeUniqueId(const std::string&
     store_ = createPrefixStore("mscclpp", timeout_);
   }
 
-  std::string key = "mscclpp_uniqueid_" + name + std::to_string(counter_++);
+  std::string key = "mscclpp_uniqueid_" + name + "_" + std::to_string(counter_++);
 
   mscclpp::UniqueId unique_id;
 

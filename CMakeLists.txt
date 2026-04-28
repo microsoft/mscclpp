@@ -276,5 +276,5 @@ endif()
 
 # TorchComms MSCCL++ backend
 if(MSCCLPP_BUILD_EXT_TORCHCOMMS)
-    add_subdirectory(python/mscclpp_torchcomm)
+    add_subdirectory(python/mscclpp_torchcomms)
 endif()

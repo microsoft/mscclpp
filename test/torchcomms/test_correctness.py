@@ -13,7 +13,7 @@ both packet (<=1MB) and non-packet (>1MB) algorithm paths.
 Prerequisites:
   - torchcomms >= 0.2.0 installed (pip install --pre torchcomms)
   - MSCCL++ built with -DMSCCLPP_BUILD_EXT_TORCHCOMMS=ON
-  - TORCHCOMMS_BACKEND_LIB_PATH_MSCCLPP env var pointing to the built _comms_mscclpp .so
+  - mscclpp-torchcomms installed (python -m pip install ./python/mscclpp_torchcomms)
 
 Run examples:
   torchrun --nproc_per_node=2 test/torchcomms/test_correctness.py --collective allreduce
@@ -28,6 +28,8 @@ import sys
 
 import torch
 import torchcomms
+
+import mscclpp_torchcomms  # noqa: F401 — auto-registers backend .so path
 
 # Size sweep: covers packet path (<=1MB), boundary, and non-packet path (>1MB)
 SWEEP_NELEMS = [1, 64, 1024, 16384, 262144, 1048576, 4194304]

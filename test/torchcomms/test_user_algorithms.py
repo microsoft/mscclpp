@@ -28,6 +28,8 @@ import sys
 import torch
 import torchcomms
 
+import mscclpp_torchcomms  # noqa: F401 — auto-registers backend .so path
+
 
 def get_env():
     rank = int(os.environ["RANK"])
