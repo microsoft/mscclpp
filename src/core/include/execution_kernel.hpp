@@ -17,6 +17,7 @@
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "execution_common.hpp"
+#include "logger.hpp"
 #include "reduce_kernel.hpp"
 namespace mscclpp {
 
@@ -880,13 +881,13 @@ class ExecutionKernel {
       case DataType::FLOAT8_E4M3FNUZ:
 #if defined(__FP8_E4M3_IS_FNUZ__)
         if (dataType == DataType::FLOAT8_E4M3FN) {
-          throw Error("FLOAT8_E4M3FN is not natively supported on this platform; use FLOAT8_E4M3FNUZ",
-                      ErrorCode::InvalidUsage);
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E4M3FN is not natively supported on this platform; use FLOAT8_E4M3FNUZ");
         }
 #else
         if (dataType == DataType::FLOAT8_E4M3FNUZ) {
-          throw Error("FLOAT8_E4M3FNUZ is not natively supported on this platform; use FLOAT8_E4M3FN",
-                      ErrorCode::InvalidUsage);
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E4M3FNUZ is not natively supported on this platform; use FLOAT8_E4M3FN");
         }
 #endif
         executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
@@ -903,13 +904,13 @@ class ExecutionKernel {
       case DataType::FLOAT8_E5M2FNUZ:
 #if defined(__FP8_E5M2_IS_FNUZ__)
         if (dataType == DataType::FLOAT8_E5M2) {
-          throw Error("FLOAT8_E5M2 is not natively supported on this platform; use FLOAT8_E5M2FNUZ",
-                      ErrorCode::InvalidUsage);
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E5M2 is not natively supported on this platform; use FLOAT8_E5M2FNUZ");
         }
 #else
         if (dataType == DataType::FLOAT8_E5M2FNUZ) {
-          throw Error("FLOAT8_E5M2FNUZ is not natively supported on this platform; use FLOAT8_E5M2",
-                      ErrorCode::InvalidUsage);
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E5M2FNUZ is not natively supported on this platform; use FLOAT8_E5M2");
         }
 #endif
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
