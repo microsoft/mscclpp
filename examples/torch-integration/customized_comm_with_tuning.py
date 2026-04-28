@@ -126,9 +126,11 @@ class CustomizedComm:
     _CANDIDATE_NTHREADS = [512, 768, 1024]
     _NBLOCKS_LIMIT = {
         "default_allreduce_nvls_packet": 16,
+        "default_allreduce_nvls_zero_copy": 32,
         "default_allreduce_packet": 56,
         "default_allreduce_allpair_packet": 56,
         "default_allreduce_rsag": 64,
+        "default_allreduce_rsag_zero_copy": 64,
         "default_allreduce_fullmesh": 64,
         "default_allgather_fullmesh2": 32,
     }
@@ -234,10 +236,19 @@ class CustomizedComm:
                 a = self._algo("allreduce", "default_allreduce_packet")
                 if a:
                     out.append(a)
+                a = self._algo("allreduce", "default_allreduce_allpair_packet")
+                if a:
+                    out.append(a)
                 a = self._algo("allreduce", "default_allreduce_nvls_packet")
                 if self._nvls and a:
                     out.append(a)
             if size >= 512 << 10:
+                a = self._algo("allreduce", "default_allreduce_rsag_zero_copy")
+                if self.symmetric_memory and a:
+                    out.append(a)
+                a = self._algo("allreduce", "default_allreduce_nvls_zero_copy")
+                if self._nvls and self.symmetric_memory and a:
+                    out.append(a)
                 a = self._algo("allreduce", "default_allreduce_rsag")
                 if a:
                     out.append(a)
@@ -564,7 +575,7 @@ def main():
     n_iter = _get_env_int("MSCCLPP_BENCH_ITERS", default=100)
 
     comm_group = init_dist()
-    cc = CustomizedComm(comm_group)
+    cc = CustomizedComm(comm_group, symmetric_memory=True)
 
     print(f"rank {local} starting benchmarks with dtype={dtype} accum_dtype={accum_dtype}...")
     benchmark_allreduce(
