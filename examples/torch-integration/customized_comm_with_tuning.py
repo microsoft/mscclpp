@@ -238,9 +238,10 @@ class CustomizedComm:
         out = []
         if self.multi_host_mnnvl:
             if size <= 4 << 20:
-                a = self._algo("allreduce", "default_allreduce_allpair_packet")
-                if a:
-                    out.append(a)
+                if size <= 128 << 10:
+                    a = self._algo("allreduce", "default_allreduce_allpair_packet")
+                    if a:
+                        out.append(a)
                 if size <= 64 << 10:
                     a = self._algo("allreduce", "default_allreduce_nvls_packet")
                     if self._nvls and a:
@@ -254,7 +255,7 @@ class CustomizedComm:
                 if self.symmetric_memory and a:
                     out.append(a)
                 a = self._algo("allreduce", "default_allreduce_nvls_zero_copy")
-                if self._nvls and self.symmetric_memory and a:
+                if self._nvls and a:
                     out.append(a)
                 a = self._algo("allreduce", "default_allreduce_rsag")
                 if a:
