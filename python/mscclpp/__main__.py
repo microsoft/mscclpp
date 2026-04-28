@@ -58,9 +58,9 @@ default_algo_configs = [
         "function": def_algo.allgather_mrc,
         "spec": AlgoSpec(
             name="allgather_mrc",
-            collective=AllGather(2, 1, True),
+            collective=AllGather(4, 1, True),
             nranks_per_node=1,
-            world_size=2,
+            world_size=4,
             in_place=True,
             instances=1,
             protocol="Simple",
