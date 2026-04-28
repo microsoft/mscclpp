@@ -119,6 +119,12 @@ class Env {
   /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
   const int ibGidIndex;
 
+  /// Env name: `MSCCLPP_MNNVL_NRANKS_PER_NODE`. Overrides the NVLink-domain size reported by the bootstrap.
+  /// This is intended for Multi-Node NVLink (MNNVL) deployments where a single CUDA IPC / NVLS domain spans
+  /// multiple hosts and should be treated as one collective peer group.
+  /// If unset or non-positive, the bootstrap falls back to physical-host-based detection.
+  const int mnnvlNranksPerNode;
+
  private:
   Env();
 

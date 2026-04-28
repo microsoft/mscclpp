@@ -17,9 +17,6 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
                                   size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerNode,
                                   int worldSize, size_t nelems, uint32_t numScratchBuff, void* flags,
                                   uint32_t flagSize) {
-  // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
-
   if (sizeof(T) == 2 || sizeof(T) == 1) nelems = (nelems * sizeof(T) + sizeof(T)) / sizeof(int);
   const int nPeers = nRanksPerNode - 1;
 
@@ -143,7 +140,7 @@ std::shared_ptr<void> AllreduceAllpairPacket::initAllreduceContext(std::shared_p
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm, this->conns_);
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;
   ctx->registeredMemories.pop_back();  // remove the local memory from previous context

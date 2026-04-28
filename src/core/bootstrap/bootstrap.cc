@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <mscclpp/core.hpp>
+#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <sstream>
 #include <thread>
@@ -433,6 +434,10 @@ void TcpBootstrap::Impl::establishConnections(int64_t timeoutSec) {
 
 int TcpBootstrap::Impl::getNranksPerNode() {
   if (nRanksPerNode_ > 0) return nRanksPerNode_;
+  if (env()->mnnvlNranksPerNode > 0) {
+    nRanksPerNode_ = env()->mnnvlNranksPerNode;
+    return nRanksPerNode_;
+  }
   int nRanksPerNode = 0;
   bool useIpv4 = peerCommAddresses_[rank_].sa.sa_family == AF_INET;
   for (int i = 0; i < nRanks_; i++) {

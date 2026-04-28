@@ -23,9 +23,6 @@ __global__ void __launch_bounds__(1024, 1)
 #else
     ) {
 #endif
-  // This version of allreduce only works for single nodes
-  if (worldSize != nRanksPerNode) return;
-
 #if defined(ENABLE_NPKIT)
   extern __shared__ int4 NpkitSharedMem[];
   NpKitEvent* event_buffer = (NpKitEvent*)((char*)NpkitSharedMem);
@@ -267,7 +264,7 @@ std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Comm
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm, this->conns_);
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;
   ctx->registeredMemories.pop_back();  // remove the local memory from previous context

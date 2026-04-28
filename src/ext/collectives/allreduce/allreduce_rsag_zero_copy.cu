@@ -183,7 +183,7 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm, this->conns_);
 
   ctx->memorySemaphores = this->semaphores_;
 

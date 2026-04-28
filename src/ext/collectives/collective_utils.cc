@@ -69,6 +69,25 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
   return memorySemaphores;
 }
 
+int getCollectiveDomainNranksPerNode(std::shared_ptr<mscclpp::Communicator> comm,
+                                     const std::vector<mscclpp::Connection>& connections) {
+  const int worldSize = comm->bootstrap()->getNranks();
+  const int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  if (worldSize <= nRanksPerNode) {
+    return nRanksPerNode;
+  }
+  const bool allPeersUseCudaIpc =
+      std::all_of(connections.begin(), connections.end(),
+                  [](const auto& connection) { return connection.transport() == mscclpp::Transport::CudaIpc; });
+  return allPeersUseCudaIpc ? worldSize : nRanksPerNode;
+}
+
+int getCollectiveDomainNranksPerNode(std::shared_ptr<mscclpp::Communicator> comm) {
+  const int worldSize = comm->bootstrap()->getNranks();
+  const int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  return worldSize > nRanksPerNode ? worldSize : nRanksPerNode;
+}
+
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<mscclpp::MemoryChannel>& memoryChannels) {
   std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;
