@@ -133,7 +133,7 @@ struct AllreduceRsAgAdapter {
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
       nThreadsPerBlock = 1024;
-      nBlocks = 64;
+      nBlocks = 128;
     }
     allreduceRsAg<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
@@ -144,7 +144,7 @@ struct AllreduceRsAgAdapter {
 
 void AllreduceRsAg::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
-  nChannelsPerConnection_ = 64;
+  nChannelsPerConnection_ = 128;
   comm_ = comm;
   // setup semaphores
   this->scratchSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);
@@ -179,6 +179,10 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, c
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > nChannelsPerConnection_) {
+    WARN(ALGO, "Block number ", numBlocksAndThreads.first, " exceeds the maximum limit ", nChannelsPerConnection_);
+    return CommResult::CommInvalidArgument;
+  }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemoryHandles_.get(), nullptr, nullptr, 0, 0, 0, algoCtx->rank,
                                 algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0, 0,
