@@ -308,7 +308,16 @@ if __name__ == "__main__":
     try:
         main()
     finally:
-        try:
-            dist.destroy_process_group()
-        except Exception:
-            pass
+        # Ordered shutdown: barrier so every rank reaches teardown before the
+        # TCPStore server (rank 0) exits, then destroy the PG. Avoids noisy
+        # "recvValue failed / Connection was likely closed" stack traces from
+        # ProcessGroupNCCL's HeartbeatMonitor.
+        if dist.is_initialized():
+            try:
+                dist.barrier()
+            except Exception:
+                pass
+            try:
+                dist.destroy_process_group()
+            except Exception:
+                pass
