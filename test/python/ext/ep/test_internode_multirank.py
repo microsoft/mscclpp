@@ -38,7 +38,8 @@ def init_dist():
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ.get("LOCAL_RANK", rank % 8))
     torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", world_size=world_size, rank=rank)
+    dist.init_process_group(backend="nccl", world_size=world_size, rank=rank,
+                            device_id=torch.device(f"cuda:{local_rank}"))
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
 
 
@@ -381,3 +382,14 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Ordered shutdown: barrier so every rank reaches teardown before the
+        # TCPStore server (rank 0) exits, then destroy the PG. Without this,
+        # ProcessGroupNCCL's HeartbeatMonitor on non-zero ranks logs noisy
+        # "recvValue failed / Connection was likely closed" stack traces.
+        if dist.is_initialized():
+            try:
+                dist.barrier()
+            except Exception:
+                pass
+            dist.destroy_process_group()

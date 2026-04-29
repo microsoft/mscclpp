@@ -327,3 +327,14 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Ordered shutdown: barrier so every rank reaches teardown before the
+        # TCPStore server (rank 0) exits, then destroy the PG. Avoids noisy
+        # "recvValue failed / Connection was likely closed" stack traces from
+        # ProcessGroupNCCL's HeartbeatMonitor.
+        if dist.is_initialized():
+            try:
+                dist.barrier()
+            except Exception:
+                pass
+            dist.destroy_process_group()
