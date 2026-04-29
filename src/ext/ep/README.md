@@ -13,53 +13,61 @@ targeting:
 
 | Feature                            | Status                                      |
 |------------------------------------|---------------------------------------------|
-| `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)                   |
-| `get_dispatch_layout`              | ✅ ported                                   |
-| `intranode_dispatch` (NVLink)      | ✅ ported, validated (8 ranks, 1 node)     |
-| `intranode_combine` (NVLink)       | ✅ ported, validated (8 ranks, 1 node)     |
-| `internode_dispatch` (NVLink+RDMA) | ✅ ported, validated (16 ranks, 2×H100×8)  |
-| `internode_combine` (NVLink+RDMA)  | ✅ ported, validated (16 ranks, 2×H100×8)  |
-| `low_latency_dispatch` (pure RDMA) | ⚠️ structural port, untested                |
-| `low_latency_combine` (pure RDMA)  | ⚠️ structural port, untested                |
-| `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp               |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                      |
-| pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally                     |
+| `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)                          |
+| `get_dispatch_layout`              | ✅ ported                                          |
+| `intranode_dispatch` (NVLink)      | ✅ validated (8 ranks, 1 node)                    |
+| `intranode_combine` (NVLink)       | ✅ validated (8 ranks, 1 node)                    |
+| `internode_dispatch` (NVLink+RDMA) | ✅ validated (16 ranks, 2×H100×8)                 |
+| `internode_combine` (NVLink+RDMA)  | ✅ validated (16 ranks, 2×H100×8)                 |
+| `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks intra-node; 16 ranks 2×H100) |
+| `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks intra-node; 16 ranks 2×H100) |
+| Multi-`ProxyService` sharding      | ✅ env-tunable, arch-aware default                 |
+| `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp                      |
+| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                             |
+| pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
 
 Internode HT was validated end-to-end on two H100×8 nodes connected over
 Infiniband using [`test/python/ext/ep/test_internode_multirank.py`](../../../test/python/ext/ep/test_internode_multirank.py).
 All 16 ranks complete dispatch followed by combine with exact (zero-diff)
 recovery of the per-rank token payloads.
 
-The low-latency port is **structural**: the DeepEP LL kernels (pure
-IBGDA) have been mechanically translated to MSCCL++ port-channel ops.
-Semantic mapping:
+The low-latency (LL) path uses a mixed transport: `MemoryChannel` (CUDA
+IPC) for same-node peers and `PortChannel` (CPU proxy + IB verbs) for
+remote peers. The DeepEP LL kernels were translated as follows:
 
 | DeepEP / IBGDA                           | MSCCL++ replacement                                              |
 |------------------------------------------|------------------------------------------------------------------|
-| `nvshmemx_barrier_all_block()`           | signal + wait ring across `port_channel_handles[peer_rank]`      |
-| `nvshmemi_ibgda_put_nbi_warp(...)`       | lane-0 `port_channel_handles[qp*N+dst].put(dst_off, src_off, n)` |
-| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `port_channel_handles[qp*N+dst].atomicAdd(off, int64)`    |
+| `nvshmemx_barrier_all_block()`           | signal + wait ring across per-peer channel handles               |
+| `nvshmemi_ibgda_put_nbi_warp(...)` (intra-node) | `MemoryChannelDeviceHandle::put` (CUDA IPC, no proxy)     |
+| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node) | lane-0 `PortChannelDeviceHandle::put(dst_off, src_off, n)` |
+| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `atomicAdd` on the corresponding channel handle           |
+
+LL was validated on:
+- 8 ranks × 1 H100 node (NVLink + CUDA-IPC fast path).
+- 16 ranks × 2 H100×8 nodes (mixed CUDA-IPC intra-node + IB inter-node).
+
+### `num_proxy_services` / proxy sharding
+
+A single `mscclpp::ProxyService` is one CPU host thread driving one
+FIFO. With 8 GPUs / node sharing one proxy, the host thread becomes the
+bottleneck for cross-node LL traffic. `Buffer` therefore allocates `N`
+ProxyServices and shards `PortChannel`s across them by `(qp_idx,
+dst_rank)`.
+
+- Default: `8` on Hopper (sm_90), `1` on Blackwell / sm_100+ (NVSwitch).
+- Override at runtime: `MSCCLPP_EP_NUM_PROXIES=<N>` (clamped to ≥1).
+  Rank 0 prints the resolved value at construction.
+- Sweet spot on 2×H100×8 is `N=8`; `N=12` over-subscribes the host CPUs
+  and collapses throughput.
 
 ### Known limitations
 
-- LL performance will NOT match IBGDA — the MSCCL++ port channel uses a
-  CPU proxy. The port is for functional parity, not latency.
-- Unlike DeepEP, this port drives LL dispatch/combine through
-  `PortChannel` rather than NVSHMEM, so `Buffer::sync()` connects every
-  peer (not just same-GPU-ID peers) even in `low_latency_mode=True`.
-- **LL dispatch/combine hangs for intra-node 8-GPU (single host)
-  configurations** with the current `PortChannel`-over-IB setup: with
-  `num_nvl_bytes=0` every peer-to-peer transfer goes through the CPU
-  proxy's IB verbs path, and IB loopback between two distinct HCAs on
-  the same host does not deliver atomics reliably. Using `CudaIpc` for
-  same-node peers instead surfaces a 64-bit `atomicAdd` vs. 32-bit
-  counter alignment mismatch in `CudaIpcConnection::atomicAdd` which
-  corrupts adjacent counter slots. A proper fix requires either (a) a
-  mixed-transport LL variant that uses `MemoryChannel` (IPC, no proxy)
-  for same-node peers like HT does, or (b) widening `rdma_recv_count`
-  slots to 64 bits. See [`test/python/ext/ep/test_low_latency_multirank.py`](../../../test/python/ext/ep/test_low_latency_multirank.py).
-- H100 cross-node validation of LL mode (1 GPU per node, DeepEP's
-  recommended topology) is still pending.
+- LL performance will NOT match IBGDA for cross-node traffic — remote
+  peers go through a CPU proxy. The port is for functional parity, not
+  latency. (Intra-node LL traffic uses CUDA IPC and is competitive.)
+- Unlike DeepEP, this port drives LL through `PortChannel` /
+  `MemoryChannel` rather than NVSHMEM, so `Buffer::sync()` connects
+  every peer even in `low_latency_mode=True`.
 - The internode HT functional test inserts an explicit
   `torch.cuda.synchronize()` + `dist.barrier()` between dispatch and
   combine. Without it, fast ranks can launch combine while peers still
@@ -114,21 +122,28 @@ python/mscclpp/ext/ep/
 
 test/python/ext/ep/
 ├── test_ep_smoke.py                   — size-hint + rejection smoke test
-├── test_intranode_multirank.py        — NVLink dispatch+combine, 8 ranks
+├── test_intranode_multirank.py        — NVLink HT dispatch+combine, 8 ranks
 ├── test_internode_multirank.py        — HT dispatch+combine, 16 ranks (2×8)
-└── test_low_latency_multirank.py      — LL dispatch+combine (intra-node hang; see limitations)
+└── test_low_latency_multirank.py      — LL dispatch+combine (intra-node + cross-node)
 ```
 
 ## Running the tests
 
-Intranode (single node, 8 GPUs):
+Intranode (single node, 8 GPUs) — HT:
 
 ```bash
 torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ext/ep/test_intranode_multirank.py
 ```
 
-Internode HT (2 nodes × 8 GPUs):
+Intranode LL (single node, 8 GPUs):
+
+```bash
+torchrun --nnodes=1 --nproc_per_node=8 \
+    test/python/ext/ep/test_low_latency_multirank.py
+```
+
+Internode HT (2 nodes × 8 GPUs), torchrun:
 
 ```bash
 # node 0 (master)
@@ -143,6 +158,43 @@ torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
     --master_addr=<master_ip> --master_port=29600 \
     test/python/ext/ep/test_internode_multirank.py
 ```
+
+Internode HT/LL via mpirun (matches the NCCL-EP launch convention with
+NUMA binding and an explicit topology file):
+
+```bash
+mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
+    --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
+    --bind-to numa \
+    -x NCCL_SOCKET_IFNAME=eth0 -x MSCCLPP_SOCKET_IFNAME=eth0 -x GLOO_SOCKET_IFNAME=eth0 \
+    -x NCCL_IB_DISABLE=0 -x NCCL_TOPO_FILE=<topo.xml> \
+    -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
+    bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
+             WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
+             LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
+             exec python3 test/python/ext/ep/test_internode_multirank.py'
+```
+
+### Benchmark mode
+
+All three multirank tests double as micro-benchmarks when
+`MSCCLPP_EP_BENCH=1` is set. Dispatch and combine are timed separately
+with CUDA events; per-rank times are reduced across ranks and reported
+as `min` / `avg` / `max`, with bandwidth computed from the average time
+(matching NCCL-EP's `ep_bench` convention).
+
+Env knobs:
+
+| Variable                      | Meaning                                | Default |
+|-------------------------------|----------------------------------------|---------|
+| `MSCCLPP_EP_BENCH`            | Enable benchmark pass                  | `0`     |
+| `MSCCLPP_EP_BENCH_WARMUP`     | Warmup iterations                      | `10`    |
+| `MSCCLPP_EP_BENCH_ITERS`      | Timed iterations                       | `50`    |
+| `MSCCLPP_EP_BENCH_TOKENS`     | Tokens per rank                        | test-specific |
+| `MSCCLPP_EP_BENCH_HIDDEN`     | Hidden dim                             | `7168`  |
+| `MSCCLPP_EP_BENCH_EXPERTS`    | Total experts                          | test-specific |
+| `MSCCLPP_EP_BENCH_TOPK`       | top-k routing                          | `8`     |
+| `MSCCLPP_EP_NUM_PROXIES`      | Number of `ProxyService`s in `Buffer`  | 8 (Hopper) / 1 (Blackwell) |
 
 ## Migration plan
 
@@ -165,7 +217,7 @@ torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
       peer rank (so kernel-side indexing by `peer_rank` is consistent).
 - [x] Validated on 2×H100×8 with `test_internode_multirank.py`.
 
-### Phase 3 — Low-Latency (pure RDMA) — STRUCTURAL PORT
+### Phase 3 — Low-Latency (RDMA + CUDA-IPC) — DONE
 
 Port `DeepEP/csrc/kernels/internode_ll.cu` and cross-reference
 `nccl/contrib/nccl_ep/device/low_latency.cu`. The nccl_ep reference is
@@ -183,12 +235,15 @@ Device API; the translation table is:
 | NVSHMEM symmetric heap                  | `cudaMalloc` + `ProxyService::addMemory`        |
 | NVSHMEM barrier                         | `bootstrap->barrier()` or `intranode::barrier`  |
 
-Bodies of `Buffer::low_latency_dispatch` / `low_latency_combine` have been
-translated from DeepEP but are **untested on real hardware**.
+`Buffer::low_latency_dispatch` / `low_latency_combine` are validated
+intra-node (8 ranks, CUDA IPC fast path) and cross-node (16 ranks on
+2×H100×8, IPC + IB). Functional correctness is bit-exact against the
+reference dispatch/combine.
 
 ### Phase 4 — Validation
 
-- [x] `test_intranode_multirank.py` — NVLink round-trip validated.
+- [x] `test_intranode_multirank.py` — NVLink HT round-trip validated.
 - [x] `test_internode_multirank.py` — HT round-trip validated on 2×H100×8.
-- [ ] `test_low_latency_multirank.py` — LL round-trip port in place; intra-node 8-GPU hangs (see Known limitations), cross-node (1 GPU / node) pending hardware validation.
+- [x] `test_low_latency_multirank.py` — LL round-trip validated intra-node (8 ranks) and cross-node (2×H100×8).
+- [x] In-tree micro-benchmark harness (`MSCCLPP_EP_BENCH=1`) reporting min/avg/max + BW@avg, aligned with NCCL-EP `ep_bench`.
 - [ ] Throughput benchmarks against DeepEP upstream.
