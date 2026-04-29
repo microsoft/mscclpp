@@ -172,6 +172,11 @@ class TorchCommMSCCLPP : public TorchCommBackend, public std::enable_shared_from
   /// communicator since AlgorithmCollection references it.
   std::shared_ptr<void> flagBuffer_;
   size_t flagBufferSize_ = 0;
+
+  /// dlopen-based NCCL fallback for collectives MSCCL++ doesn't natively
+  /// implement (reduce_scatter, broadcast, barrier on certain configs). Null
+  /// if libnccl couldn't be loaded — those collectives then throw.
+  std::unique_ptr<class NcclFallback> ncclFallback_;
 };
 
 }  // namespace torch::comms
