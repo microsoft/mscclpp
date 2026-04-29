@@ -35,6 +35,12 @@ import os
 import random
 import sys
 
+# Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
+# It runs in a background thread polling the TCPStore; under mpirun, rank 0
+# (the store server) can exit before non-zero ranks finish teardown, producing
+# noisy 'recvValue failed / Connection was likely closed' stack traces.
+os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
+
 import torch
 import torch.distributed as dist
 
