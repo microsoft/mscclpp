@@ -221,10 +221,35 @@ def main():
     warmup = int(os.environ.get("MSCCLPP_EP_BENCH_WARMUP", "5"))
     iters = int(os.environ.get("MSCCLPP_EP_BENCH_ITERS", "20"))
 
+    # Hoist dispatch's output tensors out of the timed loop. The largest
+    # (`packed_recv_x`, ~58 MB at 7K hidden) costs ~10us cumulative across
+    # the four torch::empty calls per iter; reusing them brings the bench
+    # in line with NCCL-EP `ep_bench` which preallocates output buffers.
+    num_local_experts = num_experts // num_ranks
+    bench_packed_recv_x = torch.empty(
+        (num_local_experts, num_ranks * num_tokens, hidden),
+        dtype=torch.bfloat16, device="cuda",
+    )
+    bench_packed_recv_src_info = torch.empty(
+        (num_local_experts, num_ranks * num_tokens),
+        dtype=torch.int32, device="cuda",
+    )
+    bench_packed_recv_layout_range = torch.empty(
+        (num_local_experts, num_ranks), dtype=torch.int64, device="cuda",
+    )
+    bench_packed_recv_count = torch.empty(
+        (num_local_experts,), dtype=torch.int32, device="cuda",
+    )
+
     def _dispatch():
         return buf.low_latency_dispatch(
             x, topk_idx, num_tokens, num_experts,
             False, False, False,  # use_fp8, async, return_recv_hook
+            bench_packed_recv_x,
+            None,  # x_scales (FP8 only)
+            bench_packed_recv_src_info,
+            bench_packed_recv_layout_range,
+            bench_packed_recv_count,
         )
 
     # Hoist combine's output-tensor allocation out of the timed loop so the
