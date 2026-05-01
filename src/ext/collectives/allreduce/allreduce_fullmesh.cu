@@ -13,8 +13,8 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
-                      int nRanksPerNode, int worldSize, size_t nelems) {
-  const int nPeer = nRanksPerNode - 1;
+                      int ipcDomainNranks, int worldSize, size_t nelems) {
+  const int nPeer = ipcDomainNranks - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by (16 * worldSize)
   const size_t nInt4 = nelems * sizeof(T) / sizeof(int4);
@@ -159,7 +159,7 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceAllconnectAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* memoryOutChannels,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t,
-                          size_t channelOutDataOffset, size_t, int rank, int nRanksPerNode, int worldSize,
+                          size_t channelOutDataOffset, size_t, int rank, int ipcDomainNranks, int worldSize,
                           size_t inputSize, cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks,
                           int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<MemoryChannel>;
@@ -168,7 +168,7 @@ struct AllreduceAllconnectAdapter {
     if (nThreadsPerBlock == 0) nThreadsPerBlock = 512;
     allreduceFullmesh<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, (ChannelType*)memoryOutChannels,
-        channelOutDataOffset, rank, nRanksPerNode, worldSize, nelems);
+        channelOutDataOffset, rank, ipcDomainNranks, worldSize, nelems);
     return cudaGetLastError();
   }
 };
@@ -225,7 +225,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
-                nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
+                nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->ipcDomainNranks, ctx->workSize, inputSize,
                 stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
@@ -252,7 +252,7 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
   ctx->memorySemaphores = this->outputSemaphores_;

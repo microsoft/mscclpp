@@ -19,12 +19,12 @@ __global__ void __launch_bounds__(1024, 1)
                   [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
                   [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOut,
                   [[maybe_unused]] size_t channelInOffset, [[maybe_unused]] size_t channelOutOffset,
-                  [[maybe_unused]] size_t size, [[maybe_unused]] int rank, [[maybe_unused]] int nRanksPerNode) {
+                  [[maybe_unused]] size_t size, [[maybe_unused]] int rank, [[maybe_unused]] int ipcDomainNranks) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
-  int nPeers = nRanksPerNode - 1;
+  int nPeers = ipcDomainNranks - 1;
   int nBlocks = gridDim.x;
   int bid = blockIdx.x;
-  size_t sizePerRank = size / nRanksPerNode;
+  size_t sizePerRank = size / ipcDomainNranks;
   const size_t minAlign = 16;
   // Align sizePerBlock to 16 bytes to ensure aligned vector access in handleMultiLoadReduceStore
   size_t sizePerBlock = (sizePerRank + nBlocks - 1) / nBlocks;
@@ -40,14 +40,14 @@ __global__ void __launch_bounds__(1024, 1)
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastPtr = multicast + bid;
   mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicastOutPtr = multicastOut + bid;
 
-  const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x;
+  const size_t chanOffset = (ipcDomainNranks - 1) * blockIdx.x;
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   // Each warp redundantly loads all entries (same value, benign race) so that
   // every warp has the data its threads will read after __syncwarp(). Required
   // when nPeers > WARP_SIZE (MNNVL/NVL72 → 71 peers).
-  for (int i = lid; i < nRanksPerNode - 1; i += WARP_SIZE) {
+  for (int i = lid; i < ipcDomainNranks - 1; i += WARP_SIZE) {
     channels[i] = memoryChans[i];
   }
   __syncwarp();
@@ -75,7 +75,7 @@ struct NvlsAdapter {
   static cudaError_t call(const void*, void*, void*, void* memoryChannels, void*,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsChannels,
                           mscclpp::DeviceHandle<mscclpp::SwitchChannel>* nvlsOutChannels, size_t channelInOffset,
-                          size_t channelOutOffset, size_t, int rank, int nRanksPerNode, int, size_t inputSize,
+                          size_t channelOutOffset, size_t, int rank, int ipcDomainNranks, int, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
     if constexpr (std::is_same_v<T, uint8_t>) {
@@ -93,7 +93,7 @@ struct NvlsAdapter {
       using ChannelType = DeviceHandle<mscclpp::BaseMemoryChannel>;
       allreduceNvls<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
                                                                  nvlsOutChannels, channelInOffset, channelOutOffset,
-                                                                 inputSize, rank, nRanksPerNode);
+                                                                 inputSize, rank, ipcDomainNranks);
       return cudaGetLastError();
     }
   }
@@ -145,7 +145,7 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
-    numBlocksAndThreads = {::min(ctx->nRanksPerNode, MAX_NBLOCKS), 1024};
+    numBlocksAndThreads = {::min(ctx->ipcDomainNranks, MAX_NBLOCKS), 1024};
     // For GB200 devices with MNNVLS (Multi-Node NVLink Sharp), scale the number of blocks inversely with
     // the number of GPUs. Empirically, 32 blocks works well for 4 GPUs and 16 for 8 GPUs, which
     // follows the formula 128 / nGPUs, clamped to [1, MAX_NBLOCKS].
@@ -159,7 +159,7 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
   }
   cudaError_t error =
       allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
-                nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize,
+                nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank, ctx->ipcDomainNranks, ctx->workSize,
                 inputSize, stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvls failed with error: %s", cudaGetErrorString(error));
@@ -183,7 +183,7 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
 
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;

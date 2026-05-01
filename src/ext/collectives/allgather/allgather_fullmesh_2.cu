@@ -12,7 +12,7 @@ __device__ DeviceSyncer deviceSyncer;
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh2(void* sendbuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                       size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t nRanksPerNode,
+                       size_t channelOutOffset, size_t rank, [[maybe_unused]] size_t worldSize, size_t ipcDomainNranks,
                        size_t nelemsPerGPU) {
   const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t lid = tid % WARP_SIZE;
@@ -20,7 +20,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t nThread = blockDim.x * gridDim.x;
   const size_t nWarp = nThread / WARP_SIZE;
-  const size_t nPeer = nRanksPerNode - 1;
+  const size_t nPeer = ipcDomainNranks - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   auto memChans = memoryChannels + chanOffset;
 
@@ -140,11 +140,11 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
   if ((char*)input == (char*)output + rank * inputSize) {
     allgatherFullmesh2<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->workSize,
-        ctx->nRanksPerNode, nElem);
+        ctx->ipcDomainNranks, nElem);
   } else {
     allgatherFullmesh2<true><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->workSize,
-        ctx->nRanksPerNode, nElem);
+        ctx->ipcDomainNranks, nElem);
   }
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -159,7 +159,7 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerNode();
 
   // setup semaphores
   ctx->memorySemaphores = this->memorySemaphores_;

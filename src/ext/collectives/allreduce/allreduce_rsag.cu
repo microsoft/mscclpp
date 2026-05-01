@@ -31,18 +31,18 @@ namespace collective {
 template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAg(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
-                  DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int nRanksPerNode,
+                  DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int ipcDomainNranks,
                   int worldSize, size_t nelems) {
   int blockId = blockIdx.x;
-  uint32_t nPeers = nRanksPerNode - 1;
+  uint32_t nPeers = ipcDomainNranks - 1;
 
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
-  uint32_t alignedNelems = ((nelems + nRanksPerNode - 1) / nRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
-                           nelemsPerInt4 * nRanksPerNode;
-  uint32_t nelemsPerRank = alignedNelems / nRanksPerNode;
+  uint32_t alignedNelems = ((nelems + ipcDomainNranks - 1) / ipcDomainNranks + nelemsPerInt4 - 1) / nelemsPerInt4 *
+                           nelemsPerInt4 * ipcDomainNranks;
+  uint32_t nelemsPerRank = alignedNelems / ipcDomainNranks;
   uint32_t nInt4PerRank = nelemsPerRank / nelemsPerInt4;
   uint32_t lastInt4Index = nelems / nelemsPerInt4;
   uint32_t remainder = nelems % nelemsPerInt4;
@@ -59,7 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
     nInt4PerBlock += remainderForBlock;
   }
   if (nInt4PerBlock == 0) return;
-  uint32_t nInt4ForCopy = nInt4PerBlock * nRanksPerNode;
+  uint32_t nInt4ForCopy = nInt4PerBlock * ipcDomainNranks;
 
   for (uint32_t idx = threadIdx.x; idx < nInt4ForCopy; idx += blockDim.x) {
     int rankIdx = idx / nInt4PerBlock;
@@ -84,13 +84,13 @@ __global__ void __launch_bounds__(1024, 1)
     if (offset > lastInt4Index) continue;
     int4 tmp = scratch4[offset];
     for (uint32_t i = 0; i < nPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % ipcDomainNranks;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       int4 data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
       tmp = calVector<T, OpType>(data, tmp);
     }
     for (uint32_t i = 0; i < nPeers; i++) {
-      int rankIdx = (rank + i + 1) % nRanksPerNode;
+      int rankIdx = (rank + i + 1) % ipcDomainNranks;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[peerIdx], offset, tmp);
     }
@@ -127,7 +127,7 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t, int rank, int nRanksPerNode, int worldSize, size_t inputSize, cudaStream_t stream,
+                          size_t, int rank, int ipcDomainNranks, int worldSize, size_t inputSize, cudaStream_t stream,
                           void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
@@ -137,7 +137,7 @@ struct AllreduceRsAgAdapter {
     }
     allreduceRsAg<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
-        nRanksPerNode, worldSize, nelems);
+        ipcDomainNranks, worldSize, nelems);
     return cudaGetLastError();
   }
 };
@@ -185,7 +185,7 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, c
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemoryHandles_.get(), nullptr, nullptr, 0, 0, 0, algoCtx->rank,
-                                algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream, nullptr, 0, 0,
+                                algoCtx->ipcDomainNranks, algoCtx->workSize, inputSize, stream, nullptr, 0, 0,
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
@@ -203,7 +203,7 @@ std::shared_ptr<void> AllreduceRsAg::initAllreduceContext(std::shared_ptr<Commun
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
 
   ctx->memorySemaphores = this->scratchSemaphores_;
   ctx->registeredMemories = this->remoteScratchMemories_;

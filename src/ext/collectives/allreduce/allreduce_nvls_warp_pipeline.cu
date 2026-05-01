@@ -18,15 +18,15 @@ __global__ void __launch_bounds__(1024, 1)
                               [[maybe_unused]] DeviceHandle<BaseMemoryChannel>* memoryChannels,
                               [[maybe_unused]] DeviceHandle<SwitchChannel>* multicast, [[maybe_unused]] size_t size,
                               [[maybe_unused]] size_t scratchBufferSize, [[maybe_unused]] int rank,
-                              [[maybe_unused]] int nRanksPerNode) {
+                              [[maybe_unused]] int ipcDomainNranks) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   constexpr int alignment = 16;
-  int nPeers = nRanksPerNode - 1;
+  int nPeers = ipcDomainNranks - 1;
   int nBlocks = gridDim.x;
   int nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION;
   int bid = blockIdx.x;
-  size_t sizePerRank = size / nRanksPerNode;
-  size_t scratchSizePerRank = scratchBufferSize / nRanksPerNode;
+  size_t sizePerRank = size / ipcDomainNranks;
+  size_t scratchSizePerRank = scratchBufferSize / ipcDomainNranks;
   const size_t maxSizePerBlock = ((sizePerRank + nBlocks - 1) / nBlocks + alignment - 1) / alignment * alignment;
   size_t start = bid * maxSizePerBlock;
   size_t end = min(start + maxSizePerBlock, sizePerRank);
@@ -53,7 +53,7 @@ __global__ void __launch_bounds__(1024, 1)
     lastIterSize = sizePerBlock % copyPerIter;
   }
 
-  const size_t chanOffset = (nRanksPerNode - 1) * blockIdx.x * 2;
+  const size_t chanOffset = (ipcDomainNranks - 1) * blockIdx.x * 2;
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ DeviceHandle<BaseMemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
   const int lid = threadIdx.x % WARP_SIZE;
@@ -68,7 +68,7 @@ __global__ void __launch_bounds__(1024, 1)
     const size_t iterSize = (it == nIter - 1) ? lastIterSize : copyPerIter;
     if (warpId < endCopyWid) {
       int tidInCopy = threadIdx.x;
-      for (int i = 0; i < nRanksPerNode; i++) {
+      for (int i = 0; i < ipcDomainNranks; i++) {
         size_t offset = i * sizePerRank + maxSizePerBlock * bid + it * copyPerIter;
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
@@ -99,7 +99,7 @@ __global__ void __launch_bounds__(1024, 1)
         channels[tidInRecvCopy + nPeers].wait();
       }
       asm volatile("bar.sync %0, %1;" ::"r"(3), "r"((NRECV_COPY_WARPS)*WARP_SIZE) : "memory");
-      for (int i = 0; i < nRanksPerNode; i++) {
+      for (int i = 0; i < ipcDomainNranks; i++) {
         size_t offset = i * sizePerRank + maxSizePerBlock * bid + it * copyPerIter;
         size_t offsetScratch =
             i * scratchSizePerRank + scratchSizePerBlock * bid + (it * copyPerIter) % scratchSizePerBlock;
@@ -116,7 +116,7 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct NvlsWarpPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>* nvlsChannels, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t scratchBufferSize, int rank, int nRanksPerNode, int, size_t inputSize,
+                          size_t scratchBufferSize, int rank, int ipcDomainNranks, int, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     // uint8_t is not supported for NVLS (no hardware support for byte-level reduction)
     if constexpr (std::is_same_v<T, uint8_t>) {
@@ -132,9 +132,9 @@ struct NvlsWarpPipelineAdapter {
 #endif
       {
         using ChannelType = DeviceHandle<BaseMemoryChannel>;
-        allreduceNvlsWarpPipeline<T>
-            <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                       nvlsChannels, inputSize, scratchBufferSize, rank, nRanksPerNode);
+        allreduceNvlsWarpPipeline<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+            input, scratch, output, (ChannelType*)memoryChannels, nvlsChannels, inputSize, scratchBufferSize, rank,
+            ipcDomainNranks);
         return cudaGetLastError();
       }
   }
@@ -165,11 +165,11 @@ CommResult AllreduceNvlsWarpPipeline::allreduceKernelFunc(
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = {ctx->nRanksPerNode * 4, 1024};
+    blockAndThreadNum = {ctx->ipcDomainNranks * 4, 1024};
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream, nullptr, 0, 0,
+                                ctx->rank, ctx->ipcDomainNranks, ctx->workSize, inputSize, stream, nullptr, 0, 0,
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWarpPipeline failed with error: %s", cudaGetErrorString(error));
@@ -187,7 +187,7 @@ std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::share
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerNode();
 
   // setup channels
   ctx->switchChannels =

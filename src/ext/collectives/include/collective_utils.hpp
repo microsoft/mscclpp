@@ -27,8 +27,8 @@ namespace mscclpp {
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
 // Sized to cover MAX_NRANKS_PER_NODE-scale allreduce algos whose device-side
-// semaphore indices grow as O(nRanksPerNode) (e.g. nvls_block_pipeline uses
-// up to ~5 * nRanksPerNode entries).
+// semaphore indices grow as O(ipcDomainNranks) (e.g. nvls_block_pipeline uses
+// up to ~5 * ipcDomainNranks entries).
 constexpr int NUM_SEMAPHORES = 512;
 
 // Upper bound on the number of NVLink-reachable ranks that participate in a
@@ -54,8 +54,8 @@ std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores
 /// Number of ranks that participate in the same GPU-IPC-reachable peer group (e.g. a single host or
 /// a Multi-Node NVLink fabric, or an AMD XGMI domain). Returns the value of `MSCCLPP_IPC_DOMAIN_NRANKS`
 /// if set to a positive value; otherwise falls back to `bootstrap->getNranksPerNode()`. This is
-/// intentionally independent of `nRanksPerNode` so that algorithms can opt in to MNNVL-like behavior
-/// without changing the meaning of bootstrap-level APIs.
+/// intentionally independent of `Bootstrap::getNranksPerNode()` so that algorithms can opt in to
+/// MNNVL-like behavior without changing the meaning of bootstrap-level APIs.
 int getIpcDomainNranks(std::shared_ptr<Communicator> comm);
 
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
@@ -86,7 +86,7 @@ class AlgorithmCtx {
  public:
   int rank;
   int workSize;
-  int nRanksPerNode;
+  int ipcDomainNranks;
 
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;
