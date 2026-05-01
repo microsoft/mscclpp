@@ -50,8 +50,13 @@ std::vector<MemoryChannel> setupMemoryChannels(
 std::vector<Connection> setupConnections(std::shared_ptr<Communicator> comm);
 std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
     std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections, int nChannelsPerConnection);
-int getCollectiveDomainNranksPerNode(std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections);
-int getCollectiveDomainNranksPerNode(std::shared_ptr<Communicator> comm);
+
+/// Number of ranks that participate in the same GPU-IPC-reachable peer group (e.g. a single host or
+/// a Multi-Node NVLink fabric, or an AMD XGMI domain). Returns the value of `MSCCLPP_IPC_DOMAIN_NRANKS`
+/// if set to a positive value; otherwise falls back to `bootstrap->getNranksPerNode()`. This is
+/// intentionally independent of `nRanksPerNode` so that algorithms can opt in to MNNVL-like behavior
+/// without changing the meaning of bootstrap-level APIs.
+int getIpcDomainNranks(std::shared_ptr<Communicator> comm);
 
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<MemoryChannel>& memoryChannels);

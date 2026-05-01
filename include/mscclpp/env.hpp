@@ -119,11 +119,11 @@ class Env {
   /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
   const int ibGidIndex;
 
-  /// Env name: `MSCCLPP_MNNVL_NRANKS_PER_NODE`. Overrides the NVLink-domain size reported by the bootstrap.
-  /// This is intended for Multi-Node NVLink (MNNVL) deployments where a single CUDA IPC / NVLS domain spans
-  /// multiple hosts and should be treated as one collective peer group.
-  /// If unset or non-positive, the bootstrap falls back to physical-host-based detection.
-  const int mnnvlNranksPerNode;
+  /// Env name: `MSCCLPP_IPC_DOMAIN_NRANKS`. Number of ranks that share a single GPU-IPC-reachable peer
+  /// group (e.g. a Multi-Node NVLink fabric such as GB200 NVL72, or an AMD XGMI domain). This hint is
+  /// consumed only by the collective algorithms; it does not affect `Bootstrap::getNranksPerNode()` or
+  /// any other layer. If unset or non-positive, algorithms fall back to `bootstrap->getNranksPerNode()`.
+  const int ipcDomainNranks;
 
  private:
   Env();

@@ -169,7 +169,7 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
 }
 
 AlgorithmCtxKey AllreduceRsAgZeroCopy::generateAllreduceContextKey(const void* inputBuffer, void* outputBuffer,
-                                                                    size_t size, DataType, bool symmetricMemory) {
+                                                                   size_t size, DataType, bool symmetricMemory) {
   // For non-symmetric algorithms, we use both input and output buffer pointers in the key.
   if (symmetricMemory) {
     size_t inputBytes, outputBytes;
@@ -186,7 +186,7 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm, this->conns_);
+  ctx->nRanksPerNode = getIpcDomainNranks(comm);
 
   ctx->memorySemaphores = this->semaphores_;
 

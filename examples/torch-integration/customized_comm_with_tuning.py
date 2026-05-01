@@ -13,6 +13,7 @@ import struct
 import sys
 import traceback
 
+
 def _get_bootstrap_world_size():
     for name in ("WORLD_SIZE", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "SLURM_NTASKS"):
         value = os.environ.get(name)
@@ -22,13 +23,8 @@ def _get_bootstrap_world_size():
 
 
 _bootstrap_world_size = _get_bootstrap_world_size()
-if (
-    _bootstrap_world_size
-    and _bootstrap_world_size > 1
-    and "MSCCLPP_MNNVL_NRANKS_PER_NODE" not in os.environ
-    and os.environ.get("MSCCLPP_ENABLE_MNNVL", "1") != "0"
-):
-    os.environ["MSCCLPP_MNNVL_NRANKS_PER_NODE"] = str(_bootstrap_world_size)
+if _bootstrap_world_size and _bootstrap_world_size > 1 and "MSCCLPP_IPC_DOMAIN_NRANKS" not in os.environ:
+    os.environ["MSCCLPP_IPC_DOMAIN_NRANKS"] = str(_bootstrap_world_size)
 
 import torch
 import mscclpp
@@ -140,11 +136,10 @@ class CustomizedComm:
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.nranks_per_node = comm.nranks_per_node
-        self.mnnvl_domain = self.world_size > 1 and os.environ.get("MSCCLPP_MNNVL_NRANKS_PER_NODE") == str(
-            self.world_size
-        )
+        nvlink_domain_nranks = int(os.environ.get("MSCCLPP_IPC_DOMAIN_NRANKS", "0"))
+        self.mnnvl_domain = self.world_size > 1 and nvlink_domain_nranks >= self.world_size
         self.multi_node = self.world_size > self.nranks_per_node and not self.mnnvl_domain
-        self.multi_host_mnnvl = self.mnnvl_domain and self.world_size > 1
+        self.multi_host_mnnvl = self.mnnvl_domain and self.world_size > self.nranks_per_node
         self.symmetric_memory = symmetric_memory
         self._nvls = mscclpp.is_nvls_supported()
 

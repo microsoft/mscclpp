@@ -94,7 +94,7 @@ std::shared_ptr<void> AllreduceNvlsPacket::initAllreduceContext(std::shared_ptr<
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm);
+  ctx->nRanksPerNode = getIpcDomainNranks(comm);
 
   // setup channels
   ctx->switchChannels = this->switchChannels_;

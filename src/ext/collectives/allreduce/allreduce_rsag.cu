@@ -203,7 +203,7 @@ std::shared_ptr<void> AllreduceRsAg::initAllreduceContext(std::shared_ptr<Commun
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm, this->conns_);
+  ctx->nRanksPerNode = getIpcDomainNranks(comm);
 
   ctx->memorySemaphores = this->scratchSemaphores_;
   ctx->registeredMemories = this->remoteScratchMemories_;

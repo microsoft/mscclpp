@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/env.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
@@ -69,23 +70,12 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
   return memorySemaphores;
 }
 
-int getCollectiveDomainNranksPerNode(std::shared_ptr<mscclpp::Communicator> comm,
-                                     const std::vector<mscclpp::Connection>& connections) {
-  const int worldSize = comm->bootstrap()->getNranks();
-  const int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
-  if (worldSize <= nRanksPerNode) {
-    return nRanksPerNode;
+int getIpcDomainNranks(std::shared_ptr<mscclpp::Communicator> comm) {
+  const int envValue = mscclpp::env()->ipcDomainNranks;
+  if (envValue > 0) {
+    return envValue;
   }
-  const bool allPeersUseCudaIpc =
-      std::all_of(connections.begin(), connections.end(),
-                  [](const auto& connection) { return connection.transport() == mscclpp::Transport::CudaIpc; });
-  return allPeersUseCudaIpc ? worldSize : nRanksPerNode;
-}
-
-int getCollectiveDomainNranksPerNode(std::shared_ptr<mscclpp::Communicator> comm) {
-  const int worldSize = comm->bootstrap()->getNranks();
-  const int nRanksPerNode = comm->bootstrap()->getNranksPerNode();
-  return worldSize > nRanksPerNode ? worldSize : nRanksPerNode;
+  return comm->bootstrap()->getNranksPerNode();
 }
 
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(

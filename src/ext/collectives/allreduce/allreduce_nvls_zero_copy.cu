@@ -183,7 +183,7 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = getCollectiveDomainNranksPerNode(comm);
+  ctx->nRanksPerNode = getIpcDomainNranks(comm);
 
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
