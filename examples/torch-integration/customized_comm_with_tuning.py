@@ -246,9 +246,6 @@ class CustomizedComm:
                     if a:
                         out.append(a)
             if size >= 512 << 10:
-                a = self._algo("allreduce", "default_allreduce_rsag_zero_copy")
-                if a:
-                    out.append(a)
                 a = self._algo("allreduce", "default_allreduce_nvls_zero_copy")
                 if self._nvls and self.symmetric_memory and a:
                     out.append(a)
