@@ -301,7 +301,11 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
 }
 
-inline void memset(void* ptr, int value, size_t bytes) { detail::gpuMemset(ptr, value, bytes); }
+/// Sets `bytes` of memory at `ptr` to `value` synchronously.
+/// @param ptr Destination address.
+/// @param value Value to set (interpreted as unsigned char per CUDA semantics).
+/// @param bytes Number of bytes to set.
+inline void gpuMemset(void* ptr, int value, size_t bytes) { detail::gpuMemset(ptr, value, bytes); }
 
 /// Check if NVLink SHARP (NVLS) is supported.
 ///
