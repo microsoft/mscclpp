@@ -263,8 +263,10 @@ std::shared_ptr<uint64_t> TokenPool::getToken() {
     for (int bit = 0; bit < UINT64_WIDTH; bit++) {
       if (holes & (1UL << bit)) {
         allocationMap_[i].set(bit);
-        INFO(MSCCLPP_ALLOC, "TokenPool allocated token at addr %p", baseAddr_ + i * UINT64_WIDTH + bit);
-        return std::shared_ptr<uint64_t>(baseAddr_ + i * UINT64_WIDTH + bit, deleter);
+        uint64_t* token = baseAddr_ + i * UINT64_WIDTH + bit;
+        mscclpp::memset(token, 0, sizeof(uint64_t));
+        INFO(MSCCLPP_ALLOC, "TokenPool allocated token at addr %p", token);
+        return std::shared_ptr<uint64_t>(token, deleter);
       }
     }
   }
