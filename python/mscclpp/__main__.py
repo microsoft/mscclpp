@@ -73,7 +73,7 @@ default_algo_configs = [
             tags={"default": 1},
         ),
         "additional_kwargs": {"thread_block_group_size": 8},
-    }
+    },
 ]
 
 

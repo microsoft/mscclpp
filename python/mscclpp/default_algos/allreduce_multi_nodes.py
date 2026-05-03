@@ -2,12 +2,13 @@
 # Licensed under the MIT License.
 
 """
-Multi-node AllReduce implementation using packet-based communication.
-This implements a hierarchical AllReduce: intra-node allreduce followed by
-inter-node exchange and final intra-node allreduce.
+Generalized multi-node AllReduce implementation using packet-based communication.
+This implements a hierarchical AllReduce for N nodes:
+1. Intra-node reduce-scatter (each GPU reduces its assigned chunk across the node)
+2. Inter-node allreduce (exchange fully intra-reduced chunks across all nodes)
+3. Intra-node broadcast (distribute the fully reduced chunks back to all GPUs in the node)
 """
 
-import argparse
 from mscclpp.language.utils import AlgoSpec
 from mscclpp.language.channel import *
 from mscclpp.language.rank import *
@@ -208,6 +209,8 @@ def allreduce_multi_nodes(spec: AlgoSpec, thread_block_group_size: int) -> Colle
 
 
 if __name__ == "__main__":
+    import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, help="name of the program")
     parser.add_argument("--num_gpus", type=int, help="total number of gpus")
