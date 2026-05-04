@@ -94,6 +94,7 @@ jobs:
       vmssName:      ${{ parameters.vmssName }}
       resourceGroup: mscclpp
       gpuArch:       '90'
+      deployArgs:    'multi-node-test true cuda'
       containerName: 'sglang-mscclpp-test'
 
   - template: templates/sglang-multi-test.yml
