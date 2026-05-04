@@ -15,26 +15,26 @@ parameters:
   type: string
 
 steps:
-- task: Bash@3
-  displayName: Add HostEntry
-  inputs:
-    targetType: 'inline'
-    script: |
-      ENTRY="${{ parameters.hostEntries }}"
-      if ! grep -qxF "$ENTRY" /etc/hosts; then
-        echo "Adding to /etc/hosts"
-        echo "$ENTRY" | sudo tee -a /etc/hosts
-      else
-        echo "Entry already exists, nothing to do."
-      fi
+# - task: Bash@3
+#   displayName: Add HostEntry
+#   inputs:
+#     targetType: 'inline'
+#     script: |
+#       ENTRY="${{ parameters.hostEntries }}"
+#       if ! grep -qxF "$ENTRY" /etc/hosts; then
+#         echo "Adding to /etc/hosts"
+#         echo "$ENTRY" | sudo tee -a /etc/hosts
+#       else
+#         echo "Entry already exists, nothing to do."
+#       fi
 
-- template: deploy.yml
-  parameters:
-    subscription:     ${{ parameters.subscription }}
-    vmssName:         ${{ parameters.vmssName }}
-    deployArgs:       'single-node-test true cuda'
-    containerName:    ${{ parameters.containerName }}
-    resourceGroup:    ${{ parameters.resourceGroup }}
+# - template: deploy.yml
+#   parameters:
+#     subscription:     ${{ parameters.subscription }}
+#     vmssName:         ${{ parameters.vmssName }}
+#     deployArgs:       'single-node-test true cuda'
+#     containerName:    ${{ parameters.containerName }}
+#     resourceGroup:    ${{ parameters.resourceGroup }}
 
 - template: run-remote-task.yml
   parameters:
