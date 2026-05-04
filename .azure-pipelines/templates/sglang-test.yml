@@ -96,7 +96,7 @@ steps:
       echo "Directory: $(pwd)"
 
       # Launch sglang server in the background
-      python3 -m sglang serve \
+      sglang serve \
         --model-path Qwen/Qwen3-8B \
         --port 30000 \
         --host 0.0.0.0 \
