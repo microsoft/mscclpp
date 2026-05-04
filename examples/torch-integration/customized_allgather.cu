@@ -69,7 +69,8 @@ class AllgatherAlgoBuilder : public mscclpp::AlgorithmBuilder {
         "allgather", "allgather", [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
         [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize, size_t outputSize,
                mscclpp::DataType dtype, [[maybe_unused]] mscclpp::ReduceOp op, cudaStream_t stream, int nBlocks,
-               int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) {
+               int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+               [[maybe_unused]] mscclpp::DataType accumDtype) {
           return self->allgatherKernelFunc(ctx, input, output, inputSize, dtype, stream);
         },
         [self](std::shared_ptr<mscclpp::Communicator> comm, const void* input, void* output, size_t inputSize,

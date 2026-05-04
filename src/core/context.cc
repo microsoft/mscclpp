@@ -46,8 +46,6 @@ void CudaIpcStream::sync() {
   }
 }
 
-Context::Impl::Impl() {}
-
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
   // Find IB context or create it
   auto it = ibContexts_.find(ibTransport);

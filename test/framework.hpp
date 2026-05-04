@@ -63,6 +63,13 @@ class TestRegistry {
 // Returns "Suite.Name" for the currently running test, or "" if none.
 std::string currentTestName();
 
+/// Collect a performance result for the current test. Results are printed together
+/// after all tests complete. Only rank 0 should call this (results are ignored on other ranks).
+/// @param label A label for this measurement (e.g., "128 MB" or "latency").
+/// @param value The numeric result.
+/// @param unit The unit string (e.g., "GB/s", "us/iter").
+void reportPerfResult(const std::string& label, double value, const std::string& unit);
+
 // Utility functions
 namespace utils {
 

@@ -21,7 +21,8 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<mscclpp::Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
                                  mscclpp::DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-                                 int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras);
+                                 int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+                                 mscclpp::DataType accumDtype);
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<mscclpp::Communicator> comm, const void*, void* output,
                                              size_t, mscclpp::DataType);
@@ -34,6 +35,7 @@ class AllreduceNvlsPacket : public mscclpp::AlgorithmBuilder {
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
+  std::vector<SwitchChannel> switchChannels_;
 };
 }  // namespace collective
 }  // namespace mscclpp

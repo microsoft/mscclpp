@@ -42,8 +42,6 @@ struct Context::Impl {
   std::shared_ptr<TokenPool> tokenPool_;
   const size_t maxNumTokens_ = 1 << 15;  // 32K tokens
 
-  Impl();
-
   IbCtx* getIbContext(Transport ibTransport);
   std::shared_ptr<uint64_t> getToken();
 };

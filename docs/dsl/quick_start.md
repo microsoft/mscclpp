@@ -12,6 +12,10 @@ After finishing the installation in the quick start section, you can add the fol
 python3 -m mscclpp --install
 ```
 
+This installs bundled default execution plans into `~/.cache/mscclpp/default` by default.
+If `MSCCLPP_CACHE_DIR` is set, bundled default plans are installed into `MSCCLPP_CACHE_DIR/default`.
+`MSCCLPP_CACHE_DIR` specifies the cache root directory, so it should be set without `default` in the path.
+
 ## Your First Algorithm: AllGather
 
 Let's walk through a simple AllGather algorithm to understand the DSL basics. This example demonstrates the key concepts without diving into all the advanced features.

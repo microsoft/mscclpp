@@ -103,10 +103,10 @@ static int GetGpuClockRateInKhz() {
   else
     return 25000;
 #else
-  cudaDeviceProp dev_prop;
+  int clockRate;
   MSCCLPP_CUDATHROW(cudaGetDevice(&dev_id));
-  MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&dev_prop, dev_id));
-  return dev_prop.clockRate;
+  MSCCLPP_CUDATHROW(cudaDeviceGetAttribute(&clockRate, cudaDevAttrClockRate, dev_id));
+  return clockRate;
 #endif
 }
 #endif

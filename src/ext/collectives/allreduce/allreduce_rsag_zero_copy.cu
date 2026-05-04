@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <type_traits>
+
 #include "allreduce/allreduce_rsag_zero_copy.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
@@ -36,7 +38,7 @@ __device__ mscclpp::DeviceSyncer globalSyncer;
 // the extra copy steps of the standard RSAG. The NRanksPerNode template
 // parameter enables compile-time unrolling of peer loops (supports 4 or 8).
 
-template <int NRanksPerNode, ReduceOp OpType, typename T>
+template <int NRanksPerNode, ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int worldSize,
@@ -73,19 +75,26 @@ __global__ void __launch_bounds__(1024, 1)
   }
   __syncthreads();
   int4 data[NPeers];
+  // AccumInt4: when AccumT != T, use a wider accumulator type.
+  // For AccumT == T, this is just int4 (no-op conversion).
+  constexpr int nElemsPerInt4 = sizeof(int4) / sizeof(T);
+  // When T == AccumT, stay with raw int4 to avoid type mismatch in identity path.
+  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nElemsPerInt4>>;
   for (uint32_t idx = threadIdx.x; idx < nInt4PerBlock; idx += blockDim.x) {
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset >= nInt4Total) continue;
-    int4 tmp = buff4[offset];
+    int4 tmp_raw = buff4[offset];
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
     }
+    AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(tmp_raw);
     for (int i = 0; i < NPeers; i++) {
-      tmp = cal_vector<T, OpType>(data[i], tmp);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data[i]);
     }
+    int4 tmp = mscclpp::downcastVector<T, AccumT, int4>(acc);
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
       int rankIdx = (rank + i + 1) % NRanksPerNode;
@@ -102,7 +111,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgZeroCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
@@ -118,11 +127,11 @@ struct AllreduceRsAgZeroCopyAdapter {
       }
     }
     if (nRanksPerNode == 4) {
-      allreduceRsAgZeroCopy<4, OpType, T>
+      allreduceRsAgZeroCopy<4, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else if (nRanksPerNode == 8) {
-      allreduceRsAgZeroCopy<8, OpType, T>
+      allreduceRsAgZeroCopy<8, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
@@ -145,9 +154,10 @@ void AllreduceRsAgZeroCopy::initialize(std::shared_ptr<Communicator> comm) {
 CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output,
                                                       size_t inputSize, DataType dtype, ReduceOp op,
                                                       cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                      const std::unordered_map<std::string, uintptr_t>&) {
+                                                      const std::unordered_map<std::string, uintptr_t>&,
+                                                      DataType accumDtype) {
   auto algoCtx = std::static_pointer_cast<AlgorithmCtx>(ctx);
-  AllreduceFunc allreduce = dispatch<AllreduceRsAgZeroCopyAdapter>(op, dtype);
+  AllreduceFunc allreduce = dispatch<AllreduceRsAgZeroCopyAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
          ", dtype=", static_cast<int>(dtype));
@@ -220,9 +230,10 @@ std::shared_ptr<Algorithm> AllreduceRsAgZeroCopy::build() {
       [self](std::shared_ptr<mscclpp::Communicator> comm) { self->initialize(comm); },
       [self](const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize, DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks,
-             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras) -> CommResult {
+             int nThreadsPerBlock, const std::unordered_map<std::string, uintptr_t>& extras,
+             DataType accumDtype) -> CommResult {
         return self->allreduceKernelFunc(ctx, input, output, inputSize, dtype, op, stream, nBlocks, nThreadsPerBlock,
-                                         extras);
+                                         extras, accumDtype);
       },
       [self](std::shared_ptr<Communicator> comm, const void* input, void* output, size_t inputSize,
              [[maybe_unused]] size_t outputSize,

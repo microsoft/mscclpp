@@ -140,7 +140,7 @@ class MemoryChannel:
 
         for tb_id in tb_list:
             tb_chunk_id = get_program().setup_remote_chunk(self.src_rank, tb_id, remote_chunk, self.channel_type)
-            tb_channel_ids = get_program().setup_channel(tb, self)
+            tb_channel_ids = get_program().setup_channel(tb_id, self)
             op = GetOperation(
                 src_buff=[RemoteChunk(src_chunk.buffer, src_chunk.index, src_chunk.size, tb_chunk_id)],
                 dst_buff=[LocalChunk(dst_chunk.buffer, dst_chunk.index, dst_chunk.size)],

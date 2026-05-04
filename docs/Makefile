@@ -5,7 +5,7 @@
 # from the environment for the first two.
 SPHINXOPTS    ?=
 SPHINXBUILD   ?= sphinx-build
-SPHINXMULTIVERSION ?= sphinx-multiversion
+SPHINXMULTIVERSION ?= python3 build_multiversion.py
 SOURCEDIR     = .
 BUILDDIR      = _build
 

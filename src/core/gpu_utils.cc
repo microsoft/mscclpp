@@ -283,7 +283,9 @@ bool isNvlsSupported() {
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
     MSCCLPP_CUTHROW(cuDeviceGet(&dev, deviceId));
     MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-    return isMulticastSupported == 1;
+    result = (isMulticastSupported == 1);
+    isChecked = true;
+    return result;
   }
   return result;
 #endif
@@ -300,9 +302,6 @@ bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
     return false;
   }
   MSCCLPP_CUTHROW(cuMemRelease(handle));
-  if (!isNvlsSupported()) {
-    throw Error("cuMemMap is used in env without NVLS support", ErrorCode::InvalidUsage);
-  }
   return true;
 #endif
 }

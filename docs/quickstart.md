@@ -25,12 +25,15 @@
         ```bash
         sudo apt-get install libnuma-dev
         ```
-    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.8 and Python Development Package
+    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.10 and Python Development Package
         ```bash
-        sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
+        sudo apt-get satisfy "python3 (>=3.10), python3-dev (>=3.10)"
         ```
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
+    * (Optional, for NVIDIA platforms) [GDRCopy](https://github.com/NVIDIA/gdrcopy) >= 2.5.1
+        * GDRCopy is required for IB `HostNoAtomic` mode, which uses CPU-side signal forwarding to GPU memory via BAR1 mappings. This mode is used on platforms where RDMA atomics are not available (e.g., when using Data Direct Virtual Functions).
+        * Install GDRCopy from source or via packages. See the [GDRCopy installation guide](https://github.com/NVIDIA/gdrcopy#installation).
 * Others
     * For RDMA (InfiniBand or RoCE) support on NVIDIA platforms, [GPUDirect RDMA](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#gpudirect-rdma-and-gpudirect-storage) should be supported by the system. See the detailed prerequisites from [this NVIDIA documentation](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-operator-rdma.html#common-prerequisites).
     * For NVLink SHARP (NVLS) support on NVIDIA platforms, the Linux kernel version should be 5.6 or above.
@@ -97,13 +100,30 @@ There are a few optional CMake options you can set:
 (install-from-source-python-module)=
 ## Install from Source (Python Module)
 
-Python 3.8 or later is required.
+Python 3.10 or later is required.
 
 ```bash
-# For NVIDIA platforms
-$ python -m pip install .
-# For AMD platforms, set the C++ compiler to HIPCC
-$ CXX=/opt/rocm/bin/hipcc python -m pip install .
+# For NVIDIA platforms (specify your CUDA version)
+$ python -m pip install ".[cuda12]"
+# For AMD platforms
+$ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
+```
+
+> **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
+> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source,
+> which requires ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+
+Optional extras can be installed by specifying them in brackets. Available extras:
+- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
+- **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
+- **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
+- **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
+
+```bash
+# Example: install with CUDA 12 and benchmark extras
+$ python -m pip install ".[cuda12,benchmark]"
+# Example: install with all extras for testing on CUDA 12
+$ python -m pip install ".[cuda12,benchmark,test]"
 ```
 
 (vscode-dev-container)=
@@ -155,8 +175,9 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 [Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
-# Choose `requirements_*.txt` according to your CUDA/ROCm version.
-$ python3 -m pip install -r ./python/requirements_cuda12.txt
+# Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
+# Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
+$ python3 -m pip install ".[cuda12,benchmark,test]"
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 

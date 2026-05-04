@@ -19,7 +19,7 @@ class AllreduceRsAg : public mscclpp::AlgorithmBuilder {
   void initialize(std::shared_ptr<Communicator> comm);
   CommResult allreduceKernelFunc(const std::shared_ptr<void> ctx, const void* input, void* output, size_t inputSize,
                                  DataType dtype, ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                 const std::unordered_map<std::string, uintptr_t>& extras);
+                                 const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype);
 
   std::shared_ptr<void> initAllreduceContext(std::shared_ptr<Communicator> comm, const void*, void* output, size_t,
                                              DataType);

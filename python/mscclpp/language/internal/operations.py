@@ -745,7 +745,7 @@ class ReduceOperation(BaseOperation):
                 remote_dst_buff=self.remote_dst_buff + other.dst_buff,
                 channel_ids=self.channel_ids,
                 put_channel_ids=self.put_channel_ids + other.channel_ids,
-                channel_type=self.channel_type,
+                channel_type=other.channel_type,
                 reduce_operation=self.reduce_operation,
                 tbg_info=self.tbg_info,
                 packet=self.packet,
