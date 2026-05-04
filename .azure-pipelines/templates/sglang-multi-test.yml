@@ -42,7 +42,6 @@ steps:
     displayName: Install mscclpp
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
-      cd mscclpp
       rm -rf build
       mkdir build 
       cd build 
