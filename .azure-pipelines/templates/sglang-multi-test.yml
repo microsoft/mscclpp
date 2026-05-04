@@ -80,10 +80,3 @@ steps:
         exit 1
       fi
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 16 --dist-init-addr mscclit-000000:20003 --nnodes 2 --node-rank $NODE_RANK --enable-mscclpp
-
-- template: stop.yml
-  parameters:
-    subscription: ${{ parameters.subscription }}
-    vmssName:     ${{ parameters.vmssName }}
-    resourceGroup: ${{ parameters.resourceGroup }}
-
