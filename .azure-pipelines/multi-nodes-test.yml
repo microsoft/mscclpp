@@ -36,14 +36,14 @@ parameters:
     10.0.0.4 mscclpp-h100-multinode-ci000001
 
 jobs:
-- job: SGlangTest
-  displayName: SGLANG Test
+- job: SGlangTestMultiNode
+  displayName: SGLANG Test Multi Node
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
   pool:
-    name: mscclpp-multi-node
+    name: mscclpp-ci-h100
   container:
     image: $(containerImage)
 
@@ -94,39 +94,12 @@ jobs:
       resourceGroup: mscclpp
       gpuArch:       '90'
 
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMscclppTest
-      displayName: Run multi-nodes mscclpp-test
-      continueOnError: true
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
-
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodeUnitTest
-      displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
-
-  steps:
   - template: templates/sglang-multi-test.yml
     parameters:
-      name: RunMultiNodePythonTests
-      displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh pytests
-
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodePythonBenchmark
-      displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
+        subscription:  mscclpp-ci-h100
+        vmssName:      mscclpp-h100-multinode-ci
+        resourceGroup: mscclpp
+        hostEntries:   ${{ parameters.hostEntries }}
 
   - template: templates/stop.yml
     parameters:
