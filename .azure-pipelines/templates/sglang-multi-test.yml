@@ -70,10 +70,11 @@ steps:
     runRemoteArgs: '--container sglang-mscclpp-test --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
+      VMSS="${{ parameters.vmssName }}"
       HOSTNAME=$(hostname)
-      if [ "$HOSTNAME" = "mscclit-000000" ]; then
+      if [ "$HOSTNAME" = "${VMSS}000000" ]; then
         NODE_RANK=0
-      elif [ "$HOSTNAME" = "mscclit-000001" ]; then
+      elif [ "$HOSTNAME" = "${VMSS}000001" ]; then
         NODE_RANK=1
       else
         echo "Unknown hostname: $HOSTNAME"

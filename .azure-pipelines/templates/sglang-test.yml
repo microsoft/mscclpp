@@ -97,7 +97,7 @@ steps:
       echo "Directory: $(pwd)"
 
       # Launch sglang server in the background
-      python3 -m sglang.launch_server \
+      python3 -m sglang serve \
         --model-path Qwen/Qwen3-8B \
         --port 30000 \
         --host 0.0.0.0 \
@@ -110,7 +110,6 @@ steps:
         --attention-backend triton \
         --grammar-backend outlines \
         --schedule-policy fcfs \
-        --disable-custom-all-reduce \
         --enable-mscclpp \
         > /tmp/sglang_server.log 2>&1 &
       SERVER_PID=$!
@@ -140,17 +139,19 @@ steps:
       mkdir -p "$RESULTS_DIR"
 
       # Run the benchmark
-      python3 ./test/bench_sglang.py \
-        --tokenizer Qwen/Qwen3-8B \
+      python3 -m sglang.bench_serving \
+        --backend sglang \
         --host 127.0.0.1 \
         --port 30000 \
-        --request-rate 20 \
-        --num-prompts 1729 \
+        --dataset-name random \
+        --random-input-len 512 \
+        --random-output-len 8129 \
         --max-concurrency 512 \
-        --dataset ./test/single_turn_completions_with_si_fixed.jsonl \
-        --output-file "$RESULTS_DIR/run.json" \
-        --flush-cache \
-        --num-warmup 50
+        --disable-stream \
+        --num-prompts 10 \
+        --seed 42 \
+        --request-rate inf \
+        2>&1 | tee $LOG_DIR/bench_serving.log"
 
       echo "Benchmark completed. Results:"
       cat "$RESULTS_DIR/run.json"
@@ -158,6 +159,7 @@ steps:
       # Shut down the server
       kill $SERVER_PID 2>/dev/null || true
       wait $SERVER_PID 2>/dev/null || true
+
 - template: run-remote-task.yml
   parameters:
     name: RunSGLangTestAllReduce
