@@ -49,41 +49,41 @@ steps:
       pip install --upgrade pip
       pip install -e "python"
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangBenchOneBatch1
-    displayName: Run SGLang Bench One Batch - 1
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      export FLASHINFER_DISABLE_VERSION_CHECK=1
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangBenchOneBatch1
+#     displayName: Run SGLang Bench One Batch - 1
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       export FLASHINFER_DISABLE_VERSION_CHECK=1
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangBenchOneBatch2
-    displayName: Run SGLang Bench One Batch - 2
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      export FLASHINFER_DISABLE_VERSION_CHECK=1
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 2 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangBenchOneBatch2
+#     displayName: Run SGLang Bench One Batch - 2
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       export FLASHINFER_DISABLE_VERSION_CHECK=1
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 2 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangBenchOneBatch32
-    displayName: Run SGLang Bench One Batch - 32
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      export FLASHINFER_DISABLE_VERSION_CHECK=1
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 32 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangBenchOneBatch32
+#     displayName: Run SGLang Bench One Batch - 32
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       export FLASHINFER_DISABLE_VERSION_CHECK=1
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 32 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
-- template: run-remote-task.yml
-  parameters:
-    name: RunSGLangBenchOneBatch64
-    displayName: Run SGLang Bench One Batch - 64
-    runRemoteArgs: '--container sglang-mscclpp-test'
-    remoteScript: |
-      export FLASHINFER_DISABLE_VERSION_CHECK=1
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
+# - template: run-remote-task.yml
+#   parameters:
+#     name: RunSGLangBenchOneBatch64
+#     displayName: Run SGLang Bench One Batch - 64
+#     runRemoteArgs: '--container sglang-mscclpp-test'
+#     remoteScript: |
+#       export FLASHINFER_DISABLE_VERSION_CHECK=1
+#       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 64 --input-len 256 --output-len 256 --tp-size 8 --disable-custom-all-reduce --enable-mscclpp 
 
 - template: run-remote-task.yml
   parameters:
@@ -93,8 +93,6 @@ steps:
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
       
-      cd mscclpp
-
       echo "Directory: $(pwd)"
 
       # Launch sglang server in the background
