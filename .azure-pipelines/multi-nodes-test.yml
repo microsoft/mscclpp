@@ -43,7 +43,7 @@ jobs:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
   pool:
-    name: mscclpp-ci-h100
+    name: mscclpp-multi-node
   container:
     image: $(containerImage)
 
