@@ -68,6 +68,7 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
+        nvidia-smi || echo "nvidia-smi not available on agent"
         set -e
         VMSS="${{ parameters.vmssName }}"
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"

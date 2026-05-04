@@ -131,7 +131,25 @@ else
 fi
 
 ###############################################################################
-# 9. Run setup script inside the container
+# 9b. Print GPU/driver info from host and container (CUDA only)
+###############################################################################
+if [ "${PLATFORM}" == "cuda" ]; then
+  echo "=== nvidia-smi on host ==="
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+    "nvidia-smi || echo 'nvidia-smi not available on host'; \
+     echo '--- /proc/driver/nvidia/version ---'; \
+     cat /proc/driver/nvidia/version 2>/dev/null || echo 'nvidia driver version file missing'"
+
+  echo "=== nvidia-smi inside container (${CONTAINER_NAME}) ==="
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+    "sudo docker exec -t --user root ${CONTAINER_NAME} bash -lc \
+      'nvidia-smi || echo \"nvidia-smi failed in container\"; \
+       echo \"--- nvcc --version ---\"; \
+       nvcc --version || echo \"nvcc not found\"'"
+fi
+
+###############################################################################
+# 10. Run setup script inside the container
 ###############################################################################
 if [ "${CONTAINER_NAME}" = "sglang-mscclpp-test" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
