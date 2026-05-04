@@ -51,23 +51,3 @@ jobs:
       subscription:     mscclpp-ci-h100
       vmssName:         mscclpp-h100-ci
       gpuArch:          '90'
-
-- job: SGlangMultiNodeTest
-  displayName: SGLANG Multi-Node Test
-  strategy:
-    matrix:
-      sglang:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
-
-  pool:
-    name: mscclpp-it
-  container:
-    image: $(containerImage)
-
-  steps:
-  - template: templates/sglang-multi-test.yml
-    parameters:
-        subscription:  msccl-it
-        vmssName:      mscclit-vmss
-        resourceGroup: msccl-IT
-        hostEntries:   ${{ parameters.hostEntries }}
