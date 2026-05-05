@@ -47,7 +47,7 @@ steps:
       git clone -b main https://github.com/caiomcbr/sglang.git
       cd sglang
       pip install --upgrade pip
-      pip install -e "python"
+      pip install -e .
 
 # - template: run-remote-task.yml
 #   parameters:
