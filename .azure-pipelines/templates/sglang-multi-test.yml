@@ -57,10 +57,19 @@ steps:
     displayName: Install SGLang
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
+      # Remove any pre-baked sglang from the container image so all nodes
+      # use the freshly cloned fork (otherwise rank 0 imports
+      # /sgl-workspace/sglang while rank 1 imports our fork, causing
+      # version mismatch and NCCL/CUDA errors).
+      pip uninstall -y sglang sglang-router 2>/dev/null || true
+      rm -rf /sgl-workspace/sglang || true
+      rm -rf sglang
       git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
       cd sglang
       pip install --upgrade pip
       pip install -e "python"
+      # Sanity check: confirm sglang resolves to our fork on every node.
+      python -c "import sglang, os; p=os.path.dirname(sglang.__file__); print('sglang from:', p); assert '/sgl-workspace' not in p, 'stock sglang still active'"
 
 - template: run-remote-task.yml
   parameters:
