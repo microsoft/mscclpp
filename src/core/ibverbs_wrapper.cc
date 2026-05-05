@@ -10,32 +10,28 @@
 
 #include "logger.hpp"
 
-// NOTE: MRC_SUPPORT is a temporal macro that makes the current MRC implementation work.
-// MRC_SUPPORT is needed because the current libibverbs implmentation of MRC does not provide
-// all symbols that we need, so we need to load some symbols from the original libibverbs.
-// This macro will be removed (set 0) once MRC provides all necessary symbols.
+// Adding MSCCLPP_USE_MRC micro for MRC enablement.
 // Non-MRC environments will not be affected by this macro as long as VMRC_LIBIBVERBS_SO
 // environment variable is not set.
-#define MRC_SUPPORT 1
-#if (MRC_SUPPORT)
+#if (MSCCLPP_USE_MRC)
 #include <cstdlib>
 #include <set>
-#endif  // (MRC_SUPPORT)
+#endif  // (MSCCLPP_USE_MRC)
 
 namespace mscclpp {
 
 static std::unique_ptr<void, int (*)(void*)> globalIBVerbsHandle(nullptr, &::dlclose);
-#if (MRC_SUPPORT)
+#if (MSCCLPP_USE_MRC)
 static std::unique_ptr<void, int (*)(void*)> globalOrigIBVerbsHandle(nullptr, &::dlclose);
-#endif  // (MRC_SUPPORT)
+#endif  // (MSCCLPP_USE_MRC)
 
 void* IBVerbs::dlsym(const std::string& symbol, bool allowReturnNull) {
-#if (MRC_SUPPORT)
+#if (MSCCLPP_USE_MRC)
   static std::set<std::string> mrcSymbols = {
       "ibv_get_device_list", "ibv_get_device_name", "ibv_open_device", "ibv_close_device", "ibv_query_qp",
       "ibv_create_cq",       "ibv_destroy_cq",      "ibv_create_qp",   "ibv_modify_qp",    "ibv_destroy_qp",
   };
-#endif  // (MRC_SUPPORT)
+#endif  // (MSCCLPP_USE_MRC)
   if (!globalIBVerbsHandle) {
     if (mscclpp::env()->ibvSo != "") {
       void* handle = ::dlopen(mscclpp::env()->ibvSo.c_str(), RTLD_NOW);
@@ -59,7 +55,7 @@ void* IBVerbs::dlsym(const std::string& symbol, bool allowReturnNull) {
       THROW(NET, SysError, errno, "Failed to open libibverbs: ", std::string(::dlerror()));
     }
   }
-#if (MRC_SUPPORT)
+#if (MSCCLPP_USE_MRC)
   // In MRC mode, `VMRC_LIBIBVERBS_SO` should be set.
   char* vmrcLibibverbsSo = ::getenv("VMRC_LIBIBVERBS_SO");
   void* ptr;
@@ -76,9 +72,9 @@ void* IBVerbs::dlsym(const std::string& symbol, bool allowReturnNull) {
   } else {
     ptr = ::dlsym(globalIBVerbsHandle.get(), symbol.c_str());
   }
-#else   // !(MRC_SUPPORT)
+#else   // !(MSCCLPP_USE_MRC)
   void* ptr = ::dlsym(globalIBVerbsHandle.get(), symbol.c_str());
-#endif  // !(MRC_SUPPORT)
+#endif  // !(MSCCLPP_USE_MRC)
   if (!ptr && !allowReturnNull) {
     THROW(NET, SysError, errno, "Failed to load libibverbs symbol: ", symbol);
   }
