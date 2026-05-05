@@ -45,7 +45,7 @@ steps:
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       git clone -b main https://github.com/caiomcbr/sglang.git
-      cd sglang
+      cd sglang/python
       pip install --upgrade pip
       pip install -e .
 
