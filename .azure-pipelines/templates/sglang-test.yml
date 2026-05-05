@@ -92,7 +92,14 @@ steps:
     runRemoteArgs: '--container sglang-mscclpp-test'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
-      
+
+      # The fork's pyproject.toml excludes `benchmark*` from installed
+      # packages, but bench_serving.py imports from sglang.benchmark.datasets.
+      # Put the source tree on PYTHONPATH so the benchmark subpackage resolves.
+      if [ -d "$(pwd)/sglang/python/sglang/benchmark" ]; then
+        export PYTHONPATH="$(pwd)/sglang/python:${PYTHONPATH:-}"
+      fi
+
       echo "Directory: $(pwd)"
 
       # Launch sglang server in the background
