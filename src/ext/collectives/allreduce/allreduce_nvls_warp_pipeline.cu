@@ -1,7 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <mscclpp/algorithm.hpp>
+#include <mscclpp/errors.hpp>
 
 #include "allreduce/allreduce_nvls_warp_pipeline.hpp"
 #include "allreduce/common.hpp"
@@ -55,7 +57,7 @@ __global__ void __launch_bounds__(1024, 1)
 
   const size_t chanOffset = (ipcDomainNranks - 1) * blockIdx.x * 2;
   auto memoryChans = memoryChannels + chanOffset;
-  __shared__ DeviceHandle<BaseMemoryChannel> channels[(MAX_NRANKS_PER_NODE - 1) * 2];
+  __shared__ DeviceHandle<BaseMemoryChannel> channels[(MAX_IPC_DOMAIN_NRANKS - 1) * 2];
   const int lid = threadIdx.x % WARP_SIZE;
   // Each warp redundantly loads all entries (same value, benign race) so that
   // every warp has the data its threads will read after __syncwarp(). Required
@@ -141,14 +143,18 @@ struct NvlsWarpPipelineAdapter {
 };
 
 void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
-  nSwitchChannels_ = 8;
-  int nBaseChannels = 64;
+  nSwitchChannels_ = NUM_NVLS_CONNECTION;
+  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm, "AllreduceNvlsWarpPipeline");
+  // The warp-pipeline kernel addresses 2 * nPeers entries per block in `memoryChannels`,
+  // so per-peer base channel allocation must be at least `2 * nBlocks`. Default
+  // nBlocks = 4 * ipcDomainNranks (see allreduceKernelFunc), so size accordingly.
+  nBaseChannels_ = std::max(64, 8 * ipcDomainNranks_);
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores =
-      setupMemorySemaphores(comm, this->conns_, nBaseChannels);
+      setupMemorySemaphores(comm, this->conns_, nBaseChannels_);
   // setup base memory channels
-  this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels);
+  this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels_);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
   this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
 }
@@ -164,8 +170,58 @@ CommResult AllreduceNvlsWarpPipeline::allreduceKernelFunc(
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
-  if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = {ctx->ipcDomainNranks * 4, 1024};
+  if (blockAndThreadNum.first == 0) {
+    // Default to 4 * ipcDomainNranks blocks, rounded up to a multiple of NUM_NVLS_CONNECTION
+    // so that nBlocks / NUM_NVLS_CONNECTION partitioning in the kernel is well-defined.
+    int defaultBlocks = ctx->ipcDomainNranks * 4;
+    defaultBlocks = ((defaultBlocks + NUM_NVLS_CONNECTION - 1) / NUM_NVLS_CONNECTION) * NUM_NVLS_CONNECTION;
+    blockAndThreadNum.first = std::max(defaultBlocks, NUM_NVLS_CONNECTION);
+  }
+  if (blockAndThreadNum.second == 0) blockAndThreadNum.second = 1024;
+  // The kernel computes nBlocksPerNvlsConn = nBlocks / NUM_NVLS_CONNECTION and indexes the
+  // multicast handle array with bid / nBlocksPerNvlsConn; both must be safe.
+  if (blockAndThreadNum.first < NUM_NVLS_CONNECTION || blockAndThreadNum.first % NUM_NVLS_CONNECTION != 0) {
+    WARN("AllreduceNvlsWarpPipeline requires nBlocks to be a positive multiple of %d (got %d)", NUM_NVLS_CONNECTION,
+         blockAndThreadNum.first);
+    return CommResult::CommInvalidArgument;
+  }
+  // Each block uses 2 * nPeers consecutive entries in `memoryChannels`, so the per-peer
+  // base-channel allocation must support 2 * nBlocks distinct entries.
+  if (2 * blockAndThreadNum.first > this->nBaseChannels_) {
+    WARN(
+        "AllreduceNvlsWarpPipeline: nBlocks %d exceeds channel allocation (nBaseChannels=%d, "
+        "ipcDomainNranks=%d). Increase MSCCLPP_IPC_DOMAIN_NRANKS-aware sizing or reduce nBlocks.",
+        blockAndThreadNum.first, this->nBaseChannels_, ctx->ipcDomainNranks);
+    return CommResult::CommInvalidArgument;
+  }
+  // The kernel hard-codes 14 + 4 + 14 = 32 warps per block and bar.sync member counts
+  // computed from these constants; deviating from 1024 threads breaks those barriers.
+  if (blockAndThreadNum.second != 1024) {
+    WARN("AllreduceNvlsWarpPipeline requires nThreadsPerBlock == 1024 (got %d)", blockAndThreadNum.second);
+    return CommResult::CommInvalidArgument;
+  }
+  // Validate input divisibility by ipcDomainNranks (kernel computes size / ipcDomainNranks).
+  if (inputSize % static_cast<size_t>(ctx->ipcDomainNranks) != 0) {
+    WARN("AllreduceNvlsWarpPipeline requires inputSize %% ipcDomainNranks == 0 (got inputSize=%zu, ipcDomainNranks=%d)",
+         inputSize, ctx->ipcDomainNranks);
+    return CommResult::CommInvalidArgument;
+  }
+  // Validate scratch is large enough for at least one pipeline iteration. The kernel
+  // computes scratchSizePerBlock = (scratchSizePerRank / nBlocks) aligned down to copyPerIter;
+  // if this is 0 the modulo offset arithmetic divides by zero.
+  const size_t sizePerRank = inputSize / static_cast<size_t>(ctx->ipcDomainNranks);
+  const size_t maxSizePerBlock = ((sizePerRank + blockAndThreadNum.first - 1) / blockAndThreadNum.first + 15) / 16 * 16;
+  const size_t copyPerIter = (maxSizePerBlock >= 1024 * 64) ? (1024 * 32) : (1024 * 16);
+  const size_t scratchSizePerRank = this->scratchBufferSize_ / static_cast<size_t>(ctx->ipcDomainNranks);
+  const size_t scratchSizePerBlock =
+      (scratchSizePerRank / static_cast<size_t>(blockAndThreadNum.first)) / copyPerIter * copyPerIter;
+  if (scratchSizePerBlock < copyPerIter) {
+    WARN(
+        "AllreduceNvlsWarpPipeline scratch buffer too small for ipcDomainNranks=%d, nBlocks=%d, inputSize=%zu "
+        "(scratchBufferSize=%zu, need at least ~%zu bytes)",
+        ctx->ipcDomainNranks, blockAndThreadNum.first, inputSize, this->scratchBufferSize_,
+        static_cast<size_t>(ctx->ipcDomainNranks) * static_cast<size_t>(blockAndThreadNum.first) * copyPerIter);
+    return CommResult::CommInvalidArgument;
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
@@ -187,7 +243,7 @@ std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::share
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerNode();
+  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
 
   // setup channels
   ctx->switchChannels =

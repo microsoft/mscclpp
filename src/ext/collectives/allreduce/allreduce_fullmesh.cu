@@ -49,8 +49,8 @@ __global__ void __launch_bounds__(512, 1)
   const size_t blockOffset = nInt4PerChunk * blockIdx.x;
   const size_t scratchChunkRankOffset = chunkSizePerRank * rank;
 
-  __shared__ DeviceHandle<MemoryChannel> channels[MAX_NRANKS_PER_NODE - 1];
-  __shared__ DeviceHandle<MemoryChannel> outChannels[MAX_NRANKS_PER_NODE - 1];
+  __shared__ DeviceHandle<MemoryChannel> channels[MAX_IPC_DOMAIN_NRANKS - 1];
+  __shared__ DeviceHandle<MemoryChannel> outChannels[MAX_IPC_DOMAIN_NRANKS - 1];
   const int lid = threadIdx.x % WARP_SIZE;
   // Each warp redundantly loads all entries (same value, benign race) so that
   // every warp has the data its threads will read after __syncwarp(). Required

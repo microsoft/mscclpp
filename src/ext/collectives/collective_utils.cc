@@ -7,6 +7,7 @@
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/env.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
@@ -76,6 +77,28 @@ int getIpcDomainNranks(std::shared_ptr<mscclpp::Communicator> comm) {
     return envValue;
   }
   return comm->bootstrap()->getNranksPerNode();
+}
+
+int validateIpcDomainSpansWorld(std::shared_ptr<mscclpp::Communicator> comm, const char* algName) {
+  const int ipcDomainNranks = getIpcDomainNranks(comm);
+  const int worldSize = comm->bootstrap()->getNranks();
+  const int rank = comm->bootstrap()->getRank();
+  if (ipcDomainNranks < 2 || ipcDomainNranks > MAX_IPC_DOMAIN_NRANKS) {
+    throw mscclpp::Error(std::string(algName) + ": ipcDomainNranks " + std::to_string(ipcDomainNranks) +
+                             " is out of supported range [2, " + std::to_string(MAX_IPC_DOMAIN_NRANKS) + "]",
+                         mscclpp::ErrorCode::InvalidUsage);
+  }
+  if (worldSize != ipcDomainNranks) {
+    throw mscclpp::Error(std::string(algName) + " requires worldSize == ipcDomainNranks (got worldSize=" +
+                             std::to_string(worldSize) + ", ipcDomainNranks=" + std::to_string(ipcDomainNranks) + ")",
+                         mscclpp::ErrorCode::InvalidUsage);
+  }
+  if (rank < 0 || rank >= ipcDomainNranks) {
+    throw mscclpp::Error(std::string(algName) + ": rank " + std::to_string(rank) + " out of [0, " +
+                             std::to_string(ipcDomainNranks) + ")",
+                         mscclpp::ErrorCode::InvalidUsage);
+  }
+  return ipcDomainNranks;
 }
 
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(

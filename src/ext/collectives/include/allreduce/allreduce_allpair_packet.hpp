@@ -29,7 +29,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
-  // Must be at least MAX_NRANKS_PER_NODE-1 so the adapter can launch one
+  // Must be at least MAX_IPC_DOMAIN_NRANKS-1 so the adapter can launch one
   // block per peer at MNNVL scale.
   const int maxBlockNum_ = 72;
   std::vector<Connection> conns_;

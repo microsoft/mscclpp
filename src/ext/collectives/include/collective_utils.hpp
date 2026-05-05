@@ -26,7 +26,7 @@ namespace mscclpp {
 
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
-// Sized to cover MAX_NRANKS_PER_NODE-scale allreduce algos whose device-side
+// Sized to cover MAX_IPC_DOMAIN_NRANKS-scale allreduce algos whose device-side
 // semaphore indices grow as O(ipcDomainNranks) (e.g. nvls_block_pipeline uses
 // up to ~5 * ipcDomainNranks entries).
 constexpr int NUM_SEMAPHORES = 512;
@@ -35,7 +35,7 @@ constexpr int NUM_SEMAPHORES = 512;
 // single collective. Sized to cover Multi-Node NVLink (MNNVL) domains up to
 // GB200 NVL72 (72 GPUs sharing one NVLink fabric). Drives compile-time sizing
 // of shared-memory channel arrays in the allreduce/allgather kernels.
-constexpr int MAX_NRANKS_PER_NODE = 72;
+constexpr int MAX_IPC_DOMAIN_NRANKS = 72;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
 
@@ -57,6 +57,16 @@ std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores
 /// intentionally independent of `Bootstrap::getNranksPerNode()` so that algorithms can opt in to
 /// MNNVL-like behavior without changing the meaning of bootstrap-level APIs.
 int getIpcDomainNranks(std::shared_ptr<Communicator> comm);
+
+/// Validates that the IPC domain spans the whole communicator and that the local rank fits within
+/// the supported `[2, MAX_IPC_DOMAIN_NRANKS]` range. Used by NVLS allreduce algorithms whose
+/// multicast group spans the whole communicator (see `setupNvlsConnections`) and whose kernels
+/// use the global rank to compute per-rank offsets while sizing per-rank work by
+/// `ipcDomainNranks`. These assumptions only hold when the IPC-reachable peer group is exactly
+/// the whole communicator (e.g. a fully populated MNNVL fabric like NVL72). Returns the validated
+/// `ipcDomainNranks`; throws `Error(InvalidUsage)` on violation. `algName` is used as a prefix
+/// in error messages.
+int validateIpcDomainSpansWorld(std::shared_ptr<Communicator> comm, const char* algName);
 
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<MemoryChannel>& memoryChannels);
