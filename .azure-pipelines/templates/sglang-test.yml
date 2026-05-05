@@ -150,10 +150,11 @@ steps:
         --num-prompts 10 \
         --seed 42 \
         --request-rate inf \
-        2>&1 | tee $LOG_DIR/bench_serving.log"
+        --output-file "$RESULTS_DIR/run.jsonl" \
+        2>&1 | tee "$RESULTS_DIR/bench_serving.log"
 
       echo "Benchmark completed. Results:"
-      cat "$RESULTS_DIR/run.json"
+      cat "$RESULTS_DIR/run.jsonl" || true
 
       # Shut down the server
       kill $SERVER_PID 2>/dev/null || true
