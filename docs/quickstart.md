@@ -125,6 +125,43 @@ $ python -m pip install ".[cuda12,benchmark]"
 # Example: install with all extras for testing on CUDA 12
 $ python -m pip install ".[cuda12,benchmark,test]"
 ```
+## MRC (Multi-path Reliable Connection) Support
+
+MSCCL++ supports execution over **Multi-path Reliable Connection (MRC)**, which enables the use of multiple network paths to improve bandwidth utilization and resilience.
+
+To enable MRC support, you must configure both the **build-time** and **runtime** environments as described below.
+
+---
+
+### 1. Install MRC Verbs Shim
+
+MSCCL++ relies on a custom verbs shim library that intercepts standard `libibverbs` calls and redirects them to an MRC-enabled implementation.
+
+- Install the [MRC verbs shim library](https://github.com/microsoft/mrc-verbs-shim-lib) on all nodes in the cluster.
+- Ensure that the underlying system has MRC support enabled.
+
+---
+
+### 2. Build MSCCL++ with MRC Enabled
+
+Enable MRC support during the build by adding the following CMake option:
+
+```bash
+-DMSCCLPP_USE_MRC=ON
+```
+
+This configures MSCCL++ to use the MRC-enabled verbs layer at runtime.
+
+### 3. Configure Runtime Environment
+
+At runtime, you must configure environment variables to override the default RDMA libraries and link against the MRC-enabled stack:
+
+```bash
+-x MSCCLPP_IBV_SO=:$MRC-SHIM-HOME/libibverbs.so
+-x LD_LIBRARY_PATH=$MRC-SHIM-HOME/mrc-header-lib:$LD_LIBRARY_PATH
+-x VMRC_LIBMRC_SO=/opt/mellanox/doca/lib/aarch64-linux-gnu/libnv_mrc.so"
+-x VMRC_LIBIBVERBS_SO=/lib/aarch64-linux-gnu/libibverbs.so.1
+```
 
 (vscode-dev-container)=
 ## VSCode Dev Container
