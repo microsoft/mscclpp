@@ -125,7 +125,9 @@ $ python -m pip install ".[cuda12,benchmark]"
 # Example: install with all extras for testing on CUDA 12
 $ python -m pip install ".[cuda12,benchmark,test]"
 ```
-## MRC (Multi-path Reliable Connection) Support
+
+(mrc-support)=
+## MRC Support
 
 MSCCL++ supports execution over **Multi-path Reliable Connection (MRC)**, which enables the use of multiple network paths to improve bandwidth utilization and resilience.
 
