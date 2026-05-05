@@ -40,7 +40,7 @@ steps:
   parameters:
     name: InstallMscclpp
     displayName: Install mscclpp
-    runRemoteArgs: '--container sglang-mscclpp-test'
+    runRemoteArgs: '--container sglang-mscclpp-test --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
     remoteScript: |
       rm -rf build
       mkdir build 
@@ -55,7 +55,7 @@ steps:
   parameters:
     name: InstallSGLang
     displayName: Install SGLang
-    runRemoteArgs: '--container sglang-mscclpp-test'
+    runRemoteArgs: '--container sglang-mscclpp-test --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
     remoteScript: |
       # Remove any pre-baked sglang from the container image so all nodes
       # use the freshly cloned fork (otherwise rank 0 imports
