@@ -60,13 +60,9 @@ int getIpcDomainNranks(std::shared_ptr<Communicator> comm);
 
 /// Validates that the IPC domain spans the whole communicator and that the local rank fits within
 /// the supported `[2, MAX_IPC_DOMAIN_NRANKS]` range. Used by NVLS allreduce algorithms whose
-/// multicast group spans the whole communicator (see `setupNvlsConnections`) and whose kernels
-/// use the global rank to compute per-rank offsets while sizing per-rank work by
-/// `ipcDomainNranks`. These assumptions only hold when the IPC-reachable peer group is exactly
-/// the whole communicator (e.g. a fully populated MNNVL fabric like NVL72). Returns the validated
-/// `ipcDomainNranks`; throws `Error(InvalidUsage)` on violation. `algName` is used as a prefix
-/// in error messages.
-int validateIpcDomainSpansWorld(std::shared_ptr<Communicator> comm, const char* algName);
+/// multicast group spans the whole communicator. Returns the validated `ipcDomainNranks`; throws
+/// `Error(InvalidUsage)` on violation.
+int validateIpcDomainSpansWorld(std::shared_ptr<Communicator> comm);
 
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<MemoryChannel>& memoryChannels);

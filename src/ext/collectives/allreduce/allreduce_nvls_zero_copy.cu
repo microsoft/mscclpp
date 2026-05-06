@@ -45,9 +45,7 @@ __global__ void __launch_bounds__(1024, 1)
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel> channels[MAX_IPC_DOMAIN_NRANKS - 1];
   const int lid = threadIdx.x % WARP_SIZE;
-  // Each warp redundantly loads all entries (same value, benign race) so that
-  // every warp has the data its threads will read after __syncwarp(). Required
-  // when nPeers > WARP_SIZE (MNNVL/NVL72 → 71 peers).
+  // Peer count may exceed WARP_SIZE on MNNVL.
   for (int i = lid; i < ipcDomainNranks - 1; i += WARP_SIZE) {
     channels[i] = memoryChans[i];
   }
@@ -107,7 +105,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
   computeCapabilityMajor_ = deviceProp.major;
   nSwitchChannels_ = 32;
-  validateIpcDomainSpansWorld(comm, "AllreduceNvls");
+  validateIpcDomainSpansWorld(comm);
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =

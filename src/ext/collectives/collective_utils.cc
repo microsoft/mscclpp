@@ -11,6 +11,8 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
+#include "logger.hpp"
+
 namespace mscclpp {
 namespace collective {
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
@@ -79,24 +81,22 @@ int getIpcDomainNranks(std::shared_ptr<mscclpp::Communicator> comm) {
   return comm->bootstrap()->getNranksPerNode();
 }
 
-int validateIpcDomainSpansWorld(std::shared_ptr<mscclpp::Communicator> comm, const char* algName) {
+int validateIpcDomainSpansWorld(std::shared_ptr<mscclpp::Communicator> comm) {
   const int ipcDomainNranks = getIpcDomainNranks(comm);
   const int worldSize = comm->bootstrap()->getNranks();
   const int rank = comm->bootstrap()->getRank();
   if (ipcDomainNranks < 2 || ipcDomainNranks > MAX_IPC_DOMAIN_NRANKS) {
-    throw mscclpp::Error(std::string(algName) + ": ipcDomainNranks " + std::to_string(ipcDomainNranks) +
-                             " is out of supported range [2, " + std::to_string(MAX_IPC_DOMAIN_NRANKS) + "]",
-                         mscclpp::ErrorCode::InvalidUsage);
+    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "ipcDomainNranks ",
+          ipcDomainNranks, " is out of supported range [2, ", MAX_IPC_DOMAIN_NRANKS, "]");
   }
   if (worldSize != ipcDomainNranks) {
-    throw mscclpp::Error(std::string(algName) + " requires worldSize == ipcDomainNranks (got worldSize=" +
-                             std::to_string(worldSize) + ", ipcDomainNranks=" + std::to_string(ipcDomainNranks) + ")",
-                         mscclpp::ErrorCode::InvalidUsage);
+    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+          "requires worldSize == ipcDomainNranks (got worldSize=", worldSize, ", ipcDomainNranks=", ipcDomainNranks,
+          ")");
   }
   if (rank < 0 || rank >= ipcDomainNranks) {
-    throw mscclpp::Error(std::string(algName) + ": rank " + std::to_string(rank) + " out of [0, " +
-                             std::to_string(ipcDomainNranks) + ")",
-                         mscclpp::ErrorCode::InvalidUsage);
+    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "rank ", rank, " out of [0, ",
+          ipcDomainNranks, ")");
   }
   return ipcDomainNranks;
 }

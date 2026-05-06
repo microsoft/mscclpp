@@ -59,9 +59,7 @@ __global__ void __launch_bounds__(1024, 1)
   auto memoryChans = memoryChannels + chanOffset;
   __shared__ DeviceHandle<BaseMemoryChannel> channels[(MAX_IPC_DOMAIN_NRANKS - 1) * 2];
   const int lid = threadIdx.x % WARP_SIZE;
-  // Each warp redundantly loads all entries (same value, benign race) so that
-  // every warp has the data its threads will read after __syncwarp(). Required
-  // when nPeers*2 > WARP_SIZE (MNNVL scale).
+  // Peer count may exceed WARP_SIZE on MNNVL.
   for (int i = lid; i < nPeers * 2; i += WARP_SIZE) {
     channels[i] = memoryChans[i];
   }
@@ -144,7 +142,7 @@ struct NvlsWarpPipelineAdapter {
 
 void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = NUM_NVLS_CONNECTION;
-  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm, "AllreduceNvlsWarpPipeline");
+  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm);
   // The warp-pipeline kernel addresses 2 * nPeers entries per block in `memoryChannels`,
   // so per-peer base channel allocation must be at least `2 * nBlocks`. Default
   // nBlocks = 4 * ipcDomainNranks (see allreduceKernelFunc), so size accordingly.

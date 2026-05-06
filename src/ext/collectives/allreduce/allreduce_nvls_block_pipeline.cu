@@ -178,7 +178,7 @@ struct NvlsBlockPipelineAdapter {
 
 void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
-  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm, "AllreduceNvlsBlockPipeline");
+  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm);
   // Block-pipeline device-side semaphore indices grow as 6 * ipcDomainNranks (see kernel).
   if (6 * ipcDomainNranks_ > NUM_SEMAPHORES) {
     throw Error("AllreduceNvlsBlockPipeline: ipcDomainNranks " + std::to_string(ipcDomainNranks_) +
