@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 """Multi-rank intranode functional validation for mscclpp_ep.
 
 Launch with:

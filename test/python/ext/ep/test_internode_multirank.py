@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 """Multi-rank internode (HT) functional validation for mscclpp_ep.
 
 Launch on each node with (example: 2 nodes x 8 GPUs = 16 ranks):
