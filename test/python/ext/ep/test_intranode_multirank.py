@@ -111,9 +111,11 @@ def main():
     _buf_hidden = max(hidden, int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "0"))) if _bench_on else hidden
     num_nvl_bytes = cfg.get_nvl_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
     if rank == 0:
-        print(f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-              f"num_experts={num_experts} num_topk={num_topk} num_nvl_bytes={num_nvl_bytes}",
-              flush=True)
+        print(
+            f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
+            f"num_experts={num_experts} num_topk={num_topk} num_nvl_bytes={num_nvl_bytes}",
+            flush=True,
+        )
 
     print(f"[rank {rank}] creating Buffer", flush=True)
     buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
@@ -129,14 +131,34 @@ def main():
         print("[layout] OK", flush=True)
 
     # Dispatch
-    (recv_x, recv_x_scales, recv_topk_idx, recv_topk_weights,
-     num_recv_tokens_per_expert_list,
-     rank_prefix_matrix, channel_prefix_matrix, recv_channel_prefix_matrix, recv_src_idx,
-     send_head, _event) = buf.runtime.intranode_dispatch(
-        x, None, topk_idx, topk_weights,
-        num_tokens_per_rank, is_token_in_rank, num_tokens_per_expert,
-        0, None, None,
-        1, cfg, None, False, False,
+    (
+        recv_x,
+        recv_x_scales,
+        recv_topk_idx,
+        recv_topk_weights,
+        num_recv_tokens_per_expert_list,
+        rank_prefix_matrix,
+        channel_prefix_matrix,
+        recv_channel_prefix_matrix,
+        recv_src_idx,
+        send_head,
+        _event,
+    ) = buf.runtime.intranode_dispatch(
+        x,
+        None,
+        topk_idx,
+        topk_weights,
+        num_tokens_per_rank,
+        is_token_in_rank,
+        num_tokens_per_expert,
+        0,
+        None,
+        None,
+        1,
+        cfg,
+        None,
+        False,
+        False,
     )
     dist.barrier(group=group)
 
@@ -149,9 +171,7 @@ def main():
         block = recv_x[start:end]
         if block.numel():
             actual = block.float().amin().item()
-            assert abs(actual - src) < 1e-3, (
-                f"rank{rank}: block from src={src} has min={actual}, expected {src}"
-            )
+            assert abs(actual - src) < 1e-3, f"rank{rank}: block from src={src} has min={actual}, expected {src}"
             assert abs(block.float().amax().item() - src) < 1e-3
         start = end
     if rank == 0:
@@ -165,9 +185,16 @@ def main():
     handle_channel_prefix_matrix = recv_channel_prefix_matrix
 
     combined_x, combined_topk_weights, _ = buf.runtime.intranode_combine(
-        recv_x, recv_topk_weights,
-        handle_recv_src_idx, handle_rank_prefix_matrix, handle_channel_prefix_matrix,
-        send_head, cfg, None, False, False,
+        recv_x,
+        recv_topk_weights,
+        handle_recv_src_idx,
+        handle_rank_prefix_matrix,
+        handle_channel_prefix_matrix,
+        send_head,
+        cfg,
+        None,
+        False,
+        False,
     )
 
     # Expected: we dispatched with x = rank * ones, so every destination r
@@ -201,19 +228,17 @@ def main():
     # NCCL-EP's `ep_bench -a ht` defaults (256 experts, top-8). The functional
     # check above still uses the smaller (num_experts=num_ranks*4, topk=4)
     # configuration.
-    bench_num_experts = int(os.environ.get(
-        "MSCCLPP_EP_BENCH_EXPERTS", str(num_experts)))
-    bench_num_topk = int(os.environ.get(
-        "MSCCLPP_EP_BENCH_TOPK", str(num_topk)))
+    bench_num_experts = int(os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", str(num_experts)))
+    bench_num_topk = int(os.environ.get("MSCCLPP_EP_BENCH_TOPK", str(num_topk)))
     if bench_num_experts % num_ranks != 0:
         if rank == 0:
-            print(f"[bench] skip: num_experts={bench_num_experts} not divisible "
-                  f"by num_ranks={num_ranks}", flush=True)
+            print(
+                f"[bench] skip: num_experts={bench_num_experts} not divisible " f"by num_ranks={num_ranks}", flush=True
+            )
         return
     if bench_num_topk > bench_num_experts:
         if rank == 0:
-            print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}",
-                  flush=True)
+            print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
     # Rebuild inputs at bench size. Keep same layout recipe as above but at
@@ -253,15 +278,36 @@ def main():
 
     def _dispatch():
         return buf.runtime.intranode_dispatch(
-            x_b, None, topk_idx_b, topk_weights_b,
-            num_tokens_per_rank_b, is_token_in_rank_b, num_tokens_per_expert_b,
-            0, None, None, 1, cfg, None, False, False,
+            x_b,
+            None,
+            topk_idx_b,
+            topk_weights_b,
+            num_tokens_per_rank_b,
+            is_token_in_rank_b,
+            num_tokens_per_expert_b,
+            0,
+            None,
+            None,
+            1,
+            cfg,
+            None,
+            False,
+            False,
         )
 
     def _combine(dout):
-        (rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev) = dout
+        rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev = dout
         buf.runtime.intranode_combine(
-            rx, rtw, rsi, rpm, rcpm, sh, cfg, None, False, False,
+            rx,
+            rtw,
+            rsi,
+            rpm,
+            rcpm,
+            sh,
+            cfg,
+            None,
+            False,
+            False,
         )
 
     # Warmup (full round-trip).
@@ -319,9 +365,9 @@ def main():
 
     # Average per-rank token counts across ranks (matches NCCL-EP `Byte counts (per rank avg)`).
     counts_t = torch.tensor(
-        [total_send_tokens_local, rdma_send_tokens_local,
-         total_recv_tokens_local, rdma_recv_tokens_local],
-        dtype=torch.float64, device="cuda",
+        [total_send_tokens_local, rdma_send_tokens_local, total_recv_tokens_local, rdma_recv_tokens_local],
+        dtype=torch.float64,
+        device="cuda",
     )
     dist.all_reduce(counts_t, op=dist.ReduceOp.SUM, group=group)
     counts_avg = (counts_t / num_ranks).tolist()
@@ -410,6 +456,7 @@ if __name__ == "__main__":
         main()
     except Exception:
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
     finally:

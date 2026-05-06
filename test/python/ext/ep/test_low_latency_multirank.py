@@ -70,7 +70,9 @@ def main():
     assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
 
     num_tokens = int(os.environ.get("MSCCLPP_EP_LL_TOKENS", "64"))
-    hidden = int(os.environ.get("MSCCLPP_EP_LL_HIDDEN", "7168"))  # LL kernels are compiled for a fixed set; see SWITCH_HIDDEN
+    hidden = int(
+        os.environ.get("MSCCLPP_EP_LL_HIDDEN", "7168")
+    )  # LL kernels are compiled for a fixed set; see SWITCH_HIDDEN
     num_topk = int(os.environ.get("MSCCLPP_EP_LL_TOPK", "4"))
     num_experts_per_rank = int(os.environ.get("MSCCLPP_EP_LL_EXPERTS_PER_RANK", "4"))
     num_experts = num_ranks * num_experts_per_rank
@@ -83,9 +85,7 @@ def main():
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * (rank - rank_offset)
     # Encode the per-token index into the last 128 elements so the receiver
     # can verify which source token it is looking at.
-    x[:, -128:] = (
-        torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
-    )
+    x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
     topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
@@ -94,9 +94,7 @@ def main():
     for _ in range(min(10, num_tokens)):
         topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
 
-    num_rdma_bytes = ep.Buffer.get_low_latency_rdma_size_hint(
-        num_tokens, hidden, num_ranks, num_experts
-    )
+    num_rdma_bytes = ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
@@ -129,12 +127,21 @@ def main():
     #   packed_recv_count, packed_recv_src_info, packed_recv_layout_range,
     #   event, hook
     (
-        packed_recv_x, _packed_recv_x_scales,
-        packed_recv_count, packed_recv_src_info, packed_recv_layout_range,
-        _event, recv_hook,
+        packed_recv_x,
+        _packed_recv_x_scales,
+        packed_recv_count,
+        packed_recv_src_info,
+        packed_recv_layout_range,
+        _event,
+        recv_hook,
     ) = buf.low_latency_dispatch(
-        x, topk_idx, num_tokens, num_experts,
-        False, False, True,  # use_fp8, async, return_recv_hook
+        x,
+        topk_idx,
+        num_tokens,
+        num_experts,
+        False,
+        False,
+        True,  # use_fp8, async, return_recv_hook
     )
     # Send phase launched on compute_stream; wait for local launch.
     torch.cuda.synchronize()
@@ -158,12 +165,12 @@ def main():
         expected_count = int((all_topk_idx == expert_id).sum().item())
         recv_layout_range = handle[1][i]
         layout_sum = int((recv_layout_range & int_mask).sum().item())
-        assert recv_count == expected_count, (
-            f"rank{rank} expert{expert_id}: recv_count={recv_count} != expected={expected_count}"
-        )
-        assert layout_sum == recv_count, (
-            f"rank{rank} expert{expert_id}: layout range sum {layout_sum} != recv_count {recv_count}"
-        )
+        assert (
+            recv_count == expected_count
+        ), f"rank{rank} expert{expert_id}: recv_count={recv_count} != expected={expected_count}"
+        assert (
+            layout_sum == recv_count
+        ), f"rank{rank} expert{expert_id}: layout range sum {layout_sum} != recv_count {recv_count}"
 
         if recv_count:
             recv_x = packed_recv_x[i, :recv_count]
@@ -186,10 +193,16 @@ def main():
     #             zero_copy, async, return_recv_hook, out)
     src_info, layout_range = handle[0], handle[1]
     combined_x, _event, _hook = buf.low_latency_combine(
-        simulated_gemm_x, topk_idx, topk_weights,
-        src_info, layout_range,
-        num_tokens, num_experts,
-        False, False, False,  # zero_copy, async, return_recv_hook
+        simulated_gemm_x,
+        topk_idx,
+        topk_weights,
+        src_info,
+        layout_range,
+        num_tokens,
+        num_experts,
+        False,
+        False,
+        False,  # zero_copy, async, return_recv_hook
         out,
     )
 
@@ -230,23 +243,34 @@ def main():
     num_local_experts = num_experts // num_ranks
     bench_packed_recv_x = torch.empty(
         (num_local_experts, num_ranks * num_tokens, hidden),
-        dtype=torch.bfloat16, device="cuda",
+        dtype=torch.bfloat16,
+        device="cuda",
     )
     bench_packed_recv_src_info = torch.empty(
         (num_local_experts, num_ranks * num_tokens),
-        dtype=torch.int32, device="cuda",
+        dtype=torch.int32,
+        device="cuda",
     )
     bench_packed_recv_layout_range = torch.empty(
-        (num_local_experts, num_ranks), dtype=torch.int64, device="cuda",
+        (num_local_experts, num_ranks),
+        dtype=torch.int64,
+        device="cuda",
     )
     bench_packed_recv_count = torch.empty(
-        (num_local_experts,), dtype=torch.int32, device="cuda",
+        (num_local_experts,),
+        dtype=torch.int32,
+        device="cuda",
     )
 
     def _dispatch():
         return buf.low_latency_dispatch(
-            x, topk_idx, num_tokens, num_experts,
-            False, False, False,  # use_fp8, async, return_recv_hook
+            x,
+            topk_idx,
+            num_tokens,
+            num_experts,
+            False,
+            False,
+            False,  # use_fp8, async, return_recv_hook
             bench_packed_recv_x,
             None,  # x_scales (FP8 only)
             bench_packed_recv_src_info,
@@ -261,12 +285,18 @@ def main():
     bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _combine(dout, out_):
-        (recv_x, _scales, _cnt, src_info_, layout_range_, _ev, _hk) = dout
+        recv_x, _scales, _cnt, src_info_, layout_range_, _ev, _hk = dout
         buf.low_latency_combine(
-            recv_x, topk_idx, topk_weights,
-            src_info_, layout_range_,
-            num_tokens, num_experts,
-            False, False, False,
+            recv_x,
+            topk_idx,
+            topk_weights,
+            src_info_,
+            layout_range_,
+            num_tokens,
+            num_experts,
+            False,
+            False,
+            False,
             out_,
         )
 
