@@ -24,7 +24,7 @@ __global__ void barrier(int** task_fifo_ptrs, int head, int rank) {
 }
 
 void barrier(int** task_fifo_ptrs, int head, int rank, int num_ranks, cudaStream_t stream) {
-#define BARRIER_LAUNCH_CASE(ranks)                                    \
+#define BARRIER_LAUNCH_CASE(ranks)                                 \
   LAUNCH_KERNEL(&cfg, barrier<ranks>, task_fifo_ptrs, head, rank); \
   break
 

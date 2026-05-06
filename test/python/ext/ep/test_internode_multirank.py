@@ -46,8 +46,9 @@ def init_dist():
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ.get("LOCAL_RANK", rank % 8))
     torch.cuda.set_device(local_rank)
-    dist.init_process_group(backend="nccl", world_size=world_size, rank=rank,
-                            device_id=torch.device(f"cuda:{local_rank}"))
+    dist.init_process_group(
+        backend="nccl", world_size=world_size, rank=rank, device_id=torch.device(f"cuda:{local_rank}")
+    )
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
 
 
@@ -71,8 +72,9 @@ def main():
     from mscclpp.ext import ep
 
     NUM_MAX_NVL_PEERS = 8
-    assert num_ranks % NUM_MAX_NVL_PEERS == 0 and num_ranks > NUM_MAX_NVL_PEERS, \
-        f"expected >1 node with 8 GPUs each, got num_ranks={num_ranks}"
+    assert (
+        num_ranks % NUM_MAX_NVL_PEERS == 0 and num_ranks > NUM_MAX_NVL_PEERS
+    ), f"expected >1 node with 8 GPUs each, got num_ranks={num_ranks}"
     num_nodes = num_ranks // NUM_MAX_NVL_PEERS
     num_local_ranks = NUM_MAX_NVL_PEERS
 
@@ -80,7 +82,7 @@ def main():
     num_tokens = 128
     hidden = 1024
     num_topk = min(4, num_ranks)
-    num_experts = (num_ranks * 4)  # multiple of num_ranks
+    num_experts = num_ranks * 4  # multiple of num_ranks
 
     torch.manual_seed(0xA1B2 + rank)
 
@@ -125,19 +127,25 @@ def main():
     num_nvl_bytes = cfg.get_nvl_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
     num_rdma_bytes = cfg.get_rdma_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
     if rank == 0:
-        print(f"[cfg] num_nodes={num_nodes} num_ranks={num_ranks} num_tokens={num_tokens} "
-              f"hidden={hidden} num_experts={num_experts} num_topk={num_topk} "
-              f"num_nvl_bytes={num_nvl_bytes} num_rdma_bytes={num_rdma_bytes}",
-              flush=True)
+        print(
+            f"[cfg] num_nodes={num_nodes} num_ranks={num_ranks} num_tokens={num_tokens} "
+            f"hidden={hidden} num_experts={num_experts} num_topk={num_topk} "
+            f"num_nvl_bytes={num_nvl_bytes} num_rdma_bytes={num_rdma_bytes}",
+            flush=True,
+        )
 
     print(f"[rank {rank}] creating Buffer", flush=True)
     buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False)
-    print(f"[rank {rank}] Buffer created is_available={buf.is_available()} "
-          f"is_internode={buf.is_internode_available()}", flush=True)
+    print(
+        f"[rank {rank}] Buffer created is_available={buf.is_available()} "
+        f"is_internode={buf.is_internode_available()}",
+        flush=True,
+    )
     assert buf.is_available() and buf.is_internode_available()
 
-    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = \
-        buf.runtime.get_dispatch_layout(topk_idx, num_experts, None, False, False)
+    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(
+        topk_idx, num_experts, None, False, False
+    )
     assert torch.allclose(ref_rank, num_tokens_per_rank)
     assert torch.allclose(ref_rdma_rank, num_tokens_per_rdma_rank)
     assert torch.allclose(ref_exp, num_tokens_per_expert)
@@ -153,17 +161,42 @@ def main():
     #  cached_rdma_channel_prefix_matrix=None, cached_recv_rdma_rank_prefix_sum=None,
     #  cached_gbl_channel_prefix_matrix=None, cached_recv_gbl_rank_prefix_sum=None,
     #  expert_alignment, config, previous_event, async, allocate_on_comm_stream)
-    (recv_x, recv_x_scales, recv_topk_idx, recv_topk_weights,
-     num_recv_tokens_per_expert_list,
-     rdma_channel_prefix_matrix, gbl_channel_prefix_matrix,
-     recv_rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,
-     recv_gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum,
-     recv_src_meta, send_rdma_head, send_nvl_head, _event) = buf.runtime.internode_dispatch(
-        x, None, topk_idx, topk_weights,
-        num_tokens_per_rank, num_tokens_per_rdma_rank, is_token_in_rank, num_tokens_per_expert,
-        0, 0,
-        None, None, None, None,
-        1, cfg, None, False, False,
+    (
+        recv_x,
+        recv_x_scales,
+        recv_topk_idx,
+        recv_topk_weights,
+        num_recv_tokens_per_expert_list,
+        rdma_channel_prefix_matrix,
+        gbl_channel_prefix_matrix,
+        recv_rdma_channel_prefix_matrix,
+        recv_rdma_rank_prefix_sum,
+        recv_gbl_channel_prefix_matrix,
+        recv_gbl_rank_prefix_sum,
+        recv_src_meta,
+        send_rdma_head,
+        send_nvl_head,
+        _event,
+    ) = buf.runtime.internode_dispatch(
+        x,
+        None,
+        topk_idx,
+        topk_weights,
+        num_tokens_per_rank,
+        num_tokens_per_rdma_rank,
+        is_token_in_rank,
+        num_tokens_per_expert,
+        0,
+        0,
+        None,
+        None,
+        None,
+        None,
+        1,
+        cfg,
+        None,
+        False,
+        False,
     )
     dist.barrier(group=group)
 
@@ -176,9 +209,9 @@ def main():
         if block.numel():
             lo = block.float().amin().item()
             hi = block.float().amax().item()
-            assert abs(lo - src) < 1e-3 and abs(hi - src) < 1e-3, (
-                f"rank{rank}: block from src={src} has range=[{lo}, {hi}], expected {src}"
-            )
+            assert (
+                abs(lo - src) < 1e-3 and abs(hi - src) < 1e-3
+            ), f"rank{rank}: block from src={src} has range=[{lo}, {hi}], expected {src}"
         start = end
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
@@ -202,11 +235,19 @@ def main():
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
     combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
-        recv_x, recv_topk_weights,
-        recv_src_meta, is_token_in_rank,
-        recv_rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum, recv_gbl_channel_prefix_matrix,
-        send_rdma_head, send_nvl_head,
-        cfg, None, False, False,
+        recv_x,
+        recv_topk_weights,
+        recv_src_meta,
+        is_token_in_rank,
+        recv_rdma_channel_prefix_matrix,
+        recv_rdma_rank_prefix_sum,
+        recv_gbl_channel_prefix_matrix,
+        send_rdma_head,
+        send_nvl_head,
+        cfg,
+        None,
+        False,
+        False,
     )
 
     num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
@@ -235,19 +276,17 @@ def main():
     # NCCL-EP's `ep_bench -a ht` defaults (256 experts, top-8). The functional
     # check above still uses the smaller (num_experts=num_ranks*4, topk=4)
     # configuration.
-    bench_num_experts = int(os.environ.get(
-        "MSCCLPP_EP_BENCH_EXPERTS", str(num_experts)))
-    bench_num_topk = int(os.environ.get(
-        "MSCCLPP_EP_BENCH_TOPK", str(num_topk)))
+    bench_num_experts = int(os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", str(num_experts)))
+    bench_num_topk = int(os.environ.get("MSCCLPP_EP_BENCH_TOPK", str(num_topk)))
     if bench_num_experts % num_ranks != 0:
         if rank == 0:
-            print(f"[bench] skip: num_experts={bench_num_experts} not divisible "
-                  f"by num_ranks={num_ranks}", flush=True)
+            print(
+                f"[bench] skip: num_experts={bench_num_experts} not divisible " f"by num_ranks={num_ranks}", flush=True
+            )
         return
     if bench_num_topk > bench_num_experts:
         if rank == 0:
-            print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}",
-                  flush=True)
+            print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
     # Respect the Buffer's pre-sized num_nvl_bytes / num_rdma_bytes budget.
@@ -294,20 +333,43 @@ def main():
 
     def _dispatch():
         return buf.runtime.internode_dispatch(
-            x_b, None, topk_idx_b, topk_weights_b,
-            num_tokens_per_rank_b, num_tokens_per_rdma_rank_b, is_token_in_rank_b, num_tokens_per_expert_b,
-            0, 0, None, None, None, None,
-            1, cfg, None, False, False,
+            x_b,
+            None,
+            topk_idx_b,
+            topk_weights_b,
+            num_tokens_per_rank_b,
+            num_tokens_per_rdma_rank_b,
+            is_token_in_rank_b,
+            num_tokens_per_expert_b,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+            1,
+            cfg,
+            None,
+            False,
+            False,
         )
 
     def _combine(dout):
-        (rx, _rxs, _rti, rtw, _lst,
-         _rpm, _gpm, rrcpm, rrps, rgpm, _rgps,
-         rsm, sh_rdma, sh_nvl, _ev) = dout
+        rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
         buf.runtime.internode_combine(
-            rx, rtw, rsm, is_token_in_rank_b,
-            rrcpm, rrps, rgpm,
-            sh_rdma, sh_nvl, cfg, None, False, False,
+            rx,
+            rtw,
+            rsm,
+            is_token_in_rank_b,
+            rrcpm,
+            rrps,
+            rgpm,
+            sh_rdma,
+            sh_nvl,
+            cfg,
+            None,
+            False,
+            False,
         )
 
     # Warmup (full round-trip with the sync/barrier guard between phases,
@@ -369,16 +431,16 @@ def main():
         num_tokens_per_rank_b.to(torch.int64),
         group=group,
     )
-    src_node = (torch.arange(num_ranks, device="cuda") // num_local_ranks)
+    src_node = torch.arange(num_ranks, device="cuda") // num_local_ranks
     remote_mask = (src_node != local_node).to(torch.int64)
     total_recv_tokens_local = int(recv_from_src.sum().item())
     rdma_recv_tokens_local = int((recv_from_src * remote_mask).sum().item())
 
     # Average per-rank token counts across ranks (matches NCCL-EP `Byte counts (per rank avg)`).
     counts_t = torch.tensor(
-        [total_send_tokens_local, rdma_send_tokens_local,
-         total_recv_tokens_local, rdma_recv_tokens_local],
-        dtype=torch.float64, device="cuda",
+        [total_send_tokens_local, rdma_send_tokens_local, total_recv_tokens_local, rdma_recv_tokens_local],
+        dtype=torch.float64,
+        device="cuda",
     )
     dist.all_reduce(counts_t, op=dist.ReduceOp.SUM, group=group)
     counts_avg = (counts_t / num_ranks).tolist()
@@ -469,6 +531,7 @@ if __name__ == "__main__":
         main()
     except Exception:
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
     finally:

@@ -177,7 +177,9 @@ class Buffer:
     def get_next_low_latency_combine_buffer(self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int):
         return self.runtime.get_next_low_latency_combine_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
 
-    def get_local_buffer_tensor(self, dtype: torch.dtype, offset: int = 0, use_rdma_buffer: bool = False) -> torch.Tensor:
+    def get_local_buffer_tensor(
+        self, dtype: torch.dtype, offset: int = 0, use_rdma_buffer: bool = False
+    ) -> torch.Tensor:
         return self.runtime.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
 
     # ------------------------------------------------------------------
