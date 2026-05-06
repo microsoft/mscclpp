@@ -11,6 +11,7 @@
 #include <mscclpp/core.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/gpu.hpp>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -115,9 +116,11 @@ class TorchCommMSCCLPP : public TorchCommBackend, public std::enable_shared_from
   /// Map PyTorch scalar type to MSCCL++ DataType.
   static mscclpp::DataType torchDtypeToMscclpp(at::ScalarType dtype);
 
-  /// Map TorchComms ReduceOp to MSCCL++ ReduceOp.
-  /// Throws if the op is not supported by MSCCL++ native kernels.
-  static mscclpp::ReduceOp torchReduceOpToMscclpp(const ReduceOp& op, const std::string& collective_name);
+  /// Map TorchComms ReduceOp to MSCCL++ ReduceOp. Returns std::nullopt for
+  /// ops MSCCL++ kernels do not implement (MAX, PRODUCT, ...); callers route
+  /// those to NcclFallback. Single source of truth for "does MSCCL++ handle
+  /// this op natively?".
+  static std::optional<mscclpp::ReduceOp> torchReduceOpToMscclpp(const ReduceOp& op);
 
   /// Get the appropriate stream for an operation.
   cudaStream_t getOperationStream(bool async_op) const;
@@ -136,6 +139,15 @@ class TorchCommMSCCLPP : public TorchCommBackend, public std::enable_shared_from
   template <typename Fn>
   c10::intrusive_ptr<TorchWork> ncclFallback(const char* op, cudaStream_t stream, std::chrono::milliseconds timeout,
                                              Fn&& body);
+
+  /// Execute a resolved MSCCL++ algorithm wrapped in start/end GPU events.
+  /// Shared by executeCollective() and reduce_scatter_single()'s native
+  /// branch (which has to call selectAlgorithm() itself to gate on reduce-op
+  /// support).
+  c10::intrusive_ptr<TorchWork> runAlgorithm(const std::shared_ptr<mscclpp::Algorithm>& algo, const void* sendbuf,
+                                             void* recvbuf, size_t sendBytes, size_t recvBytes, mscclpp::DataType dtype,
+                                             mscclpp::ReduceOp reduceOp, cudaStream_t stream,
+                                             std::chrono::milliseconds timeout);
 
   /// Central dispatch for all supported collectives.
   ///

@@ -39,21 +39,26 @@ mscclpp::DataType TorchCommMSCCLPP::torchDtypeToMscclpp(at::ScalarType dtype) {
   }
 }
 
-mscclpp::ReduceOp TorchCommMSCCLPP::torchReduceOpToMscclpp(const ReduceOp& op, const std::string& collective_name) {
+std::optional<mscclpp::ReduceOp> TorchCommMSCCLPP::torchReduceOpToMscclpp(const ReduceOp& op) {
+  // MSCCL++ kernels only implement SUM and MIN. Everything else routes to
+  // NcclFallback, which uses NCCL's correct implementation.
+  //
+  // PREMUL_SUM is mapped to SUM because it's defined as "caller has already
+  // multiplied each input by the scale factor" — so by the time the kernel
+  // runs, it really is just a SUM. (FSDP2 uses this for grad sync.)
+  //
+  // AVG is intentionally NOT mapped to SUM here. AVG = SUM/world_size, and
+  // MSCCL++ has no native divide step; mapping AVG → SUM would silently
+  // produce N× the correct result. NCCL implements AVG correctly via
+  // ncclAvg, so we let it route there.
   switch (op.type()) {
     case ReduceOp::RedOpType::SUM:
-    // FSDP2 sends PREMUL_SUM (with the divide factor pre-applied to the gradient)
-    // and AVG for reduce_scatter. MSCCL++ kernels only implement SUM, but the
-    // caller has already done the scaling for PREMUL_SUM, and FSDP2's
-    // set_gradient_divide_factor(1.0) makes AVG behave as SUM.
     case ReduceOp::RedOpType::PREMUL_SUM:
-    case ReduceOp::RedOpType::AVG:
       return mscclpp::SUM;
     case ReduceOp::RedOpType::MIN:
       return mscclpp::MIN;
     default:
-      throw std::runtime_error("[TorchCommMSCCLPP] " + collective_name +
-                               " unsupported reduce op type=" + std::to_string(static_cast<int>(op.type())));
+      return std::nullopt;  // AVG, MAX, PRODUCT, BAND/BOR/BXOR -> NcclFallback
   }
 }
 
@@ -132,23 +137,6 @@ std::shared_ptr<mscclpp::Algorithm> TorchCommMSCCLPP::selectAlgorithm(
   if (request.collective == "allreduce") return mscclpp::nccl::selectSingleNodeAllreduce(algoMap, request, config);
   return nullptr;
 }
-
-namespace {
-// Reduce ops that map cleanly to MSCCL++ kernels (SUM-family + MIN).
-// Anything else (MAX, PRODUCT, ...) goes through NcclFallback.
-bool isMscclppNativeReduceOp(const ReduceOp& op) {
-  using T = ReduceOp::RedOpType;
-  switch (op.type()) {
-    case T::SUM:
-    case T::PREMUL_SUM:
-    case T::AVG:
-    case T::MIN:
-      return true;
-    default:
-      return false;
-  }
-}
-}  // namespace
 
 // --- Lifecycle ---
 
@@ -269,21 +257,11 @@ const at::Device& TorchCommMSCCLPP::getDevice() const { return device_; }
 //                       that gated it.
 //                       Examples: all_reduce, reduce_scatter_single
 
-c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::executeCollective(const std::string& collective, const void* sendbuf,
-                                                                  void* recvbuf, size_t sendBytes, size_t recvBytes,
-                                                                  mscclpp::DataType dtype, mscclpp::ReduceOp reduceOp,
-                                                                  bool async_op, std::chrono::milliseconds timeout) {
-  std::unordered_map<std::string, std::vector<uint64_t>> hints;
-  cudaStream_t stream = getOperationStream(async_op);
-  mscclpp::CollectiveRequest request{size_,     nRanksPerNode_, rank_,      sendbuf, recvbuf,
-                                     sendBytes, stream,         collective, dtype,   hints};
-
-  auto algo = algorithmCollection_.selectAlgorithm(request);
-  if (!algo) {
-    throw std::runtime_error("[TorchCommMSCCLPP] no algorithm registered for '" + collective +
-                             "' size=" + std::to_string(sendBytes));
-  }
-
+c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::runAlgorithm(const std::shared_ptr<mscclpp::Algorithm>& algo,
+                                                             const void* sendbuf, void* recvbuf, size_t sendBytes,
+                                                             size_t recvBytes, mscclpp::DataType dtype,
+                                                             mscclpp::ReduceOp reduceOp, cudaStream_t stream,
+                                                             std::chrono::milliseconds timeout) {
   auto work = c10::make_intrusive<TorchWorkMSCCLPP>(stream, device_.index(), timeout, event_pool_);
   work->recordStart();
   algo->execute(comm_, sendbuf, recvbuf, sendBytes, recvBytes, dtype, reduceOp, stream, executor_);
@@ -291,14 +269,29 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::executeCollective(const std::str
   return work;
 }
 
+c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::executeCollective(const std::string& collective, const void* sendbuf,
+                                                                  void* recvbuf, size_t sendBytes, size_t recvBytes,
+                                                                  mscclpp::DataType dtype, mscclpp::ReduceOp reduceOp,
+                                                                  bool async_op, std::chrono::milliseconds timeout) {
+  cudaStream_t stream = getOperationStream(async_op);
+  mscclpp::CollectiveRequest request{size_,     nRanksPerNode_, rank_,      sendbuf, recvbuf,
+                                     sendBytes, stream,         collective, dtype,   {}};
+
+  auto algo = algorithmCollection_.selectAlgorithm(request);
+  if (!algo) {
+    throw std::runtime_error("[TorchCommMSCCLPP] no algorithm registered for '" + collective +
+                             "' size=" + std::to_string(sendBytes));
+  }
+  return runAlgorithm(algo, sendbuf, recvbuf, sendBytes, recvBytes, dtype, reduceOp, stream, timeout);
+}
+
 c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::all_reduce(at::Tensor& tensor, const ReduceOp& op, bool async_op,
                                                            const AllReduceOptions& options) {
   checkInitialized();
   TORCH_CHECK(tensor.is_contiguous(), "[TorchCommMSCCLPP] all_reduce requires contiguous tensor");
-  if (isMscclppNativeReduceOp(op)) {
+  if (auto mscclppOp = torchReduceOpToMscclpp(op)) {
     return executeCollective("allreduce", tensor.data_ptr(), tensor.data_ptr(), tensor.nbytes(), tensor.nbytes(),
-                             torchDtypeToMscclpp(tensor.scalar_type()), torchReduceOpToMscclpp(op, "all_reduce"),
-                             async_op, options.timeout);
+                             torchDtypeToMscclpp(tensor.scalar_type()), *mscclppOp, async_op, options.timeout);
   }
   cudaStream_t stream = getOperationStream(async_op);
   return ncclFallback("all_reduce", stream, options.timeout, [&] {
@@ -337,7 +330,6 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::reduce_scatter_single(at::Tensor
   const auto mscclppDtype = torchDtypeToMscclpp(dtype);
   cudaStream_t stream = getOperationStream(async_op);
 
-  std::unordered_map<std::string, std::vector<uint64_t>> hints;
   mscclpp::CollectiveRequest request{size_,
                                      nRanksPerNode_,
                                      rank_,
@@ -347,15 +339,12 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::reduce_scatter_single(at::Tensor
                                      stream,
                                      "reducescatter",
                                      mscclppDtype,
-                                     hints};
-  auto algo = isMscclppNativeReduceOp(op) ? algorithmCollection_.selectAlgorithm(request) : nullptr;
+                                     {}};
+  auto mscclppOp = torchReduceOpToMscclpp(op);
+  auto algo = mscclppOp ? algorithmCollection_.selectAlgorithm(request) : nullptr;
   if (algo) {
-    auto work = c10::make_intrusive<TorchWorkMSCCLPP>(stream, device_.index(), options.timeout, event_pool_);
-    work->recordStart();
-    algo->execute(comm_, input.data_ptr(), output.data_ptr(), input.nbytes(), output.nbytes(), mscclppDtype,
-                  torchReduceOpToMscclpp(op, "reduce_scatter_single"), stream, executor_);
-    work->recordEnd();
-    return work;
+    return runAlgorithm(algo, input.data_ptr(), output.data_ptr(), input.nbytes(), output.nbytes(), mscclppDtype,
+                        *mscclppOp, stream, options.timeout);
   }
   return ncclFallback("reduce_scatter_single", stream, options.timeout, [&] {
     nccl_->reduceScatter(input.data_ptr(), output.data_ptr(), output.numel(), dtype, op, stream);
@@ -380,9 +369,11 @@ c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::barrier(bool async_op, const Bar
 
 // --- Unsupported operations ---
 //
-// MSCCL++ focuses on bulk-synchronous data-parallel collectives. P2P, the
-// tensor-list collective variants, scatter/gather, and split() aren't part
-// of MSCCL++'s scope. Use a separate NCCL/RCCL TorchComm for these.
+// Tensor-list collective variants, _v collectives, scatter/gather,
+// batch_op_issue, and split() aren't part of MSCCL++'s scope and have no
+// clean NCCL one-call equivalent (most would need group send/recv stitching
+// or sub-communicator machinery). Each throws with guidance to use a
+// separate NCCL/RCCL TorchComm.
 
 c10::intrusive_ptr<TorchWork> TorchCommMSCCLPP::send(const at::Tensor& tensor, int peer, bool async_op,
                                                      const SendOptions& options) {
