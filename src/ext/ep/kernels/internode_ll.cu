@@ -22,9 +22,9 @@
 //     position in the connected-peer map. In the recommended 1-GPU-per-node
 //     LL topology, `peer_idx == dst_rank`; see src/ext/ep/README.md.
 //
-// WARNING: This port is untested on multi-node H100; performance will NOT
-// match IBGDA (host-proxy adds latency). Functional correctness needs
-// validation on real hardware.
+// Validated on 2 nodes x 8 H100 GPUs via
+// `test/python/ext/ep/test_low_latency_multirank.py`. Performance does NOT
+// match IBGDA (host-proxy adds latency); see README for measurements.
 
 #include "configs.cuh"
 #include "exception.cuh"
