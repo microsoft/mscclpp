@@ -24,6 +24,14 @@ void CudaIpcStream::atomicAdd(uint64_t* dst, int64_t value) {
   // The CUDA runtime uses a per-context lock; the main thread holds it while waiting for
   // the test kernel, and the proxy thread needs it to launch the atomicAdd kernel.
   // A separate CUDA context avoids this contention.
+  //
+  // TODO(#796): `dst` is a CUDA-IPC mapping registered in the primary/runtime context, so
+  // launching this kernel from `proxyAtomicCtx_` is technically UB (device pointers are
+  // context-scoped). It works in practice on current drivers because the IPC handle aliases
+  // the same physical allocation, but a correct fix would either (a) avoid the separate
+  // context (e.g. break the deadlock differently) or (b) re-open the IPC mapping inside
+  // `proxyAtomicCtx_`. Carried over from the DeepEP `chhwang/dev-atomic-add-cleanup`
+  // cherry-pick; revisit before this lands on `main`.
   if (!proxyAtomicCtx_) {
     CUdevice cuDevice;
     CUresult res = cuDeviceGet(&cuDevice, deviceId_);

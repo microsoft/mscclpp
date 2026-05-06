@@ -63,6 +63,14 @@ void CudaIpcStream::sync() {
   // operations that complete asynchronously on the GPU. Syncing them here would deadlock
   // because sync() is called from the proxy thread while the main thread may hold the
   // device context via cudaStreamSynchronize() on the test kernel's stream.
+  //
+  // TODO(#796): As a side effect, `Connection::flush()` does not order/complete pending
+  // remote `atomicAdd` operations on the CUDA-IPC transport, so PortChannel flush no
+  // longer guarantees that a peer kernel sees the updated value. EP currently relies on
+  // higher-level signaling (PortChannel signal/wait, FIFO drain) for ordering, but a
+  // correct fix needs a deadlock-free way to drain `proxyAtomicStream_` here. Carried
+  // over from the DeepEP `chhwang/dev-atomic-add-cleanup` cherry-pick; revisit before
+  // this lands on `main`.
 }
 
 IbCtx* Context::Impl::getIbContext(Transport ibTransport) {
