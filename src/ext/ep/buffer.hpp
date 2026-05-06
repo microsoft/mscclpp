@@ -1,9 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 #pragma once
-
-// Forcibly disable NDEBUG
-#ifdef NDEBUG
-#undef NDEBUG
-#endif
 
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
