@@ -1,5 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
+#include <limits>
+
 #include "configs.cuh"
 #include "buffer.cuh"
 #include "exception.cuh"
