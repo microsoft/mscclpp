@@ -75,14 +75,7 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
 
 int getIpcDomainNranks(std::shared_ptr<mscclpp::Communicator> comm) {
   const int envValue = mscclpp::env()->ipcDomainNranks;
-  if (envValue > 0) {
-    return envValue;
-  }
-  return comm->bootstrap()->getNranksPerNode();
-}
-
-int validateIpcDomainSpansWorld(std::shared_ptr<mscclpp::Communicator> comm) {
-  const int ipcDomainNranks = getIpcDomainNranks(comm);
+  const int ipcDomainNranks = (envValue > 0) ? envValue : comm->bootstrap()->getNranksPerNode();
   const int worldSize = comm->bootstrap()->getNranks();
   const int rank = comm->bootstrap()->getRank();
   if (ipcDomainNranks < 2 || ipcDomainNranks > MAX_IPC_DOMAIN_NRANKS) {

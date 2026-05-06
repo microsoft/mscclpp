@@ -142,7 +142,7 @@ struct NvlsWarpPipelineAdapter {
 
 void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = NUM_NVLS_CONNECTION;
-  ipcDomainNranks_ = validateIpcDomainSpansWorld(comm);
+  ipcDomainNranks_ = getIpcDomainNranks(comm);
   // The warp-pipeline kernel addresses 2 * nPeers entries per block in `memoryChannels`,
   // so per-peer base channel allocation must be at least `2 * nBlocks`. Default
   // nBlocks = 4 * ipcDomainNranks (see allreduceKernelFunc), so size accordingly.
