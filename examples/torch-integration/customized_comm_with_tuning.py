@@ -449,7 +449,7 @@ def main():
     accum_map = {"float32": mscclpp.DataType.float32, "float16": mscclpp.DataType.float16}
     accum_str = os.environ.get("ACCUM_DTYPE")
     accum_dtype = accum_map.get(accum_str) if accum_str else None
-    symmetric_memory = os.environ.get("SYMMETRIC_MEMORY", "0") == "1"
+    symmetric_memory = os.environ.get("SYMMETRIC_MEMORY", "1") == "1"
 
     comm_group = init_dist()
     cc = CustomizedComm(comm_group, symmetric_memory=symmetric_memory)
