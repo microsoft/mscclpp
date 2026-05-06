@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
 """Multi-rank low-latency functional test for mscclpp_ep.
 
 Launch with (intra-node, 8 GPUs):
