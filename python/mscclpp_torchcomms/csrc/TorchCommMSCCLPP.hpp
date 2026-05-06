@@ -13,6 +13,7 @@
 #include <mscclpp/gpu.hpp>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include "TorchWorkMSCCLPP.hpp"
 
@@ -121,6 +122,21 @@ class TorchCommMSCCLPP : public TorchCommBackend, public std::enable_shared_from
   /// Get the appropriate stream for an operation.
   cudaStream_t getOperationStream(bool async_op) const;
 
+  /// Selector lambda body installed on AlgorithmCollectionBuilder. Defined
+  /// out-of-line to keep init() readable.
+  static std::shared_ptr<mscclpp::Algorithm> selectAlgorithm(
+      const std::unordered_map<std::string,
+                               std::unordered_map<std::string, std::shared_ptr<mscclpp::Algorithm>>>& algoMapByCollective,
+      const mscclpp::CollectiveRequest& request);
+
+  /// Wrap a NCCL fallback dispatch body in start/end GPU events on `stream`
+  /// and return a TorchWorkMSCCLPP handle. Throws if libnccl was not
+  /// dlopen'd at init time. Used by every collective that may go through
+  /// the fallback (broadcast, barrier, send, recv, reduce, ...).
+  template <typename Fn>
+  c10::intrusive_ptr<TorchWork> ncclFallback(const char* op, cudaStream_t stream, std::chrono::milliseconds timeout,
+                                             Fn&& body);
+
   /// Central dispatch for all supported collectives.
   ///
   /// Builds a CollectiveRequest from the arguments, asks AlgorithmCollection to
@@ -176,7 +192,7 @@ class TorchCommMSCCLPP : public TorchCommBackend, public std::enable_shared_from
   /// dlopen-based NCCL fallback for collectives MSCCL++ doesn't natively
   /// implement (reduce_scatter, broadcast, barrier on certain configs). Null
   /// if libnccl couldn't be loaded — those collectives then throw.
-  std::unique_ptr<class NcclFallback> ncclFallback_;
+  std::unique_ptr<class NcclFallback> nccl_;
 };
 
 }  // namespace torch::comms

@@ -55,7 +55,7 @@ def main():
         print(f"  world_size={world_size}, dim={args.dim}, nlayers={args.nlayers}")
         print(f"  iterations={args.iterations}, lr={args.lr}")
 
-    # --- Create MSCCL++ communicator ---
+    # --- Create MSCCL++ communicator 
     # The MSCCL++ backend dlopens libnccl.so.2 internally and transparently
     # falls back to NCCL for collectives without native MSCCL++ algorithms
     # (broadcast, barrier, reduce_scatter on certain configurations).
@@ -80,9 +80,7 @@ def main():
 
     # --- Build model ---
     torch.manual_seed(42)
-    model = nn.Sequential(
-        *[nn.Linear(args.dim, args.dim, bias=False, device=device) for _ in range(args.nlayers)]
-    )
+    model = nn.Sequential(*[nn.Linear(args.dim, args.dim, bias=False, device=device) for _ in range(args.nlayers)])
     ref_model = copy.deepcopy(model)
 
     # --- Apply FSDP2 ---

@@ -9,6 +9,7 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu.hpp>
+#include <vector>
 
 namespace torch::comms {
 
@@ -46,11 +47,28 @@ class NcclFallback {
                      cudaStream_t stream);
 
   /// broadcast from `root` to all ranks. count is element count.
-  void broadcast(const void* sendbuf, void* recvbuf, size_t count, at::ScalarType dtype, int root,
-                 cudaStream_t stream);
+  void broadcast(const void* sendbuf, void* recvbuf, size_t count, at::ScalarType dtype, int root, cudaStream_t stream);
 
   /// barrier emulated as a 1-element ncclAllReduce on a persistent device int.
   void barrier(cudaStream_t stream);
+
+  /// all_reduce for ops MSCCL++ does not implement natively (e.g. MAX, PRODUCT).
+  void allReduce(const void* sendbuf, void* recvbuf, size_t count, at::ScalarType dtype, const ReduceOp& op,
+                 cudaStream_t stream);
+
+  /// reduce: like all_reduce but only `root` receives the result.
+  void reduce(const void* sendbuf, void* recvbuf, size_t count, at::ScalarType dtype, const ReduceOp& op, int root,
+              cudaStream_t stream);
+
+  /// Point-to-point send/recv (count is element count).
+  void send(const void* sendbuf, size_t count, at::ScalarType dtype, int peer, cudaStream_t stream);
+  void recv(void* recvbuf, size_t count, at::ScalarType dtype, int peer, cudaStream_t stream);
+
+  /// Variadic all-to-all via ncclGroupStart/End loop of ncclSend/ncclRecv.
+  /// Counts and offsets are in elements; vectors are length worldSize.
+  void allToAllV(const void* sendbuf, void* recvbuf, const std::vector<uint64_t>& sendCounts,
+                 const std::vector<uint64_t>& recvCounts, const std::vector<uint64_t>& sendOffsets,
+                 const std::vector<uint64_t>& recvOffsets, at::ScalarType dtype, cudaStream_t stream);
 
  private:
   NcclFallback() = default;
@@ -58,12 +76,18 @@ class NcclFallback {
   // Opaque to the header — concrete state lives in NcclFallback.cpp.
   void* dlHandle_ = nullptr;
   void* ncclComm_ = nullptr;
+  int worldSize_ = 0;
   void* getUniqueIdFn_ = nullptr;
   void* commInitRankFn_ = nullptr;
   void* commDestroyFn_ = nullptr;
   void* reduceScatterFn_ = nullptr;
   void* broadcastFn_ = nullptr;
   void* allReduceFn_ = nullptr;
+  void* reduceFn_ = nullptr;
+  void* sendFn_ = nullptr;
+  void* recvFn_ = nullptr;
+  void* groupStartFn_ = nullptr;
+  void* groupEndFn_ = nullptr;
   void* barrierBuf_ = nullptr;  // persistent 4-byte device buffer for barrier()
 };
 
