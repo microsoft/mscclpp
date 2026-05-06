@@ -133,7 +133,7 @@ struct AllreduceRsAgAdapter {
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
       nThreadsPerBlock = 1024;
-      nBlocks = 128;
+      nBlocks = 64;
     }
     allreduceRsAg<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
