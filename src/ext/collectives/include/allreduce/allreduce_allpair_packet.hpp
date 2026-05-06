@@ -4,6 +4,7 @@
 #include <mscclpp/algorithm.hpp>
 
 #include "allreduce/common.hpp"
+#include "collective_utils.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -31,7 +32,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   const int nSegmentsForScratchBuffer_ = 2;
   // Must be at least MAX_IPC_DOMAIN_NRANKS-1 so the adapter can launch one
   // block per peer at MNNVL scale.
-  const int maxBlockNum_ = 72;
+  const int maxBlockNum_ = MAX_IPC_DOMAIN_NRANKS - 1;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;
