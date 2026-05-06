@@ -1,30 +1,16 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# torchrun --nnodes=1 --nproc_per_node=8 examples/torch-integration/customized_comm_with_tuning.py
-# mpirun -np 2 --hostfile <hostfile> python3 examples/torch-integration/customized_comm_with_tuning.py
+# mpirun -np 8 python3 examples/torch-integration/customized_comm_with_tuning.py
+# mpirun -np 16 --hostfile <hostfile> python3 examples/torch-integration/customized_comm_with_tuning.py
 
-import gc
-import fcntl
-import ipaddress
 import os
-import socket
-import struct
-import sys
-import traceback
 
+from mpi4py import MPI
 
-def _get_bootstrap_world_size():
-    for name in ("WORLD_SIZE", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "SLURM_NTASKS"):
-        value = os.environ.get(name)
-        if value is not None:
-            return int(value)
-    return None
-
-
-_bootstrap_world_size = _get_bootstrap_world_size()
-if _bootstrap_world_size and _bootstrap_world_size > 1 and "MSCCLPP_IPC_DOMAIN_NRANKS" not in os.environ:
-    os.environ["MSCCLPP_IPC_DOMAIN_NRANKS"] = str(_bootstrap_world_size)
+_world_size = MPI.COMM_WORLD.Get_size()
+if _world_size > 1 and "MSCCLPP_IPC_DOMAIN_NRANKS" not in os.environ:
+    os.environ["MSCCLPP_IPC_DOMAIN_NRANKS"] = str(_world_size)
 
 import torch
 import mscclpp
@@ -51,46 +37,6 @@ def _load_algorithms(scratch: torch.Tensor, rank: int):
         scratch_buffer=scratch.data_ptr(),
         scratch_buffer_size=scratch.nbytes,
         rank=rank,
-    )
-
-
-def _interfaces_for_ip(ip: str):
-    target = ipaddress.ip_address(ip)
-    for iface in os.listdir("/sys/class/net"):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                req = struct.pack("256s", iface.encode()[:15])
-                addr = socket.inet_ntoa(fcntl.ioctl(sock.fileno(), 0x8915, req)[20:24])
-        except OSError:
-            continue
-        if ipaddress.ip_address(addr) == target:
-            return iface
-    return None
-
-
-def _resolve_interface(master_addr: str):
-    for env_name in ("MSCCLPP_INTERFACE", "MSCCLPP_SOCKET_IFNAME", "NCCL_SOCKET_IFNAME"):
-        value = os.environ.get(env_name)
-        if value:
-            iface = value.split(",")[0].strip()
-            if iface in os.listdir("/sys/class/net"):
-                return iface
-            raise ValueError(f"Interface {iface} from {env_name} does not exist")
-    return _interfaces_for_ip(master_addr)
-
-
-def _get_env_int(*names: str, default=None):
-    for name in names:
-        value = os.environ.get(name)
-        if value is not None:
-            return int(value)
-    return default
-
-
-def _running_under_mpi() -> bool:
-    return any(
-        name in os.environ
-        for name in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "PMIX_RANK", "MPI_LOCALRANKID", "SLURM_PROCID")
     )
 
 
@@ -156,11 +102,6 @@ class CustomizedComm:
 
     def _algo(self, collective: str, name: str):
         return self._algos.get((collective, name))
-
-    def _nblocks_limit(self, algo_name: str, size: int) -> int:
-        if algo_name == "default_allreduce_packet" and size < (1 << 20):
-            return 56
-        return self._NBLOCKS_LIMIT.get(algo_name, 128)
 
     def _default_ar_config(self):
         """Fallback allreduce config for barrier / timing sync."""
@@ -337,7 +278,7 @@ class CustomizedComm:
         run = lambda a, nb, nt: self._run_tune(collective, a, buf, target_size, nb, nt)
 
         for algo in cands:
-            nb_limit = self._nblocks_limit(algo.name, target_size)
+            nb_limit = self._NBLOCKS_LIMIT.get(algo.name, 128)
             for nb in self._CANDIDATE_NBLOCKS:
                 if nb > nb_limit:
                     continue
@@ -435,11 +376,7 @@ class CustomizedComm:
 # -- Benchmarks (standalone) --------------------------------------------------
 
 
-def _bench_sizes(low=None, high=None):
-    if low is None:
-        low = _get_env_int("MSCCLPP_BENCH_LOW_SIZE", default=5 * 1024)
-    if high is None:
-        high = _get_env_int("MSCCLPP_BENCH_HIGH_SIZE", default=80 << 20)
+def _bench_sizes(low=5 * 1024, high=80 << 20):
     sizes, c = [], low
     while c <= high:
         sizes.append(c)
@@ -539,30 +476,11 @@ def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=10, 
 
 
 def init_dist() -> mscclpp.CommGroup:
-    addr = os.environ.get("MSCCLPP_MASTER_ADDR")
-    rank = _get_env_int("RANK", "OMPI_COMM_WORLD_RANK", "PMI_RANK", "SLURM_PROCID")
-    world = _get_env_int("WORLD_SIZE", "OMPI_COMM_WORLD_SIZE", "PMI_SIZE", "SLURM_NTASKS")
-    if addr and rank is not None and world is not None:
-        port = os.environ.get("MSCCLPP_MASTER_PORT", "29500")
-        iface = _resolve_interface(addr)
-        if not iface:
-            raise ValueError(f"No interface for {addr}")
-        return mscclpp.CommGroup(interfaceIpPortTrio=f"{iface}:{addr}:{port}", rank=rank, size=world)
-    if _running_under_mpi():
-        try:
-            from mpi4py import MPI
-        except ModuleNotFoundError as exc:
-            raise RuntimeError("mpi4py is required to launch this example with mpirun") from exc
-
-        return mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD)
-    import torch.distributed as dist
-
-    dist.init_process_group(backend="gloo")
-    return mscclpp.CommGroup(torch_group=dist.group.WORLD)
+    return mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD)
 
 
 def main():
-    local = _get_env_int("LOCAL_RANK", "OMPI_COMM_WORLD_LOCAL_RANK", "MPI_LOCALRANKID", "SLURM_LOCALID", default=0)
+    local = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED).Get_rank()
     torch.cuda.set_device(local)
 
     dtype_str = os.environ.get("DTYPE", "float16")
@@ -570,22 +488,12 @@ def main():
     accum_map = {"float32": mscclpp.DataType.float32, "float16": mscclpp.DataType.float16}
     accum_str = os.environ.get("ACCUM_DTYPE")
     accum_dtype = accum_map.get(accum_str) if accum_str else None
-    n_warmup = _get_env_int("MSCCLPP_BENCH_WARMUP", default=10)
-    n_graph_launches = _get_env_int("MSCCLPP_BENCH_GRAPH_LAUNCHES", default=10)
-    n_iter = _get_env_int("MSCCLPP_BENCH_ITERS", default=100)
 
     comm_group = init_dist()
-    cc = CustomizedComm(comm_group, symmetric_memory=False)
+    cc = CustomizedComm(comm_group)
 
     print(f"rank {local} starting benchmarks with dtype={dtype} accum_dtype={accum_dtype}...")
-    benchmark_allreduce(
-        cc,
-        dtype=dtype,
-        accum_dtype=accum_dtype,
-        n_warmup=n_warmup,
-        n_graph_launches=n_graph_launches,
-        n_iter=n_iter,
-    )
+    benchmark_allreduce(cc, dtype=dtype, accum_dtype=accum_dtype)
     cc.barrier()
     torch.cuda.synchronize()
 
@@ -593,25 +501,13 @@ def main():
         if cc.rank == 0:
             print("Skipping allgather benchmark on multi-node: this example's allgather path is single-node only.")
     else:
-        benchmark_allgather(cc, dtype=dtype, n_warmup=n_warmup, n_graph_launches=n_graph_launches, n_iter=n_iter)
+        benchmark_allgather(cc, dtype=dtype)
         cc.barrier()
         torch.cuda.synchronize()
 
     cc.destroy()
-    del cc
-    del comm_group
-    gc.collect()
     print(f"rank {local} completed successfully.")
 
 
 if __name__ == "__main__":
-    exit_code = 0
-    try:
-        main()
-    except Exception:
-        exit_code = 1
-        traceback.print_exc()
-    finally:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os._exit(exit_code)
+    main()
