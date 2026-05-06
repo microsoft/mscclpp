@@ -3,7 +3,6 @@
 
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
-#include <mscclpp/errors.hpp>
 
 #include "allreduce/allreduce_nvls_block_pipeline.hpp"
 #include "allreduce/common.hpp"
@@ -179,14 +178,7 @@ struct NvlsBlockPipelineAdapter {
 void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
   ipcDomainNranks_ = getIpcDomainNranks(comm);
-  // Block-pipeline device-side semaphore indices grow as 6 * ipcDomainNranks (see kernel).
-  if (6 * ipcDomainNranks_ > NUM_SEMAPHORES) {
-    throw Error("AllreduceNvlsBlockPipeline: ipcDomainNranks " + std::to_string(ipcDomainNranks_) +
-                    " exceeds NUM_SEMAPHORES capacity (" + std::to_string(NUM_SEMAPHORES) + ")",
-                ErrorCode::InvalidUsage);
-  }
-  // The kernel addresses up to `2 * nBlocksForCopy = 4 * ipcDomainNranks` distinct entries
-  // per peer in `memoryChannels`. Scale the per-connection allocation to match.
+  // Per-peer channel allocation must hold up to 4 * ipcDomainNranks entries (see kernel).
   nBaseChannels_ = std::max(64, 4 * ipcDomainNranks_);
   this->conns_ = setupConnections(comm);
   // setup semaphores
@@ -208,43 +200,9 @@ CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
-  const int requiredBlocks = ctx->ipcDomainNranks * 5;
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
-  if (blockAndThreadNum.first == 0) blockAndThreadNum.first = requiredBlocks;
-  if (blockAndThreadNum.second == 0) blockAndThreadNum.second = 1024;
-  if (blockAndThreadNum.first != requiredBlocks) {
-    WARN("AllreduceNvlsBlockPipeline requires nBlocks == 5 * ipcDomainNranks (got %d, expected %d)",
-         blockAndThreadNum.first, requiredBlocks);
-    return CommResult::CommInvalidArgument;
-  }
-  if (blockAndThreadNum.second != 1024) {
-    WARN("AllreduceNvlsBlockPipeline requires nThreadsPerBlock == 1024 (got %d)", blockAndThreadNum.second);
-    return CommResult::CommInvalidArgument;
-  }
-  // Validate input alignment/divisibility expectations of the kernel.
-  constexpr size_t kKernelAlignment = 16;
-  const size_t perRankBytes = inputSize / ctx->ipcDomainNranks;
-  if (perRankBytes * static_cast<size_t>(ctx->ipcDomainNranks) != inputSize || perRankBytes % kKernelAlignment != 0) {
-    WARN(
-        "AllreduceNvlsBlockPipeline requires inputSize %% (ipcDomainNranks * %zu) == 0 (got inputSize=%zu, "
-        "ipcDomainNranks=%d)",
-        kKernelAlignment, inputSize, ctx->ipcDomainNranks);
-    return CommResult::CommInvalidArgument;
-  }
-  // Validate scratch is large enough for at least one pipeline iteration. The kernel
-  // computes scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) aligned down
-  // to unitSize; if this is 0, maxItersForScratch is 0 and the kernel deadlocks.
-  const size_t unitSize = (inputSize <= static_cast<size_t>(1024) * 1024 * 128) ? (1ULL << 16) : (1ULL << 17);
-  const size_t scratchSizePerRank = this->scratchBufferSize_ / ctx->ipcDomainNranks;
-  const size_t nBlocksForCopy = static_cast<size_t>(ctx->ipcDomainNranks) * 2;
-  const size_t scratchSizePerBlock = (scratchSizePerRank / nBlocksForCopy) / unitSize * unitSize;
-  if (scratchSizePerBlock < unitSize) {
-    WARN(
-        "AllreduceNvlsBlockPipeline scratch buffer too small for ipcDomainNranks=%d and inputSize=%zu "
-        "(scratchBufferSize=%zu, need at least ~%zu bytes)",
-        ctx->ipcDomainNranks, inputSize, this->scratchBufferSize_,
-        static_cast<size_t>(ctx->ipcDomainNranks) * nBlocksForCopy * unitSize);
-    return CommResult::CommInvalidArgument;
+  if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
+    blockAndThreadNum = {ctx->ipcDomainNranks * 5, 1024};
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
