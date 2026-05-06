@@ -17,8 +17,9 @@ Current status (see ``src/ext/ep/README.md``):
 * Internode HT (MSCCL++ PortChannel + MemoryChannel) dispatch and combine:
   ported and validated on 2 nodes x 8 H100 GPUs with
   ``test/python/ext/ep/test_internode_multirank.py``.
-* Internode low-latency kernels: structural port (NVSHMEM/IBGDA ->
-  MSCCL++ PortChannel), **untested on multi-node H100**.
+* Internode low-latency kernels (NVSHMEM/IBGDA -> MSCCL++ PortChannel):
+  ported and validated on 2 nodes x 8 H100 GPUs with
+  ``test/python/ext/ep/test_low_latency_multirank.py``.
 """
 
 from __future__ import annotations
