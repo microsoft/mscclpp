@@ -3,9 +3,9 @@
 """MSCCL++ Expert-Parallel (MoE dispatch/combine) extension.
 
 See ``src/ext/ep/README.md`` in the repository for migration status. The
-``Buffer`` class mirrors :class:`deep_ep.Buffer` and currently supports
-intranode (NVLink-only) dispatch/combine. Internode HT and low-latency
-paths raise until the NVSHMEM -> MSCCL++ port is completed.
+``Buffer`` class mirrors :class:`deep_ep.Buffer` and supports intranode
+(NVLink-only) dispatch/combine as well as internode HT and low-latency
+paths.
 """
 
 from .buffer import Buffer, Config, EventHandle  # noqa: F401
