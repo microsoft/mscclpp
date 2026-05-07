@@ -4,6 +4,9 @@
 #ifndef MSCCLPP_PORT_CHANNEL_HPP_
 #define MSCCLPP_PORT_CHANNEL_HPP_
 
+#include <unordered_set>
+#include <unordered_map>
+
 #include "core.hpp"
 #include "port_channel_device.hpp"
 #include "proxy.hpp"
@@ -84,6 +87,14 @@ class ProxyService : public BaseProxyService {
   std::vector<RegisteredMemory> memories_;
   std::shared_ptr<Proxy> proxy_;
   std::unordered_map<std::shared_ptr<BaseConnection>, int> inflightRequests_;
+  // Connections with WRs staged but not yet posted. Mapped to the count of
+  // WRs staged since the last postPending() call (used to trip the batch
+  // threshold). Distinct from `inflightRequests_` which counts QP-inflight
+  // WRs since the last flush() (used for QP overflow detection).
+  std::unordered_map<std::shared_ptr<BaseConnection>, int> stagedConns_;
+  std::unordered_set<std::shared_ptr<BaseConnection>> dirtyConns_;
+
+  void postPendingAll();
 
   ProxyHandlerResult handleTrigger(ProxyTrigger triggerRaw);
 };

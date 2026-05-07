@@ -17,6 +17,13 @@
 #include <mscclpp/port_channel_device.hpp>
 #include <vector>
 
+#if defined(USE_IBVERBS) && defined(MSCCLPP_USE_MLX5DV) && !defined(MSCCLPP_USE_ROCM)
+#include <mscclpp/ibgda_port_channel_device.hpp>
+#define MSCCLPP_EP_KERNEL_HAS_IBGDA 1
+#else
+namespace mscclpp { struct IbgdaPortChannelDeviceHandle; }
+#endif
+
 namespace mscclpp {
 namespace ep {
 
@@ -131,7 +138,8 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
               int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank, int num_topk, int num_experts, int rank,
               int num_ranks, bool use_fp8, void* workspace, cudaStream_t stream, int phases, void* rdma_buffer_ptr,
               mscclpp::PortChannelDeviceHandle* port_channel_handles, void* const* peer_rdma_bases,
-              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path);
+              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path,
+              mscclpp::IbgdaPortChannelDeviceHandle* ibgda_handles, bool use_ibgda_path);
 
 void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void* rdma_send_x, const void* x,
              const int64_t* topk_idx, const float* topk_weights, const int* src_info, const int64_t* layout_range,
@@ -139,7 +147,8 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
              int num_max_dispatch_tokens_per_rank, int num_topk, int num_experts, int rank, int num_ranks,
              void* workspace, cudaStream_t stream, int phases, bool zero_copy, void* rdma_buffer_ptr,
              mscclpp::PortChannelDeviceHandle* port_channel_handles, void* const* peer_rdma_bases,
-             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path);
+             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path,
+             mscclpp::IbgdaPortChannelDeviceHandle* ibgda_handles, bool use_ibgda_path);
 
 }  // namespace internode_ll
 

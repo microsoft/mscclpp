@@ -396,7 +396,10 @@ void IBConnection::write(RegisteredMemory dst, uint64_t dstOffset, RegisteredMem
   qp_.lock()->stageSendWrite(srcMr, dstMrInfo, (uint32_t)size, /*wrId=*/0, /*srcOffset=*/srcOffset,
                              /*dstOffset=*/dstOffset, /*signaled=*/true);
 
-  qp_.lock()->postSend();
+  // NOTE: postSend() is intentionally deferred. The proxy service batches
+  // many triggers and calls postPending() once at idle. External callers
+  // that pair write() with flush() still observe correct semantics because
+  // flush() now drains staged WRs before polling the CQ.
   INFO(CONN, "IBConnection write: from ", (uint8_t*)srcMr->getBuff() + srcOffset, " to ",
        (uint8_t*)dstMrInfo.addr + dstOffset, ", size ", size);
 
@@ -438,12 +441,12 @@ void IBConnection::updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint6
                                       /*size=*/0, /*wrId=*/0,
                                       /*srcOffset=*/0, /*dstOffset=*/0,
                                       /*signaled=*/true, /*immData=*/immData);
-    qp_.lock()->postSend();
+    // postSend deferred; see IBConnection::write.
     INFO(CONN, "IBConnection signal forwarding: value ", oldValue, " -> ", newValue);
   } else {
     qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset, newValue - oldValue,
                                    /*signaled=*/true);
-    qp_.lock()->postSend();
+    // postSend deferred; see IBConnection::write.
     INFO(CONN, "IBConnection atomic write: from ", src, " to ", (uint8_t*)dstMrInfo.addr + dstOffset, ", ", oldValue,
          " -> ", newValue);
   }
@@ -457,6 +460,9 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_ENTRY)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_ENTRY, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+
+  // Drain any staged WRs that were deferred by the staging-only write path.
+  qp_.lock()->postSend();
 
   // Check if the recv thread has already reported an error (e.g., QP entered error state).
   if (recvThreadError_.load(std::memory_order_acquire)) {
@@ -503,8 +509,14 @@ void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t v
 
   qp_.lock()->stageSendAtomicAdd(atomicSrcTransportInfo_.ibMr, dstMrInfo, /*wrId=*/0, dstOffset,
                                  static_cast<uint64_t>(value), /*signaled=*/true);
-  qp_.lock()->postSend();
+  // postSend deferred; see IBConnection::write.
   INFO(CONN, "IBConnection atomicAdd: dst ", (uint8_t*)dstMrInfo.addr + dstOffset, ", value ", value);
+}
+
+void IBConnection::postPending() {
+  // Drain all staged WRs to the NIC in a single ibv_post_send call.
+  // Cheap no-op when nothing is staged (IbQp::postSend early-returns).
+  qp_.lock()->postSend();
 }
 
 // EthernetConnection

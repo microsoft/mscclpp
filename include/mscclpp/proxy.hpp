@@ -53,6 +53,13 @@ class Proxy {
   /// @return Shared pointer to FIFO.
   std::shared_ptr<Fifo> fifo();
 
+  /// Set a callback invoked by the proxy thread when the FIFO transitions
+  /// from busy to idle (i.e., a poll returns no trigger after at least one
+  /// trigger was processed). Useful for batching: handlers can defer
+  /// expensive system calls (e.g., ibv_post_send) until the FIFO drains.
+  /// Must be called before start().
+  void setOnIdle(std::function<void()> onIdle);
+
  private:
   struct Impl;
   std::unique_ptr<Impl> pimpl_;

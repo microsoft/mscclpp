@@ -42,6 +42,7 @@ endif()
 file(GLOB_RECURSE EP_SOURCES CONFIGURE_DEPENDS
     buffer.cc
     bindings.cpp
+    ibgda_setup.cc
     kernels/*.cu
 )
 
@@ -58,6 +59,17 @@ endif()
 Python_add_library(mscclpp_ep_cpp MODULE ${EP_SOURCES})
 
 target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
+# Inherit ibverbs / mlx5dv defs from the core library so the IBGDA host-side
+# plumbing (see ibgda_setup.cc, gated by MSCCLPP_EP_HAVE_IBGDA) compiles in.
+if(IBVERBS_FOUND)
+    target_compile_definitions(mscclpp_ep_cpp PRIVATE USE_IBVERBS)
+    target_link_libraries(mscclpp_ep_cpp PRIVATE ${IBVERBS_LIBRARIES})
+    if(MLX5_FOUND)
+        target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_USE_MLX5DV)
+        target_include_directories(mscclpp_ep_cpp SYSTEM PRIVATE ${MLX5_INCLUDE_DIRS})
+        target_link_libraries(mscclpp_ep_cpp PRIVATE ${MLX5_LIBRARIES})
+    endif()
+endif()
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include

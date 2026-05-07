@@ -82,6 +82,9 @@ class IbQp {
   int pollRecvCq();
 
   IbQpInfo& getInfo() { return info_; }
+  /// Raw ibv_qp pointer. Owned by this IbQp. Provided so other components
+  /// (e.g. IbgdaResources) can call mlx5dv_init_obj on the same QP.
+  ibv_qp* getRawQp() const { return qp_; }
   int getSendWcStatus(int idx) const;
   std::string getSendWcStatusString(int idx) const;
   int getNumSendCqItems() const;

@@ -20,6 +20,7 @@ constexpr int ProxyStartWarnPeriod = 1000;
 struct Proxy::Impl {
   ProxyHandler handler;
   std::function<void()> threadInit;
+  std::function<void()> onIdle;
   std::shared_ptr<Fifo> fifo;
   std::atomic_bool threadStarted;
   std::thread service;
@@ -28,6 +29,7 @@ struct Proxy::Impl {
   Impl(ProxyHandler handler, std::function<void()> threadInit, int fifoSize)
       : handler(handler),
         threadInit(threadInit),
+        onIdle(nullptr),
         fifo(std::make_shared<Fifo>(fifoSize)),
         threadStarted(false),
         running(false) {}
@@ -71,9 +73,11 @@ MSCCLPP_API_CPP void Proxy::start(bool blocking) {
     pimpl_->threadStarted.store(true, std::memory_order_release);
 
     ProxyHandler handler = this->pimpl_->handler;
+    auto onIdle = this->pimpl_->onIdle;
     auto fifo = this->pimpl_->fifo;
     ProxyTrigger trigger;
 
+    bool wasBusy = false;
     int runCnt = ProxyStopCheckPeriod;
     for (;;) {
       if (runCnt-- == 0) {
@@ -85,8 +89,13 @@ MSCCLPP_API_CPP void Proxy::start(bool blocking) {
       // Poll to see if we are ready to send anything
       trigger = fifo->poll();
       if (trigger.fst == 0 || trigger.snd == 0) {  // TODO: this check is a potential pitfall for custom triggers
+        if (wasBusy && onIdle) {
+          onIdle();
+        }
+        wasBusy = false;
         continue;                                  // there is one in progress
       }
+      wasBusy = true;
       trigger.snd ^= (uint64_t{1} << uint64_t{63});  // this is where the last bit of snd is reverted.
 
       ProxyHandlerResult result = handler(trigger);
@@ -95,6 +104,7 @@ MSCCLPP_API_CPP void Proxy::start(bool blocking) {
       fifo->pop();
 
       if (result == ProxyHandlerResult::Stop) {
+        if (onIdle) onIdle();
         break;
       }
     }
@@ -122,5 +132,7 @@ MSCCLPP_API_CPP void Proxy::stop() {
 }
 
 MSCCLPP_API_CPP std::shared_ptr<Fifo> Proxy::fifo() { return pimpl_->fifo; }
+
+MSCCLPP_API_CPP void Proxy::setOnIdle(std::function<void()> onIdle) { pimpl_->onIdle = std::move(onIdle); }
 
 }  // namespace mscclpp

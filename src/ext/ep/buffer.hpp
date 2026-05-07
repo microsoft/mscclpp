@@ -17,6 +17,11 @@
 #include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
 
+#if defined(USE_IBVERBS) && defined(MSCCLPP_USE_MLX5DV) && !defined(MSCCLPP_USE_ROCM)
+#define MSCCLPP_EP_HAVE_IBGDA 1
+namespace mscclpp { namespace ep { struct IbgdaSetup; } }
+#endif
+
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME mscclpp_ep_cpp
 #endif
@@ -100,6 +105,17 @@ struct Buffer {
   std::vector<mscclpp::MemoryChannel> ll_memory_channels;
   std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
   bool ll_ipc_ready = false;
+
+  // ------------------------------------------------------------------
+  // Native IBGDA path (Stage 4b). Built lazily in `sync()` when env
+  // `MSCCLPP_EP_USE_IBGDA=1` is set AND the run is cross-node.
+  // The kernels do NOT consume `ibgda_setup_` until 4b.2 lands; for now
+  // it is constructed-but-unused, so existing tests are unaffected.
+  // ------------------------------------------------------------------
+  bool use_ibgda_path_ = false;
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+  std::unique_ptr<mscclpp::ep::IbgdaSetup> ibgda_setup_;
+#endif
 
  private:
   void move_fifo_slots(int num_slots = 1);

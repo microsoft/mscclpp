@@ -121,6 +121,20 @@ int MLX5DV::mlx5dv_get_data_direct_sysfs_path(struct ibv_context* context, char*
   return impl(context, buf, buf_len);
 }
 
+int MLX5DV::mlx5dv_init_obj_qp(struct ibv_qp* qp, void* out_qp) {
+  using FuncType = int (*)(struct mlx5dv_obj*, uint64_t);
+  static FuncType impl = nullptr;
+  if (!impl) {
+    void* ptr = MLX5DV::dlsym("mlx5dv_init_obj", /*allowReturnNull=*/true);
+    if (!ptr) return -1;
+    impl = reinterpret_cast<FuncType>(ptr);
+  }
+  struct mlx5dv_obj obj{};
+  obj.qp.in = qp;
+  obj.qp.out = static_cast<struct mlx5dv_qp*>(out_qp);
+  return impl(&obj, MLX5DV_OBJ_QP);
+}
+
 }  // namespace mscclpp
 
 #endif  // defined(MSCCLPP_USE_MLX5DV)

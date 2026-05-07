@@ -43,14 +43,45 @@ import sys
 # noisy 'recvValue failed / Connection was likely closed' stack traces.
 os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
 
+import ctypes
+
+import psutil
 import torch
 import torch.distributed as dist
+
+
+# Load libnuma for NUMA-aware memory binding (mirrors DeepEP/tests/utils.py).
+try:
+    _libnuma = ctypes.CDLL("libnuma.so")
+    _libnuma.numa_available.restype = ctypes.c_int
+    _libnuma.numa_run_on_node.argtypes = [ctypes.c_int]
+    _libnuma.numa_set_preferred.argtypes = [ctypes.c_int]
+except OSError:
+    _libnuma = None
+
+
+def set_numa_affinity(local_rank: int):
+    cores_per_rank = 12
+    numa_node = local_rank // 4
+    core_start = local_rank * cores_per_rank
+    core_end = core_start + cores_per_rank
+    p = psutil.Process(os.getpid())
+    p.cpu_affinity(list(range(core_start, core_end)))
+    print(f"Rank {local_rank} numa node {numa_node} bound to cores {core_start}-{core_end - 1}")
+
+    # Bind memory to NUMA node
+    if _libnuma is not None and _libnuma.numa_available() != -1:
+        _libnuma.numa_set_preferred(numa_node)
+        print(f"Rank {local_rank}: CPU affinity → cores {core_start}-{core_end - 1}, memory NUMA → node {numa_node}")
+    else:
+        print(f"Rank {local_rank}: libnuma not available")
 
 
 def init_dist():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
     local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    set_numa_affinity(local_rank)
     torch.cuda.set_device(local_rank)
     dist.init_process_group(
         backend="nccl",

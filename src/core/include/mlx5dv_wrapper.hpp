@@ -28,6 +28,11 @@ struct MLX5DV {
   /// Returns 0 on success (device supports Data Direct), non-zero otherwise.
   static int mlx5dv_get_data_direct_sysfs_path(struct ibv_context* context, char* buf, size_t buf_len);
 
+  /// Wraps mlx5dv_init_obj(MLX5DV_OBJ_QP). Returns 0 on success.
+  /// `out` must be a pointer to an mlx5dv_qp; we keep this typeless to avoid
+  /// pulling <infiniband/mlx5dv.h> into the public-ish wrapper header.
+  static int mlx5dv_init_obj_qp(struct ibv_qp* qp, void* out);
+
  private:
   static void* dlsym(const std::string& symbol, bool allowReturnNull = false);
 };

@@ -15,6 +15,10 @@
 #include "kernels/api.cuh"
 #include "kernels/configs.cuh"
 
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+#include "ibgda_setup.hpp"
+#endif
+
 namespace mscclpp {
 namespace ep {
 
@@ -74,6 +78,15 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
   }
   if (rank == 0) {
     printf("[mscclpp_ep] num_proxy_services=%d (set MSCCLPP_EP_NUM_PROXIES to override)\n", num_proxy_services);
+    fflush(stdout);
+  }
+  // Resolve native-IBGDA opt-in flag. The state is built in sync() and
+  // currently unused by the kernels (4b.1 plumbing only); see buffer.hpp.
+  if (const char* e = std::getenv("MSCCLPP_EP_USE_IBGDA")) {
+    use_ibgda_path_ = (std::atoi(e) != 0);
+  }
+  if (rank == 0) {
+    printf("[mscclpp_ep] MSCCLPP_EP_USE_IBGDA=%d\n", use_ibgda_path_ ? 1 : 0);
     fflush(stdout);
   }
   // Task fifo memory
@@ -517,6 +530,44 @@ void Buffer::sync(const std::vector<int>& device_ids,
       ll_ipc_ready = true;
     }
   }
+
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+  // ------------------------------------------------------------------
+  // Stage 4b.1: native IBGDA host-side plumbing.
+  //
+  // Built only when:
+  //   - MSCCLPP_EP_USE_IBGDA=1
+  //   - The run is cross-node (num_rdma_ranks > 1) — intra-node sticks with
+  //     the NVLink IPC fast path already established above.
+  //   - We have an RDMA buffer (num_rdma_bytes > 0).
+  //
+  // The setup is built but NOT yet consumed by any kernel (4b.2 will add
+  // the kernel branch). With or without the flag set, existing test
+  // outcomes must be identical.
+  // ------------------------------------------------------------------
+  if (use_ibgda_path_ && num_rdma_bytes > 0 && num_rdma_ranks > 1) {
+    constexpr int kNumIbgdaChannels = 16;  // mirrors num_port_channels_per_rank above
+    try {
+      ibgda_setup_ = mscclpp::ep::build_ibgda_setup(rank, num_ranks, /*ib_transport_index=*/device_id,
+                                                    kNumIbgdaChannels, rdma_buffer_ptr,
+                                                    static_cast<std::size_t>(num_rdma_bytes), bootstrap);
+      if (rank == 0) {
+        printf("[mscclpp_ep] IBGDA setup built: channels=%d num_ranks=%d (per-rank QPs=%d)\n",
+               kNumIbgdaChannels, num_ranks, kNumIbgdaChannels * (num_ranks - 1));
+        fflush(stdout);
+      }
+      // Clear any benign CUDA sticky error left by overlapping host/UAR
+      // registrations across sibling QPs (e.g., cudaErrorHostMemoryAlreadyRegistered).
+      (void)cudaGetLastError();
+    } catch (const std::exception& e) {
+      // Don't take down the run — just log and leave use_ibgda_path_ on as
+      // a hint (kernel-side fallback in 4b.2 will check ibgda_setup_ != null).
+      fprintf(stderr, "[mscclpp_ep][rank=%d] IBGDA setup failed, falling back to host FIFO: %s\n", rank, e.what());
+      ibgda_setup_.reset();
+      (void)cudaGetLastError();
+    }
+  }
+#endif  // MSCCLPP_EP_HAVE_IBGDA
 
   // Ready to use
   available = true;
@@ -1452,6 +1503,13 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
   auto peer_bases = peer_rdma_bases_gpu;
   const bool use_ipc = ll_ipc_ready;
   auto rdma_base = rdma_buffer_ptr;
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+  mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = ibgda_setup_ ? ibgda_setup_->device_handles.get() : nullptr;
+  const bool use_ibgda = use_ibgda_path_ && ibgda_dev != nullptr && !use_ipc;
+#else
+  mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = nullptr;
+  const bool use_ibgda = false;
+#endif
   auto launcher = [=](int phases) {
     internode_ll::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr, packed_recv_src_info.data_ptr<int>(),
                            packed_recv_layout_range.data_ptr<int64_t>(), packed_recv_count.data_ptr<int>(),
@@ -1459,7 +1517,8 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
                            buffer.dispatch_rdma_send_buffer, x.data_ptr(), topk_idx.data_ptr<int64_t>(),
                            next_clean_meta.first, next_clean_meta.second, num_tokens, hidden,
                            num_max_dispatch_tokens_per_rank, num_topk, num_experts, rank, num_ranks, use_fp8, workspace,
-                           launch_stream, phases, rdma_base, port_handles, peer_bases, mem_handles, use_ipc);
+                           launch_stream, phases, rdma_base, port_handles, peer_bases, mem_handles, use_ipc,
+                           ibgda_dev, use_ibgda);
   };
   launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
 
@@ -1528,13 +1587,21 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   auto peer_bases = peer_rdma_bases_gpu;
   const bool use_ipc = ll_ipc_ready;
   auto rdma_base = rdma_buffer_ptr;
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+  mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = ibgda_setup_ ? ibgda_setup_->device_handles.get() : nullptr;
+  const bool use_ibgda = use_ibgda_path_ && ibgda_dev != nullptr && !use_ipc;
+#else
+  mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = nullptr;
+  const bool use_ibgda = false;
+#endif
   auto launcher = [=](int phases) {
     internode_ll::combine(
         combined_x.data_ptr(), buffer.combine_rdma_recv_data_buffer, buffer.combine_rdma_recv_flag_buffer,
         buffer.combine_rdma_send_buffer, x.data_ptr(), topk_idx.data_ptr<int64_t>(), topk_weights.data_ptr<float>(),
         src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(), next_clean_meta.first, next_clean_meta.second,
         num_combined_tokens, hidden, num_max_dispatch_tokens_per_rank, num_topk, num_experts, rank, num_ranks,
-        workspace, launch_stream, phases, zero_copy, rdma_base, port_handles, peer_bases, mem_handles, use_ipc);
+        workspace, launch_stream, phases, zero_copy, rdma_base, port_handles, peer_bases, mem_handles, use_ipc,
+        ibgda_dev, use_ibgda);
   };
   launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
 

@@ -37,6 +37,12 @@ class BaseConnection {
 
   virtual void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) = 0;
 
+  /// Post any locally-staged work requests to the NIC. Called by the proxy
+  /// service to amortize ibv_post_send across many FIFO triggers. The default
+  /// no-op is correct for connections whose write/updateAndSync/atomicAdd
+  /// already post immediately (e.g., CudaIpcConnection).
+  virtual void postPending() {}
+
   virtual void flush(int64_t timeoutUsec = -1) = 0;
 
   /// Start signal forwarding to the given memory address.
@@ -151,6 +157,8 @@ class IBConnection : public BaseConnection {
              uint64_t size) override;
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
   void atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t value) override;
+
+  void postPending() override;
 
   void flush(int64_t timeoutUsec) override;
 };
