@@ -52,7 +52,7 @@ TEST_DATA_ALL_GATHER(float16, __half)
 TEST_DATA_ALL_GATHER(float32, float)
 TEST_DATA_ALL_GATHER(int32, int)
 
-#define TEST_DATA_ALL_REDUCE(FuncNameType, DataType)                                                       \
+#define TEST_DATA_ALL_REDUCE(FuncNameType, DataType, Atol, Rtol)                                            \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_all_reduce_##FuncNameType(               \
       DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {   \
     for (int rank = 0; rank < num_ranks; rank++) {                                                         \
@@ -66,15 +66,17 @@ TEST_DATA_ALL_GATHER(int32, int)
       }                                                                                                    \
     }                                                                                                      \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) {   \
-      assert(abs(float(result_buf[i]) - float(test_buf[i])) < 1e-3 * num_ranks);                           \
+      float diff = abs(float(result_buf[i]) - float(test_buf[i]));                                         \
+      float expected = abs(float(test_buf[i]));                                                            \
+      assert(diff <= num_ranks * ((Atol) + (Rtol) * expected));                                            \
     }                                                                                                      \
   }
 
-TEST_DATA_ALL_REDUCE(float16, __half)
-TEST_DATA_ALL_REDUCE(float32, float)
-TEST_DATA_ALL_REDUCE(int32, int)
+TEST_DATA_ALL_REDUCE(float16, __half, 1.0 / 128, 1.0 / 128)
+TEST_DATA_ALL_REDUCE(float32, float, 1e-7, 1e-7)
+TEST_DATA_ALL_REDUCE(int32, int, 0, 0)
 
-#define TEST_DATA_REDUCE_SCATTER(FuncNameType, DataType)                                                   \
+#define TEST_DATA_REDUCE_SCATTER(FuncNameType, DataType, Atol, Rtol)                                        \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_reduce_scatter_##FuncNameType(           \
       DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {   \
     int nem_elems_per_rank = num_elems / num_ranks;                                                        \
@@ -91,14 +93,16 @@ TEST_DATA_ALL_REDUCE(int32, int)
     }                                                                                                      \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) {   \
       if (i >= offset && i < offset + nem_elems_per_rank) {                                                \
-        assert(abs(float(result_buf[i - offset]) - float(test_buf[i])) < 1e-3 * num_ranks);                \
+        float diff = abs(float(result_buf[i - offset]) - float(test_buf[i]));                              \
+        float expected = abs(float(test_buf[i]));                                                          \
+        assert(diff <= num_ranks * ((Atol) + (Rtol) * expected));                                          \
       }                                                                                                    \
     }                                                                                                      \
   }
 
-TEST_DATA_REDUCE_SCATTER(float16, __half)
-TEST_DATA_REDUCE_SCATTER(float32, float)
-TEST_DATA_REDUCE_SCATTER(int32, int)
+TEST_DATA_REDUCE_SCATTER(float16, __half, 1.0 / 128, 1.0 / 128)
+TEST_DATA_REDUCE_SCATTER(float32, float, 1e-7, 1e-7)
+TEST_DATA_REDUCE_SCATTER(int32, int, 0, 0)
 
 #define TEST_DATA_ALL_TO_ALL(FuncNameType, DataType)                                                       \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_all_to_all_##FuncNameType(               \
