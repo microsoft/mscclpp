@@ -1522,6 +1522,69 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
   };
   launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+  // Read back per-block timestamps written by dispatch (offset 1024 in workspace).
+  static const bool kProfilePrintDisp = []() {
+    const char* e = std::getenv("MSCCLPP_EP_LL_PROFILE_PRINT");
+    return e != nullptr && std::string(e) == "1";
+  }();
+  if (kProfilePrintDisp) {
+    static int call_idx = 0;
+    cudaStreamSynchronize(launch_stream);
+    constexpr int kMaxBlocks = 1024;
+    std::vector<uint64_t> host_ts(kMaxBlocks * 4);
+    cudaMemcpy(host_ts.data(),
+               static_cast<char*>(workspace) + 1024,
+               host_ts.size() * sizeof(uint64_t),
+               cudaMemcpyDeviceToHost);
+    static int sm_clock_khz = []() {
+      int dev = 0; cudaGetDevice(&dev);
+      int khz = 0; cudaDeviceGetAttribute(&khz, cudaDevAttrClockRate, dev);
+      return khz;
+    }();
+    auto to_us = [](uint64_t ticks, int khz) {
+      return static_cast<double>(ticks) * 1000.0 / static_cast<double>(khz);
+    };
+    auto stats = [&](int idx_lo, int idx_hi) {
+      uint64_t mn = ~0ull, mx = 0ull;
+      double sum = 0;
+      int n = 0;
+      for (int b = 0; b < kMaxBlocks; ++b) {
+        uint64_t lo = host_ts[b * 4 + idx_lo];
+        uint64_t hi = host_ts[b * 4 + idx_hi];
+        if (lo == 0 || hi <= lo) continue;
+        uint64_t d = hi - lo;
+        if (d < mn) mn = d;
+        if (d > mx) mx = d;
+        sum += d;
+        ++n;
+      }
+      if (n == 0) return std::make_tuple(0.0, 0.0, 0.0, 0);
+      return std::make_tuple(to_us(mn, sm_clock_khz),
+                             to_us(static_cast<uint64_t>(sum / n), sm_clock_khz),
+                             to_us(mx, sm_clock_khz),
+                             n);
+    };
+    auto [send_mn, send_av, send_mx, send_n] = stats(0, 1);
+    auto [wait_mn, wait_av, wait_mx, wait_n] = stats(1, 2);
+    auto [unp_mn,  unp_av,  unp_mx,  unp_n ] = stats(2, 3);
+    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 3);
+    fprintf(stderr,
+            "[ep-prof dispatch #%d r%d] blocks=%d  "
+            "send=%.1f/%.1f/%.1fus  "
+            "wait=%.1f/%.1f/%.1fus  "
+            "unpack=%.1f/%.1f/%.1fus  "
+            "total=%.1f/%.1f/%.1fus  (min/avg/max)\n",
+            call_idx++, rank, send_n,
+            send_mn, send_av, send_mx,
+            wait_mn, wait_av, wait_mx,
+            unp_mn,  unp_av,  unp_mx,
+            tot_mn,  tot_av,  tot_mx);
+    cudaMemsetAsync(static_cast<char*>(workspace) + 1024,
+                    0, host_ts.size() * sizeof(uint64_t), launch_stream);
+  }
+#endif
+
   std::optional<EventHandle> event;
   if (async) {
     event = EventHandle(launch_stream);
@@ -1604,6 +1667,75 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
         ibgda_dev, use_ibgda);
   };
   launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
+
+#ifdef MSCCLPP_EP_LL_PROFILE
+  // Read back per-block timestamps written by the combine kernel and print
+  // a summary if MSCCLPP_EP_LL_PROFILE_PRINT=1. Layout in workspace:
+  // [block][4] of uint64_t at byte offset 256.
+  static const bool kProfilePrint = []() {
+    const char* e = std::getenv("MSCCLPP_EP_LL_PROFILE_PRINT");
+    return e != nullptr && std::string(e) == "1";
+  }();
+  if (kProfilePrint) {
+    static int call_idx = 0;
+    cudaStreamSynchronize(launch_stream);
+    // Worst-case block count: combine launcher uses kNumWarpGroupsRdma=3, so
+    // num_sms = ceil(num_experts / 3). Read 1024 entries to be safe.
+    constexpr int kMaxBlocks = 1024;
+    std::vector<uint64_t> host_ts(kMaxBlocks * 4);
+    cudaMemcpy(host_ts.data(),
+               static_cast<char*>(workspace) + 65536,
+               host_ts.size() * sizeof(uint64_t),
+               cudaMemcpyDeviceToHost);
+    static int sm_clock_khz = []() {
+      int dev = 0; cudaGetDevice(&dev);
+      int khz = 0; cudaDeviceGetAttribute(&khz, cudaDevAttrClockRate, dev);
+      return khz;
+    }();
+    auto to_us = [](uint64_t ticks, int khz) {
+      // ticks / (khz/1000 ticks-per-us) = us, i.e. ticks * 1000 / khz.
+      return static_cast<double>(ticks) * 1000.0 / static_cast<double>(khz);
+    };
+    auto stats = [&](int idx_lo, int idx_hi) {
+      uint64_t mn = ~0ull, mx = 0ull;
+      double sum = 0;
+      int n = 0;
+      for (int b = 0; b < kMaxBlocks; ++b) {
+        uint64_t lo = host_ts[b * 4 + idx_lo];
+        uint64_t hi = host_ts[b * 4 + idx_hi];
+        if (lo == 0 || hi <= lo) continue;
+        uint64_t d = hi - lo;
+        if (d < mn) mn = d;
+        if (d > mx) mx = d;
+        sum += d;
+        ++n;
+      }
+      if (n == 0) return std::make_tuple(0.0, 0.0, 0.0, 0);
+      return std::make_tuple(to_us(mn, sm_clock_khz),
+                             to_us(static_cast<uint64_t>(sum / n), sm_clock_khz),
+                             to_us(mx, sm_clock_khz),
+                             n);
+    };
+    auto [send_mn, send_av, send_mx, send_n] = stats(0, 1);
+    auto [wait_mn, wait_av, wait_mx, wait_n] = stats(1, 2);
+    auto [redu_mn, redu_av, redu_mx, redu_n] = stats(2, 3);
+    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 3);
+    fprintf(stderr,
+            "[ep-prof combine #%d r%d] blocks=%d  "
+            "send=%.1f/%.1f/%.1fus  "
+            "wait=%.1f/%.1f/%.1fus  "
+            "reduce=%.1f/%.1f/%.1fus  "
+            "total=%.1f/%.1f/%.1fus  (min/avg/max)\n",
+            call_idx++, rank, send_n,
+            send_mn, send_av, send_mx,
+            wait_mn, wait_av, wait_mx,
+            redu_mn, redu_av, redu_mx,
+            tot_mn,  tot_av,  tot_mx);
+    // Zero out so next iter's "lo==0" filter rejects untouched slots.
+    cudaMemsetAsync(static_cast<char*>(workspace) + 65536,
+                    0, host_ts.size() * sizeof(uint64_t), launch_stream);
+  }
+#endif
 
   std::optional<EventHandle> event;
   if (async) {

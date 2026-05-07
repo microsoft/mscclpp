@@ -180,8 +180,25 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
   const size_t num_int4_per_msg = num_bytes_per_msg / sizeof(int4);
   EP_DEVICE_ASSERT(num_bytes_per_msg % sizeof(int4) == 0);
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+  // Profile timestamps. Reuse workspace tail at byte offset 1024 (well past
+  // the atomic_counter / atomic_finish_counter arrays, which use
+  // num_experts * 4 * 2 = 512 bytes for typical num_experts <= 64).
+  // Layout: [block][4]uint64_t.
+  //   [b*4 + 0] = send phase entry
+  //   [b*4 + 1] = send phase done (after count write barrier)
+  //   [b*4 + 2] = recv-count spinwait done
+  //   [b*4 + 3] = kernel done
+  uint64_t* prof_buf = reinterpret_cast<uint64_t*>(
+      reinterpret_cast<char*>(atomic_counter_per_expert) + 1024);
+#endif
+
   // Sending phase
   if ((phases & LOW_LATENCY_SEND_PHASE) == 0) goto LOW_LATENCY_DISPATCH_RECV;
+
+#ifdef MSCCLPP_EP_LL_PROFILE
+  if (thread_id == 0) prof_buf[sm_id * 4 + 0] = clock64();
+#endif
 
   // Expert counts
   __shared__ int shared_num_tokens_sent_per_expert[kNumWarpGroups];
@@ -378,6 +395,11 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
   }
   __syncwarp();
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+  __syncthreads();
+  if (thread_id == 0) prof_buf[sm_id * 4 + 1] = clock64();
+#endif
+
 // Receiving phase
 LOW_LATENCY_DISPATCH_RECV:
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
@@ -415,6 +437,13 @@ LOW_LATENCY_DISPATCH_RECV:
     num_recv_tokens = shared_num_recv_tokens[warp_group_id];
     recv_token_begin_idx = shared_recv_token_begin_idx[warp_group_id];
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+    // Per-block: timestamp once across warp_group_id 0 sub_warp_id 1.
+    if (warp_group_id == 0 && sub_warp_id == 1 && lane_id == 0) {
+      prof_buf[sm_id * 4 + 2] = clock64();
+    }
+#endif
+
     EP_DEVICE_ASSERT(num_scales <= 64);
     for (int i = sub_warp_id; i < num_recv_tokens; i += kNumWarpsPerGroup) {
       const auto src_src_idx = reinterpret_cast<int*>(rdma_recv_x_uint8 + i * num_bytes_per_msg);
@@ -436,6 +465,10 @@ LOW_LATENCY_DISPATCH_RECV:
       }
     }
   }
+#ifdef MSCCLPP_EP_LL_PROFILE
+  __syncthreads();
+  if (thread_id == 0) prof_buf[sm_id * 4 + 3] = clock64();
+#endif
 }
 
 void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv_src_info,
@@ -553,7 +586,29 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
   constexpr size_t num_bytes_per_slot = kHidden * sizeof(nv_bfloat16);
   EP_STATIC_ASSERT(num_bytes_per_slot % sizeof(int4) == 0, "Invalid vectorization");
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+  // Profile timestamps. The same workspace is shared with the dispatch
+  // kernel, which uses bytes [0..2*num_experts*sizeof(int)] for its
+  // atomic_counter_per_expert / atomic_finish_counter_per_expert arrays
+  // (up to ~512 B for 64 experts). Dispatch's own prof_buf lives at
+  // byte offset 1024..(1024 + kMaxBlocks*32) = 1024..33792. Place the
+  // combine prof_buf well past that to avoid corrupting dispatch's
+  // atomic counters between iterations (which previously caused iter 1+
+  // to hang in dispatch's FINISHED_SUM_TAG spinwait).
+  // Per-block [4]uint64_t scratch. Slots:
+  //   [b*4 + 0] = send phase entry
+  //   [b*4 + 1] = send phase done (after trailing flag write barrier)
+  //   [b*4 + 2] = recv-flag spinwait done
+  //   [b*4 + 3] = kernel done
+  uint64_t* prof_buf = reinterpret_cast<uint64_t*>(
+      reinterpret_cast<char*>(atomic_clean_flag) + 65536);
+#endif
+
   if ((phases & LOW_LATENCY_SEND_PHASE) == 0) goto LOW_LATENCY_COMBINE_RECV;
+
+#ifdef MSCCLPP_EP_LL_PROFILE
+  if (thread_id == 0) prof_buf[sm_id * 4 + 0] = clock64();
+#endif
 
   if (sm_id == 0 and warp_group_id == 0 and sub_warp_id == 0) {
 #pragma unroll
@@ -666,6 +721,11 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
     __syncwarp();
   }
 
+#ifdef MSCCLPP_EP_LL_PROFILE
+  __syncthreads();
+  if (thread_id == 0) prof_buf[sm_id * 4 + 1] = clock64();
+#endif
+
 LOW_LATENCY_COMBINE_RECV:
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
 
@@ -675,6 +735,10 @@ LOW_LATENCY_COMBINE_RECV:
       while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0)
         ;
   }
+#ifdef MSCCLPP_EP_LL_PROFILE
+  __syncthreads();
+  if (thread_id == 0) prof_buf[sm_id * 4 + 2] = clock64();
+#endif
   cg::this_grid().sync();
 
   EP_DEVICE_ASSERT(num_topk <= 32 and hidden_bf16_int4 <= num_threads);
@@ -712,6 +776,10 @@ LOW_LATENCY_COMBINE_RECV:
       (reinterpret_cast<int4*>(combined_x) + token_idx * hidden_bf16_int4)[thread_id] = combined_int4;
     }
   }
+#ifdef MSCCLPP_EP_LL_PROFILE
+  __syncthreads();
+  if (thread_id == 0) prof_buf[sm_id * 4 + 3] = clock64();
+#endif
 }
 
 void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void* rdma_send_x, const void* x,

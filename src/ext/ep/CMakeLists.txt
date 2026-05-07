@@ -59,6 +59,13 @@ endif()
 Python_add_library(mscclpp_ep_cpp MODULE ${EP_SOURCES})
 
 target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
+# Optional: enable in-kernel timestamp profiling for low-latency combine.
+# `cmake -DMSCCLPP_EP_LL_PROFILE=ON ...`. Runtime print is gated by
+# the env var MSCCLPP_EP_LL_PROFILE_PRINT=1.
+option(MSCCLPP_EP_LL_PROFILE "Enable in-kernel timestamp profiling for LL combine" OFF)
+if(MSCCLPP_EP_LL_PROFILE)
+    target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_EP_LL_PROFILE)
+endif()
 # Inherit ibverbs / mlx5dv defs from the core library so the IBGDA host-side
 # plumbing (see ibgda_setup.cc, gated by MSCCLPP_EP_HAVE_IBGDA) compiles in.
 if(IBVERBS_FOUND)
