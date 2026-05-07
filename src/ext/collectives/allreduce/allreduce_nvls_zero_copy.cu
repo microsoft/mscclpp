@@ -14,7 +14,7 @@ namespace collective {
 
 constexpr int MAX_NBLOCKS = 32;
 
-template <typename T>
+template <typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvls([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                   [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
@@ -58,8 +58,8 @@ __global__ void __launch_bounds__(1024, 1)
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
   if (curBlockSize > 0) {
-    handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, curBlockSize,
-                               threadIdx.x, blockDim.x);
+    handleMultiLoadReduceStore<T, AccumT>(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset,
+                                          curBlockSize, threadIdx.x, blockDim.x);
   }
   __syncthreads();
   if (threadIdx.x < nPeers) {
@@ -90,9 +90,9 @@ struct NvlsAdapter {
 #endif
     {
       using ChannelType = DeviceHandle<mscclpp::BaseMemoryChannel>;
-      allreduceNvls<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
-                                                                 nvlsOutChannels, channelInOffset, channelOutOffset,
-                                                                 inputSize, rank, ipcDomainNranks);
+      allreduceNvls<T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+          (ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, inputSize,
+          rank, ipcDomainNranks);
       return cudaGetLastError();
     }
   }

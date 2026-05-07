@@ -36,7 +36,7 @@ MSCCLPP_DEVICE_INLINE constexpr std::size_t calcVectorSize() {
   }
 }
 
-template <typename T>
+template <typename T, typename AccumT = T>
 MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t srcOffset, size_t dstOffset, size_t size,
                                                       int tid, int nThreads) {
   // nvls can only handle 4 bytes alignment
@@ -54,7 +54,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
   vectorType* src4 = (vectorType*)src;
   vectorType* dst4 = (vectorType*)dst;
   for (size_t idx = tid; idx < nVec; idx += nThreads) {
-    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce(src4 + srcOffset4 + idx);
+    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<vectorType, AccumT>(src4 + srcOffset4 + idx);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(val, dst4 + dstOffset4 + idx);
   }
   // handle rest of data
@@ -64,7 +64,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(T* src, T* dst, size_t src
   const size_t startIdx = (srcOffset + processed) / sizeof(restVectorType);
   const size_t endIdx = (srcOffset + size) / sizeof(restVectorType);
   for (size_t idx = tid + startIdx; idx < endIdx; idx += nThreads) {
-    auto val = mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce((restVectorType*)src + idx);
+    auto val =
+        mscclpp::SwitchChannelDeviceHandle::multimemLoadReduce<restVectorType, AccumT>((restVectorType*)src + idx);
     mscclpp::SwitchChannelDeviceHandle::multimemStore(val, (restVectorType*)dst + idx);
   }
 }

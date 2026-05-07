@@ -76,6 +76,25 @@ class CustomizedComm:
         "default_allreduce_fullmesh": 64,
         "default_allgather_fullmesh2": 32,
     }
+    # (algo_name, min_size, max_size, predicate)
+    # Boundaries are inclusive on both ends. max_size=None means unbounded.
+    # predicate=None means always applicable; otherwise a callable taking `self`.
+    _AR_CANDIDATES_MNNVL = [
+        ("default_allreduce_allpair_packet", 0, 128 << 10, None),
+        ("default_allreduce_nvls_packet", 0, 64 << 10, lambda c: c._nvls),
+        ("default_allreduce_packet", 128 << 10, 4 << 20, None),
+        ("default_allreduce_nvls_zero_copy", 512 << 10, None, lambda c: c._nvls and c.symmetric_memory),
+        ("default_allreduce_rsag_zero_copy", 512 << 10, None, None),
+        ("default_allreduce_rsag", 512 << 10, None, None),
+    ]
+    _AR_CANDIDATES_SINGLE = [
+        ("default_allreduce_packet", 0, 4 << 20, None),
+        ("default_allreduce_allpair_packet", 0, 4 << 20, None),
+        ("default_allreduce_nvls_packet", 0, 4 << 20, lambda c: c._nvls),
+        ("default_allreduce_rsag_zero_copy", 512 << 10, None, None),
+        ("default_allreduce_nvls_zero_copy", 512 << 10, None, lambda c: c._nvls and c.symmetric_memory),
+        ("default_allreduce_fullmesh", 0, None, lambda c: torch.version.hip is not None),
+    ]
 
     def __init__(self, comm: mscclpp.CommGroup, symmetric_memory: bool = False):
         self.comm = comm
@@ -164,32 +183,12 @@ class CustomizedComm:
         return self._tune_buf
 
     def _ar_candidates(self, size: int):
-        out = []
-        if self.multi_host_mnnvl:
-            if size <= 4 << 20:
-                if size <= 128 << 10:
-                    out.append(self._algo("allreduce", "default_allreduce_allpair_packet"))
-                if size <= 64 << 10 and self._nvls:
-                    out.append(self._algo("allreduce", "default_allreduce_nvls_packet"))
-                if size > 128 << 10:
-                    out.append(self._algo("allreduce", "default_allreduce_packet"))
-            if size >= 512 << 10:
-                if self._nvls and self.symmetric_memory:
-                    out.append(self._algo("allreduce", "default_allreduce_nvls_zero_copy"))
-                out.append(self._algo("allreduce", "default_allreduce_rsag"))
-            return out
-        if size <= 4 << 20:
-            out.append(self._algo("allreduce", "default_allreduce_packet"))
-            out.append(self._algo("allreduce", "default_allreduce_allpair_packet"))
-            if self._nvls:
-                out.append(self._algo("allreduce", "default_allreduce_nvls_packet"))
-        if size >= 512 << 10:
-            out.append(self._algo("allreduce", "default_allreduce_rsag_zero_copy"))
-            if self._nvls and self.symmetric_memory:
-                out.append(self._algo("allreduce", "default_allreduce_nvls_zero_copy"))
-        if torch.version.hip is not None:
-            out.append(self._algo("allreduce", "default_allreduce_fullmesh"))
-        return out
+        table = self._AR_CANDIDATES_MNNVL if self.multi_host_mnnvl else self._AR_CANDIDATES_SINGLE
+        return [
+            self._algo("allreduce", name)
+            for name, lo, hi, pred in table
+            if size >= lo and (hi is None or size <= hi) and (pred is None or pred(self))
+        ]
 
     def _ag_candidates(self):
         if self.multi_host_mnnvl:
