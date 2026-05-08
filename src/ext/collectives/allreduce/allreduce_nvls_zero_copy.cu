@@ -82,14 +82,7 @@ struct NvlsAdapter {
     } else if constexpr (std::is_same_v<T, __fp8_e4m3b15>) {
       // fp8_e4m3b15 is a software-only type with no hardware NVLS support.
       return cudaErrorNotSupported;
-    } else
-#if defined(__CUDA_ARCH__) && \
-    ((!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000))
-        if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-      return cudaErrorNotSupported;
-    } else
-#endif
-    {
+    } else {
       using ChannelType = DeviceHandle<mscclpp::BaseMemoryChannel>;
       allreduceNvls<T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
           (ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, inputSize,
