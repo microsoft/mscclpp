@@ -155,7 +155,7 @@ struct SwitchChannelDeviceHandle {
     }
 #endif
     else {
-      static_assert(dependentFalse<VectorType>, "Not supported type");
+      assert(false && "Unsupported vector type for multimemLoadReduce");
     }
     return val;
   };
@@ -219,7 +219,7 @@ struct SwitchChannelDeviceHandle {
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
     } else {
-      static_assert(dependentFalse<VectorType>, "Not supported type");
+      assert(false && "Unsupported vector type for multimemStore");
     }
   };
 
@@ -244,7 +244,7 @@ struct SwitchChannelDeviceHandle {
     } else if constexpr (std::is_same_v<TValue, uint1> && std::is_same_v<T, __half2>) {
       asm volatile("multimem.red.relaxed.sys.global.add.f16x2 [%0], {%1};" ::"l"(ptr), "r"(val.x) : "memory");
     } else {
-      static_assert(dependentFalse<T>, "Not supported type");
+      assert(false && "Unsupported vector type for multimemStoreReduce");
     }
   };
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
