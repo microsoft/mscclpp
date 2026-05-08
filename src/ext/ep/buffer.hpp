@@ -90,12 +90,14 @@ struct Buffer {
   std::shared_ptr<mscclpp::PortChannelDeviceHandle> port_channel_handles_device_ptr;
   std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> memory_channel_handles_device_ptr;
 
-  // Intra-node LL only: peer-mapped RDMA buffer pointers (CUDA IPC).
-  // ``peer_rdma_bases[r]`` aliases rank ``r``'s ``rdma_buffer_ptr`` via
-  // ``cudaIpcOpenMemHandle`` (lazy peer access). Populated in ``sync()`` when
-  // ``low_latency_mode && num_rdma_ranks == 1``; null otherwise.
-  cudaIpcMemHandle_t rdma_ipc_handles[NUM_MAX_NVL_PEERS];
-  void* peer_rdma_bases[NUM_MAX_NVL_PEERS] = {nullptr};
+  // LL fast path: peer-mapped RDMA buffer pointers.
+  // ``peer_rdma_bases[r]`` aliases rank ``r``'s ``rdma_buffer_ptr`` through
+  // mscclpp's CudaIpc transport. Intranode peers use POSIX-FD CUDA IPC;
+  // cross-node peers use cuMem fabric handles routed through nvidia-imex
+  // over the NVL72 NVSwitch fabric (Proposal A — replaces RDMA atomicAdd
+  // with NVLink atomics, since Azure CX-7 RoCE has IBV_ATOMIC_NONE).
+  // Populated in ``sync()`` when ``low_latency_mode``; empty otherwise.
+  std::vector<void*> peer_rdma_bases;
   void** peer_rdma_bases_gpu = nullptr;
   // MemoryChannels over CUDA IPC used only for the LL barrier ring.
   std::vector<mscclpp::MemoryChannel> ll_memory_channels;
