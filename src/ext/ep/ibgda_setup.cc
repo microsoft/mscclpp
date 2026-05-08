@@ -12,6 +12,7 @@
 #include <infiniband/verbs.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -88,10 +89,22 @@ std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_tr
   setup->num_channels = num_channels;
 
   // 1. Resolve IB device name and build the IbCtx.
-  auto ib_transport = static_cast<Transport>(static_cast<int>(Transport::IB0) + ib_transport_index);
+  //    `MSCCLPP_EP_IB_DEVICE_OVERRIDE` may force a specific IB transport
+  //    index (0..7) for diagnostic NIC-affinity sweeps. Default = use the
+  //    NUMA-affine NIC selected by the caller (== local rank on NDv5).
+  int effective_ib_index = ib_transport_index;
+  if (const char* e = std::getenv("MSCCLPP_EP_IB_DEVICE_OVERRIDE")) {
+    int v = std::atoi(e);
+    if (v >= 0 && v < 8) effective_ib_index = v;
+  }
+  auto ib_transport = static_cast<Transport>(static_cast<int>(Transport::IB0) + effective_ib_index);
   std::string dev_name = getIBDeviceName(ib_transport);
   setup->ib_ctx = std::make_unique<IbCtx>(dev_name);
   EP_HOST_ASSERT(setup->ib_ctx->isMlx5() && "IBGDA requires an mlx5 NIC");
+  fprintf(stderr, "[mscclpp_ep] rank %d -> IB device %s (transport_index=%d, override=%s)\n",
+          rank, dev_name.c_str(), effective_ib_index,
+          effective_ib_index == ib_transport_index ? "no" : "yes");
+  fflush(stderr);
 
   // 2. Create QPs. Layout: qps[channel * num_ranks + peer].
   // Self entries are nullptr.
