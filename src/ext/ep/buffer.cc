@@ -93,8 +93,19 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
 
   // Get ranks
   CUDA_CHECK(cudaGetDevice(&device_id));
-  rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
-  num_rdma_ranks = std::max(1, num_ranks / NUM_MAX_NVL_PEERS), num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
+  // Allow overriding the local-world-size (number of GPUs per node) via the
+  // env var MSCCLPP_EP_LOCAL_WORLD_SIZE. By default the partitioning is
+  // pinned to NUM_MAX_NVL_PEERS=8, which mis-classifies all ranks as
+  // intra-node on hosts with fewer than 8 GPUs (e.g. GB200x4) and breaks
+  // cross-node LL via spurious cudaIpcOpenMemHandle on remote IPC handles.
+  int local_world_size = NUM_MAX_NVL_PEERS;
+  if (const char* env = std::getenv("MSCCLPP_EP_LOCAL_WORLD_SIZE")) {
+    int v = std::atoi(env);
+    if (v > 0 && v <= NUM_MAX_NVL_PEERS) local_world_size = v;
+  }
+  rdma_rank = rank / local_world_size, nvl_rank = rank % local_world_size;
+  num_rdma_ranks = std::max(1, num_ranks / local_world_size),
+  num_nvl_ranks = std::min(num_ranks, local_world_size);
 
   // Get device info
   cudaDeviceProp device_prop = {};

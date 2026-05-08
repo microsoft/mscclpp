@@ -11,7 +11,7 @@
 
 #pragma once
 
-#define NUM_MAX_NVL_PEERS 8
+#define NUM_MAX_NVL_PEERS 4
 #define NUM_MAX_RDMA_PEERS 20
 #define NUM_MAX_FIFO_SLOTS 32768
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)

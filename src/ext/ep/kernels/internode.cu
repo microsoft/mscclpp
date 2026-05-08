@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include <limits>
+#include <type_traits>
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
@@ -12,6 +13,17 @@
 
 namespace mscclpp {
 namespace ep {
+
+// Packed type for loading NUM_MAX_NVL_PEERS bools as a single integer.
+// Supports the two configurations the rest of the kernel logic assumes:
+//   8 peers -> uint64_t (8 bools fit exactly)
+//   4 peers -> uint32_t (4 bools fit exactly)
+// All packed loads/stores below use this alias instead of a hardcoded uint64_t.
+using NvlPackT = std::conditional_t<NUM_MAX_NVL_PEERS == 8, uint64_t, uint32_t>;
+static_assert(NUM_MAX_NVL_PEERS == 8 || NUM_MAX_NVL_PEERS == 4,
+              "NUM_MAX_NVL_PEERS must be 4 or 8 for HT internode kernel");
+static_assert(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(NvlPackT),
+              "NvlPackT size must match NUM_MAX_NVL_PEERS bools");
 
 namespace internode {
 
@@ -137,7 +149,7 @@ void get_dispatch_layout(const int64_t* topk_idx, int* num_tokens_per_rank, int*
 struct SourceMeta {
   int src_rdma_rank, is_token_in_nvl_rank_bits;
 
-  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8, "Invalid number of maximum NVL peers");
+  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8 || NUM_MAX_NVL_PEERS == 4, "Invalid number of maximum NVL peers");
 
   __forceinline__ SourceMeta() = default;
 
@@ -389,13 +401,12 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
       // Iterate over tokens
       int total_count = 0, per_nvl_rank_count[NUM_MAX_NVL_PEERS] = {0};
       for (int64_t i = token_start_idx + lane_id; i < token_end_idx; i += 32) {
-        EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(uint64_t), "Invalid number of NVL peers");
-        auto is_token_in_rank_uint64 =
-            *reinterpret_cast<const uint64_t*>(is_token_in_rank + i * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS);
-        auto is_token_in_rank_values = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
+        auto is_token_in_rank_packed =
+            *reinterpret_cast<const NvlPackT*>(is_token_in_rank + i * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS);
+        auto is_token_in_rank_values = reinterpret_cast<const bool*>(&is_token_in_rank_packed);
 #pragma unroll
         for (int j = 0; j < NUM_MAX_NVL_PEERS; ++j) per_nvl_rank_count[j] += is_token_in_rank_values[j];
-        total_count += (is_token_in_rank_uint64 != 0);
+        total_count += (is_token_in_rank_packed != 0);
       }
 
       // Warp reduce
@@ -527,8 +538,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   // Data checks
   EP_DEVICE_ASSERT(num_topk <= 32);
 
-  // RDMA symmetric layout
-  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(uint64_t), "Invalid number of NVL peers");
+  // RDMA symmetric layout (packed-bool size guard is at namespace scope via NvlPackT).
   auto hidden_bytes = hidden_int4 * sizeof(int4);
   auto num_bytes_per_rdma_token = get_num_bytes_per_rdma_token(hidden_int4, num_scales, num_topk, num_topk);
   auto rdma_channel_data =
@@ -663,10 +673,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         lane_id == rdma_rank ? rdma_channel_data.recv_buffer(lane_id) : rdma_channel_data.send_buffer(lane_id);
     for (token_idx = token_start_idx + warp_id; token_idx < token_end_idx; token_idx += kNumDispatchRDMASenderWarps) {
       // Read RDMA rank existence
-      uint64_t is_token_in_rank_uint64 = 0;
+      NvlPackT is_token_in_rank_uint64 = 0;
       if (lane_id < kNumRDMARanks)
         is_token_in_rank_uint64 =
-            *reinterpret_cast<const uint64_t*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
+            *reinterpret_cast<const NvlPackT*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
 
       // Acquire sequential lock
       while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
