@@ -93,7 +93,7 @@ set_target_properties(mscclpp_ep_cpp PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_VISIBILITY_PRESET default
-    INSTALL_RPATH "\$ORIGIN/../lib"
+    INSTALL_RPATH "\$ORIGIN/mscclpp/lib"
 )
 
 if(MSCCLPP_USE_CUDA)
@@ -103,4 +103,4 @@ elseif(MSCCLPP_USE_ROCM)
 endif()
 
 install(TARGETS mscclpp_ep_cpp
-    LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
+    LIBRARY DESTINATION ..)

@@ -44,7 +44,7 @@ import torch.distributed as dist
 def init_dist():
     rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
-    local_rank = int(os.environ.get("LOCAL_RANK", rank % 8))
+    local_rank = int(os.environ.get("LOCAL_RANK", rank % 4))
     torch.cuda.set_device(local_rank)
     dist.init_process_group(
         backend="nccl", world_size=world_size, rank=rank, device_id=torch.device(f"cuda:{local_rank}")
@@ -71,7 +71,7 @@ def main():
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp.ext import ep
 
-    NUM_MAX_NVL_PEERS = 8
+    NUM_MAX_NVL_PEERS = 4
     assert (
         num_ranks % NUM_MAX_NVL_PEERS == 0 and num_ranks > NUM_MAX_NVL_PEERS
     ), f"expected >1 node with 8 GPUs each, got num_ranks={num_ranks}"
