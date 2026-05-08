@@ -25,7 +25,8 @@ namespace mscclpp {
 namespace ep {
 
 struct Buffer {
-  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8, "The number of maximum NVLink peers must be 8");
+  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8 || NUM_MAX_NVL_PEERS == 4,
+                   "The number of maximum NVLink peers must be 4 or 8");
 
  private:
   // Low-latency mode buffer
