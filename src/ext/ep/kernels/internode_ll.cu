@@ -184,11 +184,14 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
   // Profile timestamps. Reuse workspace tail at byte offset 1024 (well past
   // the atomic_counter / atomic_finish_counter arrays, which use
   // num_experts * 4 * 2 = 512 bytes for typical num_experts <= 64).
-  // Layout: [block][4]uint64_t.
-  //   [b*4 + 0] = send phase entry
-  //   [b*4 + 1] = send phase done (after count write barrier)
-  //   [b*4 + 2] = recv-count spinwait done
-  //   [b*4 + 3] = kernel done
+  // Per-block layout: 16 uint64_t slots (1024 blocks * 16 * 8 = 128 KiB).
+  //   [b*16 + 0]  = send phase entry
+  //   [b*16 + 1]  = send phase done (after count write barrier)
+  //   [b*16 + 2]  = kernel done
+  //   [b*16 + 3]  = spare
+  //   [b*16 + 4 + wg]  = warp_group `wg` unpack-start (recv-count ack)
+  //   [b*16 + 8 + wg]  = warp_group `wg` unpack-end (after for-loop)
+  constexpr int kProfSlots = 16;
   uint64_t* prof_buf = reinterpret_cast<uint64_t*>(
       reinterpret_cast<char*>(atomic_counter_per_expert) + 1024);
 #endif
@@ -197,7 +200,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
   if ((phases & LOW_LATENCY_SEND_PHASE) == 0) goto LOW_LATENCY_DISPATCH_RECV;
 
 #ifdef MSCCLPP_EP_LL_PROFILE
-  if (thread_id == 0) prof_buf[sm_id * 4 + 0] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kProfSlots + 0] = clock64();
 #endif
 
   // Expert counts
@@ -217,11 +220,12 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
       const auto rdma_x_vec = reinterpret_cast<vec_t*>(reinterpret_cast<uint8_t*>(rdma_x_src_idx) + sizeof(int4));
       const auto rdma_x_scales = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(rdma_x_vec) + hidden_bytes);
 
-      auto dst_expert_idx =
-          warp_id < num_topk ? static_cast<int>(__ldg(topk_idx + token_idx * num_topk + warp_id)) : -1;
       thread_id == 0 ? (*rdma_x_src_idx = token_idx) : 0;
 
-// FP8 cast
+// FP8 cast (or BF16 copy). Per-token staging into rdma_x[token_idx]. We
+// intentionally do NOT bar.sync between tokens here -- a single barrier
+// at the end of the per-token-loop covers all stages, halving the heavy
+// 928-thread named barriers' contribution to the send phase.
 #pragma unroll
       for (int i = thread_id; i < hidden_bf16_int4; i += num_threads) {
         auto int4_value = __ldg(x_int4 + i);
@@ -252,7 +256,20 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
           rdma_x_vec[i] = *reinterpret_cast<vec_t*>(&int4_value);
         }
       }
-      asm volatile("bar.sync 1, %0;" ::"r"(num_threads));
+    }
+    // Single block-level barrier across the staging warps (warp_id <
+    // num_warps - 1, i.e. 928 threads). Replaces the previous per-token
+    // bar.sync that fired num_tokens_per_block times.
+    asm volatile("bar.sync 1, %0;" ::"r"(num_threads));
+
+    // Issue all sends for this block's tokens. Warps with `warp_id <
+    // num_topk` each map to one of the per-token top-k destinations and
+    // issue one IB write per token.
+    for (int token_idx = sm_id; token_idx < num_tokens; token_idx += num_sms) {
+      const auto rdma_x_src_idx =
+          reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(rdma_x) + token_idx * num_bytes_per_msg);
+      auto dst_expert_idx =
+          warp_id < num_topk ? static_cast<int>(__ldg(topk_idx + token_idx * num_topk + warp_id)) : -1;
 
       // Issue sends
       if (dst_expert_idx >= 0) {
@@ -397,7 +414,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
 
 #ifdef MSCCLPP_EP_LL_PROFILE
   __syncthreads();
-  if (thread_id == 0) prof_buf[sm_id * 4 + 1] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kProfSlots + 1] = clock64();
 #endif
 
 // Receiving phase
@@ -438,9 +455,9 @@ LOW_LATENCY_DISPATCH_RECV:
     recv_token_begin_idx = shared_recv_token_begin_idx[warp_group_id];
 
 #ifdef MSCCLPP_EP_LL_PROFILE
-    // Per-block: timestamp once across warp_group_id 0 sub_warp_id 1.
-    if (warp_group_id == 0 && sub_warp_id == 1 && lane_id == 0) {
-      prof_buf[sm_id * 4 + 2] = clock64();
+    // Per-warp_group unpack-start (recv-count ack-received) timestamp.
+    if (sub_warp_id == 1 && lane_id == 0) {
+      prof_buf[sm_id * kProfSlots + 4 + warp_group_id] = clock64();
     }
 #endif
 
@@ -464,10 +481,17 @@ LOW_LATENCY_DISPATCH_RECV:
         (lane_id + 32) < num_scales ? dst_scales[(lane_id + 32) * scale_stride] = scale_1 : 0.0f;
       }
     }
+#ifdef MSCCLPP_EP_LL_PROFILE
+    // Per-warp_group unpack-end timestamp (one writer per wg).
+    asm volatile("bar.sync %0, %1;" ::"r"(warp_group_id + 2), "r"(kNumWarpsPerGroup * 32));
+    if (sub_warp_id == 0 && lane_id == 0) {
+      prof_buf[sm_id * kProfSlots + 8 + warp_group_id] = clock64();
+    }
+#endif
   }
 #ifdef MSCCLPP_EP_LL_PROFILE
   __syncthreads();
-  if (thread_id == 0) prof_buf[sm_id * 4 + 3] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kProfSlots + 2] = clock64();
 #endif
 }
 
@@ -600,8 +624,9 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
   //   [b*4 + 1] = send phase done (after trailing flag write barrier)
   //   [b*4 + 2] = recv-flag spinwait done
   //   [b*4 + 3] = kernel done
+  // Offset 196608 is past dispatch's prof_buf (1024 + 1024*16*8 = 132096).
   uint64_t* prof_buf = reinterpret_cast<uint64_t*>(
-      reinterpret_cast<char*>(atomic_clean_flag) + 65536);
+      reinterpret_cast<char*>(atomic_clean_flag) + 196608);
 #endif
 
   if ((phases & LOW_LATENCY_SEND_PHASE) == 0) goto LOW_LATENCY_COMBINE_RECV;

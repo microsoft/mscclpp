@@ -1528,11 +1528,19 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
     const char* e = std::getenv("MSCCLPP_EP_LL_PROFILE_PRINT");
     return e != nullptr && std::string(e) == "1";
   }();
+  static const int kProfilePrintEvery = []() {
+    const char* e = std::getenv("MSCCLPP_EP_LL_PROFILE_PRINT_EVERY");
+    int v = (e != nullptr) ? std::atoi(e) : 1;
+    return v > 0 ? v : 1;
+  }();
   if (kProfilePrintDisp) {
     static int call_idx = 0;
+    int this_call = call_idx++;
+    if (this_call % kProfilePrintEvery == 0) {
     cudaStreamSynchronize(launch_stream);
     constexpr int kMaxBlocks = 1024;
-    std::vector<uint64_t> host_ts(kMaxBlocks * 4);
+    constexpr int kProfSlots = 16;
+    std::vector<uint64_t> host_ts(kMaxBlocks * kProfSlots);
     cudaMemcpy(host_ts.data(),
                static_cast<char*>(workspace) + 1024,
                host_ts.size() * sizeof(uint64_t),
@@ -1550,8 +1558,8 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
       double sum = 0;
       int n = 0;
       for (int b = 0; b < kMaxBlocks; ++b) {
-        uint64_t lo = host_ts[b * 4 + idx_lo];
-        uint64_t hi = host_ts[b * 4 + idx_hi];
+        uint64_t lo = host_ts[b * kProfSlots + idx_lo];
+        uint64_t hi = host_ts[b * kProfSlots + idx_hi];
         if (lo == 0 || hi <= lo) continue;
         uint64_t d = hi - lo;
         if (d < mn) mn = d;
@@ -1565,23 +1573,33 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
                              to_us(mx, sm_clock_khz),
                              n);
     };
+    // Slot map: 0=entry, 1=send-done, 2=kernel-exit, 4..6=wg unpack-start, 8..10=wg unpack-end.
     auto [send_mn, send_av, send_mx, send_n] = stats(0, 1);
-    auto [wait_mn, wait_av, wait_mx, wait_n] = stats(1, 2);
-    auto [unp_mn,  unp_av,  unp_mx,  unp_n ] = stats(2, 3);
-    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 3);
+    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 2);
+    // Per-wg wait (1 -> wg start) and unpack (wg start -> wg end).
+    constexpr int kMaxWg = 3;
+    double wait_av[kMaxWg]={0}, wait_mx[kMaxWg]={0}, unp_av[kMaxWg]={0}, unp_mx[kMaxWg]={0};
+    int wait_n[kMaxWg]={0}, unp_n[kMaxWg]={0};
+    for (int wg = 0; wg < kMaxWg; ++wg) {
+      auto [_a, av_w, mx_w, n_w] = stats(1, 4 + wg);
+      auto [_b, av_u, mx_u, n_u] = stats(4 + wg, 8 + wg);
+      wait_av[wg]=av_w; wait_mx[wg]=mx_w; wait_n[wg]=n_w;
+      unp_av[wg]=av_u; unp_mx[wg]=mx_u; unp_n[wg]=n_u;
+    }
     fprintf(stderr,
             "[ep-prof dispatch #%d r%d] blocks=%d  "
             "send=%.1f/%.1f/%.1fus  "
-            "wait=%.1f/%.1f/%.1fus  "
-            "unpack=%.1f/%.1f/%.1fus  "
-            "total=%.1f/%.1f/%.1fus  (min/avg/max)\n",
-            call_idx++, rank, send_n,
+            "wait_wg(avg/max)=%.1f/%.1f, %.1f/%.1f, %.1f/%.1f us  "
+            "unpack_wg(avg/max)=%.1f/%.1f, %.1f/%.1f, %.1f/%.1f us  "
+            "total=%.1f/%.1f/%.1fus\n",
+            this_call, rank, send_n,
             send_mn, send_av, send_mx,
-            wait_mn, wait_av, wait_mx,
-            unp_mn,  unp_av,  unp_mx,
+            wait_av[0], wait_mx[0], wait_av[1], wait_mx[1], wait_av[2], wait_mx[2],
+            unp_av[0], unp_mx[0], unp_av[1], unp_mx[1], unp_av[2], unp_mx[2],
             tot_mn,  tot_av,  tot_mx);
     cudaMemsetAsync(static_cast<char*>(workspace) + 1024,
                     0, host_ts.size() * sizeof(uint64_t), launch_stream);
+    }
   }
 #endif
 
@@ -1678,13 +1696,20 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   }();
   if (kProfilePrint) {
     static int call_idx = 0;
+    static const int kProfilePrintEveryC = []() {
+      const char* e = std::getenv("MSCCLPP_EP_LL_PROFILE_PRINT_EVERY");
+      int v = (e != nullptr) ? std::atoi(e) : 1;
+      return v > 0 ? v : 1;
+    }();
+    int this_call = call_idx++;
+    if (this_call % kProfilePrintEveryC == 0) {
     cudaStreamSynchronize(launch_stream);
     // Worst-case block count: combine launcher uses kNumWarpGroupsRdma=3, so
     // num_sms = ceil(num_experts / 3). Read 1024 entries to be safe.
     constexpr int kMaxBlocks = 1024;
     std::vector<uint64_t> host_ts(kMaxBlocks * 4);
     cudaMemcpy(host_ts.data(),
-               static_cast<char*>(workspace) + 65536,
+               static_cast<char*>(workspace) + 196608,
                host_ts.size() * sizeof(uint64_t),
                cudaMemcpyDeviceToHost);
     static int sm_clock_khz = []() {
@@ -1726,14 +1751,15 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
             "wait=%.1f/%.1f/%.1fus  "
             "reduce=%.1f/%.1f/%.1fus  "
             "total=%.1f/%.1f/%.1fus  (min/avg/max)\n",
-            call_idx++, rank, send_n,
+            this_call, rank, send_n,
             send_mn, send_av, send_mx,
             wait_mn, wait_av, wait_mx,
             redu_mn, redu_av, redu_mx,
             tot_mn,  tot_av,  tot_mx);
     // Zero out so next iter's "lo==0" filter rejects untouched slots.
-    cudaMemsetAsync(static_cast<char*>(workspace) + 65536,
+    cudaMemsetAsync(static_cast<char*>(workspace) + 196608,
                     0, host_ts.size() * sizeof(uint64_t), launch_stream);
+    }
   }
 #endif
 
