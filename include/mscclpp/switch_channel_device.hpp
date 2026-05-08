@@ -198,7 +198,9 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.bf16x2 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-    } else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
+    }
+#if (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) && (__CUDA_ARCH__ >= 1000)
+    else if constexpr (std::is_same_v<VectorType, f8_e4m3x4>) {
       asm volatile("multimem.st.relaxed.sys.global.e4m3x4 [%0], %1;" ::"l"(ptr), "r"(val.words[0]) : "memory");
     } else if constexpr (std::is_same_v<VectorType, f8_e4m3x8>) {
       asm volatile("multimem.st.relaxed.sys.global.v2.e4m3x4  [%0], {%1,%2};" ::"l"(ptr), "r"(val.words[0]),
@@ -218,7 +220,9 @@ struct SwitchChannelDeviceHandle {
       asm volatile("multimem.st.relaxed.sys.global.v4.e5m2x4 [%0], {%1,%2,%3,%4};" ::"l"(ptr), "r"(val.words[0]),
                    "r"(val.words[1]), "r"(val.words[2]), "r"(val.words[3])
                    : "memory");
-    } else {
+    }
+#endif
+    else {
       assert(false && "Unsupported vector type for multimemStore");
     }
   };
