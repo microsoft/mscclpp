@@ -180,12 +180,9 @@ Buffer::~Buffer() noexcept(false) {
     // failed, so there is nothing to tear down.
   }
 
-  // Intra-node LL IPC fast-path teardown.
+  // LL fast-path teardown. RegisteredMemory shared_ptrs in ll_memory_channels
+  // own the peer IPC mappings; we just release the device-side base array.
   if (ll_ipc_ready) {
-    for (int i = 0; i < num_ranks; ++i) {
-      if (i == rank or peer_rdma_bases[i] == nullptr) continue;
-      CUDA_CHECK(cudaIpcCloseMemHandle(peer_rdma_bases[i]));
-    }
     if (peer_rdma_bases_gpu != nullptr) {
       CUDA_CHECK(cudaFree(peer_rdma_bases_gpu));
       peer_rdma_bases_gpu = nullptr;
@@ -331,9 +328,17 @@ void Buffer::sync(const std::vector<int>& device_ids,
     EP_HOST_ASSERT(communicator != nullptr);
     EP_HOST_ASSERT(bootstrap != nullptr);
 
-    // Allocate the RDMA buffer
-    CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
-    CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
+    // Allocate the RDMA buffer.
+    //
+    // Use mscclpp's `gpuCallocPhysical` (cuMemCreate + cuMemMap with the
+    // POSIX_FD|FABRIC handle types) instead of plain cudaMalloc. This makes
+    // the allocation eligible for cuMem fabric IPC, which lets the LL fast
+    // path map the buffer across the NVL72 fabric via nvidia-imex and
+    // perform atomicAdd over NVLink rather than RDMA. Cross-node HT (which
+    // still goes through PortChannel/IB) is unaffected — the IB MR
+    // registration in `registerMemory(..., all_transport)` below handles
+    // physical-allocator-backed pointers identically to cudaMalloc'd ones.
+    rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
     bootstrap->barrier();
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -466,31 +471,21 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // NVLink's multi-TB/s). We additionally set up CUDA-IPC peer pointers
     // to each peer's `rdma_buffer_ptr` plus a set of per-peer MemoryChannels
     // for a barrier ring. The LL kernels select this path at launch time.
-    // Cross-node LL is unaffected: this block is a no-op there.
+    // Cross-node LL uses cuMem fabric IPC (Proposal A): peers map
+    // `rdma_buffer_ptr` through the NVL72 NVSwitch fabric via nvidia-imex,
+    // and the LL kernels do direct `st.global` + atomicAdd through those
+    // peer pointers. This bypasses the RDMA path entirely (Azure CX-7 RoCE
+    // has IBV_ATOMIC_NONE which makes the proxy-emulated atomicAdd hang).
+    // Requires nvidia-imex active on every rank's host with a shared
+    // `nodes_config.cfg` covering all node IPs.
     // ------------------------------------------------------------------
-    if (low_latency_mode and num_rdma_ranks == 1) {
-      EP_HOST_ASSERT(num_ranks == num_nvl_ranks);
-      EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS);
-
-      // 1. Exchange CUDA IPC handles for rdma_buffer_ptr via bootstrap.
-      CUDA_CHECK(cudaIpcGetMemHandle(&rdma_ipc_handles[rank], rdma_buffer_ptr));
-      std::vector<cudaIpcMemHandle_t> all_rdma_handles(num_ranks);
-      all_rdma_handles[rank] = rdma_ipc_handles[rank];
-      bootstrap->allGather(all_rdma_handles.data(), sizeof(cudaIpcMemHandle_t));
-
-      peer_rdma_bases[rank] = rdma_buffer_ptr;
-      for (int r = 0; r < num_ranks; ++r) {
-        if (r == rank) continue;
-        rdma_ipc_handles[r] = all_rdma_handles[r];
-        CUDA_CHECK(cudaIpcOpenMemHandle(&peer_rdma_bases[r], rdma_ipc_handles[r], cudaIpcMemLazyEnablePeerAccess));
-      }
-      CUDA_CHECK(cudaMalloc(&peer_rdma_bases_gpu, sizeof(void*) * NUM_MAX_NVL_PEERS));
-      CUDA_CHECK(
-          cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases, sizeof(void*) * NUM_MAX_NVL_PEERS, cudaMemcpyHostToDevice));
-
-      // 2. Build MemoryChannels for the per-peer barrier ring. These use
-      //    CUDA IPC connections (distinct tag from the existing port-channel
-      //    machinery) so setup does not interfere with cross-node fallback.
+    if (low_latency_mode) {
+      // Reuse the local RDMA registration's CudaIpc transport entry. The
+      // existing `local_rdma_buffer_mem` was registered with `all_transport`
+      // (= ipc | ib), so its CudaIpc TransportInfo is already populated
+      // with the FABRIC handle (when supported by the underlying physical
+      // allocation). We need a separate registration only because the
+      // remote-side `recvMemory` below is tagged independently.
       constexpr int kLlIpcTag = 2;
       auto rdma_mem_ipc = communicator->registerMemory(rdma_buffer_ptr, num_rdma_bytes, ipc_transport);
       std::vector<std::shared_future<mscclpp::RegisteredMemory>> remote_futures(num_ranks);
@@ -513,11 +508,28 @@ void Buffer::sync(const std::vector<int>& device_ids,
         }
       }
 
+      // Resolve peer base pointers from the (now mapped) remote
+      // RegisteredMemory. `data()` returns the locally-mapped peer pointer;
+      // for fabric handles this address lives in the cuMem fabric VA range
+      // and is dereferenceable from the GPU.
+      peer_rdma_bases.assign(num_ranks, nullptr);
+      peer_rdma_bases[rank] = rdma_buffer_ptr;
+      std::vector<mscclpp::RegisteredMemory> remote_mems(num_ranks);
+      for (int r = 0; r < num_ranks; ++r) {
+        if (r == rank) continue;
+        remote_mems[r] = remote_futures[r].get();
+        peer_rdma_bases[r] = remote_mems[r].data();
+      }
+      CUDA_CHECK(cudaMalloc(&peer_rdma_bases_gpu, sizeof(void*) * num_ranks));
+      CUDA_CHECK(cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases.data(),
+                            sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+
+      // Build MemoryChannels for the per-peer barrier ring.
       std::vector<mscclpp::MemoryChannelDeviceHandle> ll_handles(num_ranks);
       for (int r = 0; r < num_ranks; ++r) {
         if (r == rank) continue;
         auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, ll_ipc_conns[r]);
-        ll_memory_channels.emplace_back(sema, remote_futures[r].get(), rdma_mem_ipc);
+        ll_memory_channels.emplace_back(sema, remote_mems[r], rdma_mem_ipc);
         ll_handles[r] = ll_memory_channels.rbegin()->deviceHandle();
       }
       ll_memory_channel_handles_device_ptr =
