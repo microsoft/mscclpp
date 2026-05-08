@@ -546,7 +546,12 @@ void Buffer::sync(const std::vector<int>& device_ids,
   // outcomes must be identical.
   // ------------------------------------------------------------------
   if (use_ibgda_path_ && num_rdma_bytes > 0 && num_rdma_ranks > 1) {
-    constexpr int kNumIbgdaChannels = 16;  // mirrors num_port_channels_per_rank above
+    int num_ibgda_channels = 16;  // mirrors num_port_channels_per_rank above
+    if (const char* e = std::getenv("MSCCLPP_EP_IBGDA_CHANNELS")) {
+      int v = std::atoi(e);
+      if (v > 0) num_ibgda_channels = v;
+    }
+    const int kNumIbgdaChannels = num_ibgda_channels;
     try {
       ibgda_setup_ = mscclpp::ep::build_ibgda_setup(rank, num_ranks, /*ib_transport_index=*/device_id,
                                                     kNumIbgdaChannels, rdma_buffer_ptr,
