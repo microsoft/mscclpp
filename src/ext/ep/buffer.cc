@@ -1707,7 +1707,8 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
     // Worst-case block count: combine launcher uses kNumWarpGroupsRdma=3, so
     // num_sms = ceil(num_experts / 3). Read 1024 entries to be safe.
     constexpr int kMaxBlocks = 1024;
-    std::vector<uint64_t> host_ts(kMaxBlocks * 4);
+    constexpr int kCombSlots = 8;
+    std::vector<uint64_t> host_ts(kMaxBlocks * kCombSlots);
     cudaMemcpy(host_ts.data(),
                static_cast<char*>(workspace) + 196608,
                host_ts.size() * sizeof(uint64_t),
@@ -1726,8 +1727,8 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
       double sum = 0;
       int n = 0;
       for (int b = 0; b < kMaxBlocks; ++b) {
-        uint64_t lo = host_ts[b * 4 + idx_lo];
-        uint64_t hi = host_ts[b * 4 + idx_hi];
+        uint64_t lo = host_ts[b * kCombSlots + idx_lo];
+        uint64_t hi = host_ts[b * kCombSlots + idx_hi];
         if (lo == 0 || hi <= lo) continue;
         uint64_t d = hi - lo;
         if (d < mn) mn = d;
@@ -1743,17 +1744,20 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
     };
     auto [send_mn, send_av, send_mx, send_n] = stats(0, 1);
     auto [wait_mn, wait_av, wait_mx, wait_n] = stats(1, 2);
-    auto [redu_mn, redu_av, redu_mx, redu_n] = stats(2, 3);
-    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 3);
+    auto [gsy_mn,  gsy_av,  gsy_mx,  gsy_n ] = stats(2, 3);
+    auto [redu_mn, redu_av, redu_mx, redu_n] = stats(3, 4);
+    auto [tot_mn,  tot_av,  tot_mx,  tot_n ] = stats(0, 4);
     fprintf(stderr,
             "[ep-prof combine #%d r%d] blocks=%d  "
             "send=%.1f/%.1f/%.1fus  "
             "wait=%.1f/%.1f/%.1fus  "
+            "grid_sync=%.1f/%.1f/%.1fus  "
             "reduce=%.1f/%.1f/%.1fus  "
             "total=%.1f/%.1f/%.1fus  (min/avg/max)\n",
             this_call, rank, send_n,
             send_mn, send_av, send_mx,
             wait_mn, wait_av, wait_mx,
+            gsy_mn,  gsy_av,  gsy_mx,
             redu_mn, redu_av, redu_mx,
             tot_mn,  tot_av,  tot_mx);
     // Zero out so next iter's "lo==0" filter rejects untouched slots.

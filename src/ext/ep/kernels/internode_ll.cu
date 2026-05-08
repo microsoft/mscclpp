@@ -619,12 +619,14 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
   // combine prof_buf well past that to avoid corrupting dispatch's
   // atomic counters between iterations (which previously caused iter 1+
   // to hang in dispatch's FINISHED_SUM_TAG spinwait).
-  // Per-block [4]uint64_t scratch. Slots:
-  //   [b*4 + 0] = send phase entry
-  //   [b*4 + 1] = send phase done (after trailing flag write barrier)
-  //   [b*4 + 2] = recv-flag spinwait done
-  //   [b*4 + 3] = kernel done
+  // Per-block scratch. Slots:
+  //   [b*8 + 0] = send phase entry
+  //   [b*8 + 1] = send phase done (after trailing flag write barrier)
+  //   [b*8 + 2] = recv-flag spinwait done
+  //   [b*8 + 3] = grid-sync done (entry to reduce arithmetic)
+  //   [b*8 + 4] = kernel done
   // Offset 196608 is past dispatch's prof_buf (1024 + 1024*16*8 = 132096).
+  constexpr int kCombProfSlots = 8;
   uint64_t* prof_buf = reinterpret_cast<uint64_t*>(
       reinterpret_cast<char*>(atomic_clean_flag) + 196608);
 #endif
@@ -632,7 +634,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
   if ((phases & LOW_LATENCY_SEND_PHASE) == 0) goto LOW_LATENCY_COMBINE_RECV;
 
 #ifdef MSCCLPP_EP_LL_PROFILE
-  if (thread_id == 0) prof_buf[sm_id * 4 + 0] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kCombProfSlots + 0] = clock64();
 #endif
 
   if (sm_id == 0 and warp_group_id == 0 and sub_warp_id == 0) {
@@ -748,7 +750,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
 
 #ifdef MSCCLPP_EP_LL_PROFILE
   __syncthreads();
-  if (thread_id == 0) prof_buf[sm_id * 4 + 1] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kCombProfSlots + 1] = clock64();
 #endif
 
 LOW_LATENCY_COMBINE_RECV:
@@ -762,9 +764,12 @@ LOW_LATENCY_COMBINE_RECV:
   }
 #ifdef MSCCLPP_EP_LL_PROFILE
   __syncthreads();
-  if (thread_id == 0) prof_buf[sm_id * 4 + 2] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kCombProfSlots + 2] = clock64();
 #endif
   cg::this_grid().sync();
+#ifdef MSCCLPP_EP_LL_PROFILE
+  if (thread_id == 0) prof_buf[sm_id * kCombProfSlots + 3] = clock64();
+#endif
 
   EP_DEVICE_ASSERT(num_topk <= 32 and hidden_bf16_int4 <= num_threads);
   EP_STATIC_ASSERT(kHidden % (32 * kNumElemsPerInt4) == 0, "Invalid vectorization");
@@ -803,7 +808,7 @@ LOW_LATENCY_COMBINE_RECV:
   }
 #ifdef MSCCLPP_EP_LL_PROFILE
   __syncthreads();
-  if (thread_id == 0) prof_buf[sm_id * 4 + 3] = clock64();
+  if (thread_id == 0) prof_buf[sm_id * kCombProfSlots + 4] = clock64();
 #endif
 }
 
