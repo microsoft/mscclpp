@@ -506,13 +506,17 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
   constexpr int kNumMaxTopK = 9;
   // (kNumWarpGroups, kNumWarpsPerGroup) is path-dependent. Intra-node IPC
   // benefits from 1 expert per SM with 32 warps cooperating on the recv-side
-  // body (matches NCCL-EP's structure for num_experts <= num_sms). The
-  // PortChannel path is IB-bound and a wider grid only adds host-proxy FIFO
-  // contention and a costlier cg::this_grid().sync(), so we keep (3, 10).
+  // body (matches NCCL-EP's structure for num_experts <= num_sms). For the
+  // IBGDA RDMA path, sweep on H100/NDR (TOKENS=128, TOPK=8, num_experts=64,
+  // num_ranks=16) shows the recv-side unpack body benefits most from one
+  // expert per SM with 32 warps per warp-group: send=28us, wait=200us,
+  // unpack=5us at (1, 32) -> 38.7/39.6 GB/s vs 36.3/37.4 at (3, 10). Wider
+  // warp-groups (>1) regress because each block ends up sending more
+  // concurrent unsignaled WRs that contend on the same per-(le,dst_rank) QP.
   constexpr int kNumWarpsPerGroupIpc = 32;
   constexpr int kNumWarpGroupsIpc = 1;
-  constexpr int kNumWarpsPerGroupRdma = 10;
-  constexpr int kNumWarpGroupsRdma = 3;
+  constexpr int kNumWarpsPerGroupRdma = 32;
+  constexpr int kNumWarpGroupsRdma = 1;
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsIpc * kNumWarpsPerGroupIpc, "Too many top-k selections");
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsRdma * kNumWarpsPerGroupRdma, "Too many top-k selections");
 
@@ -821,12 +825,14 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path,
              mscclpp::IbgdaPortChannelDeviceHandle* ibgda_handles, bool use_ibgda_path) {
   // See the comment in `dispatch()`: (kNumWarpGroups, kNumWarpsPerGroup)
-  // is path-dependent. IPC uses (1, 32) to mirror NCCL-EP; PortChannel keeps
-  // (3, 10) to avoid host-proxy FIFO contention on the IB path.
+  // is path-dependent. IPC uses (1, 32) to mirror NCCL-EP; the IBGDA RDMA
+  // path also benefits from (1, 32) per the same H100/NDR sweep documented
+  // in dispatch(): combine recv-side body parallelism dominates and a wider
+  // warp-group only adds QP contention.
   constexpr int kNumWarpsPerGroupIpc = 32;
   constexpr int kNumWarpGroupsIpc = 1;
-  constexpr int kNumWarpsPerGroupRdma = 10;
-  constexpr int kNumWarpGroupsRdma = 3;
+  constexpr int kNumWarpsPerGroupRdma = 32;
+  constexpr int kNumWarpGroupsRdma = 1;
   constexpr int kNumMaxTopk = 9;
 
   const int kNumWarpGroups = use_ipc_path ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
