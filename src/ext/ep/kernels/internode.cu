@@ -504,7 +504,25 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
     __syncthreads();
     if (thread_id == 0) printf("[ph4-N] rank=%d enter final-barrier run=%d ch=%d\n", rank, (int)run_barrier, barrier_channel_idx);
 
-    if (run_barrier) {
+    if (nvls_mc_ptr != nullptr) {
+      // Phase 4 / NVLS HT "B2": replace the cross-node port_channel
+      // signal/wait pair with an epoch-monotonic NVLS multimem barrier
+      // (slot at +16). Bypasses the broken IB signal/wait path on Azure
+      // CX-7 RoCE that hangs the entire CTA at the !kLowLatencyMode
+      // __syncthreads below (thread 33's wait never completes).
+      if (thread_id == 0) {
+        if (rank == 0) printf("[nvls] rank=%d epoch=%llu enter b2\n", rank, (unsigned long long)nvls_epoch);
+        uint64_t* mc_b2 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_barrier + 16);
+        uint64_t* dev_b2 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier + 16);
+        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b2) : "memory");
+        const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
+        uint64_t v;
+        do {
+          asm volatile("ld.acquire.sys.global.u64 %0, [%1];" : "=l"(v) : "l"(dev_b2) : "memory");
+        } while (v < expected);
+        if (rank == 0) printf("[nvls] rank=%d epoch=%llu pass b2 v=%llu\n", rank, (unsigned long long)nvls_epoch, (unsigned long long)v);
+      }
+    } else if (run_barrier) {
       port_channel_handles[barrier_channel_idx].signal();
       port_channel_handles[barrier_channel_idx].wait();
     }
