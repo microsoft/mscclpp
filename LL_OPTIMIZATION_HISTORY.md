@@ -445,3 +445,71 @@ To meaningfully exceed this requires either:
 
 Combine path may still have non-NIC headroom (recv-side reduce-add could
 be pipelined with TMA / cp.async); leaving as a future independent attack.
+
+---
+
+## Phase 8 — Combine TMA / cp.async pipeline (DECLINED after profiling)
+
+The Phase 7 synthesis flagged combine as a candidate "non-NIC software
+option" worth pursuing. Profiled the combine kernel (TOKENS=128, TOPK=8,
+BF16 hidden=7168, 16 ranks, IBGDA, grid (1, 32) → 64 blocks):
+
+```
+[ep-prof combine #10 r0] blocks=64
+  send=9.5/16.6/19.1us
+  wait=1.3/220.2/330.8us
+  grid_sync=1.0/111.7/335.3us
+  reduce=7.9/8.9/9.6us
+  total=356.3/357.2/358.0us  (min/avg/max)
+```
+
+Breakdown of average per-block time (357 µs total):
+
+| phase     | time   | %      | notes                                 |
+|-----------|-------:|-------:|---------------------------------------|
+| send      | 17 µs  |   5%   | RDMA WRITEs back to source ranks      |
+| **wait**  | 220 µs | **62%**| NIC bandwidth bound (same as dispatch)|
+| grid_sync | 112 µs |  31%   | per-block skew slack (free CTA wait)  |
+| **reduce**| **9 µs** | **2.5%**| weighted reduce-add over topk inputs|
+
+The reduce arithmetic — the *only* place TMA / `cp.async` could help — is
+**9 µs out of 357 µs = 2.5%** of the total kernel time. Even halving it
+(an aggressive estimate; H100 HBM3 already runs the loop at ~50% of peak
+BW, so realistic savings are ~3 µs) yields **<1% end-to-end perf**.
+
+Wait at 220 µs is the same NIC-bandwidth ceiling that dispatch hits:
+combine sends the same ~14 MB/rank/iter back from each (le, src_rank)
+to its source rank. The Phase 7 speculation that combine had a
+"non-NIC bottleneck profile" was wrong — both paths are NIC-bound.
+
+The 112 µs `grid_sync` interval is the same within-rank wait skew
+documented in Phase 7.3 — blocks that finished waiting early sit in
+`cg::this_grid().sync()` until the slowest block catches up. It is not
+addressable by software (it tracks per-(le, src_rank) NIC contention).
+
+**Decision: not implementing.** The cp.async pipeline would add 50+ LoC
+of shared-memory plumbing and `__pipeline_*` synchronization for ≤1%
+perf. Profile is the rebuttal.
+
+## Updated synthesis (post Phase 8)
+
+Both LL paths (dispatch + combine) are **single-NIC bandwidth bound** at
+this problem size. The kernel-side software work is essentially done at
+38.9 / 39.6 GB/s = 94-97% of the ~41 GB/s practical ceiling.
+
+Remaining categories of attack, all architectural / non-trivial:
+
+1. **Multi-NIC striping** — fan WRs across `mlx5_ib0 + mlx5_ib1` per
+   rank. Requires QP-pool restructure, topology-aware peer mapping,
+   and recv-side aggregation. Largest predicted win but biggest change.
+
+2. **Smaller per-token payload** — at hidden=2048 or FP8, NIC stops
+   being the binding constraint and kernel-side wins re-open. Useful
+   for application-level integration but doesn't move the LL benchmark
+   number on the current setup.
+
+3. **NDR2 / 100 GB/s NIC** — hardware uplift, out of scope.
+
+For the current 2×8×H100 NDR(50) setup with TOKENS=128 / TOPK=8 / BF16
+hidden=7168, **the LL benchmark is closed**. Future commits should
+either pivot to multi-NIC or to a different problem regime.
