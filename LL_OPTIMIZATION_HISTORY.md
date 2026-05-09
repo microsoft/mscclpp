@@ -676,3 +676,76 @@ not work on NDv5 due to GPU↔NIC PCIe affinity.
 (94-97% of the ~41 GB/s practical single-NIC ceiling).** Further wins
 require hardware uplift (NDR2 / 100 GB/s NIC, or platforms with multi-NIC
 P2P like Grace-Hopper SuperChip).
+
+---
+
+## Phase 10 — Validation vs nccl-ep (CRITICAL FINDING: prior gap was apples-to-oranges)
+
+### 10.1 Setup
+
+Side-by-side at TOKENS=128, hidden=7168, topk=8, experts=64, BF16,
+2× 8×H100 NDv5, 16 ranks. Compared:
+
+- `mscclpp_ep` LL: `MSCCLPP_EP_USE_IBGDA=1` via `run_ll_mpirun.sh`.
+- `nccl_ep` LL: `/home/qinghuazhou/nccl/build/test/nccl_ep/ep_bench -a ll`
+  in two modes: default (NVLink + RDMA) and `--disable-nvlink` (RDMA only).
+
+Both stacks compute throughput identically: `bytes_per_rank / avg_time_us`
+where bytes = `recv_tokens × hidden × 2` (BF16 dispatch / combine).
+
+### 10.2 Result
+
+| Stack                   | dispatch (GB/s) | combine (GB/s) |
+|-------------------------|----------------:|---------------:|
+| mscclpp_ep LL           |          38.7   |          39.4  |
+| nccl_ep LL (default)    |       63 - 71   |       62 - 72  |
+| nccl_ep LL `--disable-nvlink` |    42.3   |          42.5  |
+
+**The "30 GB/s gap" we have been chasing all session was an
+apples-to-oranges artifact.** Default `nccl_ep` LL routes intranode
+selections (~half of all 1024 selections at 16 ranks / 2 nodes) through
+NVLink at NVLink line rate, and only ~half of selections hit RDMA. The
+weighted average inflates the reported per-rank throughput well above
+the per-NIC ceiling.
+
+When `nccl_ep` is restricted to RDMA-only (apples-to-apples with our
+LL path), it lands at **42.3/42.5 GB/s** — only **9% above us** at
+38.7/39.4. Phase 7's "single-NIC ceiling ~41 GB/s" was correct: nccl-ep
+sits at 42.3 (103%), we sit at 38.7 (94%). The remaining 9% = ~3.6 GB/s
+gap is real and likely the residual cross-rank wait skew (Phase 7.3) +
+QP / WR scheduling efficiency.
+
+### 10.3 The actual architectural gap
+
+Our `internode_ll.cu` uses a single template parameter `kIpcPath` that
+is whole-kernel:
+
+- `kIpcPath = true`  (single-node) — all peers via NVLink/IPC.
+- `kIpcPath = false` (multi-node) — all peers via RDMA, including the
+  ~7/15 intranode peers that could ride NVLink.
+
+`nccl_ep` makes the choice **per-peer** at the call site: intranode
+peers go through NVLink, internode peers through RDMA. On a 2-node
+16-rank job, each rank has 7 intranode peers (NVLink) and 8 internode
+peers (RDMA). With NVLink ≫ NIC line rate, the recv-side throughput
+math becomes a weighted average dominated by the cheaper hops.
+
+### 10.4 Implication for the optimization story
+
+- All Phases 1-9 measured the LL path against a target (~65 GB/s) that
+  was not actually achievable on the RDMA path alone. The kernel-side
+  software work (grid tune, multi-SGE, K-shard, multi-NIC) was bound by
+  a real ceiling at ~41 GB/s and we are within 6% of it.
+- **The remaining productive work is NOT on the RDMA path.** It is on
+  introducing a hybrid NVLink + RDMA dispatch mode that selects the
+  transport per peer, matching nccl-ep's architecture.
+
+### 10.5 Status
+
+- Documented. No code changes in this phase — purely a measurement /
+  validation result.
+- Comparison harness saved at `nccl-tests/sweep_ll_compare.sh` for
+  future regression checks.
+- Future work flagged: hybrid NVLink + RDMA LL dispatch (would close
+  the remaining gap to nccl-ep's default-mode numbers and is
+  architecturally well-defined).
