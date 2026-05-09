@@ -89,6 +89,10 @@ struct Config {
     num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxTopK * sizeof(float) * 2;
     num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxScales * sizeof(float) * 2;
     num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * sizeof(int4) * 2;
+    // Two extra uint64_t scratch slots per (channel, rdma_rank) used by the
+    // dispatch/combine kernels as the RDMA WRITE source for absolute-value
+    // tail/head updates (replaces broken HW atomicAdd on Azure CX-7 RoCE).
+    num_bytes += num_channels * num_rdma_ranks * sizeof(uint64_t) * 2;
     num_bytes = ((num_bytes + 127) / 128) * 128;
     return num_bytes;
   }
