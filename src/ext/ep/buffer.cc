@@ -342,12 +342,15 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // H100 + IB, A100 + IB), `gpuCallocPhysical` would either fail or
     // produce non-fabric-IPC memory; fall back to plain `cudaMalloc` and
     // let the LL path use the existing PortChannel proxy mechanism over
-    // IB. Same allocator is used for HT mode, which never needs fabric
-    // IPC since its kernels go through PortChannel RDMA WRITE on a
-    // standard IB-registered MR.
-    const bool use_fabric_ipc_alloc = low_latency_mode && mscclpp::isNvlsSupported();
+    // IB. For HT internode on Azure GB200 (Phase 4), we also use
+    // fabric-IPC so cross-node `handle.put(data)` can be replaced by
+    // direct kernel-side writes via NVL72 fabric pointers — bypassing
+    // the broken Azure CX-7 RoCE RDMA WRITE path.
+    const bool use_fabric_ipc_alloc =
+        mscclpp::isNvlsSupported() && (low_latency_mode || num_rdma_ranks > 1);
     if (use_fabric_ipc_alloc) {
       rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
+      CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
     } else {
       CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
       CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
@@ -596,7 +599,16 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // Requires nvidia-imex active on every rank's host with a shared
     // `nodes_config.cfg` covering all node IPs.
     // ------------------------------------------------------------------
-    if (low_latency_mode) {
+    // ------------------------------------------------------------------
+    // Phase 4: HT internode mode also benefits from fabric-IPC peer
+    // pointers. On Azure CX-7 the IB RDMA WRITE that PortChannel uses
+    // for the dispatch/combine token data payload hangs cross-node
+    // (same root cause as signal/wait), so we set up the same per-peer
+    // mapped pointers as LL and the kernels write tokens directly into
+    // the peer's `rdma_buffer_ptr` via the NVL72 fabric VA.
+    // ------------------------------------------------------------------
+    const bool want_fabric_ipc = use_fabric_ipc_alloc;
+    if (want_fabric_ipc) {
       // Reuse the local RDMA registration's CudaIpc transport entry. The
       // existing `local_rdma_buffer_mem` was registered with `all_transport`
       // (= ipc | ib), so its CudaIpc TransportInfo is already populated
@@ -640,21 +652,30 @@ void Buffer::sync(const std::vector<int>& device_ids,
       CUDA_CHECK(cudaMalloc(&peer_rdma_bases_gpu, sizeof(void*) * num_ranks));
       CUDA_CHECK(cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases.data(),
                             sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
-
-      // Build MemoryChannels for the per-peer barrier ring.
-      std::vector<mscclpp::MemoryChannelDeviceHandle> ll_handles(num_ranks);
-      for (int r = 0; r < num_ranks; ++r) {
-        if (r == rank) continue;
-        auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, ll_ipc_conns[r]);
-        ll_memory_channels.emplace_back(sema, remote_mems[r], rdma_mem_ipc);
-        ll_handles[r] = ll_memory_channels.rbegin()->deviceHandle();
+      if (rank == 0) {
+        printf("[mscclpp_ep] Phase 4 fabric-IPC peer bases (rank 0):\n");
+        for (int r = 0; r < num_ranks; ++r) {
+          printf("  peer_rdma_bases[%d] = %p\n", r, peer_rdma_bases[r]);
+        }
+        fflush(stdout);
       }
-      ll_memory_channel_handles_device_ptr =
-          mscclpp::detail::gpuCallocShared<mscclpp::MemoryChannelDeviceHandle>(num_ranks);
-      mscclpp::gpuMemcpy<mscclpp::MemoryChannelDeviceHandle>(ll_memory_channel_handles_device_ptr.get(),
-                                                             ll_handles.data(), num_ranks, cudaMemcpyHostToDevice);
 
-      ll_ipc_ready = true;
+      if (low_latency_mode) {
+        // LL barrier ring needs MemoryChannels.
+        std::vector<mscclpp::MemoryChannelDeviceHandle> ll_handles(num_ranks);
+        for (int r = 0; r < num_ranks; ++r) {
+          if (r == rank) continue;
+          auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, ll_ipc_conns[r]);
+          ll_memory_channels.emplace_back(sema, remote_mems[r], rdma_mem_ipc);
+          ll_handles[r] = ll_memory_channels.rbegin()->deviceHandle();
+        }
+        ll_memory_channel_handles_device_ptr =
+            mscclpp::detail::gpuCallocShared<mscclpp::MemoryChannelDeviceHandle>(num_ranks);
+        mscclpp::gpuMemcpy<mscclpp::MemoryChannelDeviceHandle>(ll_memory_channel_handles_device_ptr.get(),
+                                                               ll_handles.data(), num_ranks, cudaMemcpyHostToDevice);
+
+        ll_ipc_ready = true;
+      }
     }
   }
 
@@ -1321,7 +1342,8 @@ Buffer::internode_dispatch(
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
                       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-                      nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev);
+                      nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev,
+                      peer_rdma_bases_gpu);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1455,7 +1477,8 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
                      config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
                      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels,
                      low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev);
+                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev,
+                     peer_rdma_bases_gpu);
 
   std::optional<EventHandle> event;
   if (async) {
