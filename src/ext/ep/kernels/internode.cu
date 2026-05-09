@@ -502,11 +502,13 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
 
     // Finally barrier
     __syncthreads();
+    if (thread_id == 0) printf("[ph4-N] rank=%d enter final-barrier run=%d ch=%d\n", rank, (int)run_barrier, barrier_channel_idx);
 
     if (run_barrier) {
       port_channel_handles[barrier_channel_idx].signal();
       port_channel_handles[barrier_channel_idx].wait();
     }
+    if (thread_id == 0) printf("[ph4-N] rank=%d pass final-barrier\n", rank);
     if constexpr (!kLowLatencyMode) {
       // kLowLatencyMode==false requires sync of all ranks, which can be done by running intra-node sync
       // after the inter-node sync is done.
@@ -514,6 +516,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
     }
     barrier_device<NUM_MAX_NVL_PEERS>(task_fifo_ptrs, head, nvl_rank);
     move_fifo_slots<NUM_MAX_NVL_PEERS>(head);
+    if (thread_id == 0) printf("[ph4-N] rank=%d notify_dispatch DONE sm=%d\n", rank, sm_id);
   } else {
     // Calculate meta data
     int dst_rdma_rank = sm_id - 1;
@@ -630,7 +633,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
              // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
-             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev) {
+             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+             // Phase 4: per-peer fabric-IPC base pointers; when non-null, cross-node data
+             // PUTs go directly through NVL72 fabric VA instead of `handle.put` over IB.
+             void* const* peer_rdma_bases) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -663,6 +669,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   auto warp_role = role_meta.first;
   auto target_rank = role_meta.second;  // Not applicable for RDMA senders
   EP_DEVICE_ASSERT(num_warps == kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS);
+  if (thread_id == 0 && sm_id == 0) {
+    printf("[ph4-K] dispatch entry rank=%d sm=%d num_channels=%d kNumRDMARanks=%d\n",
+           rank, sm_id, num_channels, kNumRDMARanks);
+  }
 
   // Data checks
   EP_DEVICE_ASSERT(num_topk <= 32);
@@ -929,6 +939,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Synchronize shared memory
     sync_rdma_sender_smem();
+    if (lane_id == 0 && channel_id == 0 && rank == 0) {
+      printf("[ph4-s] sender entry rank=%d ch=%d kNumRDMARanks=%d\n",
+             rank, channel_id, kNumRDMARanks);
+    }
 
     // Get number of tokens to send for each RDMA rank
     int num_tokens_to_send = 0;
@@ -944,81 +958,110 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       for (int i = 0; i < kNumRDMARanks; ++i, __syncwarp()) {
         // To mitigate incast congestion, shuffle the starting index of target rank for different ranks and channels
         const int dst_rdma_rank = (i + channel_id + rdma_rank) % kNumRDMARanks;
-        if (lane_id != dst_rdma_rank) continue;
-        if (num_tokens_to_send == 0) continue;
 
-        // Read progress
-        auto processed_tail = ld_acquire_cta(const_cast<const int*>(rdma_send_channel_tail + dst_rdma_rank));
-        auto num_tokens_processed = processed_tail - last_issued_tail;
-        if (num_tokens_processed != num_tokens_to_send && num_tokens_processed < num_max_rdma_chunked_send_tokens)
-          continue;
+        // -----------------------------------------------------------------
+        // Phase 4 restructure: owner lane (lane_id == dst_rdma_rank) decides
+        // whether to issue, then broadcasts num_tokens_to_issue and the
+        // tail-base for slot indexing to all 32 lanes via shfl. All lanes
+        // then participate in the cooperative cross-node fabric-IPC copy
+        // (when peer_rdma_bases != nullptr). This replaces the legacy
+        // single-lane handle.put(data) path which is broken on Azure CX-7.
+        // -----------------------------------------------------------------
+        const bool owner = (lane_id == dst_rdma_rank);
+        int my_num_tokens_to_issue = 0;
+        int my_issue_tail = last_issued_tail;
+        if (owner && num_tokens_to_send > 0) {
+          auto processed_tail = ld_acquire_cta(const_cast<const int*>(rdma_send_channel_tail + dst_rdma_rank));
+          auto num_tokens_processed = processed_tail - last_issued_tail;
+          if (num_tokens_processed == num_tokens_to_send ||
+              num_tokens_processed >= num_max_rdma_chunked_send_tokens) {
+            int n = min(num_tokens_processed, num_max_rdma_chunked_send_tokens);
+            EP_DEVICE_ASSERT(n >= 0 && n <= num_tokens_to_send);
+            my_num_tokens_to_issue = n;
+          }
+        }
 
-        // Issue RDMA send
-        int num_tokens_to_issue = min(num_tokens_processed, num_max_rdma_chunked_send_tokens);
-        EP_DEVICE_ASSERT(num_tokens_to_issue >= 0 && num_tokens_to_issue <= num_tokens_to_send);
-        if (num_tokens_to_issue == 0) continue;
+        const int n_issue = __shfl_sync(0xffffffff, my_num_tokens_to_issue, dst_rdma_rank);
+        const int issue_tail = __shfl_sync(0xffffffff, my_issue_tail, dst_rdma_rank);
+        if (n_issue == 0) continue;
 
         if (nvls_tail_mc != nullptr) {
-          // Phase 3: NVLS counter fast path. Slot keyed by (producer=rdma_rank,
-          // consumer=dst_rdma_rank). Self-loop and cross-node both go here.
-          // Note: data PUT below still uses port_channel for cross-node.
-          // IB FIFO ordering between handle.put(data) and a follow-up signal
-          // is no longer required because the consumer reads the NVLS counter
-          // via ld.acquire — but we DO need data to land before consumer
-          // wakes up. We rely on `handle.flush()` (issued lazily by the
-          // proxy) plus a generous spin in the consumer for the data path.
-          // For the self-loop case there is no IB at all (data path is local
-          // shared memory), so multimem.red.add suffices.
+          // Phase 3+4: NVLS counter fast path. For cross-node, payload
+          // delivery uses warp-cooperative direct fabric-IPC writes when
+          // peer_rdma_bases is available; otherwise falls back to single-
+          // lane handle.put + flush.
           if (dst_rdma_rank != rdma_rank) {
-            const auto dst_slot_idx = last_issued_tail % num_max_rdma_chunked_recv_tokens;
-            const size_t num_bytes_per_msg = num_bytes_per_rdma_token * num_tokens_to_issue;
+            const auto dst_slot_idx = issue_tail % num_max_rdma_chunked_recv_tokens;
+            const size_t num_bytes_per_msg = (size_t)num_bytes_per_rdma_token * (size_t)n_issue;
             const auto dst_offset = rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
                                     dst_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
             const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
                                     dst_slot_idx * num_bytes_per_rdma_token + data_send_offset;
-            const auto port_channel_idx = kLowLatencyMode
-                                              ? (channel_id * kNumRDMARanks + dst_rdma_rank)
-                                              : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
+            if (peer_rdma_bases != nullptr) {
+              // Phase 4: warp-cooperative copy via NVL72 fabric VA.
+              const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
+              const int4* src_p = reinterpret_cast<const int4*>(
+                  reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+              int4* dst_p = reinterpret_cast<int4*>(
+                  reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+              if (owner && channel_id == 0 && issue_tail == 0) {
+                printf("[ph4-d] rank=%d ch=%d dst=%d n=%d dst_p=%p src_p=%p bytes=%zu\n",
+                       rank, channel_id, dst_rdma_rank, n_issue, dst_p, src_p, (size_t)num_bytes_per_msg);
+              }
+              const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
+              for (int k = lane_id; k < n_int4; k += 32) {
+                dst_p[k] = src_p[k];
+              }
+              __threadfence_system();
+              __syncwarp();
+            } else if (owner) {
+              const auto port_channel_idx =
+                  kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
+                                  : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
+              auto& handle = port_channel_handles[port_channel_idx];
+              handle.put(dst_offset, src_offset, num_bytes_per_msg);
+              handle.flush();
+            }
+          }
+          // Owner advances NVLS counter for this peer.
+          if (owner) {
+            nvls_ctr_add(nvls_tail_mc, channel_id, rdma_rank, dst_rdma_rank, (uint64_t)n_issue);
+          }
+        } else if (owner) {
+          // Legacy non-NVLS path (single-lane).
+          if (dst_rdma_rank == rdma_rank) {
+            // Update tails
+            mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
+                                    (uint64_t)n_issue, mscclpp::memoryOrderRelease);
+          } else {
+            const auto dst_slot_idx = issue_tail % num_max_rdma_chunked_recv_tokens;
+            const size_t num_bytes_per_msg = (size_t)num_bytes_per_rdma_token * (size_t)n_issue;
+            const auto dst_offset = rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                                    dst_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
+            const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                                    dst_slot_idx * num_bytes_per_rdma_token + data_send_offset;
+            const auto port_channel_idx =
+                kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
+                                : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
             auto& handle = port_channel_handles[port_channel_idx];
             handle.put(dst_offset, src_offset, num_bytes_per_msg);
-            // Force IB completion before signaling via NVLS so the data
-            // lands before the consumer observes the new tail.
-            handle.flush();
-          }
-          nvls_ctr_add(nvls_tail_mc, channel_id, rdma_rank, dst_rdma_rank,
-                       (uint64_t)num_tokens_to_issue);
-        } else if (dst_rdma_rank == rdma_rank) {
-          // Update tails
-          mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
-                                  (uint64_t)num_tokens_to_issue, mscclpp::memoryOrderRelease);
-        } else {
-          const auto dst_slot_idx = last_issued_tail % num_max_rdma_chunked_recv_tokens;
-          const size_t num_bytes_per_msg = num_bytes_per_rdma_token * num_tokens_to_issue;
-          const auto dst_offset = rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                                  dst_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
-          const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                                  dst_slot_idx * num_bytes_per_rdma_token + data_send_offset;
-          const auto port_channel_idx = kLowLatencyMode
-                                            ? (channel_id * kNumRDMARanks + dst_rdma_rank)
-                                            : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
-          auto& handle = port_channel_handles[port_channel_idx];
-          handle.put(dst_offset, src_offset, num_bytes_per_msg);
 
-          // HW atomicAdd is broken on Azure CX-7 RoCE (IBV_ATOMIC_NONE).
-          // Write the new absolute tail to a local scratch slot, then RDMA
-          // WRITE it to the peer's tail recv slot. Single-writer-per-slot
-          // makes atomicity unnecessary; queuing on the same channel as the
-          // data PUT above keeps IB ordering (data lands before counter).
-          const uint64_t new_tail = (uint64_t)last_issued_tail + (uint64_t)num_tokens_to_issue;
-          *rdma_channel_tail_send_src.buffer(dst_rdma_rank) = new_tail;
-          __threadfence_system();
-          const auto src_off_tail =
-              reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
-              reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
-          handle.put(rdma_rank * sizeof(uint64_t) + tail_send_offset, src_off_tail, sizeof(uint64_t));
+            // HW atomicAdd is broken on Azure CX-7 RoCE (IBV_ATOMIC_NONE).
+            // Write the new absolute tail to a local scratch slot, then RDMA
+            // WRITE it to the peer's tail recv slot.
+            const uint64_t new_tail = (uint64_t)issue_tail + (uint64_t)n_issue;
+            *rdma_channel_tail_send_src.buffer(dst_rdma_rank) = new_tail;
+            __threadfence_system();
+            const auto src_off_tail =
+                reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
+                reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+            handle.put(rdma_rank * sizeof(uint64_t) + tail_send_offset, src_off_tail, sizeof(uint64_t));
+          }
         }
-        last_issued_tail += num_tokens_to_issue;
-        num_tokens_to_send -= num_tokens_to_issue;
+        if (owner) {
+          last_issued_tail += n_issue;
+          num_tokens_to_send -= n_issue;
+        }
       }
     }
   } else if (warp_role == WarpRole::kRDMAAndNVLForwarder) {
@@ -1344,6 +1387,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       if (lane_id == 0) st_relaxed_sys_global(nvl_channel_head.buffer(), cached_channel_head_idx);
     }
   }
+  if (thread_id == 0 && channel_id == 0 && rank == 0) {
+    printf("[ph4-Z] dispatch exit rank=%d sm=%d\n", rank, sm_id);
+  }
 }
 
 void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights, void* recv_src_meta,
@@ -1358,7 +1404,8 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-              void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev) {
+              void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+              void* const* peer_rdma_bases) {
   constexpr int kNumDispatchRDMASenderWarps = 7;
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -1376,7 +1423,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
                   num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                    \
                   num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                      \
                   num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,      \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev);                                           \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases);                          \
   }                                                                                                                    \
   break
 
@@ -1609,7 +1656,9 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             int num_ranks, mscclpp::PortChannelDeviceHandle* port_channel_handles,
             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
             // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
-            void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev) {
+            void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+            // Phase 4 fabric-IPC peer base pointers (nullptr → fall back to handle.put for cross-node data).
+            void* const* peer_rdma_bases) {
   enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
   const auto sm_id = static_cast<int>(blockIdx.x);
@@ -1650,6 +1699,9 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
 
   EP_DEVICE_ASSERT(num_warps == NUM_MAX_NVL_PEERS + kNumForwarders + 1);
   auto num_max_nvl_chunked_recv_tokens_per_rdma = num_max_nvl_chunked_recv_tokens / kNumRDMARanks;
+  if (thread_id == 0 && channel_id == 0 && rank == 0) {
+    printf("[ph4-C] combine entry rank=%d sm=%d num_channels=%d\n", rank, sm_id, num_channels);
+  }
 
   if (warp_role == WarpRole::kNVLSender) {
     // NVL producers
@@ -1936,27 +1988,47 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
 
         // Issue RDMA send
         if (sub_warp_id == kNumWarpsPerForwarder - 1) {
-          if (lane_id == 0) {
-            if (nvls_tail_mc != nullptr) {
-              // Phase 3: NVLS counter fast path. Slot keyed (producer=rdma_rank,
-              // consumer=dst_rdma_rank). Self-loop and cross-node both go here.
-              if (dst_rdma_rank != rdma_rank) {
-                auto rdma_slot_idx = token_start_idx % num_max_rdma_chunked_recv_tokens;
-                const size_t num_bytes_per_msg = num_chunked_tokens * num_bytes_per_rdma_token;
-                auto dst_offset = rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                                  rdma_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
-                auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                                  rdma_slot_idx * num_bytes_per_rdma_token + data_send_offset;
-                auto port_channel_idx = kLowLatencyMode
-                                            ? (channel_id * kNumRDMARanks + dst_rdma_rank)
-                                            : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
+          if (nvls_tail_mc != nullptr) {
+            // Phase 3+4: NVLS counter fast path. Cross-node payload uses
+            // warp-cooperative direct fabric-IPC writes when peer_rdma_bases
+            // is available; otherwise single-lane handle.put + flush.
+            if (dst_rdma_rank != rdma_rank) {
+              const auto rdma_slot_idx = token_start_idx % num_max_rdma_chunked_recv_tokens;
+              const size_t num_bytes_per_msg =
+                  (size_t)num_chunked_tokens * (size_t)num_bytes_per_rdma_token;
+              const auto dst_offset =
+                  rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                  rdma_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
+              const auto src_offset =
+                  dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                  rdma_slot_idx * num_bytes_per_rdma_token + data_send_offset;
+              if (peer_rdma_bases != nullptr) {
+                const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
+                const int4* src_p = reinterpret_cast<const int4*>(
+                    reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+                int4* dst_p = reinterpret_cast<int4*>(
+                    reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+                const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
+                for (int k = lane_id; k < n_int4; k += 32) {
+                  dst_p[k] = src_p[k];
+                }
+                __threadfence_system();
+                __syncwarp();
+              } else if (lane_id == 0) {
+                const auto port_channel_idx =
+                    kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
+                                    : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
                 auto& handle = port_channel_handles[port_channel_idx];
                 handle.put(dst_offset, src_offset, num_bytes_per_msg);
                 handle.flush();
               }
+            }
+            if (lane_id == 0) {
               nvls_ctr_add(nvls_tail_mc, channel_id, rdma_rank, dst_rdma_rank,
                            (uint64_t)num_chunked_tokens);
-            } else if (dst_rdma_rank == rdma_rank) {
+            }
+          } else if (lane_id == 0) {
+            if (dst_rdma_rank == rdma_rank) {
               mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
                                       (uint64_t)num_chunked_tokens, mscclpp::memoryOrderRelease);
             } else {
@@ -2138,7 +2210,8 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev) {
+             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+             void* const* peer_rdma_bases) {
   constexpr int kNumCombineForwarderWarps = 16;
 
 #define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -2152,7 +2225,7 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
                   rdma_buffer_ptr, num_max_rdma_chunked_send_tokens, num_max_rdma_chunked_recv_tokens, buffer_ptrs,   \
                   num_max_nvl_chunked_send_tokens, num_max_nvl_chunked_recv_tokens, rank, num_ranks,                  \
                   port_channel_handles, memory_channel_handles,                                                       \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev);                                          \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases);                         \
   }                                                                                                                   \
   break
 
