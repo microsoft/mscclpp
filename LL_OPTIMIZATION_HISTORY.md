@@ -349,3 +349,99 @@ Net win: **+6.4% dispatch / +5.4% combine** with no correctness regressions.
    the recv-side reduce-add.
 3. Investigate ~75us per-iter launch overhead (cooperative-launch cost
    with 64 blocks).
+
+---
+
+## Phase 7 — Post-grid optimization attempts (May 9, 2026)
+
+After Phase 6's grid (1, 32) tuning landed (38.7 / 39.6 GB/s), explored
+three more avenues. None produced material gains; all confirmed the same
+underlying constraint: **single-NIC bandwidth ceiling**.
+
+### 7.1 Multi-SGE WR coalesce — REVERTED
+
+Implemented a `kMultiSge` template flag on the dispatch kernel. New
+`rdma_write_multi_sge()` primitive in `src/core/include/ibgda_device.cuh`
+packs N SGEs (each one full LL token) into one RDMA WRITE WQE (ds = 2 + N).
+QP `max_send_sge` bumped 1 → 4 in `src/core/ib.cc`; SQ depth lowered
+8192 → 2048 to keep per-QP WQE memory bounded.
+
+Per-block work was rewired so each SM owns one (`dst_local_expert`, `dst_rank`)
+pair. After staging + grid-sync, the warp builds a `shared_token_list[wg][256]`
+of token indices targeted at this expert, then issues ⌈N / 4⌉ multi-SGE WRs
+delivering them into N consecutive recv slots on the peer.
+
+| variant                | dispatch GB/s | wait avg (us) |
+|------------------------|---------------|---------------|
+| baseline (Phase 6)     | 38.53         | 212           |
+| **Multi-SGE ON**       | **38.68**     | **197** (-7%) |
+
+WR count per QP fell 16 → 4 (a 4× reduction) but wait dropped only 7%.
+Math: 1008 WRs × 14336 B/WR = 14.4 MB per rank per iter; at NDR 50 GB/s NIC
+ceiling that is 288 µs minimum wire time. Current 38.7 GB/s payload + 7%
+IB overhead = ~41 GB/s on the wire = **82% of single-NIC ceiling**.
+
+Multi-SGE saves WR-post overhead but the bytes on the wire are unchanged.
+Reverted (stashed) since the +0.3 GB/s gain doesn't justify the kernel
+restructure and the QP `max_send_sge` ABI change.
+
+### 7.2 CUDA Graph capture — INCOMPATIBLE
+
+Tried wrapping `_dispatch()` and `_combine()` in `torch.cuda.CUDAGraph`
+to amortize the ~70 µs/iter gap between kernel-total time and bench-loop
+time (suspected `cudaLaunchCooperativeKernel` overhead).
+
+Capture succeeded; the warmup PASS confirmed correctness once. Replay then
+hung — first-node ranks completed all 20 iters but second-node ranks only
+saw the warmup traffic.
+
+Root cause: IBGDA primitives keep device-side QP state (`resv_head`,
+`prod_idx`, `post_send_lock`) that monotonically advances per kernel
+invocation. Graph replay re-executes the WQE writes verbatim, but the
+runtime QP state has already advanced past the captured snapshot;
+subsequent replays write into stale / wrapped SQ slots and the doorbell
+ring index is wrong, so peers never see the data.
+
+CUDA Graph is fundamentally incompatible with this IBGDA QP state model.
+Test reverted.
+
+### 7.3 Cross-rank skew investigation
+
+Captured per-rank dispatch profile at iter 10 (16 ranks × 64 blocks each):
+
+| metric        | min (us) | avg (us) | max (us) | range |
+|---------------|----------|----------|----------|-------|
+| wait avg      | 188      | 203      | 226      | 38    |
+| wait max      | 277      | 295      | 321      | 44    |
+| total avg     | 222      | 237      | 262      | 40    |
+
+Slowest ranks: r2, r7 (node 1), r8 (node 2). Cross-rank skew is bounded
+(~40 µs); the dominant variance is **within-rank**: a single rank's wait
+ranges 200 µs (avg) to 321 µs (max) across its 64 blocks (= 64 (le, src_rank)
+pairs it is receiving from). That 120 µs intra-rank spread reflects
+per-(le, src_rank) NIC contention on the receiver side and is essentially
+a wire-level scheduling phenomenon.
+
+Best case: even if all 16 ranks were perfectly synchronized at the slowest
+rank's avg (226 µs), we'd save ~25 µs = ~7%. Not pursuing — the within-rank
+spread dominates and is not an addressable software issue.
+
+### 7.4 Synthesis: single-NIC ceiling
+
+Three independent attacks (K-shard fan-out, multi-SGE coalesce, CUDA Graph)
+all bottomed out at the same number. The conclusion is unambiguous:
+
+**At TOKENS=128, TOPK=8, BF16 hidden=7168, 2×8×H100 NDR with 1 mlx5_ib
+NIC per rank, the practical single-NIC LL ceiling is ~41 GB/s payload
+(82% of the 50 GB/s NDR raw line rate).** Phase 6's 38.7/39.6 GB/s sits
+at 94-97% of that practical ceiling.
+
+To meaningfully exceed this requires either:
+- Multi-NIC striping (would need to fan WRs across mlx5_ib0+mlx5_ib1 +
+  topology-aware QP allocation; non-trivial ABI change).
+- A different problem size where NIC is no longer the binding constraint
+  (smaller hidden, smaller per-token payload, sparser topk).
+- Hardware uplift (NDR2 / 100 GB/s NIC).
+
+Combine path may still have non-NIC headroom (recv-side reduce-add could
+be pipelined with TMA / cp.async); leaving as a future independent attack.
