@@ -330,15 +330,34 @@ void Buffer::sync(const std::vector<int>& device_ids,
 
     // Allocate the RDMA buffer.
     //
-    // Use mscclpp's `gpuCallocPhysical` (cuMemCreate + cuMemMap with the
-    // POSIX_FD|FABRIC handle types) instead of plain cudaMalloc. This makes
-    // the allocation eligible for cuMem fabric IPC, which lets the LL fast
-    // path map the buffer across the NVL72 fabric via nvidia-imex and
-    // perform atomicAdd over NVLink rather than RDMA. Cross-node HT (which
-    // still goes through PortChannel/IB) is unaffected — the IB MR
-    // registration in `registerMemory(..., all_transport)` below handles
-    // physical-allocator-backed pointers identically to cudaMalloc'd ones.
-    rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
+    // For low-latency mode on platforms that support NVLink-SHARP / NVLS
+    // (GB200 NVL72 with nvidia-imex configured), use mscclpp's
+    // `gpuCallocPhysical` (cuMemCreate + cuMemMap with POSIX_FD|FABRIC
+    // handle types) so the buffer is eligible for cuMem fabric IPC — the
+    // LL fast path then maps the buffer across the NVL72 fabric via
+    // nvidia-imex and performs atomicAdd over NVLink rather than RDMA
+    // (which has IBV_ATOMIC_NONE on Azure CX-7 RoCE).
+    //
+    // Fallback: on platforms without NVLS / multicast support (e.g.
+    // H100 + IB, A100 + IB), `gpuCallocPhysical` would either fail or
+    // produce non-fabric-IPC memory; fall back to plain `cudaMalloc` and
+    // let the LL path use the existing PortChannel proxy mechanism over
+    // IB. Same allocator is used for HT mode, which never needs fabric
+    // IPC since its kernels go through PortChannel RDMA WRITE on a
+    // standard IB-registered MR.
+    const bool use_fabric_ipc_alloc = low_latency_mode && mscclpp::isNvlsSupported();
+    if (use_fabric_ipc_alloc) {
+      rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
+    } else {
+      CUDA_CHECK(cudaMalloc(&rdma_buffer_ptr, num_rdma_bytes));
+      CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
+    }
+    if (rank == 0) {
+      printf("[mscclpp_ep] rdma_buffer allocator: %s (low_latency=%d, nvls=%d)\n",
+             use_fabric_ipc_alloc ? "gpuCallocPhysical (fabric-IPC)" : "cudaMalloc",
+             (int)low_latency_mode, (int)mscclpp::isNvlsSupported());
+      fflush(stdout);
+    }
     bootstrap->barrier();
     CUDA_CHECK(cudaDeviceSynchronize());
 
@@ -460,6 +479,104 @@ void Buffer::sync(const std::vector<int>& device_ids,
     mscclpp::gpuMemcpy<mscclpp::PortChannelDeviceHandle>(port_channel_handles_device_ptr.get(),
                                                          port_channel_handles.data(), port_channel_handles.size(),
                                                          cudaMemcpyHostToDevice);
+
+    // ------------------------------------------------------------------
+    // HT internode NVLS multicast setup (Wide Proposal B2).
+    //
+    // On platforms with NVLink-SHARP / multicast support (GB200 NVL72
+    // with nvidia-imex), allocate a multicast-bound buffer used by the HT
+    // dispatch / combine / notify_dispatch kernels for:
+    //   - tail / head atomic counters (replaces the 4 atomicAdd sites)
+    //   - notify_dispatch barrier epoch (replaces port_channel.signal/wait)
+    //   - notify_dispatch small-data delivery (replaces putWithSignal)
+    //
+    // All cross-node atomic adds become `multimem.red.add.u64` PTX which
+    // travels over the NVL72 fabric — bypassing IB entirely. This is the
+    // same fabric path that LL Proposal A validated cross-node.
+    //
+    // Fallback (existing IB platforms): when `isNvlsSupported()` is false
+    // or there is only one RDMA rank (intranode-only), `nvls_ht_enabled`
+    // stays `false` and kernels select the legacy PortChannel path.
+    //
+    // Skipped for `low_latency_mode` since LL has its own (working)
+    // fabric-IPC path via Proposal A and does not use the HT counter
+    // protocol.
+    // ------------------------------------------------------------------
+    nvls_ht_enabled = false;
+    if (!low_latency_mode && num_rdma_ranks > 1 && mscclpp::isNvlsSupported()) {
+      // Worst-case sizing — chosen so the same multicast buffer fits any
+      // (num_sms, num_rdma_ranks) configuration the kernels may launch with.
+      const size_t kCounterBytesPerChannel =
+          static_cast<size_t>(NUM_MAX_RDMA_PEERS) * NUM_MAX_RDMA_PEERS * sizeof(uint64_t);
+      const size_t tail_bytes = static_cast<size_t>(kNvlsMaxChannels) * kCounterBytesPerChannel;
+      const size_t head_bytes = tail_bytes;
+      const size_t barrier_bytes = static_cast<size_t>(kNvlsBarrierSlots) * sizeof(uint64_t);
+      // Data region: per-sender slot of [num_rdma_ranks_max × per_peer_bytes],
+      // one slot per global rank (worst-case num_ranks = NUM_MAX_RDMA_PEERS *
+      // NUM_MAX_NVL_PEERS). Each rank writes its own slot via `multimem.st`;
+      // every receiver then reads the sub-position destined to it.
+      const size_t kPerSenderSlotBytes =
+          static_cast<size_t>(NUM_MAX_RDMA_PEERS) * kNvlsPerPeerBytes;
+      const size_t kMaxRanks =
+          static_cast<size_t>(NUM_MAX_RDMA_PEERS) * NUM_MAX_NVL_PEERS;
+      const size_t data_bytes = kMaxRanks * kPerSenderSlotBytes;
+
+      // 256 B alignment for each sub-region to keep `multimem` ops well-aligned.
+      auto align256 = [](size_t x) { return (x + 255) & ~size_t(255); };
+      nvls_ht_off_tail = 0;
+      nvls_ht_off_head = align256(nvls_ht_off_tail + tail_bytes);
+      nvls_ht_off_barrier = align256(nvls_ht_off_head + head_bytes);
+      nvls_ht_off_data = align256(nvls_ht_off_barrier + barrier_bytes);
+      nvls_ht_total_bytes = align256(nvls_ht_off_data + data_bytes);
+
+      // GpuBuffer auto-uses gpuCallocPhysicalShared (cuMem fabric handle)
+      // when isNvlsSupported() — required for multicast bind.
+      nvls_ht_buffer = std::make_shared<mscclpp::GpuBuffer<uint8_t>>(nvls_ht_total_bytes);
+      CUDA_CHECK(cudaMemset(nvls_ht_buffer->data(), 0, nvls_ht_buffer->bytes()));
+
+      std::vector<int> all_ranks;
+      all_ranks.reserve(num_ranks);
+      for (int r = 0; r < num_ranks; ++r) all_ranks.push_back(r);
+
+      // Collective: every rank must call. If it fails (e.g. IMEX
+      // misconfigured, peers in different fabrics), the exception
+      // propagates — there is no clean fallback mid-collective. The
+      // `isNvlsSupported()` gate above is the production guard.
+      nvls_ht_conn = mscclpp::connectNvlsCollective(communicator, all_ranks, nvls_ht_buffer->bytes());
+      auto sw = nvls_ht_conn->bindAllocatedMemory(
+          reinterpret_cast<CUdeviceptr>(nvls_ht_buffer->data()), nvls_ht_buffer->bytes());
+      nvls_ht_sc = std::make_shared<mscclpp::SwitchChannel>(std::move(sw));
+      auto h = nvls_ht_sc->deviceHandle();
+      nvls_ht_mc_ptr = h.mcPtr;
+      nvls_ht_dev_ptr = h.devicePtr;
+      nvls_ht_enabled = (nvls_ht_mc_ptr != nullptr) && (nvls_ht_dev_ptr != nullptr);
+
+      // DIAG: print mcPtr/devicePtr/buf-VA per rank to verify whether
+      // connectNvlsCollective produced a multicast that actually spans
+      // both nodes (suspected: per-node only on Azure GB200).
+      printf(
+          "[mscclpp_ep] NVLS HT diag rank=%d mcPtr=%p devicePtr=%p bufVA=%p bytes=%zu\n",
+          rank, (void*)nvls_ht_mc_ptr, (void*)nvls_ht_dev_ptr,
+          (void*)nvls_ht_buffer->data(), (size_t)nvls_ht_buffer->bytes());
+      fflush(stdout);
+
+      bootstrap->barrier();
+
+      if (rank == 0) {
+        printf(
+            "[mscclpp_ep] NVLS HT multicast: enabled=%d total=%zu KB "
+            "(tail@%zu head@%zu barrier@%zu data@%zu)\n",
+            (int)nvls_ht_enabled, nvls_ht_total_bytes / 1024, nvls_ht_off_tail, nvls_ht_off_head,
+            nvls_ht_off_barrier, nvls_ht_off_data);
+        fflush(stdout);
+      }
+    } else if (rank == 0) {
+      printf(
+          "[mscclpp_ep] NVLS HT multicast: disabled (low_latency=%d, num_rdma_ranks=%d, "
+          "nvls_supported=%d)\n",
+          (int)low_latency_mode, num_rdma_ranks, (int)mscclpp::isNvlsSupported());
+      fflush(stdout);
+    }
 
     // ------------------------------------------------------------------
     // Intra-node LL fast path setup.
@@ -1107,6 +1224,9 @@ Buffer::internode_dispatch(
     // Send sizes
     *moe_recv_counter = -1, *moe_recv_rdma_counter = -1;
     for (int i = 0; i < num_local_experts; ++i) moe_recv_expert_counter[i] = -1;
+    // NVLS Phase 2: bump the per-call epoch counter so the kernel's
+    // barrier spin uses a fresh expected value (epoch * num_ranks).
+    if (nvls_ht_enabled) ++nvls_ht_epoch;
     internode::notify_dispatch(
         num_tokens_per_rank->data_ptr<int>(), moe_recv_counter_mapped, num_ranks,
         num_tokens_per_rdma_rank->data_ptr<int>(), moe_recv_rdma_counter_mapped, num_tokens_per_expert->data_ptr<int>(),
@@ -1116,7 +1236,10 @@ Buffer::internode_dispatch(
         recv_gbl_rank_prefix_sum.data_ptr<int>(), rdma_buffer_ptr, config.num_max_rdma_chunked_recv_tokens,
         buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
         config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, low_latency_mode,
-        port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get());
+        port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+        nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
+        nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
+        nvls_ht_off_barrier, nvls_ht_off_data, nvls_ht_epoch, kNvlsPerPeerBytes);
     move_fifo_slots(3);
 
     // Synchronize total received tokens and tokens per expert
@@ -1178,6 +1301,13 @@ Buffer::internode_dispatch(
   }
 
   // Launch data dispatch
+  // Phase 3: pass NVLS counter region pointers (head/tail × mc/dev). When
+  // `nvls_ht_enabled` is false, all four are nullptr and the kernel falls
+  // back to the legacy PortChannel/atomicAdd path.
+  void* nvls_head_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
+  void* nvls_head_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
+  void* nvls_tail_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
+  void* nvls_tail_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
   internode::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr, recv_topk_weights_ptr,
                       cached_mode ? nullptr : recv_src_meta->data_ptr(), x.data_ptr(), x_scales_ptr, topk_idx_ptr,
                       topk_weights_ptr, cached_mode ? nullptr : send_rdma_head->data_ptr<int>(),
@@ -1190,7 +1320,8 @@ Buffer::internode_dispatch(
                       rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
-                      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get());
+                      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+                      nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1310,6 +1441,11 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
   move_fifo_slots(2);
 
   auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
+  // Phase 3: NVLS counter region pointers for combine kernel.
+  void* combine_nvls_head_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
+  void* combine_nvls_head_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
+  void* combine_nvls_tail_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
+  void* combine_nvls_tail_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
   internode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(),
                      combined_topk_weights_ptr, is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(),
                      topk_weights_ptr, combined_rdma_head.data_ptr<int>(), combined_nvl_head.data_ptr<int>(),
@@ -1318,7 +1454,8 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
                      num_combined_tokens, hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
                      config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
                      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels,
-                     low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get());
+                     low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev);
 
   std::optional<EventHandle> event;
   if (async) {
