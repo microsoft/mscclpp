@@ -194,6 +194,18 @@ Buffer::~Buffer() noexcept(false) {
     }
   }
 
+  // Hybrid LL IPC fast-path teardown (Phase 11).
+  if (hybrid_ll_ready) {
+    for (int i = 0; i < (int)hybrid_peer_bases.size(); ++i) {
+      if (i == rank || hybrid_peer_bases[i] == nullptr) continue;
+      CUDA_CHECK(cudaIpcCloseMemHandle(hybrid_peer_bases[i]));
+    }
+    if (hybrid_peer_bases_gpu != nullptr) {
+      CUDA_CHECK(cudaFree(hybrid_peer_bases_gpu));
+      hybrid_peer_bases_gpu = nullptr;
+    }
+  }
+
   for (auto& ps : proxy_services) ps->stopProxy();
 
   // Free cuBLAS handle, workspace and MoE counter
@@ -578,6 +590,81 @@ void Buffer::sync(const std::vector<int>& device_ids,
     }
   }
 #endif  // MSCCLPP_EP_HAVE_IBGDA
+
+  // ------------------------------------------------------------------
+  // Phase 11 — Hybrid LL fast path setup (multi-node, IBGDA + IPC).
+  //
+  // When LL is running cross-node with IBGDA enabled, also open CUDA IPC
+  // peer pointers for each same-node neighbor's rdma_buffer_ptr. The LL
+  // kernel will then prefer NVLink for intranode peers and IBGDA for
+  // internode peers, matching nccl-ep's per-peer transport selection.
+  //
+  // The IPC ring is restricted to same-node peers (peer / NUM_MAX_NVL_PEERS
+  // == rdma_rank); cross-node entries stay nullptr in `hybrid_peer_bases`.
+  // The kernel checks for nullptr to decide IPC vs IBGDA per peer.
+  // ------------------------------------------------------------------
+  if (low_latency_mode && num_rdma_ranks > 1 && num_rdma_bytes > 0) {
+    bool hybrid_enabled = true;
+    if (const char* e = std::getenv("MSCCLPP_EP_HYBRID_LL")) {
+      if (e[0] != '\0' && std::atoi(e) == 0) hybrid_enabled = false;
+    }
+#ifdef MSCCLPP_EP_HAVE_IBGDA
+    const bool have_ibgda = (ibgda_setup_ != nullptr);
+#else
+    const bool have_ibgda = false;
+#endif
+    if (hybrid_enabled && have_ibgda) {
+      try {
+        hybrid_ipc_handles.assign(num_ranks, cudaIpcMemHandle_t{});
+        hybrid_peer_bases.assign(num_ranks, nullptr);
+
+        // 1. Allgather rdma_buffer_ptr IPC handles to all ranks. Cross-node
+        //    handles are useless to us but the bootstrap allgather is
+        //    symmetric and easier than building a per-node sub-bootstrap.
+        CUDA_CHECK(cudaIpcGetMemHandle(&hybrid_ipc_handles[rank], rdma_buffer_ptr));
+        bootstrap->allGather(hybrid_ipc_handles.data(), sizeof(cudaIpcMemHandle_t));
+
+        // 2. Open IPC handles only for same-node peers.
+        const int my_node = rank / NUM_MAX_NVL_PEERS;
+        int opened = 0;
+        for (int r = 0; r < num_ranks; ++r) {
+          if (r == rank) {
+            hybrid_peer_bases[r] = rdma_buffer_ptr;
+            continue;
+          }
+          if (r / NUM_MAX_NVL_PEERS != my_node) continue;  // cross-node
+          CUDA_CHECK(cudaIpcOpenMemHandle(&hybrid_peer_bases[r], hybrid_ipc_handles[r],
+                                          cudaIpcMemLazyEnablePeerAccess));
+          ++opened;
+        }
+
+        // 3. Mirror to GPU.
+        CUDA_CHECK(cudaMalloc(&hybrid_peer_bases_gpu, sizeof(void*) * num_ranks));
+        CUDA_CHECK(cudaMemcpy(hybrid_peer_bases_gpu, hybrid_peer_bases.data(),
+                              sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+
+        hybrid_ll_ready = true;
+        if (rank == 0) {
+          printf("[mscclpp_ep] Hybrid LL ready: %d intranode peers per rank "
+                 "(NVLink for same-node, IBGDA for cross-node)\n", opened);
+          fflush(stdout);
+        }
+      } catch (const std::exception& e) {
+        fprintf(stderr, "[mscclpp_ep][rank=%d] Hybrid LL setup failed, kernel will use IBGDA only: %s\n",
+                rank, e.what());
+        for (int i = 0; i < (int)hybrid_peer_bases.size(); ++i) {
+          if (i != rank && hybrid_peer_bases[i] != nullptr) {
+            (void)cudaIpcCloseMemHandle(hybrid_peer_bases[i]);
+          }
+        }
+        hybrid_peer_bases.clear();
+        hybrid_ipc_handles.clear();
+        if (hybrid_peer_bases_gpu) { cudaFree(hybrid_peer_bases_gpu); hybrid_peer_bases_gpu = nullptr; }
+        hybrid_ll_ready = false;
+        (void)cudaGetLastError();
+      }
+    }
+  }
 
   // Ready to use
   available = true;
@@ -1520,6 +1607,12 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
   mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = nullptr;
   const bool use_ibgda = false;
 #endif
+  // Phase 11 hybrid: when IBGDA is active and same-node IPC pointers are
+  // available, hand them to the kernel so it can prefer NVLink for
+  // intranode peers. Single-node (use_ipc) keeps its existing path.
+  if (use_ibgda && hybrid_ll_ready && hybrid_peer_bases_gpu != nullptr) {
+    peer_bases = hybrid_peer_bases_gpu;
+  }
   auto launcher = [=](int phases) {
     internode_ll::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr, packed_recv_src_info.data_ptr<int>(),
                            packed_recv_layout_range.data_ptr<int64_t>(), packed_recv_count.data_ptr<int>(),
@@ -1685,6 +1778,10 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   mscclpp::IbgdaPortChannelDeviceHandle* ibgda_dev = nullptr;
   const bool use_ibgda = false;
 #endif
+  // Phase 11 hybrid: see low_latency_dispatch().
+  if (use_ibgda && hybrid_ll_ready && hybrid_peer_bases_gpu != nullptr) {
+    peer_bases = hybrid_peer_bases_gpu;
+  }
   auto launcher = [=](int phases) {
     internode_ll::combine(
         combined_x.data_ptr(), buffer.combine_rdma_recv_data_buffer, buffer.combine_rdma_recv_flag_buffer,

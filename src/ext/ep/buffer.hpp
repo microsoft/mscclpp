@@ -107,6 +107,28 @@ struct Buffer {
   bool ll_ipc_ready = false;
 
   // ------------------------------------------------------------------
+  // Phase 11 — Hybrid LL fast path.
+  //
+  // In multi-node LL with IBGDA, also open CUDA IPC peer pointers for
+  // same-node neighbors so the kernel can prefer NVLink for intranode
+  // peers and IBGDA for internode peers (matching nccl-ep's behavior).
+  //
+  // `hybrid_peer_bases` is sparse: indexed by global rank, populated
+  // only for same-node peers (rank' / NUM_MAX_NVL_PEERS == rdma_rank
+  // && rank' != rank). Cross-node and self entries are nullptr; the
+  // kernel checks for nullptr to decide IPC vs IBGDA per peer.
+  //
+  // Built lazily in `sync()` when:
+  //   - low_latency_mode && num_rdma_ranks > 1
+  //   - env MSCCLPP_EP_USE_IBGDA=1 && IBGDA setup succeeds
+  //   - env MSCCLPP_EP_HYBRID_LL is not set to "0"
+  // ------------------------------------------------------------------
+  std::vector<cudaIpcMemHandle_t> hybrid_ipc_handles;
+  std::vector<void*> hybrid_peer_bases;          // size num_ranks; same-node entries non-null
+  void** hybrid_peer_bases_gpu = nullptr;        // GPU array of size num_ranks
+  bool hybrid_ll_ready = false;
+
+  // ------------------------------------------------------------------
   // Native IBGDA path (Stage 4b). Built lazily in `sync()` when env
   // `MSCCLPP_EP_USE_IBGDA=1` is set AND the run is cross-node.
   // The kernels do NOT consume `ibgda_setup_` until 4b.2 lands; for now

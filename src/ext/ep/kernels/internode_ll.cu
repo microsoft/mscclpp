@@ -291,15 +291,28 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
           } else {
 #ifdef MSCCLPP_EP_LL_HAS_IBGDA
             if constexpr (kIbgdaPath) {
-              // Native IBGDA: lane 0 issues one RDMA WRITE WQE directly.
-              // UNSIGNALED + no DB ring — the trailing count write below
-              // (signaled, rings DB) flushes the per-QP queue.
-              if (lane_id == 0) {
-                const auto dst_off = rdma_offset_of(dst_ptr, rdma_buffer_ptr);
-                const auto src_off = rdma_offset_of(src_ptr, rdma_buffer_ptr);
-                mscclpp::ibgda::port_put(ibgda_handles[dst_expert_local_idx * num_ranks + dst_rank], dst_off, src_off,
-                                         num_bytes_per_msg,
-                                         /*signal_cqe=*/false, /*ring_db=*/false);
+              // Phase 11 hybrid: prefer NVLink for same-node peers when
+              // host has supplied per-peer IPC bases. Cross-node peers fall
+              // through to the IBGDA RDMA WRITE path below.
+              const bool use_ipc_for_peer =
+                  (peer_rdma_bases != nullptr) && (peer_rdma_bases[dst_rank] != nullptr);
+              if (use_ipc_for_peer) {
+                const auto peer_dst = peer_ptr_of(dst_ptr, peer_rdma_bases, rdma_buffer_ptr, dst_rank);
+                const auto* src_int4_ptr = reinterpret_cast<const int4*>(src_ptr);
+                const auto* dst_int4_ptr = reinterpret_cast<int4*>(peer_dst);
+                UNROLLED_WARP_COPY(8, lane_id, num_int4_per_msg, dst_int4_ptr, src_int4_ptr, ld_nc_global,
+                                   st_na_global);
+              } else {
+                // Native IBGDA: lane 0 issues one RDMA WRITE WQE directly.
+                // UNSIGNALED + no DB ring — the trailing count write below
+                // (signaled, rings DB) flushes the per-QP queue.
+                if (lane_id == 0) {
+                  const auto dst_off = rdma_offset_of(dst_ptr, rdma_buffer_ptr);
+                  const auto src_off = rdma_offset_of(src_ptr, rdma_buffer_ptr);
+                  mscclpp::ibgda::port_put(ibgda_handles[dst_expert_local_idx * num_ranks + dst_rank], dst_off,
+                                           src_off, num_bytes_per_msg,
+                                           /*signal_cqe=*/false, /*ring_db=*/false);
+                }
               }
               __syncwarp();
             } else
@@ -381,16 +394,27 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
       } else {
 #ifdef MSCCLPP_EP_LL_HAS_IBGDA
         if constexpr (kIbgdaPath) {
-          // Single writer per (dst_expert_local_idx, rank) slot, so an
-          // 8-byte inline RDMA WRITE delivering the encoded count is
-          // semantically equivalent to atomicAdd from a zero-initialised
-          // remote slot. The receiver polls with ld_acquire_sys_global.
-          auto* counter_ptr = rdma_recv_count + dst_expert_local_idx * num_ranks + rank;
-          const auto off = rdma_offset_of(reinterpret_cast<uint64_t>(counter_ptr), rdma_buffer_ptr);
-          const auto& ch = ibgda_handles[dst_expert_local_idx * num_ranks + dst_rank];
-          mscclpp::IbgdaRemoteMr r = ch.remote_mrs[ch.dst];
-          mscclpp::ibgda::rdma_write_inl8(ch.qp, static_cast<uint64_t>(static_cast<int64_t>(-num_tokens_sent - 1)),
-                                          r.addr + off, r.rkey_be);
+          // Phase 11 hybrid: same-node peer → store the count via the
+          // peer-mapped pointer (NVLink); cross-node peer → inline RDMA WRITE.
+          const bool use_ipc_for_peer =
+              (peer_rdma_bases != nullptr) && (peer_rdma_bases[dst_rank] != nullptr);
+          if (use_ipc_for_peer) {
+            auto peer_counter = reinterpret_cast<int64_t*>(
+                peer_ptr_of(reinterpret_cast<uint64_t>(rdma_recv_count + dst_expert_local_idx * num_ranks + rank),
+                            peer_rdma_bases, rdma_buffer_ptr, dst_rank));
+            st_na_release(peer_counter, static_cast<int64_t>(-num_tokens_sent - 1));
+          } else {
+            // Single writer per (dst_expert_local_idx, rank) slot, so an
+            // 8-byte inline RDMA WRITE delivering the encoded count is
+            // semantically equivalent to atomicAdd from a zero-initialised
+            // remote slot. The receiver polls with ld_acquire_sys_global.
+            auto* counter_ptr = rdma_recv_count + dst_expert_local_idx * num_ranks + rank;
+            const auto off = rdma_offset_of(reinterpret_cast<uint64_t>(counter_ptr), rdma_buffer_ptr);
+            const auto& ch = ibgda_handles[dst_expert_local_idx * num_ranks + dst_rank];
+            mscclpp::IbgdaRemoteMr r = ch.remote_mrs[ch.dst];
+            mscclpp::ibgda::rdma_write_inl8(ch.qp, static_cast<uint64_t>(static_cast<int64_t>(-num_tokens_sent - 1)),
+                                            r.addr + off, r.rkey_be);
+          }
         } else
 #endif
         {
@@ -686,16 +710,25 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
         } else {
 #ifdef MSCCLPP_EP_LL_HAS_IBGDA
           if constexpr (kIbgdaPath) {
-            const auto buf_int4_ptr = reinterpret_cast<int4*>(buf_ptr);
-            if (not zero_copy)
-              UNROLLED_WARP_COPY(7, lane_id, hidden_bf16_int4, buf_int4_ptr, x_int4, ld_nc_global, st_na_global);
-            if (lane_id == 0) {
-              const auto dst_off = rdma_offset_of(dst_ptr, rdma_buffer_ptr);
-              const auto src_off = rdma_offset_of(static_cast<uint64_t>(buf_ptr), rdma_buffer_ptr);
-              // UNSIGNALED + no DB ring — trailing flag write drives the doorbell.
-              mscclpp::ibgda::port_put(ibgda_handles[local_expert_idx * num_ranks + dst_rank], dst_off, src_off,
-                                       hidden * sizeof(nv_bfloat16),
-                                       /*signal_cqe=*/false, /*ring_db=*/false);
+            // Phase 11 hybrid: same-node peer → NVLink warp copy.
+            const bool use_ipc_for_peer =
+                (peer_rdma_bases != nullptr) && (peer_rdma_bases[dst_rank] != nullptr);
+            if (use_ipc_for_peer) {
+              const auto peer_dst = peer_ptr_of(dst_ptr, peer_rdma_bases, rdma_buffer_ptr, dst_rank);
+              const auto peer_dst_int4 = reinterpret_cast<int4*>(peer_dst);
+              UNROLLED_WARP_COPY(7, lane_id, hidden_bf16_int4, peer_dst_int4, x_int4, ld_nc_global, st_na_global);
+            } else {
+              const auto buf_int4_ptr = reinterpret_cast<int4*>(buf_ptr);
+              if (not zero_copy)
+                UNROLLED_WARP_COPY(7, lane_id, hidden_bf16_int4, buf_int4_ptr, x_int4, ld_nc_global, st_na_global);
+              if (lane_id == 0) {
+                const auto dst_off = rdma_offset_of(dst_ptr, rdma_buffer_ptr);
+                const auto src_off = rdma_offset_of(static_cast<uint64_t>(buf_ptr), rdma_buffer_ptr);
+                // UNSIGNALED + no DB ring — trailing flag write drives the doorbell.
+                mscclpp::ibgda::port_put(ibgda_handles[local_expert_idx * num_ranks + dst_rank], dst_off, src_off,
+                                         hidden * sizeof(nv_bfloat16),
+                                         /*signal_cqe=*/false, /*ring_db=*/false);
+              }
             }
             __syncwarp();
           } else
@@ -731,11 +764,22 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
         } else {
 #ifdef MSCCLPP_EP_LL_HAS_IBGDA
           if constexpr (kIbgdaPath) {
-            auto* flag_ptr = rdma_recv_flag + global_expert_idx;
-            const auto off = rdma_offset_of(reinterpret_cast<uint64_t>(flag_ptr), rdma_buffer_ptr);
-            const auto& ch = ibgda_handles[local_expert_idx * num_ranks + dst_rank];
-            mscclpp::IbgdaRemoteMr r = ch.remote_mrs[ch.dst];
-            mscclpp::ibgda::rdma_write_inl8(ch.qp, static_cast<uint64_t>(1), r.addr + off, r.rkey_be);
+            // Phase 11 hybrid: same-node peer → store the flag via the
+            // peer-mapped pointer (NVLink); cross-node peer → inline RDMA WRITE.
+            const bool use_ipc_for_peer =
+                (peer_rdma_bases != nullptr) && (peer_rdma_bases[dst_rank] != nullptr);
+            if (use_ipc_for_peer) {
+              auto peer_flag = reinterpret_cast<int64_t*>(peer_ptr_of(
+                  reinterpret_cast<uint64_t>(rdma_recv_flag + global_expert_idx),
+                  peer_rdma_bases, rdma_buffer_ptr, dst_rank));
+              st_na_release(peer_flag, static_cast<int64_t>(1));
+            } else {
+              auto* flag_ptr = rdma_recv_flag + global_expert_idx;
+              const auto off = rdma_offset_of(reinterpret_cast<uint64_t>(flag_ptr), rdma_buffer_ptr);
+              const auto& ch = ibgda_handles[local_expert_idx * num_ranks + dst_rank];
+              mscclpp::IbgdaRemoteMr r = ch.remote_mrs[ch.dst];
+              mscclpp::ibgda::rdma_write_inl8(ch.qp, static_cast<uint64_t>(1), r.addr + off, r.rkey_be);
+            }
           } else
 #endif
           {

@@ -749,3 +749,81 @@ math becomes a weighted average dominated by the cheaper hops.
 - Future work flagged: hybrid NVLink + RDMA LL dispatch (would close
   the remaining gap to nccl-ep's default-mode numbers and is
   architecturally well-defined).
+
+---
+
+## Phase 11 — Hybrid NVLink + RDMA LL Dispatch [POSITIVE, +70%]
+
+**Hypothesis (from Phase 10):** the remaining gap to nccl-ep's default-mode
+numbers is *architectural*: our LL kernel selects a single transport for
+the entire kernel via the `kIpcPath` / `kIbgdaPath` template parameters,
+so a 16-rank/2-node run forces all 15 destination peers through IBGDA
+even though 7 of them sit on the same host. nccl-ep mixes per peer:
+NVLink for intranode, RDMA for cross-node.
+
+### Implementation
+
+Goal: keep the kernel's IBGDA template branch (because the barrier and
+recv-side logic are already wired for it) but, *inside* every per-peer
+RDMA send site, runtime-check whether the host has supplied a
+peer-mapped pointer for that destination rank. If yes, use a warp copy
+over NVLink; if no, fall through to the existing `port_put` /
+`rdma_write_inl8` code.
+
+**Host (`buffer.cc` / `buffer.hpp`):**
+- New buffer fields: `hybrid_ipc_handles`, `hybrid_peer_bases`
+  (`std::vector<void*>`, size `num_ranks`, sparse), `hybrid_peer_bases_gpu`
+  (GPU mirror), `hybrid_ll_ready`.
+- After IBGDA setup succeeds in `sync()`, when
+  `low_latency_mode && num_rdma_ranks > 1`:
+  1. `cudaIpcGetMemHandle(rdma_buffer_ptr)` and `bootstrap->allGather`
+     across all ranks (cross-node entries are ignored).
+  2. `cudaIpcOpenMemHandle` only for peers `r` where
+     `r / NUM_MAX_NVL_PEERS == rank / NUM_MAX_NVL_PEERS && r != rank`.
+  3. Mirror the sparse pointer table to GPU.
+- Launchers (`low_latency_dispatch` and `low_latency_combine`):
+  when `use_ibgda && hybrid_ll_ready`, override `peer_bases` from the
+  null pointer to `hybrid_peer_bases_gpu` so the kernel can see it.
+- Gated by env `MSCCLPP_EP_HYBRID_LL` (default ON; set to `0` to disable).
+- IPC handles cleaned up in destructor.
+
+**Kernel (`internode_ll.cu`):** at all four RDMA send sites
+(dispatch send-data, dispatch send-count, combine send-data,
+combine send-flag), inside the `if constexpr (kIbgdaPath)` block,
+prepended:
+```
+const bool use_ipc_for_peer =
+    (peer_rdma_bases != nullptr) && (peer_rdma_bases[dst_rank] != nullptr);
+if (use_ipc_for_peer) {
+   <IPC warp copy / st_na_release on peer-mapped pointer>
+} else {
+   <existing port_put / rdma_write_inl8>
+}
+```
+The recv-side spin-wait (`ld_acquire_sys_global`) is transport-agnostic
+and unchanged. Branch is uniform across the warp — `dst_rank` is
+broadcast-derived per warp group.
+
+### Result (LL bench, 16 ranks across 2 nodes)
+
+| config | dispatch GB/s | combine GB/s | notes |
+| --- | --- | --- | --- |
+| Phase 10 baseline (IBGDA only) | 38.7–39.4 | 39.4 | All 15 peers via RDMA |
+| nccl-ep `--disable-nvlink` (RDMA only) | 42.3 | 42.5 | Apples-to-apples ceiling |
+| nccl-ep default (mixed) | 63–71 | 62–72 | Mixed transports |
+| **mscclpp_ep Phase 11 hybrid** | **65.85–65.97** | **66.78–67.06** | 7/15 peers NVLink |
+
+3 consecutive runs all in this band. **+~70% over baseline**, now
+matching nccl-ep's default-mode numbers within run-to-run noise.
+Validation `max|got-expected| = 0.0000e+00` on every run.
+
+### Notes
+
+- The `[mscclpp_ep] Hybrid LL ready: 7 intranode peers per rank …` line
+  is printed once on rank 0 during `sync()` — useful as a confidence
+  marker in benchmark logs.
+- Single-node LL is unaffected: `num_rdma_ranks > 1` gate keeps the
+  existing `ll_ipc_ready` fast path in charge there.
+- C8 (intranode LL audit) and C9 (health metric in bench output) remain
+  open but are no longer urgent — the architectural gap that motivated
+  them is closed.
