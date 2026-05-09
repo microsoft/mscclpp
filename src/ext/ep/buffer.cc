@@ -551,14 +551,19 @@ void Buffer::sync(const std::vector<int>& device_ids,
       int v = std::atoi(e);
       if (v > 0) num_ibgda_channels = v;
     }
+    int num_nics = 1;
+    if (const char* e = std::getenv("MSCCLPP_EP_NUM_NICS")) {
+      int v = std::atoi(e);
+      if (v >= 1 && v <= 8) num_nics = v;
+    }
     const int kNumIbgdaChannels = num_ibgda_channels;
     try {
       ibgda_setup_ = mscclpp::ep::build_ibgda_setup(rank, num_ranks, /*ib_transport_index=*/device_id,
                                                     kNumIbgdaChannels, rdma_buffer_ptr,
-                                                    static_cast<std::size_t>(num_rdma_bytes), bootstrap);
+                                                    static_cast<std::size_t>(num_rdma_bytes), bootstrap, num_nics);
       if (rank == 0) {
-        printf("[mscclpp_ep] IBGDA setup built: channels=%d num_ranks=%d (per-rank QPs=%d)\n",
-               kNumIbgdaChannels, num_ranks, kNumIbgdaChannels * (num_ranks - 1));
+        printf("[mscclpp_ep] IBGDA setup built: channels=%d num_ranks=%d num_nics=%d (per-rank QPs=%d)\n",
+               kNumIbgdaChannels, num_ranks, num_nics, kNumIbgdaChannels * (num_ranks - 1));
         fflush(stdout);
       }
       // Clear any benign CUDA sticky error left by overlapping host/UAR

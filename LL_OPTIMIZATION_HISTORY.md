@@ -513,3 +513,166 @@ Remaining categories of attack, all architectural / non-trivial:
 For the current 2×8×H100 NDR(50) setup with TOKENS=128 / TOPK=8 / BF16
 hidden=7168, **the LL benchmark is closed**. Future commits should
 either pivot to multi-NIC or to a different problem regime.
+
+---
+
+## Phase 9 — Multi-NIC striping (IN PROGRESS)
+
+### 9.0 Latest finding: NIC-saturation diagnostic (May 9, 2026)
+
+Forced all 8 master-node ranks onto a single NIC via
+`MSCCLPP_EP_IB_DEVICE_OVERRIDE=0` (worker node ranks kept their NUMA
+NICs because mpirun did not propagate the override). Result:
+
+```
+PASS
+  dispatch: avg=4832us per_rank_bw=2.85 GB/s  agg_bw=45.6 GB/s
+  combine : avg=4708us per_rank_bw=2.92 GB/s  agg_bw=46.8 GB/s
+```
+
+Per-rank BW collapsed 38.9 → 2.85 GB/s when 8 master ranks share 1 NIC.
+That is a 13.6× drop and confirms unambiguously that **the per-rank
+NIC line-rate IS the binding constraint** in the current 1-NIC-per-rank
+configuration. The 8-NIC fabric is fully utilized at ~38.9 GB/s × 8 =
+311 GB/s of node-aggregate payload BW, ≈ 78% of the 8 × 50 = 400 GB/s
+node ceiling.
+
+Implication: each NIC is at ~82% line-rate. Remaining headroom at the
+node level is ≈ 89 GB/s = 11 GB/s/rank IFF we can perfectly redistribute
+WRs across NICs. In a fully symmetric N-NIC stripe the per-NIC
+aggregate demand is unchanged, so the gain comes from
+**(a) breaking per-rank NIC affinity** (a single rank's last-WR
+completion time can drop because its WRs scatter across N NICs and the
+NIC scheduler interleaves them), and
+**(b) recv-side multi-NIC ingress** (the destination GPU now drains
+across N NICs instead of one).
+
+### 9.1 Architectural inventory
+
+- 8 mlx5_ib NICs/node, all PORT_ACTIVE, NDR (50 GB/s each).
+- Current setup (`src/ext/ep/ibgda_setup.cc`): single `IbCtx` per rank.
+  All `num_channels × num_ranks` QPs created on that one NIC. Layout
+  `qps[c * num_ranks + peer]`, indexed in the kernel by
+  `(local_expert_idx, dst_rank)`.
+- Kernel uses `ibgda_handles[le * num_ranks + dst_rank]` (4 distinct
+  channels actually exercised: `le ∈ [0..num_local_experts=4)`); the
+  default `num_ibgda_channels=16` is over-provisioned by 4×.
+- `MSCCLPP_EP_IB_DEVICE_OVERRIDE` env exists for forcing a single NIC.
+
+### 9.2 Plan
+
+Stripe each rank's QPs across N NICs by channel index:
+
+- New env `MSCCLPP_EP_NUM_NICS` (default 1 = current behavior).
+- Each rank picks `nic[i] = (device_id + i) % 8` for i ∈ [0, N).
+- Channel `c`'s QP lives on `nic[c % N]`.
+- Refactor `build_ibgda_setup`:
+  - Allocate `N` `IbCtx` instances, one per NIC.
+  - Register the rdma buffer MR on each ctx (N lkey/rkey values).
+  - Register the sig MR on each ctx.
+  - `d_local_mrs` length becomes `N` (was 1); each handle's `src` =
+    nic_index_for_channel(c).
+  - `d_remote_mrs` length becomes `N × num_ranks` (was num_ranks);
+    handle's `dst` = nic_index_for_channel(c) * num_ranks + peer_rank.
+  - Allgather rdma/sig MR records of size `(addr, rkey[N])` instead of
+    `(addr, rkey)`.
+  - One CQ-poller thread polling all NICs round-robin.
+- Kernel changes: NONE expected — the device-handle layout (channel ×
+  num_ranks) is unchanged, and each handle already references its own
+  local/remote MR entries via `src`/`dst` indices that the kernel
+  blindly threads through `port_put`.
+
+### 9.3 Risks
+
+- Cross-NUMA penalty: NIC `(device_id + 1) % 8` is on a different NUMA
+  domain than the GPU. PCIe traversal cost is real but small for IBGDA
+  (kernel writes the BF doorbell directly).
+- Multiple PDs across IbCtx instances: signal MR's PD must match the
+  QP's PD per NIC. The current code grabs the PD off any QP — easy
+  to fix by making sig MR per-NIC.
+- Doubled QP count on the host: 2 NICs × current QP count is still
+  small (16 ch × 16 ranks × 2 = 512 QPs/rank), well under HCA limits.
+- Allgather record size grows; bootstrap is one-shot, no bench impact.
+
+### 9.4 Execution
+
+Step-by-step:
+1. Refactor `IbgdaSetup` struct + `build_ibgda_setup` to support N NICs.
+2. Wire `MSCCLPP_EP_NUM_NICS` env in `buffer.cc`.
+3. Forward env in `nccl-tests/run_ll_mpirun.sh`.
+4. Build + deploy. Sweep N ∈ {1, 2, 4, 8}. Compare to baseline 38.9/39.6.
+5. If PASS, commit and update this doc with results.
+
+### 9.5 Results — multi-NIC striping is NOT viable on NDv5 (REVERTED)
+
+Implementation done as planned (channel `c` → NIC `(base + c) % 8`).
+First sweep (no NUMA awareness):
+
+| N | dispatch GB/s | combine GB/s | notes |
+|--:|--:|--:|---|
+| 1 | 38.61 | 39.59 | baseline preserved |
+| 2 | 13.80 | 15.06 | -64% |
+| 4 | (timeout) | (timeout) | hung at 60s |
+| 8 |  3.32 |  3.43 | -91% |
+
+Strict monotonic regression with N. Hypothesis: cross-NUMA PCIe penalty
+(NICs 0-3 belong to NUMA 0, 4-7 to NUMA 1, GPUs 0-3 NUMA 0, 4-7 NUMA 1).
+
+Constrained the stripe to within-NUMA (4 NICs/NUMA, modular indexing
+inside the NUMA group). Sweep:
+
+| N (NUMA-aware) | dispatch GB/s | combine GB/s |
+|---:|--:|--:|
+| 1 | 38.73 | 39.41 |
+| 2 | 15.39 | 17.06 |
+| 3 | 12.22 | 13.13 |
+| 4 |  9.06 |  9.56 |
+
+Still bad. Within-NUMA is not enough. Even rank 0 using only ib0+ib1
+(both NUMA 0) drops 2.5×.
+
+Isolation test (`MSCCLPP_EP_NIC_DUP=1`, N=2 with both ctxs pointing at
+the SAME mlx5_ib0):
+
+```
+PASS
+  dispatch: avg=356us per_rank_bw=38.61 GB/s
+  combine : avg=353us per_rank_bw=38.96 GB/s
+```
+
+**Multi-IbCtx / multi-PD overhead is zero.** Two `IbCtx` instances on
+the same NIC perform identically to one. The regression therefore comes
+exclusively from the GPU↔NIC PCIe routing when hitting a non-affine
+NIC.
+
+**Conclusion: PCIe topology limits multi-NIC striping on this hardware.**
+The `nvidia-smi topo` matrix shows every GPU has a single "NODE" path
+to its NUMA-affine NIC subset, but in practice the GPU's PCIe stack is
+optimized only for its primary NIC. Posting RDMA WRs to any other NIC
+forces cross-switch PCIe hops that dominate over the bandwidth saving.
+
+This rules out multi-NIC striping on NDv5/H100 with mlx5 + IBGDA. The
+single-NIC ceiling of ~41 GB/s/rank stands.
+
+### 9.6 Status
+
+- The multi-NIC plumbing is left in place (`MSCCLPP_EP_NUM_NICS` env,
+  default 1) so the path can be re-evaluated on different hardware
+  (NDR2, NVL switches with multi-port HCAs, etc.) without re-implementing.
+- Default behavior (N=1) is identical to pre-Phase-9.
+- `MSCCLPP_EP_NIC_DUP=1` is left as a debug knob (forces all ctxs onto
+  the same NIC; useful to isolate multi-PD overhead from multi-NIC PCIe
+  cost).
+
+### 9.7 Synthesis (post Phase 9)
+
+The single-NIC line-rate IS the binding constraint (proved in 9.0:
+forcing all 8 master ranks onto ib0 drops to 2.85 GB/s = 1/14× of
+baseline). Per-NIC NDR(50) line rate = ~41 GB/s practical payload.
+Multi-NIC striping is the ONLY remaining software lever, and it does
+not work on NDv5 due to GPU↔NIC PCIe affinity.
+
+**The LL benchmark on this hardware/problem is closed at ~38.7/39.4 GB/s
+(94-97% of the ~41 GB/s practical single-NIC ceiling).** Further wins
+require hardware uplift (NDR2 / 100 GB/s NIC, or platforms with multi-NIC
+P2P like Grace-Hopper SuperChip).

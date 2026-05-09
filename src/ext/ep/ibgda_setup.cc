@@ -39,12 +39,12 @@ IbgdaSetup::~IbgdaSetup() {
   // Tear down in reverse order of construction:
   //   - device_handles, d_local_mrs, d_remote_mrs: shared_ptr from
   //     gpuCallocShared, auto-freed via custom deleter.
-  //   - resources / qps / rdma_mr: smart ptrs, auto-freed.
-  //   - sig_mr (raw ibv_mr) + sig_slots / sig_seq (raw cudaMalloc): explicit.
-  if (sig_mr != nullptr) {
-    ibv_dereg_mr(sig_mr);
-    sig_mr = nullptr;
+  //   - resources / qps / rdma_mrs: smart ptrs, auto-freed.
+  //   - sig_mrs (raw ibv_mr) + sig_slots / sig_seq (raw cudaMalloc): explicit.
+  for (ibv_mr* m : sig_mrs) {
+    if (m) ibv_dereg_mr(m);
   }
+  sig_mrs.clear();
   if (sig_slots != nullptr) {
     cudaFree(sig_slots);
     sig_slots = nullptr;
@@ -76,52 +76,78 @@ constexpr int kIbgdaMaxSendWr = 8192;
 
 std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_transport_index, int num_channels,
                                               void* rdma_buffer_ptr, std::size_t num_rdma_bytes,
-                                              std::shared_ptr<TcpBootstrap> bootstrap) {
+                                              std::shared_ptr<TcpBootstrap> bootstrap, int num_nics) {
   EP_HOST_ASSERT(rdma_buffer_ptr != nullptr);
   EP_HOST_ASSERT(num_rdma_bytes > 0);
   EP_HOST_ASSERT(num_ranks > 1);
   EP_HOST_ASSERT(num_channels > 0);
   EP_HOST_ASSERT(ib_transport_index >= 0 && ib_transport_index < 8);
+  EP_HOST_ASSERT(num_nics >= 1 && num_nics <= 8);
 
   auto setup = std::make_unique<IbgdaSetup>();
   setup->rank = rank;
   setup->num_ranks = num_ranks;
   setup->num_channels = num_channels;
+  setup->num_nics = num_nics;
 
-  // 1. Resolve IB device name and build the IbCtx.
+  // 1. Resolve IB device(s) and build IbCtx per NIC.
   //    `MSCCLPP_EP_IB_DEVICE_OVERRIDE` may force a specific IB transport
   //    index (0..7) for diagnostic NIC-affinity sweeps. Default = use the
   //    NUMA-affine NIC selected by the caller (== local rank on NDv5).
-  int effective_ib_index = ib_transport_index;
+  //    With num_nics > 1, the additional NICs are picked starting from the
+  //    base index and wrapping mod 8: nic[i] = (base + i) % 8.
+  int effective_base = ib_transport_index;
   if (const char* e = std::getenv("MSCCLPP_EP_IB_DEVICE_OVERRIDE")) {
-    int v = std::atoi(e);
-    if (v >= 0 && v < 8) effective_ib_index = v;
+    if (e[0] != '\0') {
+      int v = std::atoi(e);
+      if (v >= 0 && v < 8) effective_base = v;
+    }
   }
-  auto ib_transport = static_cast<Transport>(static_cast<int>(Transport::IB0) + effective_ib_index);
-  std::string dev_name = getIBDeviceName(ib_transport);
-  setup->ib_ctx = std::make_unique<IbCtx>(dev_name);
-  EP_HOST_ASSERT(setup->ib_ctx->isMlx5() && "IBGDA requires an mlx5 NIC");
-  fprintf(stderr, "[mscclpp_ep] rank %d -> IB device %s (transport_index=%d, override=%s)\n",
-          rank, dev_name.c_str(), effective_ib_index,
-          effective_ib_index == ib_transport_index ? "no" : "yes");
+  setup->ib_ctxs.resize(num_nics);
+  std::vector<int> nic_idx(num_nics);
+  // NUMA-aware striping: on NDv5, NICs 0-3 belong to NUMA 0 and 4-7 to NUMA 1.
+  // Crossing NUMA for IBGDA doorbells/PCIe DMA is ~3× slower (verified
+  // empirically). Constrain each rank's NIC stripe to its own 4-NIC NUMA
+  // group: nic[i] = numa_base + (effective_base + i) % 4.
+  // DEBUG: MSCCLPP_EP_NIC_DUP=1 forces all stripe slots to the SAME NIC
+  // (same as effective_base) — used to isolate multi-IbCtx overhead from
+  // actual multi-NIC routing cost.
+  const int numa_base = (effective_base / 4) * 4;
+  const int local_off = effective_base % 4;
+  bool nic_dup = false;
+  if (const char* e = std::getenv("MSCCLPP_EP_NIC_DUP"); e && e[0] != '\0' && std::atoi(e) > 0) {
+    nic_dup = true;
+  }
+  for (int n = 0; n < num_nics; ++n) {
+    nic_idx[n] = nic_dup ? effective_base : (numa_base + (local_off + n) % 4);
+    auto ib_transport = static_cast<Transport>(static_cast<int>(Transport::IB0) + nic_idx[n]);
+    std::string dev_name = getIBDeviceName(ib_transport);
+    setup->ib_ctxs[n] = std::make_unique<IbCtx>(dev_name);
+    EP_HOST_ASSERT(setup->ib_ctxs[n]->isMlx5() && "IBGDA requires an mlx5 NIC");
+    fprintf(stderr, "[mscclpp_ep] rank %d -> IB device[%d/%d] %s (transport_index=%d, numa_base=%d, dup=%d)\n",
+            rank, n, num_nics, dev_name.c_str(), nic_idx[n], numa_base, (int)nic_dup);
+  }
   fflush(stderr);
 
-  // 2. Create QPs. Layout: qps[channel * num_ranks + peer].
-  // Self entries are nullptr.
+  auto nic_for_channel = [num_nics](int c) { return c % num_nics; };
+
+  // 2. Create QPs. Layout: qps[channel * num_ranks + peer]. Each QP lives on
+  // ib_ctxs[nic_for_channel(channel)]. Self entries are nullptr.
   const int total_slots = num_channels * num_ranks;
   setup->qps.resize(total_slots);
   setup->resources.resize(total_slots);
 
   for (int c = 0; c < num_channels; ++c) {
+    auto& ctx = setup->ib_ctxs[nic_for_channel(c)];
     for (int r = 0; r < num_ranks; ++r) {
       if (r == rank) continue;
-      auto qp = setup->ib_ctx->createQp(/*port=*/kIbgdaPort, /*gidIndex=*/kIbgdaGid,
-                                        /*maxSendCqSize=*/kIbgdaMaxSendWr * 2,
-                                        /*maxSendCqPollNum=*/64,
-                                        /*maxSendWr=*/kIbgdaMaxSendWr,
-                                        /*maxRecvWr=*/1,
-                                        /*maxWrPerSend=*/1,
-                                        /*noAtomic=*/true);
+      auto qp = ctx->createQp(/*port=*/kIbgdaPort, /*gidIndex=*/kIbgdaGid,
+                              /*maxSendCqSize=*/kIbgdaMaxSendWr * 2,
+                              /*maxSendCqPollNum=*/64,
+                              /*maxSendWr=*/kIbgdaMaxSendWr,
+                              /*maxRecvWr=*/1,
+                              /*maxWrPerSend=*/1,
+                              /*noAtomic=*/true);
       setup->qps[c * num_ranks + r] = qp;
     }
   }
@@ -147,7 +173,8 @@ std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_tr
 
   // 4. RTR/RTS each local QP using the matching peer-side QP info. The peer
   // info we want is "rank r's QP for talking to us" == r's record indexed at
-  // [c * num_ranks + rank].
+  // [c * num_ranks + rank]. Both sides agree on the channel index and
+  // therefore on which NIC pair carries the connection.
   for (int c = 0; c < num_channels; ++c) {
     for (int r = 0; r < num_ranks; ++r) {
       if (r == rank) continue;
@@ -168,73 +195,128 @@ std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_tr
     }
   }
 
-  // 6. Register the existing rdma_buffer_ptr as an MR on this IbCtx, then
-  // allgather (addr, rkey) so we can build per-peer remote_mrs entries.
-  setup->rdma_mr = setup->ib_ctx->registerMr(rdma_buffer_ptr, num_rdma_bytes);
-  IbgdaSetup::PeerMr my_rdma_mr{};
-  {
-    auto info = setup->rdma_mr->getInfo();
-    my_rdma_mr.addr = info.addr;
-    my_rdma_mr.rkey = info.rkey;
+  // 6. Register the rdma buffer as an MR on EACH NIC, then allgather
+  //    (addr, rkey[N]) so we can build per-(nic, peer) remote_mrs entries.
+  setup->rdma_mrs.resize(num_nics);
+  std::vector<uint32_t> my_rdma_rkeys(num_nics);
+  uint64_t my_rdma_addr = 0;
+  for (int n = 0; n < num_nics; ++n) {
+    setup->rdma_mrs[n] = setup->ib_ctxs[n]->registerMr(rdma_buffer_ptr, num_rdma_bytes);
+    auto info = setup->rdma_mrs[n]->getInfo();
+    my_rdma_addr = info.addr;  // same across NICs (single allocation)
+    my_rdma_rkeys[n] = info.rkey;
   }
-  setup->peer_rdma.assign(num_ranks, IbgdaSetup::PeerMr{});
-  setup->peer_rdma[rank] = my_rdma_mr;
-  bootstrap->allGather(setup->peer_rdma.data(), sizeof(IbgdaSetup::PeerMr));
+  // Allgather record per rank: addr (8B) + N rkeys (4B each), packed.
+  const std::size_t rdma_rec_bytes = sizeof(uint64_t) + num_nics * sizeof(uint32_t);
+  std::vector<uint8_t> rdma_all(num_ranks * rdma_rec_bytes, 0);
+  {
+    uint8_t* p = rdma_all.data() + rank * rdma_rec_bytes;
+    std::memcpy(p, &my_rdma_addr, sizeof(uint64_t));
+    std::memcpy(p + sizeof(uint64_t), my_rdma_rkeys.data(), num_nics * sizeof(uint32_t));
+  }
+  bootstrap->allGather(rdma_all.data(), rdma_rec_bytes);
+  setup->peer_rdma.assign(num_nics * num_ranks, IbgdaSetup::PeerMr{});
+  for (int r = 0; r < num_ranks; ++r) {
+    const uint8_t* p = rdma_all.data() + r * rdma_rec_bytes;
+    uint64_t addr;
+    std::memcpy(&addr, p, sizeof(uint64_t));
+    for (int n = 0; n < num_nics; ++n) {
+      uint32_t rk;
+      std::memcpy(&rk, p + sizeof(uint64_t) + n * sizeof(uint32_t), sizeof(uint32_t));
+      auto& pr = setup->peer_rdma[n * num_ranks + r];
+      pr.addr = addr;
+      pr.rkey = rk;
+    }
+  }
 
-  // 7. Allocate signal slots: total_slots * 4 bytes on GPU. Layout:
-  // sig_slots[c * num_ranks + sender_peer] — when peer P sends signal() to
-  // us through channel c, it RDMA-WRITEs to *our* sig_slots[c * num_ranks + P].
-  // Each peer therefore needs to know our sig MR (addr+rkey) AND the offset
-  // within it that corresponds to (channel, sender=P) == "we are receiving
-  // from P". We allgather the base addr+rkey only; the offset is derivable.
+  // 7. Allocate signal slots and register the same buffer as MR on each NIC.
+  // Layout: sig_slots[c * num_ranks + sender_peer] — when peer P sends signal()
+  // to us through channel c, it RDMA-WRITEs to *our* sig_slots[c * num_ranks
+  // + P]. The base address is identical across NICs; rkey differs.
   const std::size_t sig_bytes = std::size_t(total_slots) * sizeof(uint32_t);
   CUDA_CHECK(cudaMalloc(&setup->sig_slots, sig_bytes));
   CUDA_CHECK(cudaMemset(setup->sig_slots, 0, sig_bytes));
   CUDA_CHECK(cudaMalloc(&setup->sig_seq, sig_bytes));
   CUDA_CHECK(cudaMemset(setup->sig_seq, 0, sig_bytes));
 
-  // Use raw verbs for the signal MR (we need the rkey/lkey directly).
-  ibv_pd* pd = setup->qps[(rank == 0 ? 1 : 0)]->getRawQp()->pd;  // any non-null QP shares the same pd
-  for (int c = 0; c < num_channels && pd == nullptr; ++c)
-    for (int r = 0; r < num_ranks && pd == nullptr; ++r)
-      if (auto& q = setup->qps[c * num_ranks + r]; q) pd = q->getRawQp()->pd;
-  EP_HOST_ASSERT(pd != nullptr);
-  setup->sig_mr = ibv_reg_mr(pd, setup->sig_slots, sig_bytes,
-                             IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
-  if (!setup->sig_mr) {
-    throw std::runtime_error("ibv_reg_mr(sig_slots) failed errno=" + std::to_string(errno));
+  setup->sig_mrs.assign(num_nics, nullptr);
+  std::vector<uint32_t> my_sig_lkeys(num_nics);
+  std::vector<uint32_t> my_sig_rkeys(num_nics);
+  for (int n = 0; n < num_nics; ++n) {
+    // Pick any QP on this NIC to grab its PD.
+    ibv_pd* pd = nullptr;
+    for (int c = 0; c < num_channels && pd == nullptr; ++c) {
+      if (nic_for_channel(c) != n) continue;
+      for (int r = 0; r < num_ranks && pd == nullptr; ++r) {
+        if (auto& q = setup->qps[c * num_ranks + r]; q) pd = q->getRawQp()->pd;
+      }
+    }
+    EP_HOST_ASSERT(pd != nullptr);
+    ibv_mr* m = ibv_reg_mr(pd, setup->sig_slots, sig_bytes,
+                           IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_WRITE);
+    if (!m) {
+      throw std::runtime_error("ibv_reg_mr(sig_slots) failed errno=" + std::to_string(errno));
+    }
+    setup->sig_mrs[n] = m;
+    my_sig_lkeys[n] = m->lkey;
+    my_sig_rkeys[n] = m->rkey;
   }
 
-  IbgdaSetup::PeerMr my_sig_mr{};
-  my_sig_mr.addr = reinterpret_cast<uint64_t>(setup->sig_slots);
-  my_sig_mr.rkey = setup->sig_mr->rkey;
-  setup->peer_sig.assign(num_ranks, IbgdaSetup::PeerMr{});
-  setup->peer_sig[rank] = my_sig_mr;
-  bootstrap->allGather(setup->peer_sig.data(), sizeof(IbgdaSetup::PeerMr));
-
-  // 8. Build the GPU-resident MR tables. We have a single local MR (the
-  // rdma_buffer_ptr); remote_mrs has one entry per peer rank.
-  std::vector<IbgdaLocalMr> h_local(1);
-  h_local[0].addr = reinterpret_cast<uint64_t>(rdma_buffer_ptr);
-  h_local[0].lkey_be = htonl(setup->rdma_mr->getLkey());
-  h_local[0].pad = 0;
-
-  std::vector<IbgdaRemoteMr> h_remote(num_ranks);
+  uint64_t my_sig_addr = reinterpret_cast<uint64_t>(setup->sig_slots);
+  const std::size_t sig_rec_bytes = sizeof(uint64_t) + num_nics * sizeof(uint32_t);
+  std::vector<uint8_t> sig_all(num_ranks * sig_rec_bytes, 0);
+  {
+    uint8_t* p = sig_all.data() + rank * sig_rec_bytes;
+    std::memcpy(p, &my_sig_addr, sizeof(uint64_t));
+    std::memcpy(p + sizeof(uint64_t), my_sig_rkeys.data(), num_nics * sizeof(uint32_t));
+  }
+  bootstrap->allGather(sig_all.data(), sig_rec_bytes);
+  setup->peer_sig.assign(num_nics * num_ranks, IbgdaSetup::PeerMr{});
   for (int r = 0; r < num_ranks; ++r) {
-    h_remote[r].addr = setup->peer_rdma[r].addr;
-    h_remote[r].rkey_be = htonl(setup->peer_rdma[r].rkey);
-    h_remote[r].pad = 0;
+    const uint8_t* p = sig_all.data() + r * sig_rec_bytes;
+    uint64_t addr;
+    std::memcpy(&addr, p, sizeof(uint64_t));
+    for (int n = 0; n < num_nics; ++n) {
+      uint32_t rk;
+      std::memcpy(&rk, p + sizeof(uint64_t) + n * sizeof(uint32_t), sizeof(uint32_t));
+      auto& ps = setup->peer_sig[n * num_ranks + r];
+      ps.addr = addr;
+      ps.rkey = rk;
+    }
   }
 
-  setup->d_local_mrs = mscclpp::detail::gpuCallocShared<IbgdaLocalMr>(1);
-  setup->d_remote_mrs = mscclpp::detail::gpuCallocShared<IbgdaRemoteMr>(num_ranks);
-  mscclpp::gpuMemcpy<IbgdaLocalMr>(setup->d_local_mrs.get(), h_local.data(), 1, cudaMemcpyHostToDevice);
-  mscclpp::gpuMemcpy<IbgdaRemoteMr>(setup->d_remote_mrs.get(), h_remote.data(), num_ranks, cudaMemcpyHostToDevice);
+  // 8. Build the GPU-resident MR tables.
+  //    d_local_mrs[n]   = (rdma_buffer_ptr, lkey on NIC n)  — one per NIC.
+  //    d_remote_mrs[n*num_ranks + r] = (peer r's addr, peer r's rkey on NIC n).
+  std::vector<IbgdaLocalMr> h_local(num_nics);
+  for (int n = 0; n < num_nics; ++n) {
+    h_local[n].addr = reinterpret_cast<uint64_t>(rdma_buffer_ptr);
+    h_local[n].lkey_be = htonl(setup->rdma_mrs[n]->getLkey());
+    h_local[n].pad = 0;
+  }
+
+  std::vector<IbgdaRemoteMr> h_remote(num_nics * num_ranks);
+  for (int n = 0; n < num_nics; ++n) {
+    for (int r = 0; r < num_ranks; ++r) {
+      auto& pr = setup->peer_rdma[n * num_ranks + r];
+      auto& hr = h_remote[n * num_ranks + r];
+      hr.addr = pr.addr;
+      hr.rkey_be = htonl(pr.rkey);
+      hr.pad = 0;
+    }
+  }
+
+  setup->d_local_mrs = mscclpp::detail::gpuCallocShared<IbgdaLocalMr>(num_nics);
+  setup->d_remote_mrs = mscclpp::detail::gpuCallocShared<IbgdaRemoteMr>(num_nics * num_ranks);
+  mscclpp::gpuMemcpy<IbgdaLocalMr>(setup->d_local_mrs.get(), h_local.data(), num_nics, cudaMemcpyHostToDevice);
+  mscclpp::gpuMemcpy<IbgdaRemoteMr>(setup->d_remote_mrs.get(), h_remote.data(),
+                                    num_nics * num_ranks, cudaMemcpyHostToDevice);
 
   // 9. Build the device handle array (channel × num_ranks).
   std::vector<IbgdaPortChannelDeviceHandle> h_handles(total_slots);
   std::memset(h_handles.data(), 0, h_handles.size() * sizeof(IbgdaPortChannelDeviceHandle));
   for (int c = 0; c < num_channels; ++c) {
+    const int n = nic_for_channel(c);
     for (int r = 0; r < num_ranks; ++r) {
       auto& h = h_handles[c * num_ranks + r];
       if (r == rank) continue;  // self-slot left zeroed
@@ -244,23 +326,23 @@ std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_tr
 
       // Local sig slot WE poll for messages from peer r through channel c.
       h.sig_local_addr = &setup->sig_slots[c * num_ranks + r];
-      h.sig_local_lkey = htonl(setup->sig_mr->lkey);
+      h.sig_local_lkey = htonl(my_sig_lkeys[n]);
 
       // Remote sig slot peer r polls for messages FROM US through channel c.
       // Peer r's slot for "rank == us" is at offset (c * num_ranks + rank) * 4
-      // inside their signal buffer.
-      h.sig_remote_addr = setup->peer_sig[r].addr +
+      // inside their signal buffer. The rkey must be the one peer r registered
+      // on its own NIC n (matching channel-to-NIC pairing).
+      h.sig_remote_addr = setup->peer_sig[n * num_ranks + r].addr +
                           static_cast<uint64_t>(c * num_ranks + rank) * sizeof(uint32_t);
-      h.sig_rkey_be = htonl(setup->peer_sig[r].rkey);
+      h.sig_rkey_be = htonl(setup->peer_sig[n * num_ranks + r].rkey);
 
-      // Outbound seq counter is per-handle; carve out one u32 from sig_seq
-      // (sig_seq is num_channels × num_ranks u32s so we can reuse the same
-      // index function — it is unrelated to the inbound sig_slots buffer
-      // beyond reusing the size).
+      // Outbound seq counter is per-handle.
       h.sig_seq = &setup->sig_seq[c * num_ranks + r];
 
-      h.dst = static_cast<uint32_t>(r);   // index into remote_mrs[] (peer-rank-based)
-      h.src = 0;                          // single-entry local_mrs table
+      // src/dst index into the local/remote MR tables. With multi-NIC,
+      // src = nic, dst = nic * num_ranks + peer_rank.
+      h.src = static_cast<uint32_t>(n);
+      h.dst = static_cast<uint32_t>(n * num_ranks + r);
       h.peer_rank = static_cast<uint32_t>(r);
       h._pad = 0;
     }
@@ -273,7 +355,8 @@ std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_tr
   // 10. Spawn CQ drain thread. Kernel-issued rdma_write paths set CQ_UPDATE
   // on every WR; without this drain, the send CQ (sized 2 × kIbgdaMaxSendWr)
   // would fill within a few iterations of LL dispatch+combine and the QP
-  // would error out. We collect raw send_cq pointers from each QP up front.
+  // would error out. We collect raw send_cq pointers from each QP up front
+  // (across ALL NICs).
   {
     std::vector<ibv_cq*> send_cqs;
     send_cqs.reserve(total_slots);

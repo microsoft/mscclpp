@@ -48,16 +48,20 @@ struct IbgdaSetup {
   int num_ranks = 0;
   int rank = 0;
 
-  // IB context + QPs + Stage-1 GPU mappings.
-  std::unique_ptr<IbCtx> ib_ctx;
+  // Phase 9 multi-NIC striping: each rank may use up to N NICs in parallel.
+  // Channel `c` uses NIC `c % num_nics`. With num_nics=1 (default) the layout
+  // and behavior are identical to pre-Phase-9.
+  int num_nics = 1;
+
+  // IB contexts (one per NIC) + QPs + Stage-1 GPU mappings.
+  std::vector<std::unique_ptr<IbCtx>> ib_ctxs;     // size = num_nics
   // Indexed [channel * num_ranks + peer]; entries with peer == rank are null.
   std::vector<std::shared_ptr<IbQp>> qps;
   std::vector<std::unique_ptr<IbgdaResources>> resources;
 
-  // RDMA buffer MR. We register the *same* `rdma_buffer_ptr` that the
-  // existing PortChannel path uses, so dst/src offsets in the kernel work
-  // unchanged.
-  std::unique_ptr<const IbMr> rdma_mr;
+  // RDMA buffer MR registered on each NIC. We register the *same*
+  // `rdma_buffer_ptr` on every IbCtx so that any QP can DMA from/to it.
+  std::vector<std::unique_ptr<const IbMr>> rdma_mrs;  // size = num_nics
 
   // Signal slots (GPU-resident).
   // Layout: 4 bytes per (channel, peer) on the receiving side. `sig_slots`
@@ -69,18 +73,19 @@ struct IbgdaSetup {
   // rank=A's POV indexed by channel × peer"). See the per-handle wiring
   // in `IbgdaSetup::populate_handles`.
   uint32_t* sig_slots = nullptr;       // GPU mem; size = num_channels * num_ranks * 4
-  ibv_mr* sig_mr = nullptr;            // raw verbs (we keep the IbMr only for rdma_mr)
+  std::vector<ibv_mr*> sig_mrs;        // size = num_nics; raw verbs (one per IbCtx)
   uint32_t* sig_seq = nullptr;         // GPU mem; per-handle outbound counters
 
-  // Per-peer (addr, rkey) for the RDMA buffer and the signal buffer. Filled
-  // by an allgather over the bootstrap.
+  // Per-(NIC, peer) (addr, rkey) for the RDMA buffer and the signal buffer.
+  // Layout: peer_rdma[nic * num_ranks + peer]. The addr is the same across
+  // NICs (single allocation) but the rkey differs per ctx.
   struct PeerMr {
     uint64_t addr = 0;
     uint32_t rkey = 0;
     uint32_t pad = 0;
   };
-  std::vector<PeerMr> peer_rdma;       // size = num_ranks
-  std::vector<PeerMr> peer_sig;        // size = num_ranks
+  std::vector<PeerMr> peer_rdma;       // size = num_nics * num_ranks
+  std::vector<PeerMr> peer_sig;        // size = num_nics * num_ranks
 
   // Flat device-side handle array: num_channels * num_ranks entries.
   // Self entries (peer == rank) are zeroed and unused.
@@ -88,8 +93,11 @@ struct IbgdaSetup {
 
   // Underlying GPU-side MR-table arrays referenced by every device handle
   // (see IbgdaPortChannelDeviceHandle::local_mrs / remote_mrs).
-  std::shared_ptr<IbgdaLocalMr>  d_local_mrs;     // length 1 (we have a single MR)
-  std::shared_ptr<IbgdaRemoteMr> d_remote_mrs;    // length num_ranks
+  // d_local_mrs has one entry per NIC: handle.src = nic_index_for_channel(c).
+  // d_remote_mrs has num_nics * num_ranks entries:
+  //   handle.dst = nic_index_for_channel(c) * num_ranks + peer_rank.
+  std::shared_ptr<IbgdaLocalMr>  d_local_mrs;     // length num_nics
+  std::shared_ptr<IbgdaRemoteMr> d_remote_mrs;    // length num_nics * num_ranks
 
   // CQ drain thread. The kernel-side rdma_write paths set CQ_UPDATE on
   // every WR, so without periodic ibv_poll_cq() the send CQ would fill up
@@ -102,13 +110,16 @@ struct IbgdaSetup {
 // Build the full IBGDA setup. Bootstrap is used for cross-rank exchange of
 // QP info and MR keys; rdma_buffer_ptr/num_rdma_bytes is the same buffer the
 // existing PortChannel path uses. `ib_transport_index` is the IB device
-// index this rank will use (== `device_id` on NDv5).
+// index this rank will use (== `device_id` on NDv5) — interpreted as the
+// BASE NIC. With `num_nics > 1`, additional NICs are picked starting from
+// `ib_transport_index` and wrapping mod 8: nic[i] = (ib_transport_index + i)
+// % 8 for i ∈ [0, num_nics). Channel `c`'s QP is placed on `nic[c % num_nics]`.
 //
 // Throws on any irrecoverable error. On success returns a fully-initialised
 // IbgdaSetup with all QPs in RTS and the device-side handle array populated.
 std::unique_ptr<IbgdaSetup> build_ibgda_setup(int rank, int num_ranks, int ib_transport_index, int num_channels,
                                               void* rdma_buffer_ptr, std::size_t num_rdma_bytes,
-                                              std::shared_ptr<TcpBootstrap> bootstrap);
+                                              std::shared_ptr<TcpBootstrap> bootstrap, int num_nics = 1);
 
 }  // namespace ep
 }  // namespace mscclpp
