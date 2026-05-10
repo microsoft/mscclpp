@@ -1228,12 +1228,16 @@ Buffer::internode_dispatch(
     recv_gbl_rank_prefix_sum = cached_recv_gbl_rank_prefix_sum.value();
 
     // Just a barrier and clean flags
+    if (nvls_ht_enabled) ++nvls_ht_cached_epoch;
     internode::cached_notify(hidden_int4, num_scales, num_topk, num_topk, num_ranks, num_channels, 0, nullptr, nullptr,
                              nullptr, nullptr, rdma_buffer_ptr, config.num_max_rdma_chunked_recv_tokens,
                              buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank,
                              comm_stream, config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
                              num_nvl_bytes, true, low_latency_mode, port_channel_handles_device_ptr.get(),
-                             memory_channel_handles_device_ptr.get());
+                             memory_channel_handles_device_ptr.get(),
+                             nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
+                             nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
+                             nvls_ht_off_barrier, nvls_ht_cached_epoch);
     move_fifo_slots(2);
   } else {
     rdma_channel_prefix_matrix =
@@ -1459,7 +1463,10 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       combined_nvl_head.data_ptr<int>(), rdma_buffer_ptr, config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu,
       config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
       config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, false, low_latency_mode,
-      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get());
+      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+      nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
+      nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
+      nvls_ht_off_barrier, (nvls_ht_enabled ? ++nvls_ht_cached_epoch : 0));
   move_fifo_slots(2);
 
   auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());

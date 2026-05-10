@@ -147,6 +147,11 @@ struct Buffer {
   // before each kernel launch that uses an NVLS barrier; the kernel spins
   // until the barrier slot reaches `epoch * num_ranks`.
   uint64_t nvls_ht_epoch = 0;
+  // Independent epoch for cached_notify barrier slots (offsets +24 / +32),
+  // since those slots are only touched when the cached path is taken — using
+  // the shared `nvls_ht_epoch` would over-count the expected value relative
+  // to the number of times those particular slots have actually been bumped.
+  uint64_t nvls_ht_cached_epoch = 0;
   // Worst-case shape parameters used to size the buffer:
   //   stride_per_channel = num_rdma_ranks * num_rdma_ranks (counter slots)
   // We allocate for `kNvlsMaxChannels` so any `num_sms` config fits.
