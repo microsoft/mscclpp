@@ -880,9 +880,15 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       if (is_token_in_rank_uint64 != 0) {
         rdma_tail_idx = rdma_send_channel_next_tail[lane_id]++;
         while (rdma_tail_idx - cached_rdma_channel_head >= num_max_rdma_chunked_recv_tokens) {
-          // Phase 3: NVLS fast path. lane_id is dst_rdma_rank (peer consumer).
-          // Slot is keyed (producer=rdma_rank, consumer=lane_id).
-          if (nvls_head_dev != nullptr) {
+          // Phase 4: prefer the legacy local-load when peer_rdma_bases
+          // is in use \u2014 cross-node head feedback now writes the
+          // absolute value directly into our local rdma_channel_head
+          // slot via fabric VA, so a `ld_volatile_global` here sees it.
+          if (peer_rdma_bases != nullptr && lane_id != rdma_rank) {
+            cached_rdma_channel_head =
+                static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+          } else if (nvls_head_dev != nullptr) {
+            // Phase 3: NVLS fast path (self loop only when fabric VA on).
             cached_rdma_channel_head =
                 static_cast<int>(nvls_ctr_load(nvls_head_dev, channel_id, rdma_rank, lane_id));
           } else {
@@ -1064,9 +1070,30 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               handle.flush();
             }
           }
-          // Owner advances NVLS counter for this peer.
+          // Owner advances tail counter for this peer.
+          // Phase 4 fix: cross-node tail goes through direct fabric-VA
+          // store on peer's rdma_channel_tail slot (single writer, no
+          // atomic needed). The NVLS multimem.red.relaxed counter path
+          // is unreliable for cross-node visibility — empirically only
+          // partial increments are seen by the consumer's ld.acquire.
+          // Self path (dst == self) still uses NVLS for intra-rank.
           if (owner) {
-            nvls_ctr_add(nvls_tail_mc, channel_id, rdma_rank, dst_rdma_rank, (uint64_t)n_issue);
+            if (peer_rdma_bases != nullptr && dst_rdma_rank != rdma_rank) {
+              const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
+              const uintptr_t my_tail_off =
+                  reinterpret_cast<uintptr_t>(rdma_channel_tail.buffer(rdma_rank)) -
+                  reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+              uint64_t* peer_tail = reinterpret_cast<uint64_t*>(
+                  reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_tail_off);
+              const uint64_t new_tail = (uint64_t)issue_tail + (uint64_t)n_issue;
+              asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_tail), "l"(new_tail) : "memory");
+              if (rank == 0) {
+                printf("[ph4-T] sender wrote tail rank=%d ch=%d dst=%d new_tail=%lu peer=%p\n",
+                       rank, channel_id, dst_rdma_rank, (unsigned long)new_tail, (void*)peer_tail);
+              }
+            } else {
+              nvls_ctr_add(nvls_tail_mc, channel_id, rdma_rank, dst_rdma_rank, (uint64_t)n_issue);
+            }
           }
         } else if (owner) {
           // Legacy non-NVLS path (single-lane).
@@ -1105,6 +1132,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         }
       }
     }
+    // Phase 4 diag: report final issued tail per (channel, dst_rdma_rank).
+    if (lane_id < kNumRDMARanks && rank == 0) {
+      printf("[ph4-Sx] sender exit rank=%d ch=%d dst=%d issued_total=%d\n",
+             rank, channel_id, lane_id, last_issued_tail);
+    }
   } else if (warp_role == WarpRole::kRDMAAndNVLForwarder) {
     // RDMA consumers and NVL producers
     const auto dst_nvl_rank = target_rank;
@@ -1137,6 +1169,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             recv_rdma_channel_prefix_matrix[lane_id * num_channels + channel_id] = src_rdma_channel_prefix_1;
           src_rdma_channel_prefix += lane_id == 0 ? 0 : recv_rdma_rank_prefix_sum[lane_id - 1];
           EP_DEVICE_ASSERT(num_tokens_to_recv_from_rdma >= 0);
+          // Phase 4 diag: report received expected token count per (channel, src).
+          if (rank == 4) {
+            printf("[ph4-Fx] fwd meta rank=%d ch=%d dst_nvl=%d src_rdma=%d expect_rdma=%d\n",
+                   rank, channel_id, dst_nvl_rank, lane_id, num_tokens_to_recv_from_rdma);
+          }
           break;
         }
 
@@ -1189,9 +1226,18 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         src_rdma_rank = (src_rdma_rank + 1) % kNumRDMARanks;
         if (__shfl_sync(0xffffffff, num_tokens_to_recv_from_rdma, src_rdma_rank) > 0) {
           if (lane_id == src_rdma_rank and cached_rdma_channel_head == cached_rdma_channel_tail) {
-            // Phase 3: NVLS counter fast path. Slot keyed (producer=src_rdma_rank,
-            // consumer=rdma_rank). Same coordinate as writer-side `nvls_ctr_add`.
-            if (nvls_tail_dev != nullptr) {
+            // Phase 4 fix: cross-node tail is now delivered via direct
+            // fabric-VA store to local rdma_channel_tail.buffer(src_rdma_rank),
+            // so prefer the legacy ld_acquire read which sees those stores.
+            // NVLS counter only used for self path (single rank).
+            if (peer_rdma_bases != nullptr && src_rdma_rank != rdma_rank) {
+              cached_rdma_channel_tail =
+                  static_cast<int>(ld_acquire_sys_global(rdma_channel_tail.buffer(src_rdma_rank)));
+              if (rank == 4 && lane_id == src_rdma_rank && cached_rdma_channel_tail > cached_rdma_channel_head) {
+                printf("[ph4-Tr] fwd read tail rank=%d ch=%d src=%d val=%d head=%d\n",
+                       rank, channel_id, src_rdma_rank, cached_rdma_channel_tail, cached_rdma_channel_head);
+              }
+            } else if (nvls_tail_dev != nullptr) {
               uint64_t v = nvls_ctr_load(nvls_tail_dev, channel_id, src_rdma_rank, rdma_rank);
               cached_rdma_channel_tail = static_cast<int>(v);
             } else {
@@ -1306,7 +1352,20 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // Update remote head
       if (min_head != std::numeric_limits<int>::max() and min_head >= last_head + num_max_rdma_chunked_send_tokens and
           lane_id < kNumRDMARanks) {
-        if (nvls_head_mc != nullptr) {
+        if (peer_rdma_bases != nullptr && lane_id != rdma_rank) {
+          // Phase 4 fix: cross-node head feedback via direct fabric-VA
+          // store on peer's rdma_channel_head slot (single writer per
+          // (channel, my_rdma_rank) on peer's side: producer is me, slot
+          // is `peer.rdma_channel_head.buffer(my_rdma_rank)`). Bypasses
+          // both broken port_channel.put and the unreliable NVLS counter.
+          const int dst_rank_global = lane_id * NUM_MAX_NVL_PEERS + nvl_rank;
+          const uintptr_t my_head_off =
+              reinterpret_cast<uintptr_t>(rdma_channel_head.buffer(rdma_rank)) -
+              reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+          uint64_t* peer_head = reinterpret_cast<uint64_t*>(
+              reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_head_off);
+          asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_head), "l"((uint64_t)min_head) : "memory");
+        } else if (nvls_head_mc != nullptr) {
           // Phase 3: NVLS counter fast path. Slot keyed (producer=lane_id,
           // consumer=rdma_rank). Same coordinate as reader-side
           // `nvls_ctr_load(nvls_head_dev, channel, rdma_rank, lane_id)` —
