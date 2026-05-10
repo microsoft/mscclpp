@@ -56,7 +56,12 @@ __device__ __forceinline__ size_t nvls_ctr_slot_index(int channel_id, int src_rd
 __device__ __forceinline__ void nvls_ctr_add(void* mc_base, int channel_id, int src_rdma, int dst_rdma,
                                              uint64_t delta) {
   uint64_t* slot = reinterpret_cast<uint64_t*>(mc_base) + nvls_ctr_slot_index(channel_id, src_rdma, dst_rdma);
-  asm volatile("multimem.red.release.sys.global.add.u64 [%0], %1;" ::"l"(slot), "l"(delta) : "memory");
+  // NOTE: must be `relaxed`, not `release`. Empirically on Azure GB200,
+  // `multimem.red.release.sys.global.add.u64` issued concurrently from
+  // many channels (warps) triggers `unspecified launch failure`. Use a
+  // preceding `__threadfence_system()` at the call site to publish data
+  // before bumping the counter.
+  asm volatile("multimem.red.relaxed.sys.global.add.u64 [%0], %1;" ::"l"(slot), "l"(delta) : "memory");
 }
 
 __device__ __forceinline__ uint64_t nvls_ctr_load(void* dev_base, int channel_id, int src_rdma, int dst_rdma) {
@@ -822,7 +827,24 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       if (dst_rdma_rank == rdma_rank) continue;
 
       // Issue RDMA for non-local ranks
-      if (lane_id == 0) {
+      if (peer_rdma_bases != nullptr) {
+        // Phase 4: deliver meta directly via NVL72 fabric VA (cooperative
+        // int copy across the warp). Replaces port_channel.put which is
+        // unreliable cross-node on Azure CX-7 RoCE without flush.
+        const auto num_bytes = sizeof(int) * (NUM_MAX_NVL_PEERS * 2 + 2);
+        const auto dst_offset = rdma_rank * num_bytes + meta_recv_offset;
+        const auto src_offset = dst_rdma_rank * num_bytes + meta_send_offset;
+        const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
+        const int* src_p = reinterpret_cast<const int*>(
+            reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+        int* dst_p = reinterpret_cast<int*>(
+            reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+        const int n_int = (int)(num_bytes / sizeof(int));
+        for (int k = lane_id; k < n_int; k += 32) {
+          dst_p[k] = src_p[k];
+        }
+        __threadfence_system();
+      } else if (lane_id == 0) {
         auto num_bytes = sizeof(int) * (NUM_MAX_NVL_PEERS * 2 + 2);
         auto dst_offset = rdma_rank * num_bytes + meta_recv_offset;
         auto src_offset = dst_rdma_rank * num_bytes + meta_send_offset;
@@ -1016,22 +1038,23 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
                                     dst_slot_idx * num_bytes_per_rdma_token + data_send_offset;
             if (peer_rdma_bases != nullptr) {
-              // Phase 4: warp-cooperative copy via NVL72 fabric VA.
+              // Phase 4: warp-cooperative int4 stores via NVL72 fabric VA.
+              // Uses NVLS counter (nvls_ctr_add) below to publish the
+              // writes to the receiver — `multimem.red.RELAXED` + a
+              // preceding `__threadfence_system()` is the validated
+              // ordering pair (release semantics on multimem.red triggers
+              // unspecified launch failure on Azure GB200).
               const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
               const int4* src_p = reinterpret_cast<const int4*>(
                   reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
               int4* dst_p = reinterpret_cast<int4*>(
                   reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
-              if (owner && channel_id == 0 && issue_tail == 0) {
-                printf("[ph4-d] rank=%d ch=%d dst=%d n=%d dst_p=%p src_p=%p bytes=%zu\n",
-                       rank, channel_id, dst_rdma_rank, n_issue, dst_p, src_p, (size_t)num_bytes_per_msg);
-              }
               const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
               for (int k = lane_id; k < n_int4; k += 32) {
                 dst_p[k] = src_p[k];
               }
-              __threadfence_system();
               __syncwarp();
+              __threadfence_system();
             } else if (owner) {
               const auto port_channel_idx =
                   kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
