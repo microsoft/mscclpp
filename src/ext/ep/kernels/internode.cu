@@ -2053,8 +2053,8 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
                 for (int k = lane_id; k < n_int4; k += 32) {
                   dst_p[k] = src_p[k];
                 }
-                __threadfence_system();
                 __syncwarp();
+                __threadfence_system();
               } else if (lane_id == 0) {
                 const auto port_channel_idx =
                     kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
