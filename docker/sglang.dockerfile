@@ -6,11 +6,7 @@ LABEL org.opencontainers.image.source=https://github.com/microsoft/mscclpp
 
 # Install cmake (not in base image)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        htop \
-        lcov \
-        vim \
-        && \
+    apt-get install -y --no-install-recommends && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/*

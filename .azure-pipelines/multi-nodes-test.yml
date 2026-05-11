@@ -11,19 +11,8 @@ trigger:
     - docs/**
     - '**/*.md'
 
-pr:
-  branches:
-    include:
-    - main
-    - release/*
-  drafts: false
-  paths:
-    exclude:
-      - .devcontainer/**
-      - .github/**
-      - docker/**
-      - docs/**
-      - '**/*.md'
+# Do not run multi-nodes-test for PR, we can trigger it manually
+pr: none
 
 parameters:
 - name: vmssName
@@ -36,16 +25,16 @@ parameters:
     10.0.0.4 mscclpp-h100-multinode-ci000001
 
 jobs:
-- job: SGlangTestMultiNode
-  displayName: SGLANG Test Multi Node
+- job: MultiNodesTest
+  displayName: Multi nodes test
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
     name: mscclpp-multi-node
   container:
-    image: $(containerImage)
+    image: $[ variables['containerImage'] ]
 
   steps:
   - task: Bash@3
@@ -68,7 +57,6 @@ jobs:
     inputs:
       targetType: 'inline'
       script: |
-        nvidia-smi || echo "nvidia-smi not available on agent"
         set -e
         VMSS="${{ parameters.vmssName }}"
         DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
@@ -90,22 +78,46 @@ jobs:
 
   - template: templates/deploy.yml
     parameters:
-      subscription:  mscclpp-ci-h100
-      vmssName:      ${{ parameters.vmssName }}
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
       resourceGroup: mscclpp
-      gpuArch:       '90'
-      deployArgs:    'multi-node-test true cuda'
-      containerName: 'sglang-mscclpp-test'
+      gpuArch: '90'
 
-  - template: templates/sglang-multi-test.yml
+  - template: templates/run-remote-task.yml
     parameters:
-        subscription:  mscclpp-ci-h100
-        vmssName:      mscclpp-h100-multinode-ci
-        resourceGroup: mscclpp
-        hostEntries:   ${{ parameters.hostEntries }}
+      name: RunMscclppTest
+      displayName: Run multi-nodes mscclpp-test
+      continueOnError: true
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodeUnitTest
+      displayName: Run multi-nodes unit tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodePythonTests
+      displayName: Run multi-nodes python tests
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh pytests
+
+  - template: templates/run-remote-task.yml
+    parameters:
+      name: RunMultiNodePythonBenchmark
+      displayName: Run multi-nodes python benchmark
+      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+      remoteScript: |
+        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
   - template: templates/stop.yml
     parameters:
-      subscription:  mscclpp-ci-h100
-      vmssName:      ${{ parameters.vmssName }}
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
       resourceGroup: mscclpp
