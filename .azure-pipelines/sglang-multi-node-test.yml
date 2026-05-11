@@ -88,11 +88,10 @@ jobs:
           fi
         done <<< "${{ parameters.hostEntries }}"
 
-  # Generate the SSH config and hostfiles consumed by the deploy / test
+  # Generate the SSH config and hostfile consumed by the deploy / test
   # templates below:
-  #   - config       : SSH client config (custom port + key) for each node
-  #   - hostfile     : user@host list used by deploy / test scripts
-  #   - hostfile_mpi : bare hostnames used by mpirun
+  #   - config   : SSH client config (custom port + key) for each node
+  #   - hostfile : user@host list used by deploy / test scripts (parallel-ssh)
   - task: Bash@3
     displayName: Generate deploy files
     inputs:
@@ -114,8 +113,6 @@ jobs:
           StrictHostKeyChecking no" > "${DEPLOY_DIR}/config"
 
         printf '%s\n%s\n' "azureuser@${NODE0}" "azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
-
-        printf '%s\n%s\n' "${NODE0}" "${NODE1}" > "${DEPLOY_DIR}/hostfile_mpi"
 
   # Build MSCCL++ and deploy it onto the VMSS GPU nodes.
   - template: templates/deploy.yml
