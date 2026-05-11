@@ -1050,7 +1050,31 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               int4* dst_p = reinterpret_cast<int4*>(
                   reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
               const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
-              for (int k = lane_id; k < n_int4; k += 32) {
+              // Unrolled 8x to give the LSU pipeline more outstanding stores
+              // per lane. Each lane handles k, k+32, ..., k+224 per iter
+              // (stride 256) before looping. Tail handled with stride-32 loop.
+              const int stride8 = 8 * 32;
+              int k = lane_id;
+              const int n_full = (n_int4 / stride8) * stride8;
+              for (; k < n_full; k += stride8) {
+                int4 v0 = src_p[k];
+                int4 v1 = src_p[k + 32];
+                int4 v2 = src_p[k + 64];
+                int4 v3 = src_p[k + 96];
+                int4 v4 = src_p[k + 128];
+                int4 v5 = src_p[k + 160];
+                int4 v6 = src_p[k + 192];
+                int4 v7 = src_p[k + 224];
+                dst_p[k] = v0;
+                dst_p[k + 32] = v1;
+                dst_p[k + 64] = v2;
+                dst_p[k + 96] = v3;
+                dst_p[k + 128] = v4;
+                dst_p[k + 160] = v5;
+                dst_p[k + 192] = v6;
+                dst_p[k + 224] = v7;
+              }
+              for (; k < n_int4; k += 32) {
                 dst_p[k] = src_p[k];
               }
               __syncwarp();
@@ -2157,7 +2181,29 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
                 int4* dst_p = reinterpret_cast<int4*>(
                     reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
                 const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
-                for (int k = lane_id; k < n_int4; k += 32) {
+                // Same 8x unroll as dispatch sender for LSU pipelining.
+                const int stride8 = 8 * 32;
+                int k = lane_id;
+                const int n_full = (n_int4 / stride8) * stride8;
+                for (; k < n_full; k += stride8) {
+                  int4 v0 = src_p[k];
+                  int4 v1 = src_p[k + 32];
+                  int4 v2 = src_p[k + 64];
+                  int4 v3 = src_p[k + 96];
+                  int4 v4 = src_p[k + 128];
+                  int4 v5 = src_p[k + 160];
+                  int4 v6 = src_p[k + 192];
+                  int4 v7 = src_p[k + 224];
+                  dst_p[k] = v0;
+                  dst_p[k + 32] = v1;
+                  dst_p[k + 64] = v2;
+                  dst_p[k + 96] = v3;
+                  dst_p[k + 128] = v4;
+                  dst_p[k + 160] = v5;
+                  dst_p[k + 192] = v6;
+                  dst_p[k + 224] = v7;
+                }
+                for (; k < n_int4; k += 32) {
                   dst_p[k] = src_p[k];
                 }
                 __syncwarp();
