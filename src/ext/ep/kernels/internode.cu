@@ -892,7 +892,13 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       if (lane_id < kNumRDMARanks and not kCachedMode)
         send_rdma_head[token_idx * kNumRDMARanks + lane_id] = rdma_tail_idx;
 
-      // Update last token tail
+      // Update last token tail. In-loop writes are sequenced by the
+      // per-channel sequential lock and the warp-stride property of the
+      // token loop, so monotonicity is guaranteed and a plain
+      // st_release_cta is correct AND faster than atomicMax (which
+      // would serialize through L2 if the compiler can't infer shared
+      // address space). The epilogue (out of the seq-lock contract for
+      // the highest in-rank slot) needs atomicMax separately.
       if (last_rdma_tail_idx >= 0)
         st_release_cta(const_cast<const int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
       last_rdma_tail_idx = rdma_tail_idx;
@@ -962,9 +968,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       ;
     __syncwarp();
 
-    // Update last token tail
+    // Update last token tail (epilogue). See in-loop note on atomicMax.
     if (last_rdma_tail_idx >= 0)
-      st_release_cta(const_cast<const int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
+      atomicMax(const_cast<int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
 
     // Release sequential lock
     lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
