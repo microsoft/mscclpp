@@ -1,3 +1,13 @@
+# =============================================================================
+# Single-node SGLang integration test pipeline.
+#
+# Runs MSCCL++ SGLang tests on a single H100 GPU node from the `msccl-ci-h100`
+# pool. All deploy / run / teardown logic is delegated to
+# `templates/sglang-test.yml`.
+#
+# Docs / non-code changes are excluded from triggering this pipeline.
+# =============================================================================
+
 trigger:
   branches:
     include:
@@ -25,44 +35,30 @@ pr:
     - docs/**
     - '**/*.md'
 
+parameters:
+# Name of the pre-provisioned Azure VMSS that hosts the GPU test node.
+- name: vmssName
+  type: string
+  default: mscclpp-h100-ci
+
 jobs:
-- job: IntegrationTestA100
-  displayName: Integration test A100
+- job: SGlangTest
+  displayName: SGLANG Test
+  # Matrix is kept (despite having a single entry today) to make it easy to
+  # add more variants (e.g. cuda13, rocm) without restructuring the job.
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
-
-  pool:
-    name: msccl-ci
-  container:
-    image: $(containerImage)
-
-  steps:
-  - template: templates/integration-test.yml
-    parameters:
-      subscription: mscclpp-ci
-      vmssName: mscclpp-ci
-      gpuArch: '80'
-
-- job: IntegrationTestH100
-  displayName: Integration test H100
-  strategy:
-    matrix:
-      cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
-
+      sglang:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
   pool:
     name: msccl-ci-h100
   container:
     image: $(containerImage)
 
   steps:
-  - template: templates/integration-test.yml
+  # Deploy MSCCL++ to the GPU node and run the SGLang single-node tests.
+  - template: templates/sglang-test.yml
     parameters:
       subscription: mscclpp-ci-h100
-      vmssName: mscclpp-h100-ci
-      perfBaselineFile: test/deploy/perf_ndmv5.jsonl
+      vmssName: ${{ parameters.vmssName }}
       gpuArch: '90'
