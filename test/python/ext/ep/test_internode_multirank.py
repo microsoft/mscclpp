@@ -79,10 +79,13 @@ def main():
     num_local_ranks = NUM_MAX_NVL_PEERS
 
     # Small settings for functional check
-    num_tokens = 128
-    hidden = 1024
-    num_topk = min(4, num_ranks)
-    num_experts = num_ranks * 4  # multiple of num_ranks
+    import os as _os
+    num_tokens = int(_os.environ.get("MSCCLPP_EP_HT_TOKENS", "128"))
+    hidden = int(_os.environ.get("MSCCLPP_EP_HT_HIDDEN", "1024"))
+    num_topk = int(_os.environ.get("MSCCLPP_EP_HT_TOPK", str(min(4, num_ranks))))
+    _experts_env = _os.environ.get("MSCCLPP_EP_HT_EXPERTS", "")
+    num_experts = int(_experts_env) if _experts_env else num_ranks * 4
+    assert num_experts % num_ranks == 0
 
     torch.manual_seed(0xA1B2 + rank)
 
@@ -425,12 +428,13 @@ def main():
     total_send_tokens_local = int(nodes_unique.sum().item())
     nvl_send_tokens_local = int(nodes_unique[local_node].item())
     rdma_send_tokens_local = total_send_tokens_local - nvl_send_tokens_local
-    recv_from_src = torch.empty(num_ranks, dtype=torch.int64, device="cuda")
-    dist.all_to_all_single(
-        recv_from_src,
-        num_tokens_per_rank_b.to(torch.int64),
-        group=group,
-    )
+    # Replaced dist.all_to_all_single (NCCL socket transport fails with
+    # NCCL_IB_DISABLE=1 internode) with all_gather_into_tensor + transpose,
+    # which works on the same socket-NCCL setup the LL test uses.
+    _send_row = num_tokens_per_rank_b.to(torch.int64).contiguous()
+    _gathered = torch.empty(num_ranks * num_ranks, dtype=torch.int64, device="cuda")
+    dist.all_gather_into_tensor(_gathered, _send_row, group=group)
+    recv_from_src = _gathered.view(num_ranks, num_ranks)[:, rank].contiguous()
     src_node = torch.arange(num_ranks, device="cuda") // num_local_ranks
     remote_mask = (src_node != local_node).to(torch.int64)
     total_recv_tokens_local = int(recv_from_src.sum().item())
