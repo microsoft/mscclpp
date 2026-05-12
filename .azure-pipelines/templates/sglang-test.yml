@@ -35,20 +35,20 @@ steps:
     deployArgs: 'single-node-test true cuda'
     containerName: ${{ parameters.containerName }}
 
-- template: run-remote-task.yml
-  parameters:
-    name: InstallMscclpp
-    displayName: Install mscclpp
-    runRemoteArgs: '--container ${{ parameters.containerName }}'
-    remoteScript: |
-      rm -rf build
-      mkdir build
-      cd build
-      cmake -DCMAKE_BUILD_TYPE=Release ..
-      make -j
-      cd ..
-      pip install .
-      pip install -r ./python/requirements_cuda12.txt
+# - template: run-remote-task.yml
+#   parameters:
+#     name: InstallMscclpp
+#     displayName: Install mscclpp
+#     runRemoteArgs: '--container ${{ parameters.containerName }}'
+#     remoteScript: |
+#       rm -rf build
+#       mkdir build
+#       cd build
+#       cmake -DCMAKE_BUILD_TYPE=Release ..
+#       make -j
+#       cd ..
+#       pip install .
+#       pip install -r ./python/requirements_cuda12.txt
 
 # TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
 # Tracking: the fork below (`caiomcbr/sglang` @ main) is a personal branch and
