@@ -159,9 +159,7 @@ steps:
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
-      # Single-node torchrun: WORLD_SIZE here is the number of *nodes* (1),
-      # not GPUs. nproc_per_node=gpu spawns one rank per local GPU.
-      export WORLD_SIZE=1
+      export WORLD_SIZE=8
       export RANK=0
       export MASTER_ADDR=127.0.0.1
       export MASTER_PORT=12345
