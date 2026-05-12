@@ -354,12 +354,13 @@ def main():
     bytes_per_token = bench_hidden * x_b.element_size()
     total_send_tokens_local = int(is_token_in_rank_b.any(dim=1).sum().item())
     rdma_send_tokens_local = 0  # intranode: no remote nodes
-    recv_from_src = torch.empty(num_ranks, dtype=torch.int64, device="cuda")
-    dist.all_to_all_single(
-        recv_from_src,
-        num_tokens_per_rank_b.to(torch.int64),
-        group=group,
-    )
+    # Replaced dist.all_to_all_single (NCCL socket transport fails with
+    # NCCL_IB_DISABLE=1 internode) with all_gather_into_tensor + transpose,
+    # which works on the same socket-NCCL setup the LL test uses.
+    _send_row = num_tokens_per_rank_b.to(torch.int64).contiguous()
+    _gathered = torch.empty(num_ranks * num_ranks, dtype=torch.int64, device="cuda")
+    dist.all_gather_into_tensor(_gathered, _send_row, group=group)
+    recv_from_src = _gathered.view(num_ranks, num_ranks)[:, rank].contiguous()
     total_recv_tokens_local = int(recv_from_src.sum().item())
     rdma_recv_tokens_local = 0  # intranode
 
