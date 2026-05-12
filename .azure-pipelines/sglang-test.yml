@@ -35,12 +35,6 @@ pr:
     - docs/**
     - '**/*.md'
 
-parameters:
-# Name of the pre-provisioned Azure VMSS that hosts the GPU test node.
-- name: vmssName
-  type: string
-  default: mscclpp-h100-ci
-
 jobs:
 - job: SGlangTest
   displayName: SGLANG Test
@@ -60,5 +54,5 @@ jobs:
   - template: templates/sglang-test.yml
     parameters:
       subscription: mscclpp-ci-h100
-      vmssName: ${{ parameters.vmssName }}
+      vmssName: mscclpp-h100-ci
       gpuArch: '90'
