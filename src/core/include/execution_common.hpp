@@ -118,6 +118,9 @@ struct Operation {
       uint8_t nChannels;
       uint8_t nInputs;
       uint8_t nOutputs;
+
+      uint8_t tbId;
+      uint8_t tbgSize;
     };
     struct {
       uint32_t unitSize;
