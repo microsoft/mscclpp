@@ -5,8 +5,10 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 #include <hip/hip_fp16.h>
+#include <hip/hip_bfloat16.h>
 #else
 #include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #endif
 
 // Numerical Recipes ranqd1, Chapter 7.1, §An Even Quicker Generator, Eq. 7.1.6
@@ -30,6 +32,7 @@ static __device__ unsigned int ranqd1(unsigned int seed) {
     }                                                                                                    \
   }
 
+FILL_DATA(bfloat16, __nv_bfloat16)
 FILL_DATA(float16, __half)
 FILL_DATA(float32, float)
 FILL_DATA(int32, int)
@@ -48,11 +51,12 @@ FILL_DATA(int32, int)
     }                                                                                                      \
   }
 
+TEST_DATA_ALL_GATHER(bfloat16, __nv_bfloat16)
 TEST_DATA_ALL_GATHER(float16, __half)
 TEST_DATA_ALL_GATHER(float32, float)
 TEST_DATA_ALL_GATHER(int32, int)
 
-#define TEST_DATA_ALL_REDUCE(FuncNameType, DataType)                                                       \
+#define TEST_DATA_ALL_REDUCE(FuncNameType, DataType, Eps)                                                   \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_all_reduce_##FuncNameType(               \
       DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {   \
     for (int rank = 0; rank < num_ranks; rank++) {                                                         \
@@ -66,15 +70,19 @@ TEST_DATA_ALL_GATHER(int32, int)
       }                                                                                                    \
     }                                                                                                      \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) {   \
-      assert(abs(float(result_buf[i]) - float(test_buf[i])) < 1e-3 * num_ranks);                           \
+      float expected = float(test_buf[i]);                                                                  \
+      float result = float(result_buf[i]);                                                                  \
+      float tol = Eps * num_ranks * (1.0f + abs(expected));                                                 \
+      assert(abs(result - expected) <= tol);                                                                \
     }                                                                                                      \
   }
 
-TEST_DATA_ALL_REDUCE(float16, __half)
-TEST_DATA_ALL_REDUCE(float32, float)
-TEST_DATA_ALL_REDUCE(int32, int)
+TEST_DATA_ALL_REDUCE(bfloat16, __nv_bfloat16, 7.8125e-3f)
+TEST_DATA_ALL_REDUCE(float16, __half, 9.765625e-4f)
+TEST_DATA_ALL_REDUCE(float32, float, 1.1920929e-7f)
+TEST_DATA_ALL_REDUCE(int32, int, 0.0f)
 
-#define TEST_DATA_REDUCE_SCATTER(FuncNameType, DataType)                                                   \
+#define TEST_DATA_REDUCE_SCATTER(FuncNameType, DataType, Eps)                                               \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_reduce_scatter_##FuncNameType(           \
       DataType* result_buf, DataType* test_buf, size_t num_elems, int num_ranks, int my_rank, int seq) {   \
     int nem_elems_per_rank = num_elems / num_ranks;                                                        \
@@ -91,14 +99,18 @@ TEST_DATA_ALL_REDUCE(int32, int)
     }                                                                                                      \
     for (size_t i = blockIdx.x * blockDim.x + threadIdx.x; i < num_elems; i += blockDim.x * gridDim.x) {   \
       if (i >= offset && i < offset + nem_elems_per_rank) {                                                \
-        assert(abs(float(result_buf[i - offset]) - float(test_buf[i])) < 1e-3 * num_ranks);                \
+        float expected = float(test_buf[i]);                                                                \
+        float result = float(result_buf[i - offset]);                                                       \
+        float tol = Eps * num_ranks * (1.0f + abs(expected));                                               \
+        assert(abs(result - expected) <= tol);                                                              \
       }                                                                                                    \
     }                                                                                                      \
   }
 
-TEST_DATA_REDUCE_SCATTER(float16, __half)
-TEST_DATA_REDUCE_SCATTER(float32, float)
-TEST_DATA_REDUCE_SCATTER(int32, int)
+TEST_DATA_REDUCE_SCATTER(bfloat16, __nv_bfloat16, 7.8125e-3f)
+TEST_DATA_REDUCE_SCATTER(float16, __half, 9.765625e-4f)
+TEST_DATA_REDUCE_SCATTER(float32, float, 1.1920929e-7f)
+TEST_DATA_REDUCE_SCATTER(int32, int, 0.0f)
 
 #define TEST_DATA_ALL_TO_ALL(FuncNameType, DataType)                                                       \
   extern "C" __global__ void __launch_bounds__(1024, 1) test_data_all_to_all_##FuncNameType(               \
@@ -118,6 +130,7 @@ TEST_DATA_REDUCE_SCATTER(int32, int)
     }                                                                                                      \
   }
 
+TEST_DATA_ALL_TO_ALL(bfloat16, __nv_bfloat16)
 TEST_DATA_ALL_TO_ALL(float16, __half)
 TEST_DATA_ALL_TO_ALL(float32, float)
 TEST_DATA_ALL_TO_ALL(int32, int)
