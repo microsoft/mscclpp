@@ -16,7 +16,7 @@ set -ex
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"
 PLATFORM="${3:-cuda}"
-CONTAINER_NAME="${4}"
+CONTAINER_NAME="${4:-mscclpp-test}"
 
 ###############################################################################
 # 2. Resolve paths and host file
@@ -119,13 +119,13 @@ else
     # InfiniBand: use --privileged for RDMA device access
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
-      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=mscclpp-test \
+      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   else
     # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
     parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
       "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
-      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=mscclpp-test \
+      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   fi
 fi
@@ -151,10 +151,5 @@ fi
 ###############################################################################
 # 10. Run setup script inside the container
 ###############################################################################
-if [ "${CONTAINER_NAME}" = "sglang-mscclpp-test" ]; then
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker exec -t --user root sglang-mscclpp-test bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
-else
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
-fi
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker exec -t --user root ${CONTAINER_NAME} bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
