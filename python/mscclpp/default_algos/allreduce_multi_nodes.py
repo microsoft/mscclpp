@@ -81,7 +81,9 @@ def allreduce_multi_nodes(spec: AlgoSpec, thread_block_group_size: int) -> Colle
                 for peer_node_id in range(num_nodes):
                     if peer_node_id != node_id:
                         peer_node_rank_id = (local_gpu_id + gpus_per_node * peer_node_id) % total_gpus
-                        inter_node_port_channels[(current_rank_id, peer_node_rank_id)] = PortChannel(peer_node_rank_id, current_rank_id)
+                        inter_node_port_channels[(current_rank_id, peer_node_rank_id)] = PortChannel(
+                            peer_node_rank_id, current_rank_id
+                        )
 
         # AllReduce
         for node_id in range(num_nodes):
@@ -171,7 +173,8 @@ def allreduce_multi_nodes(spec: AlgoSpec, thread_block_group_size: int) -> Colle
                         inter_node_offset
                         + node_id * packets_per_gpu : inter_node_offset
                         + node_id * packets_per_gpu
-                        + packets_per_gpu],
+                        + packets_per_gpu
+                    ],
                     input_buffer[local_gpu_id * packets_per_gpu : local_gpu_id * packets_per_gpu + packets_per_gpu],
                     tb_group=global_intra_node_tbg,
                 )
