@@ -2,13 +2,13 @@ set -e
 
 PLATFORM="${1:-cuda}"
 
-# Create a Python venv if one is not already active
-if [ -z "${VIRTUAL_ENV}" ] && [ ! -f /root/venv/bin/activate ]; then
-    python3 -m venv /root/venv
-fi
-if [ -f /root/venv/bin/activate ]; then
-    . /root/venv/bin/activate
-fi
+# Install Python packages system-wide. On PEP 668 ("externally-managed")
+# images this is required to avoid pip refusing to install into the system
+# site-packages. Exporting it here propagates to every pip3 call below and
+# keeps the installed packages reachable from the default `python3` used by
+# later CI steps (which run via `docker exec bash -c` and do not source any
+# venv activation).
+export PIP_BREAK_SYSTEM_PACKAGES=1
 
 mkdir -p /root/.ssh
 mv /root/mscclpp/sshkey.pub /root/.ssh/authorized_keys
