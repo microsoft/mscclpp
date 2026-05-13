@@ -7,13 +7,13 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "api.h"
+#include "atomic.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
 #include "gpu_utils_internal.hpp"
@@ -46,21 +46,7 @@ MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context,
     : context_(context),
       localEndpoint_(localEndpoint),
       maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()),
-      flushRequestGen_(0),
-      flushDoneGen_(0),
-      gpuFlushDoneGen_(detail::gpuCallocHostShared<uint64_t>()),
-      gpuExpectedFlushGen_(detail::gpuCallocShared<uint64_t>()) {}
-
-void BaseConnection::requestFlush() {
-  flush();
-  ++flushRequestGen_;
-  publishFlushDone();
-}
-
-void BaseConnection::publishFlushDone() {
-  flushDoneGen_ = flushRequestGen_;
-  atomicStore(gpuFlushDoneGen_.get(), flushDoneGen_, memoryOrderRelease);
-}
+      gpuFlushDonePos_(detail::gpuCallocHostShared<uint64_t>()) {}
 
 MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
@@ -495,21 +481,19 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #endif
 }
 
-void IBConnection::requestFlush() { ++flushRequestGen_; }
+void IBConnection::requestFlush() {
+  // No-op: IB sends were already posted by prior conn.write() calls in handleTrigger.
+  // progressFlush() drives completion by polling the send CQ.
+}
 
 bool IBConnection::progressFlush() {
-  if (flushRequestGen_ <= flushDoneGen_) return true;  // nothing pending
-
-  // Check if the recv thread has reported an error (same check as blocking flush()).
   if (recvThreadError_.load(std::memory_order_acquire)) {
     THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
   }
 
   auto qp = qp_.lock();
   if (!qp || qp->getNumSendCqItems() == 0) {
-    // QP expired or CQ fully drained — mark all pending requests as done.
-    publishFlushDone();
-    return true;
+    return true;  // QP expired or CQ already drained.
   }
 
   int wcNum = qp->pollSendCq();
@@ -523,12 +507,7 @@ bool IBConnection::progressFlush() {
             "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
     }
   }
-
-  if (qp->getNumSendCqItems() == 0) {
-    publishFlushDone();
-    return true;
-  }
-  return false;
+  return qp->getNumSendCqItems() == 0;
 }
 
 // EthernetConnection

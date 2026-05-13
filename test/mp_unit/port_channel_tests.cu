@@ -824,3 +824,68 @@ PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
     testMultiQpFlushStress(IbMode::HostNoAtomic, numQps);
   }
 }
+
+// Same-channel concurrent-flush kernel: N GPU threads on the same PortChannel each call
+// putWithSignalAndFlush in lockstep. Stresses the FIFO-position-based wait target so that
+// each caller waits on its own TriggerSync rather than on a globally-incrementing counter
+// that could be assigned out-of-order relative to the FIFO push order.
+__constant__ DeviceHandle<mscclpp::PortChannel> gSingleChanForConcurrentFlush;
+
+__global__ void kernelSameChanConcurrentFlush(int nIters) {
+  auto& chan = gSingleChanForConcurrentFlush;
+  int tid = threadIdx.x;
+  for (int i = 0; i < nIters; i++) {
+    // Each thread writes to a distinct slot (so puts don't overlap on remote side),
+    // then concurrently flushes on the same channel.
+    uint64_t offset = tid * sizeof(int);
+    chan.putWithSignalAndFlush(offset, offset, sizeof(int));
+    // Each thread waits for one signal from the remote rank's symmetric putWithSignalAndFlush.
+    chan.wait();
+  }
+}
+
+void PortChannelOneToOneTest::testSameChanConcurrentFlush(IbMode ibMode) {
+  if (gEnv->rank >= numRanksToUse) return;
+
+  constexpr int nThreads = 4;
+  std::vector<std::shared_ptr<int>> sendBuffs;
+  std::vector<mscclpp::RegisteredMemory> localMems;
+  std::vector<mscclpp::RegisteredMemory> remoteMems;
+  std::vector<mscclpp::PortChannel> portChannels;
+  setupMultiQpChannels(/*numQps=*/1, /*elemsPerChan=*/nThreads, ibMode, /*tagBase=*/700, sendBuffs, localMems,
+                       remoteMems, portChannels);
+
+  DeviceHandle<mscclpp::PortChannel> handle = portChannels[0].deviceHandle();
+  MSCCLPP_CUDATHROW(cudaMemcpyToSymbol(gSingleChanForConcurrentFlush, &handle, sizeof(handle)));
+
+  proxyService->startProxy();
+
+  // Warm-up
+  kernelSameChanConcurrentFlush<<<1, nThreads>>>(10);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  communicator->bootstrap()->barrier();
+
+  // Measure: a successful completion (no deadlock, no CQ error) validates that each
+  // concurrent-flush caller waited on its own TriggerSync (not someone else's earlier one).
+  const int nIters = 500;
+  mscclpp::Timer timer;
+  kernelSameChanConcurrentFlush<<<1, nThreads>>>(nIters);
+  MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
+  double elapsedUs = timer.elapsed();
+  communicator->bootstrap()->barrier();
+
+  if (communicator->bootstrap()->getRank() == 0) {
+    double usPerIter = elapsedUs / nIters;
+    ::mscclpp::test::reportPerfResult(std::to_string(nThreads) + " threads same-chan per-iter", usPerIter, "us");
+  }
+
+  proxyService->stopProxy();
+  for (auto& m : localMems) registeredMemories.push_back(m);
+  for (auto& m : remoteMems) registeredMemories.push_back(m);
+}
+
+TEST(PortChannelOneToOneTest, SameChanConcurrentFlushIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testSameChanConcurrentFlush(IbMode::Host);
+}
