@@ -143,19 +143,25 @@ Runtime prerequisites on GB200:
   Buffer construction; otherwise the kernels fall back to the legacy
   PortChannel + RDMA path (and on Azure CX-7 RoCE the broken IB
   atomics will hang).
-- Set `MSCCLPP_EP_LOCAL_WORLD_SIZE=4` so the host code partitions
-  GPUs by 4-rank NUMA hosts.
+- `MSCCLPP_EP_LOCAL_WORLD_SIZE` partitions ranks into NUMA hosts; it
+  defaults to the build-time `NUM_MAX_NVL_PEERS`, so a GB200 build
+  (`-DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4`) auto-uses 4 and **does not
+  require** setting this env var. Only set `MSCCLPP_EP_LOCAL_WORLD_SIZE=4`
+  if you are running on GB200 against a stock build that still has
+  `NUM_MAX_NVL_PEERS=8` (otherwise host code mis-classifies cross-node
+  peers as local and `cudaIpcOpenMemHandle` fails).
 
 Runtime knobs (env vars, exposed by `test_intranode_multirank.py` /
-`test_internode_multirank.py`):
+`test_internode_multirank.py` — defaults below are the test-script
+defaults, **not** the `ep.Config(...)` constructor defaults):
 
 | Variable                  | Maps to (`ep.Config` field)         | Default | Notes                                  |
 |---------------------------|--------------------------------------|--------:|-----------------------------------------|
-| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `20`    | Try `64` on GB200 for `dispatch` BW.   |
+| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `152`   | `20` on the intranode test. Try `64` on GB200 intranode for `dispatch` BW. |
 | `MSCCLPP_EP_NVL_SEND`     | `num_max_nvl_chunked_send_tokens`    | `8`     | Must be `<` `MSCCLPP_EP_NVL_RECV`.     |
 | `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
-| `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `8`     | Internode only.                        |
-| `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | varies  | Scale **down** as `num_rdma_ranks` grows (16n → 32). |
+| `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `16`    | Internode only.                        |
+| `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | `128`   | Scale **down** as `num_rdma_ranks` grows (4n→128, 8n→64, 16n→32) to keep the RDMA buffer under the 2 GiB `INT_MAX` limit. |
 
 Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
 tokens=4096, experts=256, topk=8):
