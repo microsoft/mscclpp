@@ -31,23 +31,23 @@ ScopeGuard<Fn> makeScopeGuard(Fn fn) {
 template <typename T, typename Impl, typename Fn>
 std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Fn fn) {
   auto thisRecvItem = std::make_shared<std::weak_ptr<BaseRecvItem>>();
-  auto future = std::async(std::launch::deferred, [impl, remoteRank, tag, thisRecvItem,
-                                                   lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
-                                                   fn = std::move(fn)]() mutable {
-    [[maybe_unused]] auto cleanup = makeScopeGuard([impl, remoteRank, tag, thisRecvItem]() {
-      auto item = thisRecvItem->lock();
-      auto it = impl->lastRecvItems_.find({remoteRank, tag});
-      if (item && it != impl->lastRecvItems_.end() && it->second == item) {
-        impl->lastRecvItems_.erase(it);
-      }
-    });
+  auto future = std::async(std::launch::deferred,
+                           [impl, remoteRank, tag, thisRecvItem, lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
+                            fn = std::move(fn)]() mutable {
+                             [[maybe_unused]] auto cleanup = makeScopeGuard([impl, remoteRank, tag, thisRecvItem]() {
+                               auto item = thisRecvItem->lock();
+                               auto it = impl->lastRecvItems_.find({remoteRank, tag});
+                               if (item && it != impl->lastRecvItems_.end() && it->second == item) {
+                                 impl->lastRecvItems_.erase(it);
+                               }
+                             });
 
-    if (lastRecvItem) {
-      // Recursive call to the previous receive items
-      lastRecvItem->wait();
-    }
-    return fn();
-  });
+                             if (lastRecvItem) {
+                               // Recursive call to the previous receive items
+                               lastRecvItem->wait();
+                             }
+                             return fn();
+                           });
   auto sharedFuture = std::shared_future<T>(std::move(future));
   auto recvItem = std::make_shared<RecvItem<T>>(sharedFuture);
   *thisRecvItem = recvItem;
@@ -156,13 +156,13 @@ MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const Endpo
 
   return makeOrderedRecvFuture<Connection>(pimpl_.get(), remoteRank, tag,
                                            [this, remoteRank, tag, localEndpoint]() mutable {
-    std::vector<char> data;
-    bootstrap()->recv(data, remoteRank, tag);
-    auto remoteEndpoint = Endpoint::deserialize(data);
-    auto connection = context()->connect(localEndpoint, remoteEndpoint);
-    pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
-    return connection;
-  });
+                                             std::vector<char> data;
+                                             bootstrap()->recv(data, remoteRank, tag);
+                                             auto remoteEndpoint = Endpoint::deserialize(data);
+                                             auto connection = context()->connect(localEndpoint, remoteEndpoint);
+                                             pimpl_->connectionInfos_[connection.impl_.get()] = {remoteRank, tag};
+                                             return connection;
+                                           });
 }
 
 MSCCLPP_API_CPP std::shared_future<Connection> Communicator::connect(const EndpointConfig& localConfig, int remoteRank,
