@@ -15,12 +15,13 @@ targeting:
 |------------------------------------|---------------------------------------------|
 | `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)                          |
 | `get_dispatch_layout`              | ✅ ported                                          |
-| `intranode_dispatch` (NVLink)      | ✅ validated (8 ranks, 1 node)                    |
-| `intranode_combine` (NVLink)       | ✅ validated (8 ranks, 1 node)                    |
-| `internode_dispatch` (NVLink+RDMA) | ✅ validated (16 ranks, 2×H100×8)                 |
-| `internode_combine` (NVLink+RDMA)  | ✅ validated (16 ranks, 2×H100×8)                 |
-| `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks intra-node; 16 ranks 2×H100) |
-| `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks intra-node; 16 ranks 2×H100) |
+| `intranode_dispatch` (NVLink)      | ✅ validated (8 ranks H100; 4 ranks GB200)         |
+| `intranode_combine` (NVLink)       | ✅ validated (8 ranks H100; 4 ranks GB200)         |
+| `internode_dispatch` (NVLink+RDMA) | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
+| `internode_combine` (NVLink+RDMA)  | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
+| `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
+| `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
+| GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
 | Multi-`ProxyService` sharding      | ✅ env-tunable, arch-aware default                 |
 | `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp                      |
 | Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                             |
@@ -30,6 +31,21 @@ Internode HT was validated end-to-end on two H100×8 nodes connected over
 Infiniband using [`test/python/ext/ep/test_internode_multirank.py`](../../../test/python/ext/ep/test_internode_multirank.py).
 All 16 ranks complete dispatch followed by combine with exact (zero-diff)
 recovery of the per-rank token payloads.
+
+On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), HT and LL were
+validated at 16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168,
+tokens=4096, experts=256, top-k=8:
+
+- HT internode: dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg
+  (`NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32`).
+- LL internode: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
+  combine ~**21 148 GB/s** agg (defaults).
+
+The GB200 path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
+routing peer pointers through cuMem fabric IPC over the NVL72 fabric
+(`nvidia-imex`) and emitting NVLink-SHARP `multimem.*` atomics from the
+kernels. The legacy RDMA-atomic PortChannel path is retained as a
+fallback when `mscclpp::isNvlsSupported()` returns `false`.
 
 The low-latency (LL) path uses a mixed transport: `MemoryChannel` (CUDA
 IPC) for same-node peers and `PortChannel` (CPU proxy + IB verbs) for
