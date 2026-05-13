@@ -159,6 +159,7 @@ steps:
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
+      export NODE_SIZE=1
       export WORLD_SIZE=8
       export RANK=0
       export MASTER_ADDR=127.0.0.1
@@ -166,8 +167,8 @@ steps:
 
       cd sglang
 
-      torchrun --nproc_per_node gpu \
-      --nnodes $WORLD_SIZE \
+      torchrun --nproc_per_node $WORLD_SIZE \
+      --nnodes $NODE_SIZE \
       --node_rank $RANK \
       --master_addr $MASTER_ADDR \
       --master_port $MASTER_PORT benchmark/kernels/all_reduce/benchmark_mscclpp.py
