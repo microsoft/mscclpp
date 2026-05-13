@@ -238,6 +238,7 @@ test scripts can `from mscclpp.ext import ep`.
 Intranode (single node, 8 GPUs) — HT:
 
 ```bash
+MSCCLPP_EP_BENCH=1 \
 torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ext/ep/test_intranode_multirank.py
 ```
@@ -245,6 +246,7 @@ torchrun --nnodes=1 --nproc_per_node=8 \
 Intranode LL (single node, 8 GPUs):
 
 ```bash
+MSCCLPP_EP_BENCH=1 \
 torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ext/ep/test_low_latency_multirank.py
 ```
@@ -253,27 +255,34 @@ Internode HT (2 nodes × 8 GPUs), torchrun:
 
 ```bash
 # node 0 (master)
-NCCL_SOCKET_IFNAME=eth0 MSCCLPP_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0 \
+MSCCLPP_EP_BENCH=1 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
     --master_addr=<master_ip> --master_port=29600 \
     test/python/ext/ep/test_internode_multirank.py
 
 # node 1 (worker)
-NCCL_SOCKET_IFNAME=eth0 MSCCLPP_SOCKET_IFNAME=eth0 GLOO_SOCKET_IFNAME=eth0 \
+MSCCLPP_EP_BENCH=1 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
     --master_addr=<master_ip> --master_port=29600 \
     test/python/ext/ep/test_internode_multirank.py
 ```
 
-Internode HT via mpirun (matches the NCCL-EP launch convention with
-NUMA binding and an explicit topology file):
+If the bootstrap NIC is mis-detected (e.g. multi-homed hosts), pin
+it explicitly:
+
+```bash
+export NCCL_SOCKET_IFNAME=<bootstrap_iface>
+export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
+export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
+```
+
+Internode HT via mpirun (NCCL-EP convention with NUMA binding):
 
 ```bash
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
-    -x NCCL_SOCKET_IFNAME=eth0 -x MSCCLPP_SOCKET_IFNAME=eth0 -x GLOO_SOCKET_IFNAME=eth0 \
-    -x NCCL_IB_DISABLE=0 -x NCCL_TOPO_FILE=<topo.xml> \
+    -x MSCCLPP_EP_BENCH=1 \
     -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
@@ -287,14 +296,18 @@ Internode LL via mpirun — same launch wrapper, swap the test script:
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
-    -x NCCL_SOCKET_IFNAME=eth0 -x MSCCLPP_SOCKET_IFNAME=eth0 -x GLOO_SOCKET_IFNAME=eth0 \
-    -x NCCL_IB_DISABLE=0 -x NCCL_TOPO_FILE=<topo.xml> \
+    -x MSCCLPP_EP_BENCH=1 \
     -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
              LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
              exec python3 test/python/ext/ep/test_low_latency_multirank.py'
 ```
+
+Add `-x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface>
+-x GLOO_SOCKET_IFNAME=<iface>` to the `mpirun` lines above only if the
+default bootstrap NIC is wrong. `NCCL_IB_DISABLE` / `NCCL_TOPO_FILE`
+are not required — EP traffic goes through mscclpp, not NCCL.
 
 ### Benchmark mode
 
