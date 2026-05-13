@@ -96,6 +96,75 @@ from mscclpp.ext import ep
 buf = ep.Buffer(group, num_nvl_bytes=..., num_rdma_bytes=...)
 ```
 
+### Build-time CMake options
+
+| Variable                              | Default | Meaning                                                       |
+|---------------------------------------|---------|---------------------------------------------------------------|
+| `MSCCLPP_BUILD_EXT_EP`                | `OFF`   | Build the EP extension at all                                 |
+| `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | Compile-time `NUM_MAX_NVL_PEERS` — set to `4` for GB200 NVL72 |
+| `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT`     | `OFF`   | Use a short ~10s kernel spin timeout (default is ~100s)       |
+
+### Azure GB200 (NVL72, 4 GPUs / NUMA host)
+
+GB200 NVL72 nodes expose **4 GPUs per NUMA host** (not 8 like HGX
+H100), and the cross-node atomic fast-path uses NVLink-SHARP
+multicast (`multimem.*` PTX) routed over the NVL72 fabric via
+nvidia-imex instead of broken IB atomics on Azure CX-7 RoCE. Two
+build-time settings are required:
+
+```bash
+# 1. Use the wheel-based install path (also sets MSCCLPP_BUILD_EXT_EP=ON
+#    via pyproject.toml).
+CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
+python3 -m pip install --no-build-isolation \
+    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
+    .
+
+# 2. Or, plain CMake:
+cmake -S . -B build \
+      -DMSCCLPP_BUILD_EXT_EP=ON \
+      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
+      -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+cmake --build build -j
+```
+
+Add `-DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON` only when triaging hangs (it
+shortens the kernel-side spin timeout from ~100s to ~10s).
+
+Runtime prerequisites on GB200:
+
+- CUDA Toolkit ≥ 12.5 (the `cuCtxCreate` proxy-context path uses the
+  4-arg signature added in 12.5; older toolkits compile against the
+  3-arg fallback automatically).
+- Driver ≥ 555 with nvidia-imex configured so cuMem fabric handles
+  (`POSIX_FD | FABRIC`) can be exchanged across nodes.
+- NVLink-SHARP / multicast support enabled (`nvidia-smi mig … --imex`
+  reachable). `mscclpp::isNvlsSupported()` must return `true` at
+  Buffer construction; otherwise the kernels fall back to the legacy
+  PortChannel + RDMA path (and on Azure CX-7 RoCE the broken IB
+  atomics will hang).
+- Set `MSCCLPP_EP_LOCAL_WORLD_SIZE=4` so the host code partitions
+  GPUs by 4-rank NUMA hosts.
+
+Runtime knobs (env vars, exposed by `test_intranode_multirank.py` /
+`test_internode_multirank.py`):
+
+| Variable                  | Maps to (`ep.Config` field)         | Default | Notes                                  |
+|---------------------------|--------------------------------------|--------:|-----------------------------------------|
+| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `20`    | Try `64` on GB200 for `dispatch` BW.   |
+| `MSCCLPP_EP_NVL_SEND`     | `num_max_nvl_chunked_send_tokens`    | `8`     | Must be `<` `MSCCLPP_EP_NVL_RECV`.     |
+| `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
+| `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `8`     | Internode only.                        |
+| `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | varies  | Scale **down** as `num_rdma_ranks` grows (16n → 32). |
+
+Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
+tokens=4096, experts=256, topk=8):
+
+- HT internode: `NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32` →
+  dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg.
+- LL internode: defaults → dispatch ~**16 817 GB/s** agg
+  (262 GB/s per rank), combine ~**21 148 GB/s** agg.
+
 ## Layout
 
 ```
