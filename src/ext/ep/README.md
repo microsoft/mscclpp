@@ -423,6 +423,8 @@ Env knobs:
       `memory_channel_handles_device_ptr`, with port channels ordered by
       peer rank (so kernel-side indexing by `peer_rank` is consistent).
 - [x] Validated on 2×H100×8 with `test_internode_multirank.py`.
+- [x] Validated on 16×GB200 NVL72 (64 ranks, Azure CX-7 RoCE) — see
+      Phase 5.
 
 ### Phase 3 — Low-Latency (RDMA + CUDA-IPC) — DONE
 
@@ -454,3 +456,34 @@ reference dispatch/combine.
 - [x] `test_low_latency_multirank.py` — LL round-trip validated intra-node (8 ranks) and cross-node (2×H100×8).
 - [x] In-tree micro-benchmark harness (`MSCCLPP_EP_BENCH=1`) reporting min/avg/max + BW@avg, aligned with NCCL-EP `ep_bench`.
 - [ ] Throughput benchmarks against DeepEP upstream.
+
+### Phase 5 — Azure GB200 NVL72 port — DONE
+
+GB200 (4 GPUs / NUMA host, CX-7 RoCE) needed three independent fixes
+on top of the H100 baseline:
+
+- [x] `NUM_MAX_NVL_PEERS` made CMake-configurable
+      (`-DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4`); runtime
+      `MSCCLPP_EP_LOCAL_WORLD_SIZE` defaults to the compile-time value.
+- [x] Portability fixes for older toolchains/arches: multimem PTX
+      guarded by `__CUDA_ARCH__ >= 900`, `cuCtxCreate` 4-arg form
+      version-guarded, `NUM_TIMEOUT_CYCLES` restored, CMake install
+      destination dual-mode.
+- [x] **LL bypass for broken CX-7 IB atomics** (Proposal A):
+      `Buffer::rdma_buffer_ptr` allocated via
+      `mscclpp::detail::gpuCallocPhysical` (POSIX_FD | FABRIC handles);
+      LL IPC fast-path gate lifted from `num_rdma_ranks==1` to
+      `low_latency_mode`; peer bases resolved through
+      `RegisteredMemory::data()` so mscclpp `CudaIpc` transport imports
+      cross-node cuMem fabric handles via `nvidia-imex`.
+- [x] **NVLS multimem fast path for HT atomics** (Proposal B):
+      runtime-gated by `mscclpp::isNvlsSupported()`. Cross-node
+      `port_channel.signal/wait` + `putWithSignal` replaced by
+      `multimem.red.add.u64` on NVL72 multicast counters; legacy IB
+      path retained as fallback.
+- [x] Validated on 16 × Azure GB200 NVL72 (64 ranks), HIDDEN=7168,
+      tokens=4096, experts=256, top-k=8:
+      - HT: dispatch ~2 006 GB/s agg, combine ~2 011 GB/s agg
+        (`NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32`).
+      - LL: dispatch ~16 817 GB/s agg (~262 GB/s/rank),
+        combine ~21 148 GB/s agg (defaults).
