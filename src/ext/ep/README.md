@@ -239,6 +239,8 @@ Intranode (single node, 8 GPUs) — HT:
 
 ```bash
 MSCCLPP_EP_BENCH=1 \
+MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
+MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ext/ep/test_intranode_multirank.py
 ```
@@ -247,6 +249,8 @@ Intranode LL (single node, 8 GPUs):
 
 ```bash
 MSCCLPP_EP_BENCH=1 \
+MSCCLPP_EP_BENCH_TOKENS=128 MSCCLPP_EP_BENCH_HIDDEN=7168 \
+MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ext/ep/test_low_latency_multirank.py
 ```
@@ -256,12 +260,16 @@ Internode HT (2 nodes × 8 GPUs), torchrun:
 ```bash
 # node 0 (master)
 MSCCLPP_EP_BENCH=1 \
+MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
+MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
     --master_addr=<master_ip> --master_port=29600 \
     test/python/ext/ep/test_internode_multirank.py
 
 # node 1 (worker)
 MSCCLPP_EP_BENCH=1 \
+MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
+MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
     --master_addr=<master_ip> --master_port=29600 \
     test/python/ext/ep/test_internode_multirank.py
@@ -283,6 +291,8 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
     -x MSCCLPP_EP_BENCH=1 \
+    -x MSCCLPP_EP_BENCH_TOKENS=4096 -x MSCCLPP_EP_BENCH_HIDDEN=7168 \
+    -x MSCCLPP_EP_BENCH_EXPERTS=256 -x MSCCLPP_EP_BENCH_TOPK=8 \
     -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
@@ -297,6 +307,8 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
     -x MSCCLPP_EP_BENCH=1 \
+    -x MSCCLPP_EP_BENCH_TOKENS=128 -x MSCCLPP_EP_BENCH_HIDDEN=7168 \
+    -x MSCCLPP_EP_BENCH_EXPERTS=256 -x MSCCLPP_EP_BENCH_TOPK=8 \
     -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
