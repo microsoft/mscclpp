@@ -17,6 +17,17 @@ using SemaphoreId = uint32_t;
 /// actual.
 using MemoryId = uint32_t;
 
+namespace detail {
+#if defined(MSCCLPP_DEVICE_COMPILE)
+/// Wait for the proxy to complete a flush. Increments the per-connection expected counter
+/// and spins on the GPU-visible flush-done counter until it reaches the new expected value.
+MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDoneGen, uint64_t* expectedFlushGen, int64_t maxSpinCount) {
+  uint64_t expected = atomicFetchAdd<uint64_t, scopeDevice>(expectedFlushGen, 1, memoryOrderRelaxed) + 1;
+  POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeSystem>(flushDoneGen, memoryOrderAcquire) < expected), maxSpinCount);
+}
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+}  // namespace detail
+
 struct BasePortChannelDeviceHandle {
   SemaphoreId semaphoreId_;
 
@@ -26,12 +37,20 @@ struct BasePortChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
+  uint64_t* flushDoneGen_;      // host-pinned, written by proxy, read by GPU
+  uint64_t* expectedFlushGen_;  // device memory, written/read by GPU
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
-                                                         FifoDeviceHandle fifo)
-      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
+                                                         FifoDeviceHandle fifo, uint64_t* flushDoneGen,
+                                                         uint64_t* expectedFlushGen)
+      : semaphoreId_(semaphoreId),
+        semaphore_(semaphore),
+        fifo_(fifo),
+        flushDoneGen_(flushDoneGen),
+        expectedFlushGen_(expectedFlushGen) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerData to the FIFO.
@@ -86,9 +105,8 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead =
-        fifo_.push({TriggerData | TriggerFlag | TriggerSync, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
-    fifo_.sync(curFifoHead, maxSpinCount);
+    fifo_.push({TriggerData | TriggerFlag | TriggerSync, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
+    detail::waitFlush(flushDoneGen_, expectedFlushGen_, maxSpinCount);
   }
 
   /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
@@ -105,8 +123,8 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerSync to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead = fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
-    fifo_.sync(curFifoHead, maxSpinCount);
+    fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
+    detail::waitFlush(flushDoneGen_, expectedFlushGen_, maxSpinCount);
   }
 
   /// Check if the port channel has been signaled.
@@ -128,8 +146,11 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
-                                                     MemoryId dst, MemoryId src)
-      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
+                                                     MemoryId dst, MemoryId src, uint64_t* flushDoneGen,
+                                                     uint64_t* expectedFlushGen)
+      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDoneGen, expectedFlushGen),
+        dst_(dst),
+        src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerData to the FIFO.

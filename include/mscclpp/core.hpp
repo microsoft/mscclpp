@@ -675,6 +675,8 @@ class Connection {
   friend class SemaphoreStub;
   friend class Semaphore;
   friend class ProxyService;
+  friend class BasePortChannel;
+  friend class PortChannel;
   friend class BaseConnection;
 };
 

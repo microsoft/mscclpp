@@ -5,7 +5,10 @@
 #include <mscclpp/port_channel.hpp>
 
 #include "api.h"
-#include "debug.h"
+#include "atomic.hpp"
+#include "connection.hpp"
+#include "logger.hpp"
+#include "proxy_impl.hpp"
 
 namespace mscclpp {
 
@@ -34,11 +37,12 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
     MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
     if (deviceNumaNode >= 0) {
       numaBind(deviceNumaNode);
-      INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode);
+      INFO(CONN, "NUMA node of ProxyService proxy thread is set to ", deviceNumaNode);
     }
   };
   auto handlerFunc = [&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
   proxy_ = std::make_shared<Proxy>(handlerFunc, initFunc, fifoSize);
+  proxy_->pimpl_->setProgressHandler([this]() { progressFlushes(); });
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -84,7 +88,21 @@ MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId d
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
 
-MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
+MSCCLPP_API_CPP void ProxyService::stopProxy() {
+  proxy_->stop();
+  // Drain pending flushes. After a bounded loop, force-unblock any still-pending GPU
+  // waiters with a sentinel write (UINT64_MAX >= any expected generation).
+  for (int i = 0; i < 1000 && !pendingFlushConns_.empty(); ++i) {
+    progressFlushes();
+  }
+  if (!pendingFlushConns_.empty()) {
+    WARN(CONN, "stopProxy: ", pendingFlushConns_.size(), " connections still pending; writing sentinel");
+    for (auto& conn : pendingFlushConns_) {
+      if (uint64_t* ptr = conn->getFlushDonePtr()) atomicStore(ptr, UINT64_MAX, memoryOrderRelease);
+    }
+    pendingFlushConns_.clear();
+  }
+}
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger.fields.semaphoreId];
@@ -105,9 +123,15 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
     numRequests++;
   }
 
-  if (((trigger.fields.type & TriggerSync) && numRequests > 0) ||
-      (maxWriteQueueSize != -1 && numRequests >= maxWriteQueueSize)) {
-    conn.flush();
+  if (trigger.fields.type & TriggerSync) {
+    // Always requestFlush on TriggerSync, even when numRequests == 0. The GPU increments
+    // expectedFlushGen_ on every flush() push, so the proxy must always increment
+    // flushRequestGen_ to match. An empty CQ drain completes immediately.
+    conn.impl_->requestFlush();
+    pendingFlushConns_.insert(conn.impl_);
+    numRequests = 0;
+  } else if (maxWriteQueueSize != -1 && numRequests >= maxWriteQueueSize) {
+    conn.flush();  // flow-control flush stays blocking
     numRequests = 0;
   }
 
@@ -115,12 +139,25 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle());
+  auto& conn = semaphore_->connection();
+  return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
+                                       conn.impl_->getFlushDonePtr(), conn.impl_->getExpectedFlushPtr());
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
+  auto& conn = semaphore_->connection();
   return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_,
-                                   src_);
+                                   src_, conn.impl_->getFlushDonePtr(), conn.impl_->getExpectedFlushPtr());
+}
+
+void ProxyService::progressFlushes() {
+  for (auto it = pendingFlushConns_.begin(); it != pendingFlushConns_.end();) {
+    if ((*it)->progressFlush()) {
+      it = pendingFlushConns_.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 }  // namespace mscclpp

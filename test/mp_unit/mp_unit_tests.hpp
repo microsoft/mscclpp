@@ -160,6 +160,13 @@ class PortChannelOneToOneTest : public CommunicatorTestBase {
   void testPacketPingPong(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testPacketPingPongPerf(bool useIbOnly, IbMode ibMode = IbMode::Default);
   void testBandwidth(PingPongTestParams params);
+  void setupMultiQpChannels(int numQps, size_t elemsPerChan, IbMode ibMode, int tagBase,
+                            std::vector<std::shared_ptr<int>>& sendBuffs,
+                            std::vector<mscclpp::RegisteredMemory>& localMems,
+                            std::vector<mscclpp::RegisteredMemory>& remoteMems,
+                            std::vector<mscclpp::PortChannel>& portChannels);
+  void testMultiQpBandwidth(IbMode ibMode, int numQps);
+  void testMultiQpFlushStress(IbMode ibMode, int numQps);
 
   std::shared_ptr<mscclpp::ProxyService> proxyService;
 };

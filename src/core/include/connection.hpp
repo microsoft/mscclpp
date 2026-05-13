@@ -50,6 +50,25 @@ class BaseConnection {
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
   virtual bool isSignalForwarding() const { return false; }
 
+  /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
+  /// to be non-blocking and pair with progressFlush(); the default does a blocking flush() and
+  /// publishes completion to the GPU-visible counter immediately.
+  /// @note Only call from the proxy thread.
+  virtual void requestFlush();
+
+  /// Progress pending async flush operations (non-blocking CQ poll).
+  /// @note Only call from the proxy thread.
+  /// @return true if no flush is pending (CQ fully drained or no request).
+  virtual bool progressFlush() { return true; }
+
+  /// Get pointer to GPU-visible flush-done generation counter (host-pinned memory).
+  /// @note Pointer is valid for the lifetime of this Connection.
+  uint64_t* getFlushDonePtr() const { return gpuFlushDoneGen_.get(); }
+
+  /// Get pointer to GPU-side expected flush generation counter (device memory).
+  /// @note Pointer is valid for the lifetime of this Connection.
+  uint64_t* getExpectedFlushPtr() const { return gpuExpectedFlushGen_.get(); }
+
   virtual Transport transport() const = 0;
 
   virtual Transport remoteTransport() const = 0;
@@ -75,6 +94,19 @@ class BaseConnection {
   std::shared_ptr<Context> context_;
   Endpoint localEndpoint_;
   int maxWriteQueueSize_;
+
+  // Per-connection flush generation counters. The proxy thread writes flushDoneGen_ when a
+  // flush completes; GPU threads spin on it via getFlushDonePtr(). Subclass requestFlush()
+  // overrides should bump flushRequestGen_ on each request and arrange for flushDoneGen_ to
+  // catch up when the request actually completes.
+  uint64_t flushRequestGen_;
+  uint64_t flushDoneGen_;
+  std::shared_ptr<uint64_t> gpuFlushDoneGen_;
+  std::shared_ptr<uint64_t> gpuExpectedFlushGen_;
+
+  // Publishes flushDoneGen_ to GPU-visible counter. Subclasses call this when their flush
+  // actually completes (e.g. CQ drained).
+  void publishFlushDone();
 };
 
 class CudaIpcConnection : public BaseConnection {
@@ -149,6 +181,9 @@ class IBConnection : public BaseConnection {
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush(int64_t timeoutUsec) override;
+
+  void requestFlush() override;
+  bool progressFlush() override;
 };
 
 class EthernetConnection : public BaseConnection {

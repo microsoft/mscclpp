@@ -1,37 +1,20 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
-#include <atomic>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/proxy.hpp>
 #include <mscclpp/utils.hpp>
-#include <thread>
 
 #include "api.h"
-#include "debug.h"
+#include "logger.hpp"
+#include "proxy_impl.hpp"
 
 namespace mscclpp {
 
 constexpr int ProxyStopCheckPeriod = 1000;
 constexpr int ProxyStartWarnPeriod = 1000;
-
-struct Proxy::Impl {
-  ProxyHandler handler;
-  std::function<void()> threadInit;
-  std::shared_ptr<Fifo> fifo;
-  std::atomic_bool threadStarted;
-  std::thread service;
-  std::atomic_bool running;
-
-  Impl(ProxyHandler handler, std::function<void()> threadInit, int fifoSize)
-      : handler(handler),
-        threadInit(threadInit),
-        fifo(std::make_shared<Fifo>(fifoSize)),
-        threadStarted(false),
-        running(false) {}
-};
 
 MSCCLPP_API_CPP Proxy::Proxy(ProxyHandler handler, std::function<void()> threadInit, int fifoSize) {
   pimpl_ = std::make_unique<Impl>(handler, threadInit, fifoSize);
@@ -70,18 +53,23 @@ MSCCLPP_API_CPP void Proxy::start(bool blocking) {
 
     pimpl_->threadStarted.store(true, std::memory_order_release);
 
-    ProxyHandler handler = this->pimpl_->handler;
-    auto fifo = this->pimpl_->fifo;
+    ProxyHandler handler = pimpl_->handler;
+    auto progressHandler = pimpl_->progressHandler;
+    auto fifo = pimpl_->fifo;
     ProxyTrigger trigger;
 
     int runCnt = ProxyStopCheckPeriod;
     for (;;) {
       if (runCnt-- == 0) {
         runCnt = ProxyStopCheckPeriod;
-        if (!this->pimpl_->running.load(std::memory_order_acquire)) {
+        if (!pimpl_->running.load(std::memory_order_acquire)) {
           break;
         }
       }
+      // Per-iteration system work (e.g. progressing pending async flushes),
+      // run regardless of whether a trigger is ready this iteration.
+      if (progressHandler) progressHandler();
+
       // Poll to see if we are ready to send anything
       trigger = fifo->poll();
       if (trigger.fst == 0 || trigger.snd == 0) {  // TODO: this check is a potential pitfall for custom triggers
@@ -107,7 +95,7 @@ MSCCLPP_API_CPP void Proxy::start(bool blocking) {
       count--;
       if (count == 0) {
         count = ProxyStartWarnPeriod;
-        WARN("Proxy thread startup taking longer than expected.");
+        WARN(CONN, "Proxy thread startup taking longer than expected.");
       }
     }
   }
