@@ -60,6 +60,7 @@ include= ["python/mscclpp/_version.py"]
 [tool.scikit-build.cmake.define]
 MSCCLPP_BUILD_PYTHON_BINDINGS = "ON"
 MSCCLPP_BUILD_TESTS = "OFF"
+MSCCLPP_BUILD_EXT_EP = "ON"
 
 [tool.black]
 line-length = 120

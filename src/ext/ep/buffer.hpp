@@ -7,8 +7,10 @@
 #include <torch/types.h>
 
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
+#include <mscclpp/switch_channel.hpp>
 #include <tuple>
 #include <vector>
 
@@ -25,7 +27,8 @@ namespace mscclpp {
 namespace ep {
 
 struct Buffer {
-  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8, "The number of maximum NVLink peers must be 8");
+  EP_STATIC_ASSERT(NUM_MAX_NVL_PEERS == 8 || NUM_MAX_NVL_PEERS == 4,
+                   "The number of maximum NVLink peers must be 4 or 8");
 
  private:
   // Low-latency mode buffer
@@ -89,17 +92,73 @@ struct Buffer {
   std::shared_ptr<mscclpp::PortChannelDeviceHandle> port_channel_handles_device_ptr;
   std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> memory_channel_handles_device_ptr;
 
-  // Intra-node LL only: peer-mapped RDMA buffer pointers (CUDA IPC).
-  // ``peer_rdma_bases[r]`` aliases rank ``r``'s ``rdma_buffer_ptr`` via
-  // ``cudaIpcOpenMemHandle`` (lazy peer access). Populated in ``sync()`` when
-  // ``low_latency_mode && num_rdma_ranks == 1``; null otherwise.
-  cudaIpcMemHandle_t rdma_ipc_handles[NUM_MAX_NVL_PEERS];
-  void* peer_rdma_bases[NUM_MAX_NVL_PEERS] = {nullptr};
+  // LL fast path: peer-mapped RDMA buffer pointers.
+  // ``peer_rdma_bases[r]`` aliases rank ``r``'s ``rdma_buffer_ptr`` through
+  // mscclpp's CudaIpc transport. Intranode peers use POSIX-FD CUDA IPC;
+  // cross-node peers use cuMem fabric handles routed through nvidia-imex
+  // over the NVL72 NVSwitch fabric (Proposal A — replaces RDMA atomicAdd
+  // with NVLink atomics, since Azure CX-7 RoCE has IBV_ATOMIC_NONE).
+  // Populated in ``sync()`` when ``low_latency_mode``; empty otherwise.
+  std::vector<void*> peer_rdma_bases;
   void** peer_rdma_bases_gpu = nullptr;
   // MemoryChannels over CUDA IPC used only for the LL barrier ring.
   std::vector<mscclpp::MemoryChannel> ll_memory_channels;
   std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
   bool ll_ipc_ready = false;
+
+  // NVLS multicast for HT internode (Wide Proposal B2).
+  //
+  // When `mscclpp::isNvlsSupported()` is true and `num_rdma_ranks > 1`,
+  // we set up a multicast-bound buffer carrying:
+  //   - tail counters[num_channels][num_rdma_ranks][num_rdma_ranks] uint64_t
+  //   - head counters[num_channels][num_rdma_ranks][num_rdma_ranks] uint64_t
+  //   - notify_dispatch barrier epoch[num_rdma_ranks] uint64_t
+  //   - notify_dispatch small-data slots[num_rdma_ranks][kSummaryBytes]
+  //
+  // Cross-node atomic adds use `multimem.red.add.u64` PTX which travels
+  // over the NVL72 fabric instead of broken IB atomics on Azure CX-7 RoCE.
+  // The kernels select between this NVLS path and the legacy PortChannel
+  // path at runtime based on `nvls_ht_enabled`.
+  //
+  // Falls back gracefully on platforms without NVLS multicast support
+  // (e.g. H100+IB, A100+IB clusters): `nvls_ht_enabled` stays `false`,
+  // all NVLS pointers stay `nullptr`, and the original PortChannel
+  // signal/wait + atomicAdd path remains active.
+  bool nvls_ht_enabled = false;
+  std::shared_ptr<mscclpp::NvlsConnection> nvls_ht_conn;
+  // SwitchChannel keeps the multicast pointer alive (its destructor
+  // unbinds the multicast); device pointers below are extracted from it.
+  std::shared_ptr<mscclpp::SwitchChannel> nvls_ht_sc;
+  // Underlying GpuBuffer (multicast-eligible physical alloc); kept alive
+  // for the lifetime of the multicast binding.
+  std::shared_ptr<mscclpp::GpuBuffer<uint8_t>> nvls_ht_buffer;
+  // mc_ptr: multicast-side device pointer (writes hit all peers via switch).
+  // dev_ptr: local-side device pointer (reads see local copy of the same
+  // physical memory).
+  void* nvls_ht_mc_ptr = nullptr;
+  void* nvls_ht_dev_ptr = nullptr;
+  // Sub-region byte offsets within the multicast buffer (set in sync()).
+  size_t nvls_ht_off_tail = 0;
+  size_t nvls_ht_off_head = 0;
+  size_t nvls_ht_off_barrier = 0;
+  size_t nvls_ht_off_data = 0;
+  size_t nvls_ht_total_bytes = 0;
+  // Per-call epoch counter for NVLS barrier slots. Incremented on the host
+  // before each kernel launch that uses an NVLS barrier; the kernel spins
+  // until the barrier slot reaches `epoch * num_ranks`.
+  uint64_t nvls_ht_epoch = 0;
+  // Independent epoch for cached_notify barrier slots (offsets +24 / +32),
+  // since those slots are only touched when the cached path is taken — using
+  // the shared `nvls_ht_epoch` would over-count the expected value relative
+  // to the number of times those particular slots have actually been bumped.
+  uint64_t nvls_ht_cached_epoch = 0;
+  // Worst-case shape parameters used to size the buffer:
+  //   stride_per_channel = num_rdma_ranks * num_rdma_ranks (counter slots)
+  // We allocate for `kNvlsMaxChannels` so any `num_sms` config fits.
+  static constexpr int kNvlsMaxChannels = 64;       // num_sms / 2 upper bound
+  static constexpr int kNvlsPerPeerBytes = 1024;    // small-data per (sender, receiver) pair
+  // Number of distinct barrier slots in the barrier sub-region (each u64).
+  static constexpr int kNvlsBarrierSlots = 8;
 
  private:
   void move_fifo_slots(int num_slots = 1);
