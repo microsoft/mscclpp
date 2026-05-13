@@ -20,22 +20,6 @@ parameters:
   default: 'sglang-mscclpp-test'
 
 steps:
-
-- template: run-remote-task.yml
-  parameters:
-    name: InstallMscclpp
-    displayName: Install mscclpp
-    runRemoteArgs: '--container ${{ parameters.containerName }} --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
-    remoteScript: |
-      rm -rf build
-      mkdir build
-      cd build
-      cmake -DCMAKE_BUILD_TYPE=Release ..
-      make -j
-      cd ..
-      pip install .
-      pip install -r ./python/requirements_cuda12.txt
-
 # TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
 # Tracking: the fork below (`caiomcbr/sglang` @ release/v0.5.7) is a personal
 # branch and should not remain a long-term CI dependency.
