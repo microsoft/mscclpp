@@ -11,7 +11,14 @@
 
 #pragma once
 
-#define NUM_MAX_NVL_PEERS 4
+// Maximum number of intra-node NVLink peers per RDMA rank.
+// - 8 for H100 NVL8 / HGX-style nodes (DeepEP upstream default).
+// - 4 for Azure GB200 NVL72 (4 GPUs per NUMA host).
+// Configurable via the CMake cache var `MSCCLPP_EP_NUM_MAX_NVL_PEERS`
+// (see `src/ext/ep/CMakeLists.txt`). Default keeps DeepEP-parity at 8.
+#ifndef NUM_MAX_NVL_PEERS
+#define NUM_MAX_NVL_PEERS 8
+#endif
 #define NUM_MAX_RDMA_PEERS 20
 #define NUM_MAX_FIFO_SLOTS 32768
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)
@@ -20,7 +27,16 @@
 
 #define FINISHED_SUM_TAG 1024
 #define NUM_CPU_TIMEOUT_SECS 100
+// Kernel-side spin timeout. Default 200G cycles ≈ 100s on Hopper/Blackwell.
+// Define `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT` (e.g. -DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
+// to use a short 10s window suitable for hang triage.
+#ifndef NUM_TIMEOUT_CYCLES
+#ifdef MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT
 #define NUM_TIMEOUT_CYCLES 20000000000ull  // ~10s debug
+#else
+#define NUM_TIMEOUT_CYCLES 200000000000ull  // 200G cycles ~= 100s
+#endif
+#endif
 #define NUM_WAIT_NANOSECONDS 500
 
 #define LOW_LATENCY_SEND_PHASE 1
