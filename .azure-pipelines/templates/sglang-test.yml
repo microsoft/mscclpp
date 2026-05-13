@@ -162,16 +162,13 @@ steps:
       export NODE_SIZE=1
       export WORLD_SIZE=8
       export RANK=0
-      export MASTER_ADDR=127.0.0.1
-      export MASTER_PORT=12345
 
       cd sglang
 
       torchrun --nproc_per_node $WORLD_SIZE \
       --nnodes $NODE_SIZE \
       --node_rank $RANK \
-      --master_addr $MASTER_ADDR \
-      --master_port $MASTER_PORT benchmark/kernels/all_reduce/benchmark_mscclpp.py
+      benchmark/kernels/all_reduce/benchmark_mscclpp.py
 
 - template: stop.yml
   parameters:
