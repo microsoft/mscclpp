@@ -198,6 +198,36 @@ test/python/ext/ep/
 
 ## Running the tests
 
+### Test prerequisites
+
+The Python tests are launched through `torchrun` / `mpirun` and require
+PyTorch + a few support packages in the active environment. A minimal
+install (matches the GB200 reference setup):
+
+```bash
+# Conda env (any Python >= 3.10). Use the appropriate Miniconda variant
+# for the host arch (`aarch64` shown; use `x86_64` on x86 clusters).
+wget -O /tmp/Miniconda3-latest-Linux-aarch64.sh \
+    https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-aarch64.sh
+bash /tmp/Miniconda3-latest-Linux-aarch64.sh -b -p $HOME/miniconda3
+source $HOME/miniconda3/etc/profile.d/conda.sh
+conda create -n torch python=3.14 -y
+conda activate torch
+
+# Runtime libs used by the tests / launcher.
+conda install -c conda-forge -y cupy mpi4py pybind11 blake3 sortedcontainers
+
+# PyTorch (pulls a matching cuda-toolkit + NCCL).
+pip3 install torch torchvision
+
+# mscclpp build deps (used by `pip install .` of this repo).
+pip install scikit-build-core nanobind setuptools_scm
+```
+
+Then build the EP extension (see [Build](#build)) — `pip install .` from
+the repo root installs `mscclpp_ep_cpp.so` into the active env so the
+test scripts can `from mscclpp.ext import ep`.
+
 Intranode (single node, 8 GPUs) — HT:
 
 ```bash
@@ -228,7 +258,7 @@ torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
     test/python/ext/ep/test_internode_multirank.py
 ```
 
-Internode HT/LL via mpirun (matches the NCCL-EP launch convention with
+Internode HT via mpirun (matches the NCCL-EP launch convention with
 NUMA binding and an explicit topology file):
 
 ```bash
@@ -242,6 +272,21 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
              LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
              exec python3 test/python/ext/ep/test_internode_multirank.py'
+```
+
+Internode LL via mpirun — same launch wrapper, swap the test script:
+
+```bash
+mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
+    --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
+    --bind-to numa \
+    -x NCCL_SOCKET_IFNAME=eth0 -x MSCCLPP_SOCKET_IFNAME=eth0 -x GLOO_SOCKET_IFNAME=eth0 \
+    -x NCCL_IB_DISABLE=0 -x NCCL_TOPO_FILE=<topo.xml> \
+    -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
+    bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
+             WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
+             LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
+             exec python3 test/python/ext/ep/test_low_latency_multirank.py'
 ```
 
 ### Benchmark mode
