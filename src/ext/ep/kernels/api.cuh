@@ -77,7 +77,10 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
                      int num_max_nvl_chunked_recv_tokens, int** task_fifo_ptrs, int head, int rank, cudaStream_t stream,
                      int64_t num_rdma_bytes, int64_t num_nvl_bytes, bool low_latency_mode,
                      mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                     mscclpp::MemoryChannelDeviceHandle* memory_channel_handles);
+                     mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+                     void* nvls_mc_ptr, void* nvls_dev_ptr,
+                     size_t nvls_off_barrier, size_t nvls_off_data,
+                     uint64_t nvls_epoch, int nvls_per_peer_bytes);
 
 void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights, void* recv_src_meta,
               const void* x, const float* x_scales, const int64_t* topk_idx, const float* topk_weights,
@@ -90,7 +93,9 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens, int rank, int num_ranks,
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
-              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles);
+              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+              void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+              void* const* peer_rdma_bases);
 
 void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_topk_weights, int num_ranks,
                    int num_channels, int num_combined_tokens, int* combined_rdma_head,
@@ -99,7 +104,9 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
                    int num_max_nvl_chunked_recv_tokens, int** task_fifo_ptrs, int head, int rank, cudaStream_t stream,
                    int64_t num_rdma_bytes, int64_t num_nvl_bytes, bool is_cached_dispatch, bool low_latency_mode,
                    mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                   mscclpp::MemoryChannelDeviceHandle* memory_channel_handles);
+                   mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+                   void* nvls_mc_ptr = nullptr, void* nvls_dev_ptr = nullptr,
+                   size_t nvls_off_barrier = 0, uint64_t nvls_epoch = 0);
 
 void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights, const bool* is_combined_token_in_rank,
              const void* x, const float* topk_weights, const int* combined_rdma_head, const int* combined_nvl_head,
@@ -109,7 +116,9 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              void** buffer_ptrs, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens, int rank,
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
-             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles);
+             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+             void* const* peer_rdma_bases);
 
 }  // namespace internode
 

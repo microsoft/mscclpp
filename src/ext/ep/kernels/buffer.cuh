@@ -4,6 +4,7 @@
 
 #include "configs.cuh"
 #include "exception.cuh"
+#include <cstdint>
 
 namespace mscclpp {
 namespace ep {

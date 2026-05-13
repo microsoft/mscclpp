@@ -419,8 +419,28 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsIpc * kNumWarpsPerGroupIpc, "Too many top-k selections");
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsRdma * kNumWarpsPerGroupRdma, "Too many top-k selections");
 
-  const int kNumWarpGroups = use_ipc_path ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
-  const int kNumWarpsPerGroup = use_ipc_path ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
+  // The narrow IPC layout (kNumWG=1, kNumWPG=32) launches one block per
+  // expert. For large `num_experts` (e.g. >~152 on GB200) this exceeds the
+  // cooperative-launch grid limit. Escalate to the wider (kNumWG=3,
+  // kNumWPG=10) layout in that case so each block owns 3 experts.
+  bool ipc_wide = false;
+  if (use_ipc_path) {
+    int cur_dev = 0;
+    cudaGetDevice(&cur_dev);
+    int sm_count = 0;
+    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, cur_dev);
+    int max_active_narrow = 0;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &max_active_narrow,
+        (void*)dispatch<false, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168>,
+        kNumWarpGroupsIpc * kNumWarpsPerGroupIpc * 32, 0);
+    const int cap_narrow = max_active_narrow * sm_count;
+    ipc_wide = (num_experts > cap_narrow);
+  }
+  const int kNumWarpGroups =
+      (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+  const int kNumWarpsPerGroup =
+      (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
   const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
   // LL dispatch/combine are latency-bound at typical problem sizes: for
@@ -448,9 +468,17 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
 
 #define DISPATCH_LAUNCH_CASE(hidden_case)                                                                            \
   {                                                                                                                  \
-    if (use_ipc_path) {                                                                                              \
+    if (use_ipc_path && !ipc_wide) {                                                                                 \
       auto dispatch_func = use_fp8 ? dispatch<true, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case>      \
                                    : dispatch<false, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case>;    \
+      LAUNCH_KERNEL(&cfg, dispatch_func, packed_recv_x, packed_recv_x_scales, packed_recv_src_info,                  \
+                    packed_recv_layout_range, packed_recv_count, rdma_recv_x, rdma_recv_count, rdma_x, x, topk_idx,  \
+                    atomic_counter_per_expert, atomic_finish_counter_per_expert, next_clean, num_next_clean_int,     \
+                    num_tokens, num_max_dispatch_tokens_per_rank, num_topk, num_experts, rank, num_ranks, phases,    \
+                    rdma_buffer_ptr, port_channel_handles, peer_rdma_bases, memory_channel_handles);                 \
+    } else if (use_ipc_path && ipc_wide) {                                                                           \
+      auto dispatch_func = use_fp8 ? dispatch<true, true, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case>    \
+                                   : dispatch<false, true, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case>;  \
       LAUNCH_KERNEL(&cfg, dispatch_func, packed_recv_x, packed_recv_x_scales, packed_recv_src_info,                  \
                     packed_recv_layout_range, packed_recv_count, rdma_recv_x, rdma_recv_count, rdma_x, x, topk_idx,  \
                     atomic_counter_per_expert, atomic_finish_counter_per_expert, next_clean, num_next_clean_int,     \
@@ -649,8 +677,27 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
   constexpr int kNumWarpGroupsRdma = 3;
   constexpr int kNumMaxTopk = 9;
 
-  const int kNumWarpGroups = use_ipc_path ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
-  const int kNumWarpsPerGroup = use_ipc_path ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
+  // See `dispatch()` for the rationale: escalate to the wide (3, 10) IPC
+  // layout when the narrow (1, 32) layout exceeds the cooperative-launch
+  // grid limit.
+  bool ipc_wide = false;
+  if (use_ipc_path) {
+    int cur_dev = 0;
+    cudaGetDevice(&cur_dev);
+    int sm_count = 0;
+    cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, cur_dev);
+    int max_active_narrow = 0;
+    cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &max_active_narrow,
+        (void*)combine<true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168, kNumMaxTopk>,
+        kNumWarpGroupsIpc * kNumWarpsPerGroupIpc * 32, 0);
+    const int cap_narrow = max_active_narrow * sm_count;
+    ipc_wide = (num_experts > cap_narrow);
+  }
+  const int kNumWarpGroups =
+      (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+  const int kNumWarpsPerGroup =
+      (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
   const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
   // See the comment in `dispatch()` above: combine-recv's per-token loop
@@ -673,8 +720,15 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
 
 #define COMBINE_LAUNCH_CASE(hidden_case)                                                                        \
   {                                                                                                             \
-    if (use_ipc_path) {                                                                                         \
+    if (use_ipc_path && !ipc_wide) {                                                                            \
       auto combine_func = combine<true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, hidden_case, kNumMaxTopk>;     \
+      LAUNCH_KERNEL(&cfg, combine_func, combined_x, rdma_recv_x, rdma_recv_flag, rdma_send_x, x, topk_idx,      \
+                    topk_weights, src_info, layout_range, next_clean, num_next_clean_int, atomic_clean_flag,    \
+                    num_combined_tokens, hidden, num_topk, num_max_dispatch_tokens_per_rank, num_experts, rank, \
+                    num_ranks, phases, zero_copy, rdma_buffer_ptr, port_channel_handles, peer_rdma_bases,       \
+                    memory_channel_handles);                                                                    \
+    } else if (use_ipc_path && ipc_wide) {                                                                      \
+      auto combine_func = combine<true, kNumWarpGroupsRdma, kNumWarpsPerGroupRdma, hidden_case, kNumMaxTopk>;   \
       LAUNCH_KERNEL(&cfg, combine_func, combined_x, rdma_recv_x, rdma_recv_flag, rdma_send_x, x, topk_idx,      \
                     topk_weights, src_info, layout_range, next_clean, num_next_clean_int, atomic_clean_flag,    \
                     num_combined_tokens, hidden, num_topk, num_max_dispatch_tokens_per_rank, num_experts, rank, \

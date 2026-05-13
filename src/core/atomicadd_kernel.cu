@@ -37,7 +37,7 @@ void CudaIpcStream::atomicAdd(uint64_t* dst, int64_t value) {
     CUresult res = cuDeviceGet(&cuDevice, deviceId_);
     if (res != CUDA_SUCCESS) throw Error("cuDeviceGet failed", ErrorCode::InternalError);
 
-    res = cuCtxCreate(&proxyAtomicCtx_, 0, cuDevice);
+    res = cuCtxCreate(&proxyAtomicCtx_, NULL, 0, cuDevice);
     if (res != CUDA_SUCCESS) throw Error("cuCtxCreate failed", ErrorCode::InternalError);
 
     cuCtxPopCurrent(nullptr);
