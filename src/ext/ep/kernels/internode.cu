@@ -28,6 +28,28 @@ static_assert(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(NvlPackT),
 namespace internode {
 
 // ===========================================================================
+// NVLS multimem PTX wrappers. `multimem.*` ops require sm_90+ (Hopper /
+// Blackwell) and an active NVLink-SHARP multicast handle. Hosts gate
+// every call site behind `nvls_mc_ptr != nullptr`, which is set only when
+// `mscclpp::isNvlsSupported()` returned true at Buffer construction, so
+// these macros are unreachable on older archs at runtime — the `__trap()`
+// fallback is purely a build-time guard to keep PTX assembly clean on
+// sm_80 / sm_86 / sm_89 targets.
+// ===========================================================================
+#if defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 900)
+#define MSCCLPP_EP_MULTIMEM_RED_ADD_RELAXED_U64(ptr, delta) \
+  asm volatile("multimem.red.relaxed.sys.global.add.u64 [%0], %1;" ::"l"(ptr), "l"((uint64_t)(delta)) : "memory")
+#define MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(ptr) \
+  asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(ptr) : "memory")
+#define MSCCLPP_EP_MULTIMEM_ST_RELAXED_U32(ptr, val) \
+  asm volatile("multimem.st.relaxed.sys.global.u32 [%0], %1;" ::"l"(ptr), "r"((uint32_t)(val)) : "memory")
+#else
+#define MSCCLPP_EP_MULTIMEM_RED_ADD_RELAXED_U64(ptr, delta) __trap()
+#define MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(ptr) __trap()
+#define MSCCLPP_EP_MULTIMEM_ST_RELAXED_U32(ptr, val) __trap()
+#endif
+
+// ===========================================================================
 // NVLS HT counter helpers (Phase 3).
 //
 // All cross-node tail/head counter updates that previously used HW
@@ -61,7 +83,7 @@ __device__ __forceinline__ void nvls_ctr_add(void* mc_base, int channel_id, int 
   // many channels (warps) triggers `unspecified launch failure`. Use a
   // preceding `__threadfence_system()` at the call site to publish data
   // before bumping the counter.
-  asm volatile("multimem.red.relaxed.sys.global.add.u64 [%0], %1;" ::"l"(slot), "l"(delta) : "memory");
+  MSCCLPP_EP_MULTIMEM_RED_ADD_RELAXED_U64(slot, delta);
 }
 
 __device__ __forceinline__ uint64_t nvls_ctr_load(void* dev_base, int channel_id, int src_rdma, int dst_rdma) {
@@ -297,7 +319,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
         uint64_t* dev_b0 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier);
         uint64_t pre;
         asm volatile("ld.acquire.sys.global.u64 %0, [%1];" : "=l"(pre) : "l"(dev_b0) : "memory");
-        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b0) : "memory");
+        MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(mc_b0);
         (void)0;
         const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
         uint64_t v;
@@ -380,7 +402,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
           static_cast<size_t>(my_global_rank) * slot_stride_bytes);
       for (int i = thread_id; i < total_ints; i += num_threads) {
         int val = src_ints[i];
-        asm volatile("multimem.st.relaxed.sys.global.u32 [%0], %1;" ::"l"(mc_slot + i), "r"(val) : "memory");
+        MSCCLPP_EP_MULTIMEM_ST_RELAXED_U32(mc_slot + i, val);
       }
       __syncthreads();
       // NVLS epoch barrier #1: ensure every sender's multimem.st has been
@@ -389,7 +411,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
         if (rank == 0) (void)0;
         uint64_t* mc_b1 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_barrier + 8);
         uint64_t* dev_b1 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier + 8);
-        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b1) : "memory");
+        MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(mc_b1);
         const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
         uint64_t v;
         do {
@@ -519,7 +541,7 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
         if (rank == 0) (void)0;
         uint64_t* mc_b2 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_barrier + 16);
         uint64_t* dev_b2 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier + 16);
-        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b2) : "memory");
+        MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(mc_b2);
         const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
         uint64_t v;
         do {
@@ -1593,7 +1615,7 @@ __global__ void cached_notify(const int rdma_clean_offset, const int rdma_num_in
       if (thread_id == 0) {
         uint64_t* mc_b3 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_barrier + 24);
         uint64_t* dev_b3 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier + 24);
-        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b3) : "memory");
+        MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(mc_b3);
         const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
         uint64_t v;
         do {
@@ -1628,7 +1650,7 @@ __global__ void cached_notify(const int rdma_clean_offset, const int rdma_num_in
       if (thread_id == 0) {
         uint64_t* mc_b4 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_barrier + 32);
         uint64_t* dev_b4 = reinterpret_cast<uint64_t*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_barrier + 32);
-        asm volatile("multimem.red.release.sys.global.add.u64 [%0], 1;" ::"l"(mc_b4) : "memory");
+        MSCCLPP_EP_MULTIMEM_RED_ADD_RELEASE_U64_ONE(mc_b4);
         const uint64_t expected = nvls_epoch * static_cast<uint64_t>(num_ranks);
         uint64_t v;
         do {
