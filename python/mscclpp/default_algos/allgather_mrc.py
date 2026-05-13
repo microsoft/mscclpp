@@ -56,3 +56,35 @@ def allgather_mrc(spec: AlgoSpec) -> CollectiveProgram:
                 ch_from_prev.wait(tb=0)
 
         return prog
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--name", type=str, help="name of the program")
+    parser.add_argument("--num_gpus", type=int, help="total number of gpus")
+    parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
+    parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
+    parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
+    parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
+
+    args = parser.parse_args()
+
+    spec = AlgoSpec(
+        name=args.name,
+        collective=AllGather(args.num_gpus, 1, True),
+        nranks_per_node=args.gpus_per_node,
+        world_size=args.num_gpus,
+        in_place=True,
+        instances=1,
+        protocol="Simple",
+        auto_sync=True,
+        num_threads_per_block=args.num_threads_per_block,
+        reuse_resources=False,
+        use_double_scratch_buffer=False,
+        min_message_size=args.min_message_size,
+        max_message_size=args.max_message_size,
+    )
+
+    prog = allgather_mrc(spec)
+    print(prog.to_json())
