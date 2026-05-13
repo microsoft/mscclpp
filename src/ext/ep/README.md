@@ -150,6 +150,35 @@ Runtime prerequisites on GB200:
   if you are running on GB200 against a stock build that still has
   `NUM_MAX_NVL_PEERS=8` (otherwise host code mis-classifies cross-node
   peers as local and `cudaIpcOpenMemHandle` fails).
+- RT priority is required by NCCL/glibc. On each node:
+
+  ```bash
+  sudo tee -a /etc/security/limits.conf > /dev/null <<'EOF'
+  * soft rtprio 99
+  * hard rtprio 99
+  EOF
+  # Re-login so `ulimit -r` reports 99.
+  ```
+- `nvidia-imex` must be active on every node with an identical
+  `/etc/nvidia-imex/nodes_config.cfg` listing all node IPs. Verify:
+
+  ```bash
+  sudo systemctl status nvidia-imex
+  sudo cat /etc/nvidia-imex/nodes_config.cfg
+  ls /dev/nvidia-caps-imex-channels/   # channel0 must exist
+  ```
+
+GB200 runtime env (export on every node before launching the tests):
+
+```bash
+export NCCL_IB_DISABLE=1                              # mscclpp owns IB
+export NCCL_MNNVL_ENABLE=0                            # Azure GB200 is NOT one MNNVL fabric across nodes
+export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3  # avoid mlx5_bond_0 (PORT_DOWN)
+# Bootstrap NIC (only if auto-detect picks wrong) — on Azure GB200:
+export NCCL_SOCKET_IFNAME=enP22p1s0f1
+export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
+export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
+```
 
 Runtime knobs (env vars, exposed by `test_intranode_multirank.py` /
 `test_internode_multirank.py` — defaults below are the test-script
