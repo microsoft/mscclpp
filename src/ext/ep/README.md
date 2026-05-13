@@ -288,7 +288,6 @@ Internode HT via mpirun (NCCL-EP convention with NUMA binding):
 
 ```bash
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
-    --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
     -x MSCCLPP_EP_BENCH=1 \
     -x MSCCLPP_EP_BENCH_TOKENS=4096 -x MSCCLPP_EP_BENCH_HIDDEN=7168 \
@@ -304,7 +303,6 @@ Internode LL via mpirun — same launch wrapper, swap the test script:
 
 ```bash
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
-    --mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include eth0 \
     --bind-to numa \
     -x MSCCLPP_EP_BENCH=1 \
     -x MSCCLPP_EP_BENCH_TOKENS=128 -x MSCCLPP_EP_BENCH_HIDDEN=7168 \
@@ -320,6 +318,14 @@ Add `-x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface>
 -x GLOO_SOCKET_IFNAME=<iface>` to the `mpirun` lines above only if the
 default bootstrap NIC is wrong. `NCCL_IB_DISABLE` / `NCCL_TOPO_FILE`
 are not required — EP traffic goes through mscclpp, not NCCL.
+
+If Open MPI's own bootstrap misbehaves (e.g. UCX is mis-configured or
+the host is multi-homed), force its control channel onto plain TCP
+over the local management NIC by adding
+`--mca pml ob1 --mca btl tcp,vader,self --mca btl_tcp_if_include <iface>`
+to `mpirun`. `<iface>` is the management NIC (e.g. `enP22p1s0f1` on
+Azure GB200, `eno1`/`bond0` elsewhere) — it is **not** `eth0` on
+GB200.
 
 ### Benchmark mode
 
