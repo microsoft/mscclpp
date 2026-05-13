@@ -49,18 +49,28 @@ fallback when `mscclpp::isNvlsSupported()` returns `false`.
 
 The low-latency (LL) path uses a mixed transport: `MemoryChannel` (CUDA
 IPC) for same-node peers and `PortChannel` (CPU proxy + IB verbs) for
-remote peers. The DeepEP LL kernels were translated as follows:
+remote peers. On GB200 NVL72, cross-node peers are *also* reached via
+CUDA-IPC — peer pointers are exchanged as cuMem fabric handles over
+`nvidia-imex` and the kernels emit NVLink-SHARP `multimem.*` atomics
+directly on the NVL72 fabric, bypassing CX-7 RoCE's broken IB atomics.
+The DeepEP LL kernels were translated as follows:
 
 | DeepEP / IBGDA                           | MSCCL++ replacement                                              |
 |------------------------------------------|------------------------------------------------------------------|
 | `nvshmemx_barrier_all_block()`           | signal + wait ring across per-peer channel handles               |
 | `nvshmemi_ibgda_put_nbi_warp(...)` (intra-node) | `MemoryChannelDeviceHandle::put` (CUDA IPC, no proxy)     |
-| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node) | lane-0 `PortChannelDeviceHandle::put(dst_off, src_off, n)` |
-| `nvshmemi_ibgda_amo_nonfetch_add(...)`   | lane-0 `atomicAdd` on the corresponding channel handle           |
+| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node, NVLS) | direct `st.global` on imported cuMem-fabric peer base (GB200) |
+| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node, fallback) | lane-0 `PortChannelDeviceHandle::put(dst_off, src_off, n)` |
+| `nvshmemi_ibgda_amo_nonfetch_add(...)` (NVLS) | `multimem.red.add.u64` on NVL72 multicast counter (GB200) |
+| `nvshmemi_ibgda_amo_nonfetch_add(...)` (fallback) | lane-0 `atomicAdd` on the corresponding channel handle           |
 
 LL was validated on:
 - 8 ranks × 1 H100 node (NVLink + CUDA-IPC fast path).
 - 16 ranks × 2 H100×8 nodes (mixed CUDA-IPC intra-node + IB inter-node).
+- 4 ranks × 1 Azure GB200 NVL72 node (NVLink + CUDA-IPC).
+- 64 ranks × 16 Azure GB200 NVL72 nodes (intra-node CUDA-IPC + cross-node
+  cuMem fabric IPC via `nvidia-imex` + NVLS `multimem.*` atomics);
+  dispatch ~16.8 TB/s agg, combine ~21.1 TB/s agg.
 
 ### `num_proxy_services` / proxy sharding
 
