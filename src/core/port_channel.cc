@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
 
 #include "api.h"
-#include "atomic.hpp"
 #include "connection.hpp"
 #include "logger.hpp"
 #include "proxy_impl.hpp"
@@ -146,8 +146,8 @@ MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() co
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
   auto& conn = semaphore_->connection();
-  return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_,
-                                   src_, conn.impl_->getFlushDonePtr(), conn.impl_->getExpectedFlushPtr());
+  return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
+                                   conn.impl_->getFlushDonePtr(), conn.impl_->getExpectedFlushPtr());
 }
 
 void ProxyService::progressFlushes() {

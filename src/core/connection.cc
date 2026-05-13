@@ -7,7 +7,7 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-#include "atomic.hpp"
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
@@ -519,7 +519,8 @@ bool IBConnection::progressFlush() {
   for (int i = 0; i < wcNum; ++i) {
     int status = qp->getSendWcStatus(i);
     if (status != static_cast<int>(WsStatus::Success)) {
-      THROW(NET, Error, ErrorCode::SystemError, "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
+      THROW(NET, Error, ErrorCode::SystemError,
+            "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
     }
   }
 

@@ -21,7 +21,8 @@ namespace detail {
 #if defined(MSCCLPP_DEVICE_COMPILE)
 /// Wait for the proxy to complete a flush. Increments the per-connection expected counter
 /// and spins on the GPU-visible flush-done counter until it reaches the new expected value.
-MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDoneGen, uint64_t* expectedFlushGen, int64_t maxSpinCount) {
+MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDoneGen, uint64_t* expectedFlushGen,
+                                     [[maybe_unused]] int64_t maxSpinCount) {
   uint64_t expected = atomicFetchAdd<uint64_t, scopeDevice>(expectedFlushGen, 1, memoryOrderRelaxed) + 1;
   POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeSystem>(flushDoneGen, memoryOrderAcquire) < expected), maxSpinCount);
 }

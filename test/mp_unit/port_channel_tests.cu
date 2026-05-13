@@ -796,8 +796,8 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
       double usPerIter = elapsedUs / nIters;
       double usPerIterPerQp = usPerIter / numQps;
       int bytesPerChan = nElemPerChan * (int)sizeof(int);
-      std::string sizeLabel =
-          (bytesPerChan >= 1024) ? (std::to_string(bytesPerChan / 1024) + " KB") : (std::to_string(bytesPerChan) + " B");
+      std::string sizeLabel = (bytesPerChan >= 1024) ? (std::to_string(bytesPerChan / 1024) + " KB")
+                                                     : (std::to_string(bytesPerChan) + " B");
       ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") per-iter", usPerIter, "us");
       ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") per-iter/QP", usPerIterPerQp, "us");
     }
