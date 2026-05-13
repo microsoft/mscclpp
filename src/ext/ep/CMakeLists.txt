@@ -87,20 +87,49 @@ else()
 endif()
 target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
 
+# Number of intra-node NVLink peers compiled into the EP kernels.
+#  - 8 (default) matches DeepEP upstream and H100/HGX 8-GPU nodes.
+#  - 4 is required for Azure GB200 NVL72 (4 GPUs per NUMA host).
+set(MSCCLPP_EP_NUM_MAX_NVL_PEERS "8" CACHE STRING
+    "Compile-time NUM_MAX_NVL_PEERS for the EP kernels (8 for HGX, 4 for GB200)")
+target_compile_definitions(mscclpp_ep_cpp PRIVATE
+    NUM_MAX_NVL_PEERS=${MSCCLPP_EP_NUM_MAX_NVL_PEERS})
+
+# Kernel-side debug timeout (~10s) — set via:
+#   -DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON
+option(MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT
+       "Use a short ~10s kernel spin timeout (default is ~100s)" OFF)
+if(MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
+    target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
+endif()
+
 set_target_properties(mscclpp_ep_cpp PROPERTIES
     PREFIX ""
     POSITION_INDEPENDENT_CODE ON
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
     CXX_VISIBILITY_PRESET default
-    INSTALL_RPATH "\$ORIGIN/mscclpp/lib"
 )
+
+# Install layout.
+#  - scikit-build / wheel build (SKBUILD set by scikit-build-core):
+#       module lands next to the `mscclpp` python package; libmscclpp.so is
+#       under `mscclpp/lib/`, so rpath = `$ORIGIN/mscclpp/lib`.
+#  - Plain CMake install: standard `${INSTALL_PREFIX}/lib` with rpath
+#       `$ORIGIN/../lib` so the .so finds the sibling mscclpp shared lib.
+if(DEFINED SKBUILD OR DEFINED ENV{SKBUILD})
+    set_target_properties(mscclpp_ep_cpp PROPERTIES
+        INSTALL_RPATH "\$ORIGIN/mscclpp/lib")
+    install(TARGETS mscclpp_ep_cpp LIBRARY DESTINATION ..)
+else()
+    set_target_properties(mscclpp_ep_cpp PROPERTIES
+        INSTALL_RPATH "\$ORIGIN/../lib")
+    install(TARGETS mscclpp_ep_cpp
+        LIBRARY DESTINATION ${INSTALL_PREFIX}/lib)
+endif()
 
 if(MSCCLPP_USE_CUDA)
     target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_USE_CUDA)
 elseif(MSCCLPP_USE_ROCM)
     target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_USE_ROCM)
 endif()
-
-install(TARGETS mscclpp_ep_cpp
-    LIBRARY DESTINATION ..)
