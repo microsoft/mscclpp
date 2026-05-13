@@ -113,19 +113,19 @@ nvidia-imex instead of broken IB atomics on Azure CX-7 RoCE. Two
 build-time settings are required:
 
 ```bash
-# 1. Use the wheel-based install path (also sets MSCCLPP_BUILD_EXT_EP=ON
-#    via pyproject.toml).
-CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
-python3 -m pip install --no-build-isolation \
-    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
-    .
-
-# 2. Or, plain CMake:
+# Option 1: plain CMake.
 cmake -S . -B build \
       -DMSCCLPP_BUILD_EXT_EP=ON \
       -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
       -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
 cmake --build build -j
+
+# Option 2: wheel-based install (pyproject.toml already sets
+# MSCCLPP_BUILD_EXT_EP=ON).
+CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
+python3 -m pip install --no-build-isolation \
+    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
+    .
 ```
 
 Add `-DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON` only when triaging hangs (it
@@ -176,6 +176,7 @@ tokens=4096, experts=256, topk=8):
 ```
 src/ext/ep/
 ├── CMakeLists.txt              — builds mscclpp_ep_cpp (Torch + pybind11)
+├── README.md                   — this file
 ├── buffer.hpp / buffer.cc      — host-side Buffer, sync(), dispatch/combine
 ├── config.hpp / event.hpp      — Config, EventHandle
 ├── bindings.cpp                — PYBIND11_MODULE definition
@@ -189,17 +190,17 @@ src/ext/ep/
     ├── runtime.cu              — intranode::barrier launcher
     ├── intranode_kernel.cu     — intranode dispatch/combine kernels
     ├── internode.cu            — internode HT dispatch/combine + layout
-    └── internode_ll.cu         — internode LL dispatch/combine (structural)
+    │                            (incl. NVLS multimem fast path for GB200)
+    └── internode_ll.cu         — internode LL dispatch/combine
 
 python/mscclpp/ext/ep/
 ├── __init__.py                 — reexports Buffer / Config / EventHandle
 └── buffer.py                   — torch.distributed-aware frontend
 
 test/python/ext/ep/
-├── test_ep_smoke.py                   — size-hint + rejection smoke test
-├── test_intranode_multirank.py        — NVLink HT dispatch+combine, 8 ranks
-├── test_internode_multirank.py        — HT dispatch+combine, 16 ranks (2×8)
-└── test_low_latency_multirank.py      — LL dispatch+combine (intra-node + cross-node)
+├── test_intranode_multirank.py        — intranode HT dispatch+combine
+├── test_internode_multirank.py        — internode HT dispatch+combine
+└── test_low_latency_multirank.py      — LL dispatch+combine
 ```
 
 ## Running the tests
@@ -224,7 +225,7 @@ conda activate torch
 conda install -c conda-forge -y cupy mpi4py pybind11 blake3 sortedcontainers
 
 # PyTorch (pulls a matching cuda-toolkit + NCCL).
-pip3 install torch torchvision
+pip3 install torch
 
 # mscclpp build deps (used by `pip install .` of this repo).
 pip install scikit-build-core nanobind setuptools_scm
