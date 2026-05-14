@@ -30,6 +30,8 @@ dtype:           fp16               # fp32 | fp16 | bf16 | fp8(e4m3|e5m2)
 reduce_op:       sum                # sum | max | min | prod
 inplace:         yes                # yes | no
 goal:            bandwidth          # latency | bandwidth
+zero_copy:       auto               # yes | no | auto (agent picks based on size/symmetry)
+symmetric_memory: yes               # yes | no | unknown — input/output at identical offsets on every rank?
 channels_allowed: nvls,memory       # memory | port | nvls (SwitchChannel) | any
 num_threads_per_block: 1024         # optional
 instances:       auto               # auto | <int>
@@ -130,12 +132,14 @@ Always run a short structured intake. **Do not generate code until the following
 1. **Topology:** number of GPUs, single-node vs multi-node, intra-node interconnect (NVLink/NVSwitch/NVLS), inter-node interconnect (IB), confirm hardware profile (H100 / GB300 / other).
 2. **Message size:** expected range (min/max), and the **target regime** (latency-bound small, bandwidth-bound large, or a specific point). One algorithm per request — pick the regime.
 3. **Data type and reduction op:** `fp32` / `fp16` / `bf16` / `fp8` (e4m3 / e5m2 / fnuz vs OCP), and `sum` / `max` / `min` / `prod`. Note: some channels/ops have dtype constraints; verify against `ReduceOperationType` and channel capabilities.
-4. **In-place vs out-of-place** and buffer layout (input/output offsets — recall the zero-copy executor offset constraints in `docs/dsl/concepts.md` § Executor limitations).
-5. **Optimization target:** latency vs bandwidth; any hard SLOs (e.g., µs target).
-6. **Channel types to consider:** `MemoryChannel`, `PortChannel`, `SwitchChannel` (NVLS), or a mix. Note any constraints (e.g., "no NVLS", "no proxy thread").
-7. **Resource budget:** preferred `num_threads_per_block` (default 1024), thread-block count, `instances` for replication, scratch buffer allowance, `use_double_scratch_buffer` on/off.
-8. **Protocol:** `"Simple"` vs `"LL"` (packet). Defaults follow message size.
-9. **Naming and output path** for the generated file and JSON plan.
+4. **In-place vs out-of-place** and buffer layout (input/output offsets).
+5. **Symmetric memory:** does the caller guarantee that input (and output, if separate) buffers sit at **identical offsets on every participating rank**? See `docs/dsl/concepts.md` § Executor limitations. If "no" or "unknown", **zero-copy designs are unsafe** — the agent must refuse them or require a scratch-buffer-based design.
+6. **Zero-copy:** does the user want a zero-copy design (no intermediate scratch)? Defaults: `auto`. Lower latency and less memory, but requires symmetric memory and constrains some algorithm choices.
+7. **Optimization target:** latency vs bandwidth; any hard SLOs (e.g., µs target).
+8. **Channel types to consider:** `MemoryChannel`, `PortChannel`, `SwitchChannel` (NVLS), or a mix. Note any constraints (e.g., "no NVLS", "no proxy thread").
+9. **Resource budget:** preferred `num_threads_per_block` (default 1024), thread-block count, `instances` for replication, scratch buffer allowance, `use_double_scratch_buffer` on/off.
+10. **Protocol:** `"Simple"` vs `"LL"` (packet). Defaults follow message size.
+11. **Naming and output path** for the generated file and JSON plan.
 
 If the user is vague, propose defaults explicitly: "Assuming 8×H100, fp16 sum, in-place, 1 MB target, bandwidth-bound, NVLS allowed — confirm or override."
 
@@ -148,7 +152,7 @@ After intake and before writing the DSL file, present a **short design proposal*
 The proposal must include:
 - **Algorithm family choice** (e.g., NVLS one-shot, RSAG + AG pipelined, all-pair reduce+put, packet LL) and **why** for this size/topology.
 - **Channel plan:** which channel types, how many per (src,dst,tb), buffer types.
-- **Buffer plan:** input/output/scratch usage; whether zero-copy applies and the resulting offset constraints.
+- **Buffer plan:** input/output/scratch usage. If `zero_copy: yes`, explicitly state the symmetric-memory requirement in the design and verify the user confirmed it. If `symmetric_memory: no/unknown`, do not propose a zero-copy design; route the algorithm through a scratch buffer instead.
 - **Thread-block layout:** number of TBs, what each does (copy / reduce / send / receive / pipeline stage), use of `ThreadBlockGroup` if uneven.
 - **Pipelining:** whether `LoopIterationContext` is used, `unit` size, `num_chunks`, semaphore handshake plan.
 - **Instances / chunk_factor:** starting values and the parallelism rationale.
@@ -375,7 +379,7 @@ When you ask for help, the message must include:
 - Do not invent DSL APIs. If a desired primitive does not exist, say so and propose either (a) composing existing primitives or (b) a small, well-scoped DSL extension as a follow-up — but do not silently implement it.
 - Do not assume GB300 capabilities until the GB300 profile is explicitly activated by the user.
 - Do not commit secrets or ADO credentials. When citing ADO content, cite paths/snippets only.
-- Respect the executor's zero-copy offset constraints (see `docs/dsl/concepts.md` § Executor limitations) — verify before recommending a zero-copy design.
+- Respect the executor's zero-copy offset constraints (see `docs/dsl/concepts.md` § Executor limitations). **Never recommend a zero-copy design unless the user has explicitly confirmed `symmetric_memory: yes`.** If `symmetric_memory: unknown`, ask before designing.
 
 ---
 
