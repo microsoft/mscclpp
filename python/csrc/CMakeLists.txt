@@ -11,7 +11,12 @@ FetchContent_Declare(dlpack
     GIT_TAG 5c210da409e7f1e51ddf445134a4376fdbd70d7d
 )
 
-FetchContent_MakeAvailable(dlpack)
+FFetchContent_GetProperties(dlpack)
+if(NOT dlpack_POPULATED)
+    FetchContent_Populate(dlpack)
+    # Add dlpack subdirectory but exclude it from installation
+    add_subdirectory(${dlpack_SOURCE_DIR} ${dlpack_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
 nanobind_add_module(mscclpp_py ${SOURCES})
