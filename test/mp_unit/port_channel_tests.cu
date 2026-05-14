@@ -36,6 +36,18 @@ inline void requireGdrForIbMode(IbMode mode, mscclpp::Transport ibTransport) {
 #define REQUIRE_GDR_FOR_IB_MODE(mode)  // No extra requirements on non-CUDA platforms.
 #endif
 
+// Skip an IPC-only PortChannel test (useIPC=true, useIB=false, useEthernet=false) when CudaIpc
+// cannot connect this rank pair. CudaIpc works intra-node always, and cross-node only on MNNVL
+// systems (GB200 NVL72 + IMEX). The combined check is "at least 2 ranks per node" OR "fabric
+// (MNNVL) handles are usable on this system".
+#define REQUIRE_CUDA_IPC_AVAILABLE                                                \
+  do {                                                                       \
+    if (gEnv->nRanksPerNode < 2 && !mscclpp::isFabricMemHandleAvailable()) { \
+      SKIP_TEST() << "CudaIpc requires intra-node ranks (nRanksPerNode>=2) or MNNVL fabric handles, \
+both unavailable here.";                                                     \
+    }                                                                        \
+  } while (0)
+
 void PortChannelOneToOneTest::SetUp() {
   // Use only two ranks
   setNumRanksToUse(2);
@@ -71,7 +83,10 @@ void PortChannelOneToOneTest::setupMeshConnections(std::vector<mscclpp::PortChan
       continue;
     }
     mscclpp::EndpointConfig cfg;
-    if ((rankToNode(r) == rankToNode(gEnv->rank)) && useIPC) {
+    if (useIPC) {
+      // CudaIpc works intra-node always, and cross-node on MNNVL systems (GB200 NVL72 + IMEX)
+      // via fabric handles. Tests that exercise CudaIpc across nodes on non-MNNVL hardware should
+      // gate themselves with REQUIRE_CUDA_IPC_AVAILABLE; we always request CudaIpc here when asked.
       cfg.transport = mscclpp::Transport::CudaIpc;
     } else if (useIb) {
       cfg.transport = ibTransport;
@@ -262,6 +277,7 @@ void PortChannelOneToOneTest::testPingPongPerf(PingPongTestParams params) {
 }
 
 TEST(PortChannelOneToOneTest, PingPong) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
   testPingPong(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
@@ -279,6 +295,7 @@ TEST(PortChannelOneToOneTest, PingPongEthernet) {
 }
 
 TEST(PortChannelOneToOneTest, PingPongWithPoll) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
   testPingPong(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = true, .ibMode = IbMode::Default});
 }
@@ -291,6 +308,7 @@ TEST(PortChannelOneToOneTest, PingPongIbHostModeWithPoll) {
 }
 
 PERF_TEST(PortChannelOneToOneTest, PingPongPerf) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
   testPingPongPerf(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
@@ -482,7 +500,10 @@ void PortChannelOneToOneTest::testPacketPingPongPerf(bool useIb, IbMode ibMode) 
   proxyService->stopProxy();
 }
 
-TEST(PortChannelOneToOneTest, PacketPingPong) { testPacketPingPong(false, IbMode::Default); }
+TEST(PortChannelOneToOneTest, PacketPingPong) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testPacketPingPong(false, IbMode::Default);
+}
 
 TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
   REQUIRE_IBVERBS;
@@ -490,7 +511,10 @@ TEST(PortChannelOneToOneTest, PacketPingPongIbHostMode) {
   testPacketPingPong(true, IbMode::Host);
 }
 
-PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerf) { testPacketPingPongPerf(false, IbMode::Default); }
+PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerf) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
+  testPacketPingPongPerf(false, IbMode::Default);
+}
 
 PERF_TEST(PortChannelOneToOneTest, PacketPingPongPerfIbHostMode) {
   REQUIRE_IBVERBS;
@@ -583,6 +607,7 @@ void PortChannelOneToOneTest::testBandwidth(PingPongTestParams params) {
 }
 
 PERF_TEST(PortChannelOneToOneTest, Bandwidth) {
+  REQUIRE_CUDA_IPC_AVAILABLE;
   testBandwidth(PingPongTestParams{
       .useIPC = true, .useIB = false, .useEthernet = false, .waitWithPoll = false, .ibMode = IbMode::Default});
 }
