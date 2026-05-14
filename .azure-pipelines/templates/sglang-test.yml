@@ -122,7 +122,7 @@ steps:
         --port 30000 \
         --dataset-name random \
         --random-input-len 512 \
-        --random-output-len 8129 \
+        --random-output-len 8192 \
         --max-concurrency 512 \
         --disable-stream \
         --num-prompts 10 \
