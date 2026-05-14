@@ -45,7 +45,7 @@ steps:
     displayName: Install SGLang
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
-      git clone -b caiorocha/mscclpp https://github.com/caiomcbr/sglang.git
+      git clone -b main https://github.com/caiomcbr/sglang.git
       cd sglang/python
       pip install -e .
 
