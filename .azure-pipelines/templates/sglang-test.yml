@@ -6,8 +6,7 @@
 #   1. Deploy: build the test container and bring the VMSS node online.
 #   2. Build and install MSCCL++ on the node.
 #   3. Install a (currently forked) SGLang.
-#   4. Run sglang.bench_one_batch at several batch sizes (kept as separate
-#      steps for per-batch visibility in the Azure DevOps UI).
+#   4. Run sglang.bench_one_batch at several batch sizes.
 #   5. Run a longer end-to-end validation: bring up an sglang server and
 #      drive it with sglang.bench_serving.
 #   6. Run the MSCCL++ all-reduce micro-benchmark via torchrun.
