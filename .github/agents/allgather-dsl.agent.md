@@ -86,24 +86,30 @@ Choose the closest match to the user's requirements as your starting template:
 ### Companion CUDA reference (for algorithmic intuition only — do not copy)
 - `src/ext/collectives/allgather/allgather_fullmesh.cu`, `allgather_fullmesh_2.cu` — fullmesh kernels. CUDA coverage is narrower than AllReduce; rely on the DSL examples above for ring/packet/tbg patterns.
 
-### External reference repository (read-only knowledge base)
+### External pattern catalog (preferred — read first)
+- **`.github/agents/knowledge/allgather-external-patterns.md`** — distilled, in-tree knowledge of external reference algorithms. Captures intent, channel topology, TB layout, sync pacing, parameters, quirks, and reconstruction inputs per pattern. **Read this before falling back to the live ADO repo.** Entries marked "not yet distilled" record the existence of a pattern and its upstream path, but are not authoritative until distilled.
+
+### External reference repository (fallback knowledge base)
 - **Repo:** `https://msazure.visualstudio.com/One/_git/msccl-users`
 - **Branch:** `t-ekoww/mscclpp_benchmark`
 - **Scope (in-scope for this agent):** *only* the folder `/algos/mscclpp_new_DSL/allgather/`. Treat everything outside this folder (including sibling collectives under `/algos/mscclpp_new_DSL/`) as out of scope and do not read or cite it.
-- **Purpose:** additional AllGather (and related) DSL algorithms and benchmark scaffolding contributed outside this repo. Use it to learn alternative patterns, parameter choices, and benchmarking conventions — **not** as an authoritative API source (the in-repo `python/mscclpp/language/` files remain authoritative).
-- **Access notes:**
-  - This is an Azure DevOps (Microsoft-internal) repo, not GitHub. It is not reachable by the agent's web-fetch tools. If the user wants the agent to consult it, they must clone it locally and either (a) tell the agent the local path, or (b) `cd` into it / add it to the allowed dirs via `/add-dir`.
-  - Suggested clone command for the user:
+- **When to consult the live repo (vs. the catalog):**
+  1. The catalog entry is marked "not yet distilled" and you need real detail.
+  2. You suspect the catalog is stale (upstream commit SHA has advanced).
+  3. The user explicitly asks to verify or distill against the source.
+  After consulting the live repo, **update the catalog entry** with the distilled summary and refresh the snapshot SHA in the catalog header. The goal is to never need to consult the live repo twice for the same pattern.
+- **Access:**
+  - Preferred: the **`azure-devops-repo_file`** MCP tool (`action: get_content` / `list_directory`) on org `msazure`, project `One`, repository `msccl-users`, version `t-ekoww/mscclpp_benchmark`. If this tool is not available in the current session, fall back to asking the user to clone locally:
     ```bash
     git clone --branch t-ekoww/mscclpp_benchmark \
       https://msazure.visualstudio.com/One/_git/msccl-users
     ```
   - Once available locally, restrict reads to `<local-path>/algos/mscclpp_new_DSL/allgather/` only.
 - **Usage rules:**
-  - Cite any pattern borrowed from this folder in the generated README's "References" section using the form `msccl-users@t-ekoww/mscclpp_benchmark:/algos/mscclpp_new_DSL/allgather/<file>`.
+  - Cite any pattern borrowed from this folder in the generated README's "References" section using the form `msccl-users@t-ekoww/mscclpp_benchmark:/algos/mscclpp_new_DSL/allgather/<file>` (or the catalog entry name if the citation came from the catalog).
   - Do not copy code verbatim into generated DSL output unless the user explicitly asks. Prefer adapting patterns to MSCCL++ DSL idioms as documented in `python/mscclpp/language/`.
   - Do not commit, push, or otherwise propagate code from this folder into the `microsoft/mscclpp` repo without the user's explicit instruction — it is a separate project under different ownership.
-  - If the folder is not present locally and the user asks the agent to "consult the external reference," ask them to clone it first rather than guessing at its contents.
+  - The catalog is the steady-state reference. The live repo is the source of truth used to refresh the catalog.
 
 ### In-repo DSL primitive unit tests (best teaching reference for individual ops)
 - `python/mscclpp/language/tests/unit_tests/` — minimal DSL programs that each exercise one primitive or fusion pattern. Use these to learn idiomatic usage of single ops before composing them. Key dirs/files for AllGather:
