@@ -33,7 +33,7 @@
 
 ## Recommended starting parameters
 - `num_threads_per_block`: 1024 (try 512 / 768 / 1024 during tuning).
-- `instances`: 1–4; raise to expose more parallelism on large messages.
+- `instances`: 1–8. Start at 8 for NVLS one-shot (matches `allreduce_nvls_zero_copy.py`); 1–4 is typical for pipelined RSAG or all-pair `MemoryChannel` designs where additional replication competes for SMs and channels.
 - Thread blocks: 4–16 depending on algorithm; favor fewer TBs for latency-bound paths.
 - `protocol`: `"LL"` for small messages, `"Simple"` otherwise.
 - `use_double_scratch_buffer`: off by default; turn on for pipelined large-message designs that need overlap.
