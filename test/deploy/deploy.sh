@@ -95,6 +95,11 @@ fi
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
 
+  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
+
+  
+
 ###############################################################################
 # 8. Launch Docker container
 ###############################################################################
