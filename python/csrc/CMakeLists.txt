@@ -11,7 +11,7 @@ FetchContent_Declare(dlpack
     GIT_TAG 5c210da409e7f1e51ddf445134a4376fdbd70d7d
 )
 
-FetchContent_GetProperties(dlpack)
+FetchContent_MakeAvailable(dlpack)
 
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS *.cpp)
 nanobind_add_module(mscclpp_py ${SOURCES})
