@@ -59,6 +59,56 @@ static int resolve_num_proxy_services() {
   return 8;
 }
 
+// Cross-host cuMem fabric IPC capability.
+//
+// `isNvlsSupported()` returns true for any device with NVLink multicast,
+// including H100. But NVLS by itself only works inside one host's NVLink
+// island; cross-host sharing of cuMem allocations / NVLS multicast handles
+// requires the device to be on an actual cross-host NVLink fabric (GB200
+// NVL72 with nvidia-imex on Azure today). H100 reports
+// `CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED == 1` too but lacks
+// the NVSwitch fabric to actually share fabric handles across hosts; the
+// cross-host import then falls back to POSIX-FD, whose handle exchange
+// routes through a unix-domain socket on the master host -- which
+// worker-node ranks cannot reach (`connect() failed for unix socket to
+// /tmp/mscclpp_bootstrap_*.sock`). That is the exact failure signature
+// commit 3ab2e43b ("NVLS HT B2 phases 1-3") introduced on H100 / Azure
+// CX-7 RoCE.
+//
+// To stay safe by default we require both:
+//   - device attr `CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED`
+//   - compute capability >= sm_100 (Blackwell+).
+//
+// Resolution order:
+//   1. `MSCCLPP_EP_FABRIC_IPC` env var (`0`/`off`/`false`/`no` => off,
+//      `1`/`on`/`true`/`yes`/`force` => on, anything else => auto). When
+//      set, env value takes precedence over the device check.
+//   2. Auto-detect via the two checks above.
+static bool resolve_fabric_ipc_supported() {
+  if (const char* env = std::getenv("MSCCLPP_EP_FABRIC_IPC")) {
+    std::string v(env);
+    for (auto& c : v) c = std::tolower(static_cast<unsigned char>(c));
+    if (v == "0" || v == "off" || v == "false" || v == "no") return false;
+    if (v == "1" || v == "on" || v == "true" || v == "yes" || v == "force") return true;
+  }
+  int dev = 0;
+  if (cudaGetDevice(&dev) != cudaSuccess) return false;
+  CUdevice cuDev;
+  if (cuDeviceGet(&cuDev, dev) != CUDA_SUCCESS) return false;
+  int supported = 0;
+  if (cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, cuDev) != CUDA_SUCCESS) {
+    return false;
+  }
+  if (!supported) return false;
+  cudaDeviceProp prop{};
+  if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return false;
+  // Blackwell+ (sm_100, GB200 NVL72) is the only deployed cross-host
+  // NVLink fabric today. H100 (sm_90) advertises fabric-handle support
+  // but lacks the nvidia-imex / NVSwitch fabric to actually share them
+  // across hosts.
+  return prop.major >= 10;
+}
+
 Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_bytes, bool low_latency_mode)
     : rank(rank),
       num_ranks(num_ranks),
@@ -346,8 +396,16 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // fabric-IPC so cross-node `handle.put(data)` can be replaced by
     // direct kernel-side writes via NVL72 fabric pointers — bypassing
     // the broken Azure CX-7 RoCE RDMA WRITE path.
+    //
+    // NVLS-supported but FABRIC-unsupported deployments (e.g. H100 on
+    // Azure NDv5) must not take this path for the HT cross-host case:
+    // their `gpuCallocPhysical` result is a POSIX-FD-only handle whose
+    // cross-host import falls back to a master-local unix socket which
+    // worker ranks cannot reach.
+    static const bool fabric_ipc_supported = resolve_fabric_ipc_supported();
     const bool use_fabric_ipc_alloc =
-        mscclpp::isNvlsSupported() && (low_latency_mode || num_rdma_ranks > 1);
+        mscclpp::isNvlsSupported() && fabric_ipc_supported &&
+        (low_latency_mode || num_rdma_ranks > 1);
     if (use_fabric_ipc_alloc) {
       rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
       CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
@@ -356,9 +414,9 @@ void Buffer::sync(const std::vector<int>& device_ids,
       CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
     }
     if (rank == 0) {
-      printf("[mscclpp_ep] rdma_buffer allocator: %s (low_latency=%d, nvls=%d)\n",
+      printf("[mscclpp_ep] rdma_buffer allocator: %s (low_latency=%d, nvls=%d, fabric_ipc=%d)\n",
              use_fabric_ipc_alloc ? "gpuCallocPhysical (fabric-IPC)" : "cudaMalloc",
-             (int)low_latency_mode, (int)mscclpp::isNvlsSupported());
+             (int)low_latency_mode, (int)mscclpp::isNvlsSupported(), (int)fabric_ipc_supported);
       fflush(stdout);
     }
     bootstrap->barrier();
@@ -501,12 +559,20 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // or there is only one RDMA rank (intranode-only), `nvls_ht_enabled`
     // stays `false` and kernels select the legacy PortChannel path.
     //
+    // Additionally: NVLS alone is insufficient for cross-host. H100 has
+    // NVLS within a node but no cross-host NVSwitch fabric, so
+    // `connectNvlsCollective` either fails or builds a per-node-only
+    // multicast object, and the POSIX-FD fallback for handle exchange
+    // routes through a master-local unix socket that worker ranks cannot
+    // reach. Gate this path on `fabric_ipc_supported` so non-Blackwell
+    // deployments cleanly use the legacy PortChannel path.
+    //
     // Skipped for `low_latency_mode` since LL has its own (working)
     // fabric-IPC path via Proposal A and does not use the HT counter
     // protocol.
     // ------------------------------------------------------------------
     nvls_ht_enabled = false;
-    if (!low_latency_mode && num_rdma_ranks > 1 && mscclpp::isNvlsSupported()) {
+    if (!low_latency_mode && num_rdma_ranks > 1 && mscclpp::isNvlsSupported() && fabric_ipc_supported) {
       // Worst-case sizing — chosen so the same multicast buffer fits any
       // (num_sms, num_rdma_ranks) configuration the kernels may launch with.
       const size_t kCounterBytesPerChannel =
@@ -576,8 +642,9 @@ void Buffer::sync(const std::vector<int>& device_ids,
     } else if (rank == 0) {
       printf(
           "[mscclpp_ep] NVLS HT multicast: disabled (low_latency=%d, num_rdma_ranks=%d, "
-          "nvls_supported=%d)\n",
-          (int)low_latency_mode, num_rdma_ranks, (int)mscclpp::isNvlsSupported());
+          "nvls_supported=%d, fabric_ipc=%d)\n",
+          (int)low_latency_mode, num_rdma_ranks, (int)mscclpp::isNvlsSupported(),
+          (int)fabric_ipc_supported);
       fflush(stdout);
     }
 
