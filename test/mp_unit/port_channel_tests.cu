@@ -40,7 +40,7 @@ inline void requireGdrForIbMode(IbMode mode, mscclpp::Transport ibTransport) {
 // cannot connect this rank pair. CudaIpc works intra-node always, and cross-node only on MNNVL
 // systems (GB200 NVL72 + IMEX). The combined check is "at least 2 ranks per node" OR "fabric
 // (MNNVL) handles are usable on this system".
-#define REQUIRE_CUDA_IPC_AVAILABLE                                                \
+#define REQUIRE_CUDA_IPC_AVAILABLE                                           \
   do {                                                                       \
     if (gEnv->nRanksPerNode < 2 && !mscclpp::isFabricMemHandleAvailable()) { \
       SKIP_TEST() << "CudaIpc requires intra-node ranks (nRanksPerNode>=2) or MNNVL fabric handles, \
