@@ -3,6 +3,7 @@
 > **Not yet active.** This profile is a stub. Before using it, the agent must confirm the specifics below with the user and fill them in. Do not assume GB300 capabilities until this file is populated and explicitly selected as the active profile.
 
 ## Topology (to confirm)
+- **num_gpus:** _TBD_ (depends on NVL domain size)
 - NVL domain size (GPUs per coherent NVLink domain): _TBD_
 - Per-GPU NVLink bandwidth and generation: _TBD_
 - Intra-domain switch fabric (NVSwitch generation, multimem semantics): _TBD_
@@ -23,11 +24,19 @@
 - `SwitchChannel` semantics on the new switch generation: _TBD_
 - `PortChannel` transport for inter-domain traffic: _TBD_
 
-## Recommended starting points by message size
+## AllReduce — Recommended starting points by message size
 | Regime | Size | Suggested algorithm family | Notes |
 | --- | --- | --- | --- |
 | Latency-bound | _TBD_ | _TBD_ | confirm with user |
 | Medium / one-shot | _TBD_ | _TBD_ | confirm with user |
+| Bandwidth-bound | _TBD_ | _TBD_ | confirm with user |
+| Cross-domain | _TBD_ | _TBD_ | confirm with user |
+
+## AllGather — Recommended starting points by message size
+| Regime | Size | Suggested algorithm family | Notes |
+| --- | --- | --- | --- |
+| Latency-bound | _TBD_ | _TBD_ | confirm with user |
+| Medium | _TBD_ | _TBD_ | confirm with user |
 | Bandwidth-bound | _TBD_ | _TBD_ | confirm with user |
 | Cross-domain | _TBD_ | _TBD_ | confirm with user |
 
