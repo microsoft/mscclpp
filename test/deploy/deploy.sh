@@ -101,7 +101,7 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run --rm -itd --name=sglang-mscclpp-test --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash lmsysorg/sglang:latest"
+    "sudo docker run --rm -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash ${CONTAINERIMAGE}"
 else
   # Set GPU passthrough flags based on platform
   LAUNCH_OPTION="--gpus=all"
