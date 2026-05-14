@@ -85,6 +85,17 @@ MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->get
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
     : BaseConnection(context, localEndpoint) {
+  // Log fabric/MNNVL availability exactly once per process so any later cross-node CudaIpc failure
+  // is easy to triage. C++11 magic statics make this thread-safe without an explicit mutex.
+  // NOTE: assigning the message to a std::string first avoids the logger's pointer-formatting
+  // overload from kicking in on the const char* result of the ternary.
+  [[maybe_unused]] static const bool fabricAvailable_ = []() {
+    const bool avail = isFabricMemHandleAvailable();
+    const std::string status = avail ? "available (cross-node CudaIpc via MNNVL/IMEX is supported)"
+                                     : "NOT available (CudaIpc is restricted to intra-node ranks on this system)";
+    INFO(CONN, "CudaIpc transport selected: fabric handles ", status);
+    return avail;
+  }();
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
     THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
