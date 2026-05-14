@@ -38,6 +38,9 @@ pr:
 jobs:
 - job: SGlangTest
   displayName: SGLANG Test
+  matrix:
+    cuda12:
+      containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
     name: msccl-ci-h100
   container:
