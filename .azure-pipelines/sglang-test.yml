@@ -38,12 +38,6 @@ pr:
 jobs:
 - job: SGlangTest
   displayName: SGLANG Test
-  # Matrix is kept (despite having a single entry today) to make it easy to
-  # add more variants (e.g. cuda13, rocm) without restructuring the job.
-  strategy:
-    matrix:
-      sglang:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-sglang-x86_64
   pool:
     name: msccl-ci-h100
   container:

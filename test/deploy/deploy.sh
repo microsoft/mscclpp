@@ -101,7 +101,7 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run --rm -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash ${CONTAINERIMAGE}"
+    "sudo docker run --rm -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash lmsysorg/sglang:latest"
 else
   # Set GPU passthrough flags based on platform
   LAUNCH_OPTION="--gpus=all"
@@ -122,24 +122,6 @@ else
       -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
       --entrypoint /bin/bash ${CONTAINERIMAGE}"
   fi
-fi
-
-###############################################################################
-# 8b. Print GPU/driver info from host and container (CUDA only)
-###############################################################################
-if [ "${PLATFORM}" == "cuda" ]; then
-  echo "=== nvidia-smi on host ==="
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "nvidia-smi || echo 'nvidia-smi not available on host'; \
-     echo '--- /proc/driver/nvidia/version ---'; \
-     cat /proc/driver/nvidia/version 2>/dev/null || echo 'nvidia driver version file missing'"
-
-  echo "=== nvidia-smi inside container (${CONTAINER_NAME}) ==="
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker exec -t --user root ${CONTAINER_NAME} bash -lc \
-      'nvidia-smi || echo \"nvidia-smi failed in container\"; \
-       echo \"--- nvcc --version ---\"; \
-       nvcc --version || echo \"nvcc not found\"'"
 fi
 
 ###############################################################################
