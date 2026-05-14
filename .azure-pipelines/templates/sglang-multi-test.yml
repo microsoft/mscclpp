@@ -21,7 +21,7 @@ parameters:
 
 steps:
 # TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
-# Tracking: the fork below (`caiomcbr/sglang` @ release/v0.5.7) is a personal
+# Tracking: the fork below (`caiomcbr/sglang` @ caiorocha/mscclpp) is a personal
 # branch and should not remain a long-term CI dependency.
 - template: run-remote-task.yml
   parameters:
@@ -36,7 +36,7 @@ steps:
       pip uninstall -y sglang sglang-router || true
       rm -rf /sgl-workspace/sglang || true
       rm -rf sglang
-      git clone -b release/v0.5.7 https://github.com/caiomcbr/sglang.git
+      git clone -b caiorocha/mscclpp https://github.com/caiomcbr/sglang.git
       cd sglang
       pip install -e "python"
       # Sanity check: confirm sglang resolves to our fork on every node.

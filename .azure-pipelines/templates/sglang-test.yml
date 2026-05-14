@@ -36,7 +36,7 @@ steps:
     containerName: ${{ parameters.containerName }}
 
 # TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
-# Tracking: the fork below (`caiomcbr/sglang` @ main) is a personal branch and
+# Tracking: the fork below (`caiomcbr/sglang` @ caiorocha/mscclpp) is a personal branch and
 # should not remain a long-term CI dependency. Also consider pinning to a
 # release branch or commit SHA for reproducibility.
 - template: run-remote-task.yml
@@ -45,7 +45,7 @@ steps:
     displayName: Install SGLang
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
-      git clone -b main https://github.com/caiomcbr/sglang.git
+      git clone -b caiorocha/mscclpp https://github.com/caiomcbr/sglang.git
       cd sglang/python
       pip install -e .
 
