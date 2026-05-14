@@ -95,6 +95,7 @@ There are a few optional CMake options you can set:
 - `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF`: Don't build the Python module.
 - `-DMSCCLPP_BUILD_TESTS=OFF`: Don't build the tests.
 - `-DMSCCLPP_BUILD_APPS_NCCL=OFF`: Don't build the NCCL API.
+- `-DMSCCLPP_BUILD_EXT_TORCHCOMMS=ON`: Build [TorchComms](https://github.com/meta-pytorch/torchcomms) support for MSCCL++ (off by default). Requires PyTorch and pybind11.
 ```
 
 (install-from-source-python-module)=
@@ -264,6 +265,26 @@ export LD_AUDIT=$MSCCLPP_INSTALL_DIR/libmscclpp_audit_nccl.so
 export LD_LIBRARY_PATH=$MSCCLPP_INSTALL_DIR:$LD_LIBRARY_PATH
 torchrun --nnodes=1 --nproc_per_node=8 your_script.py
 ```
+
+(torchcomms-support)=
+### TorchComms Support
+
+MSCCL++ integrates with [TorchComms](https://github.com/meta-pytorch/torchcomms), enabling PyTorch users to use MSCCL++ collectives through the TorchComms API. This is the recommended way to use MSCCL++ in PyTorch training for mixed-backend setups (e.g., MSCCL++ for allreduce, NCCL for broadcast/barrier).
+
+```bash
+$ python -m pip install ./python/mscclpp_torchcomms
+```
+
+```python
+import torchcomms
+import mscclpp_torchcomms  # auto-registers the backend
+
+comm = torchcomms.new_comm("mscclpp", device, name="my_comm")
+comm.all_reduce(tensor, torchcomms.ReduceOp.SUM, False)
+comm.finalize()
+```
+
+See [TorchComms Integration](torchcomms.md) for full documentation including architecture, algorithm selection, user-defined algorithms, testing, benchmarks, and troubleshooting.
 
 ## Version Tracking
 
