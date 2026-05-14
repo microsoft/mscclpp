@@ -11,7 +11,7 @@ FetchContent_Declare(dlpack
     GIT_TAG 5c210da409e7f1e51ddf445134a4376fdbd70d7d
 )
 
-FFetchContent_GetProperties(dlpack)
+FetchContent_GetProperties(dlpack)
 if(NOT dlpack_POPULATED)
     FetchContent_Populate(dlpack)
     # Add dlpack subdirectory but exclude it from installation
