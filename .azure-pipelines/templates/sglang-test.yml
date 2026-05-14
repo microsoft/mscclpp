@@ -51,8 +51,8 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangBenchOneBatch1
-    displayName: Run SGLang Bench One Batch - 1
+    name: RunSGLangBenchOneBatch
+    displayName: Run SGLang Bench One Batch
     runRemoteArgs: '--container ${{ parameters.containerName }}'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1

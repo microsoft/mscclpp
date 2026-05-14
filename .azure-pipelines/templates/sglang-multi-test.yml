@@ -47,8 +47,8 @@ steps:
 # match across ranks and be free on node 0).
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangMultiBenchOneBatch1
-    displayName: Run SGLang Multi-Node Bench One Batch - 1
+    name: RunSGLangMultiBenchOneBatch
+    displayName: Run SGLang Multi-Node Bench One Batch
     runRemoteArgs: '--container ${{ parameters.containerName }} --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
     remoteScript: |
       export FLASHINFER_DISABLE_VERSION_CHECK=1
