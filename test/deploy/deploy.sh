@@ -96,18 +96,12 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker pull ${CONTAINERIMAGE}"
 
 ###############################################################################
-# 8. Remove any existing container with the same name
-###############################################################################
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker rm -f ${CONTAINER_NAME} 2>/dev/null || true"
-
-###############################################################################
-# 9. Launch Docker container
+# 8. Launch Docker container
 ###############################################################################
 
 if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run -itd --name=sglang-mscclpp-test --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash lmsysorg/sglang:latest"
+    "sudo docker run --rm -itd --name=sglang-mscclpp-test --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash lmsysorg/sglang:latest"
 else
   # Set GPU passthrough flags based on platform
   LAUNCH_OPTION="--gpus=all"
@@ -131,7 +125,7 @@ else
 fi
 
 ###############################################################################
-# 9b. Print GPU/driver info from host and container (CUDA only)
+# 8b. Print GPU/driver info from host and container (CUDA only)
 ###############################################################################
 if [ "${PLATFORM}" == "cuda" ]; then
   echo "=== nvidia-smi on host ==="
@@ -149,7 +143,7 @@ if [ "${PLATFORM}" == "cuda" ]; then
 fi
 
 ###############################################################################
-# 10. Run setup script inside the container
+# 9. Run setup script inside the container
 ###############################################################################
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo docker exec -t --user root ${CONTAINER_NAME} bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
