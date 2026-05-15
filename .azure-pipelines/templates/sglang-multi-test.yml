@@ -8,6 +8,8 @@
 #   2. Install a (currently forked) SGLang on each node, replacing any
 #      pre-baked copy from the base image.
 #   3. Run a 2-node sglang.bench_one_batch smoke test with MSCCL++ enabled.
+#   4. Run the MSCCL++ all-reduce micro-benchmark via torchrun across both
+#      nodes.
 # =============================================================================
 
 parameters:
@@ -64,3 +66,39 @@ steps:
         exit 1
       fi
       python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 16 --dist-init-addr ${VMSS}000000:20003 --nnodes 2 --node-rank $NODE_RANK --enable-mscclpp
+
+# Depends on the `sglang/` source tree cloned by the InstallSGLang step above
+# (steps on the same remote share a working directory).
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangMultiTestAllReduce
+    displayName: Run SGLang Multi-Node Test All Reduce
+    runRemoteArgs: '--container ${{ parameters.containerName }} --hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --user azureuser'
+    remoteScript: |
+      export FLASHINFER_DISABLE_VERSION_CHECK=1
+      VMSS="${{ parameters.vmssName }}"
+      HOSTNAME=$(hostname)
+      # Explicit 2-node mapping: hostname suffix -> torchrun node rank.
+      if [ "$HOSTNAME" = "${VMSS}000000" ]; then
+        NODE_RANK=0
+      elif [ "$HOSTNAME" = "${VMSS}000001" ]; then
+        NODE_RANK=1
+      else
+        echo "Unknown hostname: $HOSTNAME"
+        exit 1
+      fi
+
+      export NODE_SIZE=2
+      export WORLD_SIZE=8
+
+      cd sglang
+
+      # Port 20004 is the torchrun rendezvous port (arbitrary, must match
+      # across ranks and be free on node 0). Distinct from 20003 used by
+      # sglang.bench_one_batch above.
+      torchrun --nproc_per_node $WORLD_SIZE \
+        --nnodes $NODE_SIZE \
+        --node_rank $NODE_RANK \
+        --master_addr ${VMSS}000000 \
+        --master_port 20004 \
+        benchmark/kernels/all_reduce/benchmark_mscclpp.py
