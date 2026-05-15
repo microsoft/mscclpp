@@ -119,12 +119,6 @@ class Env {
   /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
   const int ibGidIndex;
 
-  /// Env name: `MSCCLPP_IPC_DOMAIN_NRANKS`. Number of ranks that share a single GPU-IPC-reachable peer
-  /// group (e.g. a Multi-Node NVLink fabric such as GB200 NVL72, or an AMD XGMI domain). This hint is
-  /// consumed only by the collective algorithms; it does not affect `Bootstrap::getNranksPerNode()` or
-  /// any other layer. If unset or non-positive, algorithms fall back to `bootstrap->getNranksPerNode()`.
-  const int ipcDomainNranks;
-
  private:
   Env();
 

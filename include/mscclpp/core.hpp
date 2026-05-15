@@ -821,6 +821,18 @@ class Communicator {
   /// @return The context held by this communicator.
   std::shared_ptr<Context> context();
 
+  /// Set the IPC-domain rank count for collective algorithms using this communicator.
+  ///
+  /// The value describes how many ranks are in one GPU-IPC-reachable peer group, such as a Multi-Node NVLink
+  /// fabric. Set to 0 to use the default `bootstrap()->getNranksPerNode()` value.
+  ///
+  /// @param ipcDomainNranks Number of ranks in the communicator's IPC domain, or 0 to use the default.
+  void setIpcDomainNranks(int ipcDomainNranks);
+
+  /// Get the IPC-domain rank count override for this communicator.
+  /// @return The configured IPC-domain rank count, or 0 if the communicator uses `bootstrap()->getNranksPerNode()`.
+  int getIpcDomainNranks() const;
+
   /// Register a region of GPU memory for use in this communicator's context.
   ///
   /// @param ptr Base pointer to the memory.

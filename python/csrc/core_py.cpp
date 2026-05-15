@@ -282,6 +282,8 @@ void register_core(nb::module_& m) {
            nb::arg("context") = nullptr)
       .def("bootstrap", &Communicator::bootstrap)
       .def("context", &Communicator::context)
+      .def("set_ipc_domain_n_ranks", &Communicator::setIpcDomainNranks, nb::arg("n_ranks"))
+      .def("get_ipc_domain_n_ranks", &Communicator::getIpcDomainNranks)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {

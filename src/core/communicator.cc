@@ -81,6 +81,15 @@ MSCCLPP_API_CPP std::shared_ptr<Bootstrap> Communicator::bootstrap() { return pi
 
 MSCCLPP_API_CPP std::shared_ptr<Context> Communicator::context() { return pimpl_->context_; }
 
+MSCCLPP_API_CPP void Communicator::setIpcDomainNranks(int ipcDomainNranks) {
+  if (ipcDomainNranks < 0) {
+    throw Error("ipcDomainNranks must be non-negative", ErrorCode::InvalidUsage);
+  }
+  pimpl_->ipcDomainNranks_ = ipcDomainNranks;
+}
+
+MSCCLPP_API_CPP int Communicator::getIpcDomainNranks() const { return pimpl_->ipcDomainNranks_; }
+
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return context()->registerMemory(ptr, size, transports);
 }

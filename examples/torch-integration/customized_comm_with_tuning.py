@@ -8,10 +8,6 @@ import os
 
 from mpi4py import MPI
 
-_world_size = MPI.COMM_WORLD.Get_size()
-if _world_size > 1 and "MSCCLPP_IPC_DOMAIN_NRANKS" not in os.environ:
-    os.environ["MSCCLPP_IPC_DOMAIN_NRANKS"] = str(_world_size)
-
 import torch
 import mscclpp
 import mscclpp.ext
@@ -101,8 +97,10 @@ class CustomizedComm:
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.nranks_per_node = comm.nranks_per_node
-        nvlink_domain_nranks = int(os.environ.get("MSCCLPP_IPC_DOMAIN_NRANKS", "0"))
-        self.multi_host_mnnvl = nvlink_domain_nranks >= self.world_size and self.world_size > self.nranks_per_node
+        if comm.communicator.get_ipc_domain_n_ranks() == 0 and self.world_size > 1:
+            comm.communicator.set_ipc_domain_n_ranks(self.world_size)
+        self.ipc_domain_n_ranks = comm.communicator.get_ipc_domain_n_ranks()
+        self.multi_host_mnnvl = self.ipc_domain_n_ranks >= self.world_size and self.world_size > self.nranks_per_node
         self.symmetric_memory = symmetric_memory
         self._nvls = mscclpp.is_nvls_supported()
 

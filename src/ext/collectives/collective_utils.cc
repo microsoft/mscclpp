@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
-#include <mscclpp/env.hpp>
 #include <mscclpp/errors.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
@@ -73,23 +72,22 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
   return memorySemaphores;
 }
 
-int getIpcDomainNranks(std::shared_ptr<mscclpp::Communicator> comm) {
-  const int envValue = mscclpp::env()->ipcDomainNranks;
-  const int ipcDomainNranks = (envValue > 0) ? envValue : comm->bootstrap()->getNranksPerNode();
+int getIpcDomainNranks(std::shared_ptr<Communicator> comm) {
+  const int commValue = comm->getIpcDomainNranks();
+  const int ipcDomainNranks = (commValue > 0) ? commValue : comm->bootstrap()->getNranksPerNode();
   const int worldSize = comm->bootstrap()->getNranks();
   const int rank = comm->bootstrap()->getRank();
   if (ipcDomainNranks < 2 || ipcDomainNranks > MAX_IPC_DOMAIN_NRANKS) {
-    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "ipcDomainNranks ",
-          ipcDomainNranks, " is out of supported range [2, ", MAX_IPC_DOMAIN_NRANKS, "]");
+    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage, "ipcDomainNranks ", ipcDomainNranks,
+          " is out of supported range [2, ", MAX_IPC_DOMAIN_NRANKS, "]");
   }
   if (worldSize != ipcDomainNranks) {
-    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage,
+    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage,
           "requires worldSize == ipcDomainNranks (got worldSize=", worldSize, ", ipcDomainNranks=", ipcDomainNranks,
           ")");
   }
   if (rank < 0 || rank >= ipcDomainNranks) {
-    THROW(mscclpp::LogSubsys::ALGO, mscclpp::Error, mscclpp::ErrorCode::InvalidUsage, "rank ", rank, " out of [0, ",
-          ipcDomainNranks, ")");
+    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage, "rank ", rank, " out of [0, ", ipcDomainNranks, ")");
   }
   return ipcDomainNranks;
 }
