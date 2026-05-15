@@ -115,7 +115,8 @@ AlgorithmCollection AlgorithmCollectionBuilder::buildDefaultDslAlgorithms(int ra
       {"allreduce_2nodes_1K_64K.json", "allreduce", 8, 16, {{"default", 1}}},
       {"allreduce_2nodes_64K_2M.json", "allreduce", 8, 16, {{"default", 1}}},
       {"allgather_mrc_2_nodes.json", "allgather", 1, 2, {{"default", 1}}},
-      {"allgather_mrc_4_nodes.json", "allgather", 1, 4, {{"default", 1}}}};
+      {"allgather_mrc_4_nodes.json", "allgather", 1, 4, {{"default", 1}}},
+      {"allgather_mrc_8_nodes.json", "allgather", 1, 8, {{"default", 1}}}};
   AlgorithmCollection collection;
 
   static auto generateFileId = [](const std::string& input) {
