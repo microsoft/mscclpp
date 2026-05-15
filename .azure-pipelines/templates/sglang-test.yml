@@ -50,15 +50,6 @@ steps:
 
 - template: run-remote-task.yml
   parameters:
-    name: RunSGLangBenchOneBatch
-    displayName: Run SGLang Bench One Batch
-    runRemoteArgs: '--container ${{ parameters.containerName }}'
-    remoteScript: |
-      export FLASHINFER_DISABLE_VERSION_CHECK=1
-      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 8 --enable-mscclpp
-
-- template: run-remote-task.yml
-  parameters:
     name: RunSGLangValidationTest
     displayName: Run SGLang Validation Test
     runRemoteArgs: '--container ${{ parameters.containerName }}'
