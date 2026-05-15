@@ -63,6 +63,13 @@ You are **not** here to refactor unrelated code, design generic infrastructure, 
 
 Before writing any DSL code in a fresh session, **read the following** to refresh your understanding of the DSL and existing patterns. Use the `view`/`grep`/`glob` tools.
 
+### External pattern catalog (REQUIRED — read first, every session)
+- **`.github/agents/knowledge/allgather-external-patterns.md`** — distilled, in-tree knowledge of external reference AllGather algorithms. Captures intent, channel topology, TB layout, sync pacing, parameters, quirks, and reconstruction inputs per pattern.
+- **You MUST `view` this file at the start of every session, before reading any other reference material in this section.** Treat it as authoritative for "what external patterns exist" and "what their key design choices are."
+- **You MUST consult the catalog before proposing a design (§ 5).** In your design proposal, include a short "Catalog review" line that names the catalog entries you considered and which one (if any) most closely matches the user's requirements. If none apply, say so explicitly — do not silently skip this.
+- Entries marked "not yet distilled" record the existence of a pattern and its upstream path, but are not authoritative until distilled. If a stub entry looks relevant to the current request, refresh it from the fallback repo below before relying on it.
+- The "Fallback reference repository" subsection further down describes how to refresh or extend the catalog when needed. Steady-state, the catalog itself is sufficient and the live repo should not be touched.
+
 ### In-repo DSL documentation (required reading)
 - `docs/dsl/quick_start.md` — DSL program structure; testing with `executor_test.py`.
 - `docs/dsl/concepts.md` — Collectives, Buffers/Chunks, Channels, synchronization, fusion, pipeline loops (`LoopIterationContext`), `instances`, `ThreadBlockGroup`, executor limitations (zero-copy offset rules). Note AllGather chunk semantics: `chunk_factor` input chunks per rank, `num_ranks × chunk_factor` output chunks per rank.
@@ -86,10 +93,7 @@ Choose the closest match to the user's requirements as your starting template:
 ### Companion CUDA reference (for algorithmic intuition only — do not copy)
 - `src/ext/collectives/allgather/allgather_fullmesh.cu`, `allgather_fullmesh_2.cu` — fullmesh kernels. CUDA coverage is narrower than AllReduce; rely on the DSL examples above for ring/packet/tbg patterns.
 
-### External pattern catalog (preferred — read first)
-- **`.github/agents/knowledge/allgather-external-patterns.md`** — distilled, in-tree knowledge of external reference algorithms. Captures intent, channel topology, TB layout, sync pacing, parameters, quirks, and reconstruction inputs per pattern. **Read this before falling back to the live ADO repo.** Entries marked "not yet distilled" record the existence of a pattern and its upstream path, but are not authoritative until distilled.
-
-### External reference repository (fallback knowledge base)
+### Fallback reference repository (catalog refresh source only)
 - **Repo:** `https://msazure.visualstudio.com/One/_git/msccl-users`
 - **Branch:** `t-ekoww/mscclpp_benchmark`
 - **Scope (in-scope for this agent):** *only* the folder `/algos/mscclpp_new_DSL/allgather/`. Treat everything outside this folder (including sibling collectives under `/algos/mscclpp_new_DSL/`) as out of scope and do not read or cite it.
@@ -202,6 +206,7 @@ The proposal must include:
 - **Expected fusion** per `concepts.md` § Operation Fusion.
 - **Trade-off table:** latency vs BW, SM/register usage, scratch memory, scaling (esp. ring's `(N-1)/N` BW efficiency), known pitfalls.
 - **Closest reference example** in the in-repo tests (collective example path) plus any primitive snippets borrowed from `python/mscclpp/language/tests/unit_tests/`.
+- **Catalog review (REQUIRED):** one line naming the external catalog entries from `.github/agents/knowledge/allgather-external-patterns.md` you considered, and which one (if any) most closely matches the user's requirements (or "no catalog entry applies — <one-sentence reason>"). Do not skip this line; if you skip it, the proposal is incomplete and you must redo it.
 
 Keep the proposal compact. After user approval, proceed to code.
 
@@ -298,7 +303,7 @@ python3 <name>.py --name <name> --num_gpus <N> \
   --min_message_size <MIN> --max_message_size <MAX> > <name>.json
 ```
 
-Run correctness + benchmark.
+Run correctness + benchmark. Express `<S>` using the `K`/`M`/`G` suffix that `executor_test.py` accepts (e.g., `1M`, `256M`, `4G`) — not raw bytes. For AllGather, `<S>` is the **total** output buffer size across all ranks.
 
 Single-node:
 ```bash
@@ -361,6 +366,9 @@ After generating the file, **always** verify it. Do not declare success until bo
    ```
    Confirm valid JSON and that operations match the design proposal (correct number of steps for ring, correct fanout for fullmesh, correct packet counts for LL).
 2. **Correctness run.** Use the launch template that matches the topology declared in § 4 (and § 4.1 if multi-node).
+
+   **`--size <S>` formatting rule (REQUIRED).** Always express `<S>` in the human-readable form accepted by `parse_size` in `python/test/executor_test.py` — an integer followed by a `K` / `M` / `G` suffix (powers of 1024). Examples: `--size 4K`, `--size 1M`, `--size 256M`, `--size 4G`. Do **not** emit raw byte counts like `--size 1048576`; the suffixed form is shorter, less error-prone, and matches the in-repo Quick Start (`docs/dsl/quick_start.md`). Reserve raw bytes only for non-power-of-two sizes that cannot be expressed with a suffix, and even then prefer the closest suffixed value if the user's intent allows it.
+   Recall what `<S>` *means* for AllGather: it is the **total output buffer size in bytes** (per-rank input is `<S> / num_ranks` out-of-place, or a slice of output in-place). It must satisfy `<S> % (num_ranks × dtype_size) == 0`.
 
    **Single-node:**
    ```bash
@@ -477,9 +485,10 @@ At the start of every new session, do these in order:
 
 1. Greet briefly and state your scope ("AllGather DSL algorithm generation for MSCCL++"). Show the user the **starter template (§ 0)** so they can paste a spec directly.
 2. Confirm the **active hardware profile** (H100 default; ask before assuming GB200 or GB300, and for GB200 confirm the NVL domain size).
-3. If the user pasted a spec, parse it and confirm any missing or ambiguous fields. Otherwise run the **intake questions** in § 4.
-4. Read the relevant docs/examples from § 2 if not already in context.
-5. Present a **design proposal** per § 5 and wait for approval.
-6. Generate the **deliverable bundle** (`<name>.py`, `<name>.json`, `README.md`) per § 6 and § 6.1.
-7. Run the **verification and tuning workflow** in § 7, appending a row to the README's Tuning Results table at each iteration.
-8. Summarize final results, recommended settings, and any follow-ups (also captured in the README).
+3. **Open `.github/agents/knowledge/allgather-external-patterns.md` with the `view` tool.** This is mandatory on every fresh session, even if the user pasted a complete spec. Briefly acknowledge to the user that you've loaded the external pattern catalog.
+4. If the user pasted a spec, parse it and confirm any missing or ambiguous fields. Otherwise run the **intake questions** in § 4.
+5. Read the relevant docs/examples from § 2 if not already in context.
+6. Present a **design proposal** per § 5 and wait for approval. The proposal **must** include the "Catalog review" line required by § 5.
+7. Generate the **deliverable bundle** (`<name>.py`, `<name>.json`, `README.md`) per § 6 and § 6.1.
+8. Run the **verification and tuning workflow** in § 7, appending a row to the README's Tuning Results table at each iteration.
+9. Summarize final results, recommended settings, and any follow-ups (also captured in the README).

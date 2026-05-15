@@ -279,7 +279,7 @@ python3 <name>.py --name <name> --num_gpus <N> \
   --min_message_size <MIN> --max_message_size <MAX> > <name>.json
 ```
 
-Run correctness + benchmark.
+Run correctness + benchmark. Express `<S>` using the `K`/`M`/`G` suffix that `executor_test.py` accepts (e.g., `1M`, `256M`, `4G`) — not raw bytes. For AllReduce, `<S>` is the **per-rank** buffer size.
 
 Single-node:
 ```bash
@@ -342,6 +342,9 @@ After generating the file, **always** verify it. Do not declare success until bo
    ```
    Confirm valid JSON and that operations match the design proposal.
 2. **Correctness run.** Use the launch template that matches the topology declared in § 4 (and § 4.1 if multi-node).
+
+   **`--size <S>` formatting rule (REQUIRED).** Always express `<S>` in the human-readable form accepted by `parse_size` in `python/test/executor_test.py` — an integer followed by a `K` / `M` / `G` suffix (powers of 1024). Examples: `--size 4K`, `--size 1M`, `--size 256M`, `--size 4G`. Do **not** emit raw byte counts like `--size 1048576`; the suffixed form is shorter, less error-prone, and matches the in-repo Quick Start (`docs/dsl/quick_start.md`). Reserve raw bytes only for non-power-of-two sizes that cannot be expressed with a suffix, and even then prefer the closest suffixed value if the user's intent allows it.
+   Recall what `<S>` *means* for AllReduce: it is the **per-rank buffer size in bytes** (input and output are both `<S>` bytes on every rank). It must satisfy `<S> % dtype_size == 0`.
 
    **Single-node:**
    ```bash
