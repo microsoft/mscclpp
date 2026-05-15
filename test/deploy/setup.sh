@@ -8,7 +8,7 @@ PLATFORM="${1:-cuda}"
 # keeps the installed packages reachable from the default `python3` used by
 # later CI steps (which run via `docker exec bash -c` and do not source any
 # venv activation).
-export PIP_BREAK_SYSTEM_PACKAGES=1
+# export PIP_BREAK_SYSTEM_PACKAGES=1
 
 mkdir -p /root/.ssh
 mv /root/mscclpp/sshkey.pub /root/.ssh/authorized_keys
