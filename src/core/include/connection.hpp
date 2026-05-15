@@ -50,6 +50,23 @@ class BaseConnection {
   /// When false, the NIC writes directly to the semaphore's registered memory (e.g., via atomics).
   virtual bool isSignalForwarding() const { return false; }
 
+  /// Request a flush. Subclasses that support async flush (e.g. IBConnection) override this
+  /// to be a no-op and rely on progressFlush() to drive completion via the proxy thread.
+  /// The default does a blocking flush(); progressFlush() then trivially returns true.
+  /// @note Only call from the proxy thread.
+  virtual void requestFlush() { flush(); }
+
+  /// Progress pending async flush operations (non-blocking CQ poll).
+  /// @note Only call from the proxy thread.
+  /// @return true if no flush is pending (CQ fully drained or no request).
+  virtual bool progressFlush() { return true; }
+
+  /// Get pointer to the GPU-visible flush-done position (host-pinned memory).
+  /// ProxyService writes "one past the highest completed FIFO position" here when the CQ
+  /// drains; GPU threads spin on it (`waitFlush`) until it surpasses their own push position.
+  /// @note Pointer is valid for the lifetime of this Connection.
+  uint64_t* getFlushDonePtr() const { return gpuFlushDonePos_.get(); }
+
   virtual Transport transport() const = 0;
 
   virtual Transport remoteTransport() const = 0;
@@ -75,6 +92,11 @@ class BaseConnection {
   std::shared_ptr<Context> context_;
   Endpoint localEndpoint_;
   int maxWriteQueueSize_;
+
+  // GPU-visible flush-done position (host-pinned memory). ProxyService writes one past the
+  // highest FIFO position whose TriggerSync request has fully completed on this connection
+  // (CQ drained for IB, synchronous flush() returned for non-IB).
+  std::shared_ptr<uint64_t> gpuFlushDonePos_;
 };
 
 class CudaIpcConnection : public BaseConnection {
@@ -149,6 +171,9 @@ class IBConnection : public BaseConnection {
   void updateAndSync(RegisteredMemory dst, uint64_t dstOffset, uint64_t* src, uint64_t newValue) override;
 
   void flush(int64_t timeoutUsec) override;
+
+  void requestFlush() override;
+  bool progressFlush() override;
 };
 
 class EthernetConnection : public BaseConnection {

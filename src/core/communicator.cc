@@ -11,42 +11,24 @@ namespace mscclpp {
 
 namespace {
 
-template <typename Fn>
-class ScopeGuard {
- public:
-  explicit ScopeGuard(Fn fn) : fn_(std::move(fn)) {}
-  ScopeGuard(const ScopeGuard&) = delete;
-  ScopeGuard& operator=(const ScopeGuard&) = delete;
-  ~ScopeGuard() { fn_(); }
-
- private:
-  Fn fn_;
-};
-
-template <typename Fn>
-ScopeGuard<Fn> makeScopeGuard(Fn fn) {
-  return ScopeGuard<Fn>(std::move(fn));
-}
-
-template <typename T, typename Impl, typename Fn>
-std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Fn fn) {
+template <typename T, typename Impl, typename Func>
+std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Func func) {
+  // Weak placeholder to avoid a reference cycle; updated with the real recvItem after the future is created.
   auto thisRecvItem = std::make_shared<std::weak_ptr<BaseRecvItem>>();
   auto future = std::async(std::launch::deferred,
                            [impl, remoteRank, tag, thisRecvItem, lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
-                            fn = std::move(fn)]() mutable {
-                             [[maybe_unused]] auto cleanup = makeScopeGuard([impl, remoteRank, tag, thisRecvItem]() {
-                               auto item = thisRecvItem->lock();
-                               auto it = impl->lastRecvItems_.find({remoteRank, tag});
-                               if (item && it != impl->lastRecvItems_.end() && it->second == item) {
-                                 impl->lastRecvItems_.erase(it);
-                               }
-                             });
+                            func = std::move(func)]() mutable {
+                             auto cleanup = [impl, remoteRank, tag, thisRecvItem]() {
+                               impl->clearLastRecvItemIfMatches(remoteRank, tag, thisRecvItem->lock());
+                             };
 
                              if (lastRecvItem) {
                                // Recursive call to the previous receive items
                                lastRecvItem->wait();
                              }
-                             return fn();
+                             auto result = func();
+                             cleanup();
+                             return result;
                            });
   auto sharedFuture = std::shared_future<T>(std::move(future));
   auto recvItem = std::make_shared<RecvItem<T>>(sharedFuture);
@@ -80,6 +62,14 @@ std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank
     return nullptr;
   }
   return it->second;
+}
+
+void Communicator::Impl::clearLastRecvItemIfMatches(int remoteRank, int tag,
+                                                    const std::shared_ptr<BaseRecvItem>& expectedItem) {
+  auto it = lastRecvItems_.find({remoteRank, tag});
+  if (it != lastRecvItems_.end() && it->second == expectedItem) {
+    lastRecvItems_.erase(it);
+  }
 }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;

@@ -17,6 +17,19 @@ using SemaphoreId = uint32_t;
 /// actual.
 using MemoryId = uint32_t;
 
+namespace detail {
+#if defined(MSCCLPP_DEVICE_COMPILE)
+/// Wait until the proxy has processed and drained the TriggerSync at FIFO position `fifoPos`.
+/// The proxy publishes `flushDonePos = latestCompletedPos + 1` when the CQ drains, so the
+/// wait condition `flushDonePos > fifoPos` is satisfied exactly when our own request has
+/// been completed. Using the FIFO push position as the wait target couples the wait to the
+/// FIFO order, avoiding races when multiple GPU threads concurrently flush the same channel.
+MSCCLPP_DEVICE_INLINE void waitFlush(uint64_t* flushDonePos, uint64_t fifoPos, [[maybe_unused]] int64_t maxSpinCount) {
+  POLL_MAYBE_JAILBREAK((atomicLoad<uint64_t, scopeSystem>(flushDonePos, memoryOrderAcquire) <= fifoPos), maxSpinCount);
+}
+#endif  // defined(MSCCLPP_DEVICE_COMPILE)
+}  // namespace detail
+
 struct BasePortChannelDeviceHandle {
   SemaphoreId semaphoreId_;
 
@@ -26,12 +39,16 @@ struct BasePortChannelDeviceHandle {
   // can produce for and the sole proxy thread consumes it.
   FifoDeviceHandle fifo_;
 
+  // One past the highest FIFO position with a completed flush on this connection.
+  // Host-pinned: proxy writes after CQ drain, GPU reads in waitFlush().
+  uint64_t* flushDonePos_;
+
   MSCCLPP_INLINE BasePortChannelDeviceHandle() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE BasePortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                          Host2DeviceSemaphoreDeviceHandle semaphore,
-                                                         FifoDeviceHandle fifo)
-      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo) {}
+                                                         FifoDeviceHandle fifo, uint64_t* flushDonePos)
+      : semaphoreId_(semaphoreId), semaphore_(semaphore), fifo_(fifo), flushDonePos_(flushDonePos) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerData to the FIFO.
@@ -86,9 +103,9 @@ struct BasePortChannelDeviceHandle {
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void putWithSignalAndFlush(MemoryId dstId, uint64_t dstOffset, MemoryId srcId,
                                                    uint64_t srcOffset, uint64_t size, int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead =
+    uint64_t pos =
         fifo_.push({TriggerData | TriggerFlag | TriggerSync, dstId, dstOffset, srcId, srcOffset, size, semaphoreId_});
-    fifo_.sync(curFifoHead, maxSpinCount);
+    detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
   /// Push a TriggerData, a TriggerFlag, and a TriggerSync at the same time to the FIFO.
@@ -105,8 +122,8 @@ struct BasePortChannelDeviceHandle {
   /// Push a TriggerSync to the FIFO.
   /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
   MSCCLPP_DEVICE_INLINE void flush(int64_t maxSpinCount = 1000000) {
-    uint64_t curFifoHead = fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
-    fifo_.sync(curFifoHead, maxSpinCount);
+    uint64_t pos = fifo_.push({TriggerSync, 0, 0, 0, 0, 1, semaphoreId_});
+    detail::waitFlush(flushDonePos_, pos, maxSpinCount);
   }
 
   /// Check if the port channel has been signaled.
@@ -128,8 +145,8 @@ struct PortChannelDeviceHandle : public BasePortChannelDeviceHandle {
 
   MSCCLPP_HOST_DEVICE_INLINE PortChannelDeviceHandle(SemaphoreId semaphoreId,
                                                      Host2DeviceSemaphoreDeviceHandle semaphore, FifoDeviceHandle fifo,
-                                                     MemoryId dst, MemoryId src)
-      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo), dst_(dst), src_(src) {}
+                                                     MemoryId dst, MemoryId src, uint64_t* flushDonePos)
+      : BasePortChannelDeviceHandle(semaphoreId, semaphore, fifo, flushDonePos), dst_(dst), src_(src) {}
 
 #if defined(MSCCLPP_DEVICE_COMPILE)
   /// Push a TriggerData to the FIFO.
