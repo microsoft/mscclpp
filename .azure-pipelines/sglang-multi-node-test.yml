@@ -59,6 +59,10 @@ parameters:
 jobs:
 - job: SGlangTestMultiNode
   displayName: SGLANG Test Multi Node
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
   pool:
     name: mscclpp-multi-node
   container:
