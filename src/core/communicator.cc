@@ -17,38 +17,34 @@ class ScopeGuard {
   explicit ScopeGuard(Func func) : func_(std::move(func)) {}
   ScopeGuard(const ScopeGuard&) = delete;
   ScopeGuard& operator=(const ScopeGuard&) = delete;
-  ~ScopeGuard() { func_(); }
+  ScopeGuard(ScopeGuard&&) = delete;
+  ScopeGuard& operator=(ScopeGuard&&) = delete;
+  ~ScopeGuard() noexcept {
+    static_assert(noexcept(std::declval<Func&>()()), "ScopeGuard cleanup must be noexcept");
+    func_();
+  }
 
  private:
   Func func_;
 };
 
-template <typename Func>
-ScopeGuard<Func> makeScopeGuard(Func func) {
-  return ScopeGuard<Func>(std::move(func));
-}
-
 template <typename T, typename Impl, typename Func>
 std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Func func) {
   // Weak placeholder to avoid a reference cycle; updated with the real recvItem after the future is created.
   auto thisRecvItem = std::make_shared<std::weak_ptr<BaseRecvItem>>();
-  auto future = std::async(std::launch::deferred,
-                           [impl, remoteRank, tag, thisRecvItem, lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
-                            func = std::move(func)]() mutable {
-                             [[maybe_unused]] auto cleanup = makeScopeGuard([impl, remoteRank, tag, thisRecvItem]() {
-                               auto item = thisRecvItem->lock();
-                               auto it = impl->lastRecvItems_.find({remoteRank, tag});
-                               if (item && it != impl->lastRecvItems_.end() && it->second == item) {
-                                 impl->lastRecvItems_.erase(it);
-                               }
-                             });
+  auto future = std::async(
+      std::launch::deferred, [impl, remoteRank, tag, thisRecvItem,
+                              lastRecvItem = impl->getLastRecvItem(remoteRank, tag), func = std::move(func)]() mutable {
+        [[maybe_unused]] ScopeGuard cleanup([impl, remoteRank, tag, thisRecvItem]() noexcept {
+          impl->clearLastRecvItemIfMatches(remoteRank, tag, thisRecvItem->lock());
+        });
 
-                             if (lastRecvItem) {
-                               // Recursive call to the previous receive items
-                               lastRecvItem->wait();
-                             }
-                             return func();
-                           });
+        if (lastRecvItem) {
+          // Recursive call to the previous receive items
+          lastRecvItem->wait();
+        }
+        return func();
+      });
   auto sharedFuture = std::shared_future<T>(std::move(future));
   auto recvItem = std::make_shared<RecvItem<T>>(sharedFuture);
   *thisRecvItem = recvItem;
@@ -81,6 +77,14 @@ std::shared_ptr<BaseRecvItem> Communicator::Impl::getLastRecvItem(int remoteRank
     return nullptr;
   }
   return it->second;
+}
+
+void Communicator::Impl::clearLastRecvItemIfMatches(int remoteRank, int tag,
+                                                    const std::shared_ptr<BaseRecvItem>& expectedItem) {
+  auto it = lastRecvItems_.find({remoteRank, tag});
+  if (it != lastRecvItems_.end() && it->second == expectedItem) {
+    lastRecvItems_.erase(it);
+  }
 }
 
 MSCCLPP_API_CPP Communicator::~Communicator() = default;
