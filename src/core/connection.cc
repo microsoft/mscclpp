@@ -7,13 +7,13 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "api.h"
+#include "atomic.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
 #include "gpu_utils_internal.hpp"
@@ -43,7 +43,10 @@ const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& me
 Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
 MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-    : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+    : context_(context),
+      localEndpoint_(localEndpoint),
+      maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()),
+      gpuFlushDonePos_(detail::gpuCallocHostShared<uint64_t>()) {}
 
 MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
@@ -487,6 +490,35 @@ void IBConnection::flush(int64_t timeoutUsec) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_CONN_IB_FLUSH_EXIT)
   NpKit::CollectCpuEvent(NPKIT_EVENT_CONN_IB_FLUSH_EXIT, 0, 0, *NpKit::GetCpuTimestamp(), 0);
 #endif
+}
+
+void IBConnection::requestFlush() {
+  // No-op: IB sends were already posted by prior conn.write() calls in handleTrigger.
+  // progressFlush() drives completion by polling the send CQ.
+}
+
+bool IBConnection::progressFlush() {
+  if (recvThreadError_.load(std::memory_order_acquire)) {
+    THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
+  }
+
+  auto qp = qp_.lock();
+  if (!qp || qp->getNumSendCqItems() == 0) {
+    return true;  // QP expired or CQ already drained.
+  }
+
+  int wcNum = qp->pollSendCq();
+  if (wcNum < 0) {
+    THROW(NET, IbError, errno, "pollSendCq failed in progressFlush");
+  }
+  for (int i = 0; i < wcNum; ++i) {
+    int status = qp->getSendWcStatus(i);
+    if (status != static_cast<int>(WsStatus::Success)) {
+      THROW(NET, Error, ErrorCode::SystemError,
+            "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
+    }
+  }
+  return qp->getNumSendCqItems() == 0;
 }
 
 // EthernetConnection
