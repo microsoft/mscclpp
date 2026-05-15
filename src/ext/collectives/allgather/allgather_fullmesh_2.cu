@@ -159,7 +159,7 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerNode();
+  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
 
   // setup semaphores
   ctx->memorySemaphores = this->memorySemaphores_;

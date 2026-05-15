@@ -51,11 +51,6 @@ std::vector<Connection> setupConnections(std::shared_ptr<Communicator> comm);
 std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> setupMemorySemaphores(
     std::shared_ptr<Communicator> comm, const std::vector<Connection>& connections, int nChannelsPerConnection);
 
-/// Returns the IPC-reachable peer-group size, validated to span the whole communicator and
-/// to be within `[2, MAX_IPC_DOMAIN_NRANKS]`. Reads the communicator's IPC-domain override
-/// if set; otherwise falls back to `bootstrap->getNranksPerNode()`. Throws `Error(InvalidUsage)` on violation.
-int getIpcDomainNranks(std::shared_ptr<Communicator> comm);
-
 std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<MemoryChannel>& memoryChannels);
 

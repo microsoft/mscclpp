@@ -829,8 +829,8 @@ class Communicator {
   /// @param ipcDomainNranks Number of ranks in the communicator's IPC domain, or 0 to use the default.
   void setIpcDomainNranks(int ipcDomainNranks);
 
-  /// Get the IPC-domain rank count override for this communicator.
-  /// @return The configured IPC-domain rank count, or 0 if the communicator uses `bootstrap()->getNranksPerNode()`.
+  /// Get the effective IPC-domain rank count for this communicator.
+  /// @return The configured IPC-domain rank count, or `bootstrap()->getNranksPerNode()` if no override is set.
   int getIpcDomainNranks() const;
 
   /// Register a region of GPU memory for use in this communicator's context.

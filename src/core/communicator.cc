@@ -3,8 +3,6 @@
 
 #include "communicator.hpp"
 
-#include <utility>
-
 #include "api.h"
 
 namespace mscclpp {
@@ -88,7 +86,9 @@ MSCCLPP_API_CPP void Communicator::setIpcDomainNranks(int ipcDomainNranks) {
   pimpl_->ipcDomainNranks_ = ipcDomainNranks;
 }
 
-MSCCLPP_API_CPP int Communicator::getIpcDomainNranks() const { return pimpl_->ipcDomainNranks_; }
+MSCCLPP_API_CPP int Communicator::getIpcDomainNranks() const {
+  return (pimpl_->ipcDomainNranks_ > 0) ? pimpl_->ipcDomainNranks_ : pimpl_->bootstrap_->getNranksPerNode();
+}
 
 MSCCLPP_API_CPP RegisteredMemory Communicator::registerMemory(void* ptr, size_t size, TransportFlags transports) {
   return context()->registerMemory(ptr, size, transports);

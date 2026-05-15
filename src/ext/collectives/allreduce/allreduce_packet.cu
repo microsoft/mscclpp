@@ -263,7 +263,7 @@ std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Comm
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;
   ctx->registeredMemories.pop_back();  // remove the local memory from previous context

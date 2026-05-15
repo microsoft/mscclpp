@@ -200,7 +200,7 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
 
   ctx->memorySemaphores = this->semaphores_;
 

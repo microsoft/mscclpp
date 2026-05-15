@@ -97,8 +97,6 @@ class CustomizedComm:
         self.rank = comm.my_rank
         self.world_size = comm.nranks
         self.nranks_per_node = comm.nranks_per_node
-        if comm.communicator.get_ipc_domain_n_ranks() == 0 and self.world_size > 1:
-            comm.communicator.set_ipc_domain_n_ranks(self.world_size)
         self.ipc_domain_n_ranks = comm.communicator.get_ipc_domain_n_ranks()
         self.multi_host_mnnvl = self.ipc_domain_n_ranks >= self.world_size and self.world_size > self.nranks_per_node
         self.symmetric_memory = symmetric_memory
@@ -433,8 +431,8 @@ def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=10, 
 # -- Bootstrap & main ---------------------------------------------------------
 
 
-def init_dist() -> mscclpp.CommGroup:
-    return mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD)
+def init_dist(ipc_domain_n_ranks: int = 0) -> mscclpp.CommGroup:
+    return mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD, ipc_domain_n_ranks=ipc_domain_n_ranks)
 
 
 def main():
@@ -447,8 +445,9 @@ def main():
     accum_str = os.environ.get("ACCUM_DTYPE")
     accum_dtype = accum_map.get(accum_str) if accum_str else None
     symmetric_memory = os.environ.get("SYMMETRIC_MEMORY", "1") == "1"
+    ipc_domain_n_ranks = int(os.environ.get("IPC_DOMAIN_NRANKS", "0"))
 
-    comm_group = init_dist()
+    comm_group = init_dist(ipc_domain_n_ranks=ipc_domain_n_ranks)
     cc = CustomizedComm(comm_group, symmetric_memory=symmetric_memory)
 
     print(

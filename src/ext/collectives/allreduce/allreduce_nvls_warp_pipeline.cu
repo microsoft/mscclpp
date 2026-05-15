@@ -141,7 +141,7 @@ struct NvlsWarpPipelineAdapter {
 
 void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = NUM_NVLS_CONNECTION;
-  ipcDomainNranks_ = getIpcDomainNranks(comm);
+  ipcDomainNranks_ = comm->getIpcDomainNranks();
   // Per-peer channel allocation must hold 2 * nBlocks entries; default nBlocks = 4 * ipcDomainNranks.
   nBaseChannels_ = std::max(64, 8 * ipcDomainNranks_);
   this->conns_ = setupConnections(comm);
@@ -188,7 +188,7 @@ std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::share
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
 
   // setup channels
   ctx->switchChannels =

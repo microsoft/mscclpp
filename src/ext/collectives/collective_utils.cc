@@ -72,26 +72,6 @@ std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> setupMemoryS
   return memorySemaphores;
 }
 
-int getIpcDomainNranks(std::shared_ptr<Communicator> comm) {
-  const int commValue = comm->getIpcDomainNranks();
-  const int ipcDomainNranks = (commValue > 0) ? commValue : comm->bootstrap()->getNranksPerNode();
-  const int worldSize = comm->bootstrap()->getNranks();
-  const int rank = comm->bootstrap()->getRank();
-  if (ipcDomainNranks < 2 || ipcDomainNranks > MAX_IPC_DOMAIN_NRANKS) {
-    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage, "ipcDomainNranks ", ipcDomainNranks,
-          " is out of supported range [2, ", MAX_IPC_DOMAIN_NRANKS, "]");
-  }
-  if (worldSize != ipcDomainNranks) {
-    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage,
-          "requires worldSize == ipcDomainNranks (got worldSize=", worldSize, ", ipcDomainNranks=", ipcDomainNranks,
-          ")");
-  }
-  if (rank < 0 || rank >= ipcDomainNranks) {
-    THROW(LogSubsys::ALGO, Error, ErrorCode::InvalidUsage, "rank ", rank, " out of [0, ", ipcDomainNranks, ")");
-  }
-  return ipcDomainNranks;
-}
-
 std::shared_ptr<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> setupMemoryChannelDeviceHandles(
     const std::vector<mscclpp::MemoryChannel>& memoryChannels) {
   std::vector<mscclpp::DeviceHandle<mscclpp::MemoryChannel>> memoryChannelDeviceHandles;

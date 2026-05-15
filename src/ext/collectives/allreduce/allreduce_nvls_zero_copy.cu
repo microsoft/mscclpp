@@ -99,7 +99,6 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
   computeCapabilityMajor_ = deviceProp.major;
   nSwitchChannels_ = 32;
-  getIpcDomainNranks(comm);
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<mscclpp::MemoryDevice2DeviceSemaphore>> memorySemaphores =
@@ -177,7 +176,7 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = getIpcDomainNranks(comm);
+  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
 
   size_t sendBytes, recvBytes;
   CUdeviceptr sendBasePtr, recvBasePtr;
