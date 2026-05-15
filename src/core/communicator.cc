@@ -3,8 +3,6 @@
 
 #include "communicator.hpp"
 
-#include <utility>
-
 #include "api.h"
 
 namespace mscclpp {
