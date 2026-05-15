@@ -17,6 +17,7 @@ enum class GdrStatus {
   Disabled,       // Disabled via MSCCLPP_FORCE_DISABLE_GDR
   DriverMissing,  // /dev/gdrdrv not found
   OpenFailed,     // gdr_open() failed
+  KernelTooOld,   // gdrdrv kernel module is older than the required minimum
 };
 
 /// Return the detailed status of the global GDRCopy context.
