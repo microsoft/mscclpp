@@ -10,11 +10,13 @@ baseImageTable=(
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
+    ["sglang"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
 )
 
 declare -A extraLdPathTable
 extraLdPathTable=(
     ["rocm6.2"]="/opt/rocm/lib"
+    ["sglang"]="/usr/local/cuda-12.9/compat"
 )
 
 declare -A ofedVersionTable
@@ -25,13 +27,14 @@ ofedVersionTable=(
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
     ["rocm6.2"]="24.10-1.1.4.0"
+    ["sglang"]="24.10-1.1.4.0"
 )
 
 TARGET=${1}
 OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
+    echo "Usage: $0 [cuda11.8|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2|sglang]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
@@ -70,10 +73,17 @@ fi
 docker tag ${TAG_TMP} ${TAG_BASE}
 docker rmi --no-prune ${TAG_TMP}
 
-docker build -t ${TAG_BASE_DEV} \
-    -f docker/base-dev-x.dockerfile \
-    --build-arg BASE_IMAGE=${TAG_BASE} \
-    --build-arg TARGET=${TARGET} .
+if [[ ${TARGET} == "sglang" ]]; then
+    TAG_SGLANG="sglang-${OS_ARCH}"
+    docker build -t ${TAG_SGLANG} \
+        -f docker/sglang.dockerfile \
+        --build-arg BASE_IMAGE=${TAG_BASE} .
+else
+    docker build -t ${TAG_BASE_DEV} \
+        -f docker/base-dev-x.dockerfile \
+        --build-arg BASE_IMAGE=${TAG_BASE} \
+        --build-arg TARGET=${TARGET} .
+fi
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 GHCR_TAG_BASE_DEV=${GHCR}:base-dev-${TARGET}

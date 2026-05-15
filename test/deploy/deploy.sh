@@ -1,22 +1,47 @@
+#!/bin/bash
+# deploy.sh — Provisions remote hosts, copies sources, and launches Docker containers
+# for mscclpp CI/CD test environments.
+#
+# Usage: deploy.sh <test_name> [ib_environment] [platform] [container_name]
+#   test_name       : Test suite to deploy (e.g. single-node-test, nccltest-single-node)
+#   ib_environment  : Enable InfiniBand networking (default: true)
+#   platform        : Target GPU platform — "cuda" or "rocm" (default: cuda)
+#   container_name  : Docker container name (default: mscclpp-test)
+
 set -ex
 
+###############################################################################
+# 1. Parse arguments
+###############################################################################
 TEST_NAME=$1
 IB_ENVIRONMENT="${2:-true}"
 PLATFORM="${3:-cuda}"
+CONTAINER_NAME="${4:-mscclpp-test}"
 
+###############################################################################
+# 2. Resolve paths and host file
+###############################################################################
 KeyFilePath=${SSHKEYFILE_SECUREFILEPATH}
 ROOT_DIR="${SYSTEM_DEFAULTWORKINGDIRECTORY}/"
 DST_DIR="/tmp/mscclpp"
+
 if [ "${TEST_NAME}" == "nccltest-single-node" ] || [ "${TEST_NAME}" == "single-node-test" ]; then
   HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile_ci"
 else
   HOSTFILE="${SYSTEM_DEFAULTWORKINGDIRECTORY}/test/deploy/hostfile"
 fi
+
 SSH_OPTION="StrictHostKeyChecking=no"
 
+###############################################################################
+# 3. Prepare SSH keys
+###############################################################################
 chmod 400 ${KeyFilePath}
 ssh-keygen -t rsa -f sshkey -P ""
 
+###############################################################################
+# 4. Wait for remote hosts to be reachable
+###############################################################################
 while true; do
   set +e
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "hostname"
@@ -26,8 +51,11 @@ while true; do
   echo "Waiting for sshd to start..."
   sleep 5
 done
-
 set -e
+
+###############################################################################
+# 5. Copy source tree to remote hosts
+###############################################################################
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo rm -rf ${DST_DIR}"
 tar czf /tmp/mscclpp.tar.gz -C ${ROOT_DIR} .
 parallel-scp -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION /tmp/mscclpp.tar.gz /tmp/mscclpp.tar.gz
@@ -35,10 +63,16 @@ parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
   "sudo mkdir -p ${DST_DIR} && sudo tar xzf /tmp/mscclpp.tar.gz -C ${DST_DIR} && sudo rm -f /tmp/mscclpp.tar.gz"
 rm -f /tmp/mscclpp.tar.gz
 
+###############################################################################
+# 6. Platform-specific setup (ROCm kernel module)
+###############################################################################
 if [ "${PLATFORM}" == "rocm" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
 fi
 
+###############################################################################
+# 7. Pull the latest container image
+###############################################################################
 # Install GDRCopy kernel module on host VMs (CUDA only)
 GDRCOPY_VERSION="2.5.2"
 if [ "${PLATFORM}" == "cuda" ]; then
@@ -59,23 +93,39 @@ fi
 
 # force to pull the latest image
 parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker pull ${CONTAINERIMAGE}"
+  "sudo docker pull ${CONTAINERIMAGE}"  
 
-LAUNCH_OPTION="--gpus=all"
-if [ "${PLATFORM}" == "rocm" ]; then
-  LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
-fi
-if [ "${IB_ENVIRONMENT}" == "true" ]; then
+###############################################################################
+# 8. Launch Docker container
+###############################################################################
+
+if [ "${CONTAINER_NAME}" == "sglang-mscclpp-test" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
-    -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=mscclpp-test \
-    --entrypoint /bin/bash ${CONTAINERIMAGE}"
+    "sudo docker run --rm -itd --name=${CONTAINER_NAME} --privileged --net=host --ipc=host --gpus=all -w /root -v ${DST_DIR}:/root/mscclpp --entrypoint /bin/bash lmsysorg/sglang:latest"
 else
-  parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
-    -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=mscclpp-test \
-    --entrypoint /bin/bash ${CONTAINERIMAGE}"
-fi
-parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-  "sudo docker exec -t --user root mscclpp-test bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"
+  # Set GPU passthrough flags based on platform
+  LAUNCH_OPTION="--gpus=all"
+  if [ "${PLATFORM}" == "rocm" ]; then
+    LAUNCH_OPTION="--device=/dev/kfd --device=/dev/dri --group-add=video"
+  fi
 
+  if [ "${IB_ENVIRONMENT}" == "true" ]; then
+    # InfiniBand: use --privileged for RDMA device access
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+      "sudo docker run --rm -itd --privileged --net=host --ipc=host ${LAUNCH_OPTION} \
+      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
+      --entrypoint /bin/bash ${CONTAINERIMAGE}"
+  else
+    # Non-IB: grant SYS_ADMIN and disable seccomp instead of full --privileged
+    parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+      "sudo docker run --rm -itd --net=host --ipc=host ${LAUNCH_OPTION} --cap-add=SYS_ADMIN --security-opt seccomp=unconfined \
+      -w /root -v ${DST_DIR}:/root/mscclpp -v /opt/microsoft:/opt/microsoft --ulimit memlock=-1:-1 --name=${CONTAINER_NAME} \
+      --entrypoint /bin/bash ${CONTAINERIMAGE}"
+  fi
+fi
+
+###############################################################################
+# 9. Run setup script inside the container
+###############################################################################
+parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
+  "sudo docker exec -t --user root ${CONTAINER_NAME} bash '/root/mscclpp/test/deploy/setup.sh' ${PLATFORM}"

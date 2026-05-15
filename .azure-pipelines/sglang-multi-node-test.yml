@@ -1,0 +1,136 @@
+# =============================================================================
+# Multi-node SGLang integration test pipeline.
+#
+# This pipeline runs MSCCL++ SGLang tests across two H100 VMSS GPU nodes.
+# High-level flow:
+#   1. The pipeline agent runs inside a container on the `mscclpp-multi-node`
+#      pool. The agent itself has no GPUs.
+#   2. SSH/host configuration is generated so the agent can reach the two
+#      pre-provisioned VMSS GPU nodes.
+#   3. `templates/deploy.yml` builds and ships MSCCL++ to the GPU nodes.
+#   4. `templates/sglang-multi-test.yml` runs the SGLang multi-node tests.
+#   5. `templates/stop.yml` tears down / stops the VMSS nodes.
+#
+# Docs / non-code changes are excluded from triggering this pipeline.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+    - main
+    - release/*
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+pr:
+  branches:
+    include:
+    - main
+    - release/*
+  drafts: false
+  paths:
+    exclude:
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
+
+parameters:
+# Name of the pre-provisioned Azure VMSS that hosts the GPU test nodes.
+# Node hostnames are derived as "${vmssName}000000" and "${vmssName}000001".
+- name: vmssName
+  type: string
+  default: mscclpp-h100-multinode-ci
+# Static /etc/hosts entries mapping VMSS node hostnames to their private IPs.
+# These IPs are tied to the specific VMSS above; update both together if the
+# VMSS is reprovisioned or renamed.
+- name: hostEntries
+  type: string
+  default: |
+    10.0.0.5 mscclpp-h100-multinode-ci000000
+    10.0.0.4 mscclpp-h100-multinode-ci000001
+
+jobs:
+- job: SGlangTestMultiNode
+  displayName: SGLANG Test Multi Node
+  strategy:
+    matrix:
+      cuda12:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+  pool:
+    name: mscclpp-multi-node
+  container:
+    image: $(containerImage)
+
+  steps:
+  # Ensure the VMSS node hostnames resolve from the pipeline agent container.
+  # Idempotent: only appends lines that are not already present in /etc/hosts.
+  - task: Bash@3
+    displayName: Add HostEntry
+    inputs:
+      targetType: 'inline'
+      script: |
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          if ! grep -qxF "$line" /etc/hosts; then
+            echo "Adding to /etc/hosts: $line"
+            echo "$line" | sudo tee -a /etc/hosts
+          else
+            echo "Entry already exists: $line"
+          fi
+        done <<< "${{ parameters.hostEntries }}"
+
+  # Generate the SSH config and hostfile consumed by the deploy / test
+  # templates below:
+  #   - config   : SSH client config (custom port + key) for each node
+  #   - hostfile : user@host list used by deploy / test scripts (parallel-ssh)
+  - task: Bash@3
+    displayName: Generate deploy files
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        VMSS="${{ parameters.vmssName }}"
+        DEPLOY_DIR="$(System.DefaultWorkingDirectory)/test/deploy"
+        NODE0="${VMSS}000000"
+        NODE1="${VMSS}000001"
+
+        echo "Host ${NODE0}
+          Port 22345
+          IdentityFile /root/mscclpp/sshkey
+          StrictHostKeyChecking no
+        Host ${NODE1}
+          Port 22345
+          IdentityFile /root/mscclpp/sshkey
+          StrictHostKeyChecking no" > "${DEPLOY_DIR}/config"
+
+        printf '%s\n%s\n' "azureuser@${NODE0}" "azureuser@${NODE1}" > "${DEPLOY_DIR}/hostfile"
+
+  # Build MSCCL++ and deploy it onto the VMSS GPU nodes.
+  - template: templates/deploy.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+      resourceGroup: mscclpp
+      gpuArch: '90'
+      deployArgs: 'multi-node-test true cuda'
+      containerName: 'sglang-mscclpp-test'
+
+  # Run the SGLang multi-node tests across the two GPU nodes.
+  - template: templates/sglang-multi-test.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+
+  # Stop/deallocate the VMSS GPU nodes to release resources.
+  - template: templates/stop.yml
+    parameters:
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
+      resourceGroup: mscclpp
