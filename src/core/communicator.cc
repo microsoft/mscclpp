@@ -11,40 +11,25 @@ namespace mscclpp {
 
 namespace {
 
-template <typename Func>
-class ScopeGuard {
- public:
-  explicit ScopeGuard(Func func) : func_(std::move(func)) {}
-  ScopeGuard(const ScopeGuard&) = delete;
-  ScopeGuard& operator=(const ScopeGuard&) = delete;
-  ScopeGuard(ScopeGuard&&) = delete;
-  ScopeGuard& operator=(ScopeGuard&&) = delete;
-  ~ScopeGuard() noexcept {
-    static_assert(noexcept(std::declval<Func&>()()), "ScopeGuard cleanup must be noexcept");
-    func_();
-  }
-
- private:
-  Func func_;
-};
-
 template <typename T, typename Impl, typename Func>
 std::shared_future<T> makeOrderedRecvFuture(Impl* impl, int remoteRank, int tag, Func func) {
   // Weak placeholder to avoid a reference cycle; updated with the real recvItem after the future is created.
   auto thisRecvItem = std::make_shared<std::weak_ptr<BaseRecvItem>>();
-  auto future = std::async(
-      std::launch::deferred, [impl, remoteRank, tag, thisRecvItem,
-                              lastRecvItem = impl->getLastRecvItem(remoteRank, tag), func = std::move(func)]() mutable {
-        [[maybe_unused]] ScopeGuard cleanup([impl, remoteRank, tag, thisRecvItem]() noexcept {
-          impl->clearLastRecvItemIfMatches(remoteRank, tag, thisRecvItem->lock());
-        });
+  auto future = std::async(std::launch::deferred,
+                           [impl, remoteRank, tag, thisRecvItem, lastRecvItem = impl->getLastRecvItem(remoteRank, tag),
+                            func = std::move(func)]() mutable {
+                             auto cleanup = [impl, remoteRank, tag, thisRecvItem]() {
+                               impl->clearLastRecvItemIfMatches(remoteRank, tag, thisRecvItem->lock());
+                             };
 
-        if (lastRecvItem) {
-          // Recursive call to the previous receive items
-          lastRecvItem->wait();
-        }
-        return func();
-      });
+                             if (lastRecvItem) {
+                               // Recursive call to the previous receive items
+                               lastRecvItem->wait();
+                             }
+                             auto result = func();
+                             cleanup();
+                             return result;
+                           });
   auto sharedFuture = std::shared_future<T>(std::move(future));
   auto recvItem = std::make_shared<RecvItem<T>>(sharedFuture);
   *thisRecvItem = recvItem;
