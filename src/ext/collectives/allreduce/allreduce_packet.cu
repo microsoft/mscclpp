@@ -231,7 +231,12 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->ipcDomainNranks, dtype);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->ipcDomainNranks, ctx->workSize, dtype);
+  } else {
+    const int nPeers = ctx->workSize - 1;
+    if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+      return CommResult::CommInvalidArgument;
+    }
   }
 
   size_t sendBytes;
