@@ -46,6 +46,10 @@ class Bootstrap {
   /// @return The total number of ranks per node.
   virtual int getNranksPerNode() const = 0;
 
+  /// Return the number of ranks in this rank's GPU IPC domain.
+  /// @return The number of ranks in the GPU IPC domain.
+  virtual int getNranksPerIpcDomain() const;
+
   /// Send arbitrary data to another process.
   ///
   /// Data sent via `send(senderBuff, size, receiverRank, tag)` can be received via `recv(receiverBuff, size,
@@ -143,6 +147,9 @@ class TcpBootstrap : public Bootstrap {
 
   /// Return the total number of ranks per node.
   int getNranksPerNode() const override;
+
+  /// Return the number of ranks in this rank's GPU IPC domain.
+  int getNranksPerIpcDomain() const override;
 
   /// Send arbitrary data to another process.
   ///
@@ -820,18 +827,6 @@ class Communicator {
   /// Returns the context held by this communicator.
   /// @return The context held by this communicator.
   std::shared_ptr<Context> context();
-
-  /// Set the IPC-domain rank count for collective algorithms using this communicator.
-  ///
-  /// The value describes how many ranks are in one GPU-IPC-reachable peer group, such as a Multi-Node NVLink
-  /// fabric. Set to 0 to use the default `bootstrap()->getNranksPerNode()` value.
-  ///
-  /// @param ipcDomainNranks Number of ranks in the communicator's IPC domain, or 0 to use the default.
-  void setIpcDomainNranks(int ipcDomainNranks);
-
-  /// Get the effective IPC-domain rank count for this communicator.
-  /// @return The configured IPC-domain rank count, or `bootstrap()->getNranksPerNode()` if no override is set.
-  int getIpcDomainNranks() const;
 
   /// Register a region of GPU memory for use in this communicator's context.
   ///

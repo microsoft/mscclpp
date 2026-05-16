@@ -56,6 +56,7 @@ void register_core(nb::module_& m) {
       .def("get_rank", &Bootstrap::getRank)
       .def("get_n_ranks", &Bootstrap::getNranks)
       .def("get_n_ranks_per_node", &Bootstrap::getNranksPerNode)
+      .def("get_n_ranks_per_ipc_domain", &Bootstrap::getNranksPerIpcDomain)
       .def(
           "send",
           [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
@@ -282,8 +283,6 @@ void register_core(nb::module_& m) {
            nb::arg("context") = nullptr)
       .def("bootstrap", &Communicator::bootstrap)
       .def("context", &Communicator::context)
-      .def("set_ipc_domain_n_ranks", &Communicator::setIpcDomainNranks, nb::arg("n_ranks"))
-      .def("get_ipc_domain_n_ranks", &Communicator::getIpcDomainNranks)
       .def(
           "register_memory",
           [](Communicator* self, uintptr_t ptr, size_t size, TransportFlags transports) {

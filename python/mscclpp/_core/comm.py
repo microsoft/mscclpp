@@ -35,7 +35,6 @@ class CommGroup:
         interfaceIpPortTrio: str = "",
         rank: int = None,
         size: int = None,
-        ipc_domain_n_ranks: int = 0,
     ):
         if interfaceIpPortTrio == "" and (mpi_comm is not None or torch_group is not None):
             uniq_id = None
@@ -71,11 +70,10 @@ class CommGroup:
         else:
             raise RuntimeError("Either the interface or mpi_group need to be specified")
         self.communicator = CppCommunicator(self.bootstrap)
-        self.communicator.set_ipc_domain_n_ranks(ipc_domain_n_ranks)
         self.my_rank = self.bootstrap.get_rank()
         self.nranks = self.bootstrap.get_n_ranks()
         self.nranks_per_node = self.bootstrap.get_n_ranks_per_node()
-        self.ipc_domain_n_ranks = self.communicator.get_ipc_domain_n_ranks()
+        self.ipc_domain_n_ranks = self.bootstrap.get_n_ranks_per_ipc_domain()
 
     def barrier(self):
         self.bootstrap.barrier()

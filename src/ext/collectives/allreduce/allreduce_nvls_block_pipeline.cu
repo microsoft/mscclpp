@@ -177,7 +177,7 @@ struct NvlsBlockPipelineAdapter {
 
 void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
-  ipcDomainNranks_ = comm->getIpcDomainNranks();
+  ipcDomainNranks_ = comm->bootstrap()->getNranksPerIpcDomain();
   // Per-peer channel allocation must hold up to 4 * ipcDomainNranks entries (see kernel).
   nBaseChannels_ = std::max(64, 4 * ipcDomainNranks_);
   this->conns_ = setupConnections(comm);
@@ -224,7 +224,7 @@ std::shared_ptr<void> AllreduceNvlsBlockPipeline::initAllreduceContext(std::shar
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
+  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup channels
   ctx->switchChannels =

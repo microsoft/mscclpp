@@ -250,7 +250,7 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->getIpcDomainNranks();
+  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup semaphores
   ctx->memorySemaphores = this->outputSemaphores_;

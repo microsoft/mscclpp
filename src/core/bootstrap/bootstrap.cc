@@ -50,6 +50,8 @@ MSCCLPP_API_CPP void Bootstrap::groupBarrier(const std::vector<int>& ranks) {
   }
 }
 
+MSCCLPP_API_CPP int Bootstrap::getNranksPerIpcDomain() const { return getNranksPerNode(); }
+
 MSCCLPP_API_CPP void Bootstrap::send(const std::vector<char>& data, int peer, int tag) {
   size_t size = data.size();
   send((void*)&size, sizeof(size_t), peer, tag);
@@ -83,6 +85,7 @@ class TcpBootstrap::Impl {
   int getRank();
   int getNranks();
   int getNranksPerNode();
+  int getNranksPerIpcDomain();
   void allGather(void* allData, int size);
   void broadcast(void* data, int size, int root);
   void send(void* data, int size, int peer, int tag);
@@ -95,6 +98,7 @@ class TcpBootstrap::Impl {
   int rank_;
   int nRanks_;
   int nRanksPerNode_;
+  int nRanksPerIpcDomain_;
   bool netInitialized;
   std::unique_ptr<Socket> listenSockRoot_;
   std::unique_ptr<Socket> listenSock_;
@@ -148,6 +152,7 @@ TcpBootstrap::Impl::Impl(int rank, int nRanks)
     : rank_(rank),
       nRanks_(nRanks),
       nRanksPerNode_(0),
+      nRanksPerIpcDomain_(0),
       netInitialized(false),
       peerCommAddresses_(nRanks, SocketAddress()),
       barrierArr_(nRanks, 0),
@@ -451,6 +456,22 @@ int TcpBootstrap::Impl::getNranksPerNode() {
   return nRanksPerNode_;
 }
 
+int TcpBootstrap::Impl::getNranksPerIpcDomain() {
+  if (nRanksPerIpcDomain_ > 0) return nRanksPerIpcDomain_;
+  std::vector<uint64_t> ipcDomainHashes(nRanks_);
+  ipcDomainHashes[rank_] = getIpcDomainHash();
+  allGather(ipcDomainHashes.data(), sizeof(uint64_t));
+
+  int nRanksPerIpcDomain = 0;
+  for (int i = 0; i < nRanks_; ++i) {
+    if (ipcDomainHashes[i] == ipcDomainHashes[rank_]) {
+      ++nRanksPerIpcDomain;
+    }
+  }
+  nRanksPerIpcDomain_ = nRanksPerIpcDomain;
+  return nRanksPerIpcDomain_;
+}
+
 void TcpBootstrap::Impl::allGather(void* allData, int size) {
   char* data = static_cast<char*>(allData);
   int rank = rank_;
@@ -591,6 +612,8 @@ MSCCLPP_API_CPP int TcpBootstrap::getRank() const { return pimpl_->getRank(); }
 MSCCLPP_API_CPP int TcpBootstrap::getNranks() const { return pimpl_->getNranks(); }
 
 MSCCLPP_API_CPP int TcpBootstrap::getNranksPerNode() const { return pimpl_->getNranksPerNode(); }
+
+MSCCLPP_API_CPP int TcpBootstrap::getNranksPerIpcDomain() const { return pimpl_->getNranksPerIpcDomain(); }
 
 MSCCLPP_API_CPP void TcpBootstrap::send(void* data, int size, int peer, int tag) {
   pimpl_->send(data, size, peer, tag);
