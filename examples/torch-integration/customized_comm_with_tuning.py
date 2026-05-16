@@ -1,12 +1,13 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 
-# torchrun --nnodes=1 --nproc_per_node=8 examples/torch-integration/customized_comm_with_tuning.py
+# mpirun -np 8 python3 examples/torch-integration/customized_comm_with_tuning.py
+# mpirun -np 16 --hostfile <hostfile> python3 examples/torch-integration/customized_comm_with_tuning.py
 
 import os
-import ipaddress
 
-import netifaces as ni
+from mpi4py import MPI
+
 import torch
 import mscclpp
 import mscclpp.ext
@@ -35,17 +36,6 @@ def _load_algorithms(scratch: torch.Tensor, rank: int):
     )
 
 
-def _interfaces_for_ip(ip: str):
-    target = ipaddress.ip_address(ip)
-    for iface in ni.interfaces():
-        addrs = ni.ifaddresses(iface)
-        if ni.AF_INET in addrs:
-            for link in addrs[ni.AF_INET]:
-                if "addr" in link and ipaddress.ip_address(link["addr"]) == target:
-                    return iface
-    return None
-
-
 def _to_mscclpp_op(op) -> mscclpp.ReduceOp:
     if op == torch.distributed.ReduceOp.SUM:
         return mscclpp.ReduceOp.SUM
@@ -67,23 +57,48 @@ def _round_pow2(size: int) -> int:
 class CustomizedComm:
     """Exposes all_reduce, all_gather, barrier with lazy per-size tuning."""
 
-    _TUNE_N_WARMUP = 5
-    _TUNE_N_GRAPH_LAUNCHES = 10
-    _TUNE_N_OPS_PER_GRAPH = 100
-    _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 64, 128]
+    _TUNE_N_WARMUP = 3
+    _TUNE_N_GRAPH_LAUNCHES = 5
+    _TUNE_N_OPS_PER_GRAPH = 50
+    _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 64, 112, 128]
     _CANDIDATE_NTHREADS = [512, 768, 1024]
     _NBLOCKS_LIMIT = {
         "default_allreduce_nvls_packet": 16,
-        "default_allreduce_packet": 56,
+        "default_allreduce_nvls_zero_copy": 32,
+        "default_allreduce_packet": 112,
         "default_allreduce_allpair_packet": 56,
+        "default_allreduce_rsag": 128,
+        "default_allreduce_rsag_zero_copy": 128,
         "default_allreduce_fullmesh": 64,
         "default_allgather_fullmesh2": 32,
     }
+    # (algo_name, min_size, max_size, predicate)
+    # Boundaries are inclusive on both ends. max_size=None means unbounded.
+    # predicate=None means always applicable; otherwise a callable taking `self`.
+    _AR_CANDIDATES_MNNVL = [
+        ("default_allreduce_allpair_packet", 0, 128 << 10, None),
+        ("default_allreduce_nvls_packet", 0, 64 << 10, lambda c: c._nvls),
+        ("default_allreduce_packet", 128 << 10, 512 << 10, None),
+        ("default_allreduce_nvls_zero_copy", 512 << 10, None, lambda c: c._nvls and c.symmetric_memory),
+        ("default_allreduce_rsag_zero_copy", 512 << 10, None, None),
+        ("default_allreduce_rsag", 512 << 10, None, None),
+    ]
+    _AR_CANDIDATES_SINGLE = [
+        ("default_allreduce_packet", 0, 4 << 20, None),
+        ("default_allreduce_allpair_packet", 0, 512 << 10, None),
+        ("default_allreduce_nvls_packet", 0, 512 << 10, lambda c: c._nvls),
+        ("default_allreduce_rsag_zero_copy", 512 << 10, None, None),
+        ("default_allreduce_nvls_zero_copy", 512 << 10, None, lambda c: c._nvls and c.symmetric_memory),
+        ("default_allreduce_fullmesh", 0, None, lambda c: torch.version.hip is not None),
+    ]
 
     def __init__(self, comm: mscclpp.CommGroup, symmetric_memory: bool = False):
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
+        self.nranks_per_node = comm.nranks_per_node
+        self.ipc_domain_n_ranks = comm.ipc_domain_n_ranks
+        self.multi_host_mnnvl = self.ipc_domain_n_ranks >= self.world_size and self.world_size > self.nranks_per_node
         self.symmetric_memory = symmetric_memory
         self._nvls = mscclpp.is_nvls_supported()
 
@@ -99,13 +114,12 @@ class CustomizedComm:
         self._time_buf = None
 
     def _algo(self, collective: str, name: str):
-        return self._algos.get((collective, name))
+        return self._algos[(collective, name)]
 
     def _default_ar_config(self):
         """Fallback allreduce config for barrier / timing sync."""
-        pkt = self._algo("allreduce", "default_allreduce_nvls_packet")
-        if self._nvls and pkt:
-            return (pkt, 0, 0)
+        if self._nvls:
+            return (self._algo("allreduce", "default_allreduce_nvls_packet"), 0, 0)
         return (self._algo("allreduce", "default_allreduce_packet"), 0, 0)
 
     # -- low-level execute --
@@ -165,33 +179,17 @@ class CustomizedComm:
         return self._tune_buf
 
     def _ar_candidates(self, size: int):
-        out = []
-        if size <= 4 << 20:
-            a = self._algo("allreduce", "default_allreduce_nvls_packet")
-            if self._nvls and a:
-                out.append(a)
-            a = self._algo("allreduce", "default_allreduce_packet")
-            if a:
-                out.append(a)
-            a = self._algo("allreduce", "default_allreduce_allpair_packet")
-            if a:
-                out.append(a)
-        if size >= 512 << 10:
-            a = self._algo("allreduce", "default_allreduce_nvls_zero_copy")
-            if self._nvls and self.symmetric_memory and a:
-                out.append(a)
-            a = self._algo("allreduce", "default_allreduce_rsag_zero_copy")
-            if a:
-                out.append(a)
-        if torch.version.hip is not None:
-            a = self._algo("allreduce", "default_allreduce_fullmesh")
-            if a:
-                out.append(a)
-        return out
+        table = self._AR_CANDIDATES_MNNVL if self.multi_host_mnnvl else self._AR_CANDIDATES_SINGLE
+        return [
+            self._algo("allreduce", name)
+            for name, lo, hi, pred in table
+            if size >= lo and (hi is None or size <= hi) and (pred is None or pred(self))
+        ]
 
     def _ag_candidates(self):
-        a = self._algo("allgather", "default_allgather_fullmesh2")
-        return [a] if a else []
+        if self.multi_host_mnnvl:
+            return []
+        return [self._algo("allgather", "default_allgather_fullmesh2")]
 
     def _run_tune(self, collective, algo, buf, size, nb, nt):
         """Single tune invocation for either collective."""
@@ -207,7 +205,7 @@ class CustomizedComm:
                 stream=torch.cuda.current_stream().cuda_stream,
                 nblocks=nb,
                 nthreads_per_block=nt,
-                symmetric_memory=True,
+                symmetric_memory=self.symmetric_memory,
             )
         else:
             total = size * self.world_size
@@ -245,7 +243,7 @@ class CustomizedComm:
                     ret = run(algo, nb, nt)
                     torch.cuda.synchronize()
                     self._time_buf[0] = float(ret)
-                    self._exec_ar(self._time_buf[:1], *self._default_ar_config(), sym=True)
+                    self._exec_ar(self._time_buf[:1], *self._default_ar_config(), sym=self.symmetric_memory)
                     if self._time_buf[0].item() != 0:
                         continue
                     used.add(algo)
@@ -274,7 +272,7 @@ class CustomizedComm:
                     # Cross-rank timing sync
                     self._time_buf.fill_(elapsed)
                     torch.cuda.current_stream().wait_stream(cs)
-                    self._exec_ar(self._time_buf, *self._default_ar_config(), sym=True)
+                    self._exec_ar(self._time_buf, *self._default_ar_config(), sym=self.symmetric_memory)
                     avg = self._time_buf[self.rank].item() / self.world_size
 
                     if avg < best_time:
@@ -314,6 +312,8 @@ class CustomizedComm:
         )
 
     def all_gather(self, output_tensor, input_tensor, stream=None):
+        if self.multi_host_mnnvl:
+            raise RuntimeError("all_gather in this example currently supports only single-node runs")
         sz = _round_pow2(input_tensor.nbytes)
         if sz not in self._tune_cache["allgather"]:
             self._tune_size("allgather", sz)
@@ -341,7 +341,7 @@ def _bench_sizes(low=5 * 1024, high=80 << 20):
 
 
 def benchmark_allreduce(
-    comm: CustomizedComm, dtype=torch.float16, accum_dtype=None, n_warmup=10, n_graph_launches=10, n_iter=100
+    comm: CustomizedComm, dtype=torch.float16, accum_dtype=None, n_warmup=5, n_graph_launches=5, n_iter=50
 ):
     sizes = _bench_sizes()
     if comm.rank == 0:
@@ -382,7 +382,7 @@ def benchmark_allreduce(
             print(f"{nelems:<18} {size:<18} {ms*1000:<18.2f} {size/(ms*1e-3)/1e9:<18.2f}")
 
 
-def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=10, n_graph_launches=10, n_iter=100):
+def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=5, n_graph_launches=5, n_iter=50):
     sizes = _bench_sizes()
     if comm.rank == 0:
         print(f"\n{'='*60}\nAllgather Benchmark\n{'='*60}")
@@ -432,22 +432,11 @@ def benchmark_allgather(comm: CustomizedComm, dtype=torch.float16, n_warmup=10, 
 
 
 def init_dist() -> mscclpp.CommGroup:
-    addr = os.environ.get("MSCCLPP_MASTER_ADDR")
-    if addr:
-        rank, world = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
-        port = os.environ["MSCCLPP_MASTER_PORT"]
-        iface = _interfaces_for_ip(addr)
-        if not iface:
-            raise ValueError(f"No interface for {addr}")
-        return mscclpp.CommGroup(interfaceIpPortTrio=f"{iface}:{addr}:{port}", rank=rank, size=world)
-    import torch.distributed as dist
-
-    dist.init_process_group(backend="gloo")
-    return mscclpp.CommGroup(torch_group=dist.group.WORLD)
+    return mscclpp.CommGroup(mpi_comm=MPI.COMM_WORLD)
 
 
 def main():
-    local = int(os.environ["LOCAL_RANK"])
+    local = MPI.COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED).Get_rank()
     torch.cuda.set_device(local)
 
     dtype_str = os.environ.get("DTYPE", "float16")
@@ -455,18 +444,26 @@ def main():
     accum_map = {"float32": mscclpp.DataType.float32, "float16": mscclpp.DataType.float16}
     accum_str = os.environ.get("ACCUM_DTYPE")
     accum_dtype = accum_map.get(accum_str) if accum_str else None
+    symmetric_memory = os.environ.get("SYMMETRIC_MEMORY", "1") == "1"
 
     comm_group = init_dist()
-    cc = CustomizedComm(comm_group)
+    cc = CustomizedComm(comm_group, symmetric_memory=symmetric_memory)
 
-    print(f"rank {local} starting benchmarks with dtype={dtype} accum_dtype={accum_dtype}...")
+    print(
+        f"rank {local} starting benchmarks with dtype={dtype} "
+        f"accum_dtype={accum_dtype} symmetric_memory={symmetric_memory}..."
+    )
     benchmark_allreduce(cc, dtype=dtype, accum_dtype=accum_dtype)
     cc.barrier()
     torch.cuda.synchronize()
 
-    benchmark_allgather(cc, dtype=dtype)
-    cc.barrier()
-    torch.cuda.synchronize()
+    if cc.multi_host_mnnvl:
+        if cc.rank == 0:
+            print("Skipping allgather benchmark on multi-node: this example's allgather path is single-node only.")
+    else:
+        benchmark_allgather(cc, dtype=dtype)
+        cc.barrier()
+        torch.cuda.synchronize()
 
     cc.destroy()
     print(f"rank {local} completed successfully.")

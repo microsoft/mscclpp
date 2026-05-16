@@ -31,6 +31,7 @@ using CUmemorytype = hipMemoryType;
 constexpr auto cudaErrorPeerAccessAlreadyEnabled = hipErrorPeerAccessAlreadyEnabled;
 constexpr auto cudaErrorContextIsDestroyed = hipErrorContextIsDestroyed;
 constexpr auto cudaErrorInvalidDevice = hipErrorInvalidDevice;
+constexpr auto cudaErrorInvalidValue = hipErrorInvalidValue;
 constexpr auto cudaSuccess = hipSuccess;
 constexpr auto cudaErrorNotSupported = hipErrorNotSupported;
 constexpr auto cudaStreamNonBlocking = hipStreamNonBlocking;

@@ -29,6 +29,8 @@ class AllreduceNvlsWarpPipeline : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   uint32_t nSwitchChannels_;
+  int nRanksPerIpcDomain_ = 0;
+  int nBaseChannels_ = 0;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;

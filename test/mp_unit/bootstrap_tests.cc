@@ -127,6 +127,7 @@ class MPIBootstrap : public mscclpp::Bootstrap {
     MPI_Comm_size(shmcomm, &shmrank);
     return shmrank;
   }
+  int getNranksPerIpcDomain() const override { return getNranksPerNode(); }
   void allGather(void* sendbuf, int size) override {
     MPI_Allgather(MPI_IN_PLACE, 0, MPI_BYTE, sendbuf, size, MPI_BYTE, MPI_COMM_WORLD);
   }

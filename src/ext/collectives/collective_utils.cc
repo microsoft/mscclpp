@@ -6,8 +6,11 @@
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/errors.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {

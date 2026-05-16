@@ -60,7 +60,6 @@ struct Communicator::Impl {
   std::shared_ptr<Bootstrap> bootstrap_;
   std::shared_ptr<Context> context_;
   std::unordered_map<const BaseConnection*, ConnectionInfo> connectionInfos_;
-
   // Temporary storage for the latest RecvItem of each {remoteRank, tag} pair.
   // The RecvItem is removed when it finishes or when getLastRecvItem observes that it is ready.
   std::unordered_map<std::pair<int, int>, std::shared_ptr<BaseRecvItem>, PairHash> lastRecvItems_;
