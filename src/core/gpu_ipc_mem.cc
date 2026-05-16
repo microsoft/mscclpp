@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/utils.hpp>
 
 #include "logger.hpp"
 #include "unix_socket.hpp"
@@ -35,7 +36,7 @@ std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typ
   return os;
 }
 
-[[maybe_unused]] static bool isFabricMemHandleAvailable() {
+bool isFabricMemHandleAvailable() {
 #if (CUDA_NVLS_API_AVAILABLE)
   static int resultCache = -1;  // -1: uninitialized, 0: not available, 1: available
   if (resultCache != -1) {
@@ -283,11 +284,19 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMemHandle type is None, cannot create GpuIpcMem");
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
-    if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
-        CUDA_SUCCESS) {
+    CUresult res =
+        cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC);
+    if (res == CUDA_SUCCESS) {
       // Ignore allocHandle in the handle struct since it is process-local and not transferable across processes.
       handle_.fabric.allocHandle = {};
       type_ = GpuIpcMemHandle::Type::Fabric;
+    } else {
+      const char* errStr = nullptr;
+      (void)cuGetErrorString(res, &errStr);
+      const std::string errMsg = errStr ? std::string(errStr) : std::string("unknown CUDA error");
+      WARN(GPU, "Fabric IPC handle import failed (", errMsg,
+           "); cross-node CudaIpc requires NVIDIA MNNVL hardware and a running IMEX service. ",
+           "Falling back to other handle types if available.");
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
@@ -303,7 +312,17 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     type_ = GpuIpcMemHandle::Type::RuntimeIpc;
   }
   if (type_ == GpuIpcMemHandle::Type::None) {
-    THROW(GPU, Error, ErrorCode::Aborted, "Failed to open GpuIpcMemHandle (type: ", handle_.typeFlags, ")");
+    const bool fabricOnly = (handle_.typeFlags == GpuIpcMemHandle::Type::Fabric);
+    const std::string hint = fabricOnly
+                                 ? std::string(
+                                       "The remote rank sent only a Fabric (MNNVL) handle, but this rank could not "
+                                       "import it. Check that the IMEX daemon is running on both nodes and that the "
+                                       "GPUs share an NVLink fabric.")
+                                 : std::string(
+                                       "All handle types failed to import; check IMEX service and POSIX FD socket "
+                                       "availability.");
+    THROW(GPU, Error, ErrorCode::Aborted, "Failed to open GpuIpcMemHandle (offered types: ", handle_.typeFlags, "). ",
+          hint);
   }
 }
 
