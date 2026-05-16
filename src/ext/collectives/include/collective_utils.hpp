@@ -27,8 +27,8 @@ namespace mscclpp {
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
 // Sized to cover MAX_IPC_DOMAIN_NRANKS-scale allreduce algos whose device-side
-// semaphore indices grow as O(ipcDomainNranks) (e.g. nvls_block_pipeline uses
-// up to ~5 * ipcDomainNranks entries).
+// semaphore indices grow as O(nRanksPerIpcDomain) (e.g. nvls_block_pipeline uses
+// up to ~5 * nRanksPerIpcDomain entries).
 constexpr int NUM_SEMAPHORES = 512;
 
 // Upper bound on the number of NVLink-reachable ranks that participate in a
@@ -37,7 +37,7 @@ constexpr int NUM_SEMAPHORES = 512;
 // of shared-memory channel arrays in the allreduce/allgather kernels.
 constexpr int MAX_IPC_DOMAIN_NRANKS = 72;
 
-constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
+constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // Two 70 MiB buffers for double-buffered packet scratch space.
 
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
@@ -79,7 +79,7 @@ class AlgorithmCtx {
  public:
   int rank;
   int workSize;
-  int ipcDomainNranks;
+  int nRanksPerIpcDomain;
 
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;

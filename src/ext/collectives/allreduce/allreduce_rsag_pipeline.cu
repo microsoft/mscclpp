@@ -86,15 +86,15 @@ template <ReduceOp OpType, typename T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgPipeline(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank,
-                          int ipcDomainNranks, int worldSize, size_t nelems, size_t scratchSize, uint32_t nblocksForPut,
-                          uint32_t nblocksForReduce, uint32_t nblocksForRecv) {
+                          int nRanksPerIpcDomain, int worldSize, size_t nelems, size_t scratchSize,
+                          uint32_t nblocksForPut, uint32_t nblocksForReduce, uint32_t nblocksForRecv) {
   uint32_t bid = blockIdx.x;
   constexpr uint32_t nStepsPerIter = 4;
   uint32_t nInt4 = (nelems * sizeof(T) + sizeof(int4) - 1) / sizeof(int4);
   uint32_t nInt4PerIter = nblocksForReduce * blockDim.x * nStepsPerIter;
   const uint32_t chunkSize = nInt4PerIter * worldSize;
   uint32_t nIters = (nInt4 + chunkSize - 1) / chunkSize;
-  uint32_t nPeers = ipcDomainNranks - 1;
+  uint32_t nPeers = nRanksPerIpcDomain - 1;
   int4* scratch4 = reinterpret_cast<int4*>((char*)scratch);
   const uint32_t scratchIterStride = 2 * chunkSize;  // one for AS, one for AG
   const uint32_t pipelineDepth = scratchSize / sizeof(int4) / scratchIterStride;
@@ -111,7 +111,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       uint32_t threadIdInPut = bid * blockDim.x + threadIdx.x;
       for (uint32_t peer = 0; peer < nPeers; peer++) {
-        int remoteRankId = (rank + peer + 1) % ipcDomainNranks;
+        int remoteRankId = (rank + peer + 1) % nRanksPerIpcDomain;
         int peerId = remoteRankId < rank ? remoteRankId : remoteRankId - 1;
         // Read chunk[remoteRankId] from local buff, write to peer's scratch[rank] (sender's slot)
         uint32_t srcOffset = iter * chunkSize + remoteRankId * nInt4PerIter;
@@ -164,7 +164,7 @@ __global__ void __launch_bounds__(1024, 1)
         int4 tmp = loadVec(buff, myChunkOffset, nelems);
         // Add data from each peer's slot in scratch (peer sent their chunk[rank] to our scratch[peer])
         for (uint32_t peer = 0; peer < nPeers; peer++) {
-          int remoteRankId = (rank + peer + 1) % ipcDomainNranks;
+          int remoteRankId = (rank + peer + 1) % nRanksPerIpcDomain;
           uint32_t peerSlotOffset =
               baseOffset + remoteRankId * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
           int4 data = scratch4[peerSlotOffset];
@@ -175,7 +175,7 @@ __global__ void __launch_bounds__(1024, 1)
         uint32_t dstOffset =
             baseOffset + chunkSize + rank * nInt4PerIter + threadIdInPut + putStep * blockDim.x * nblocksForPut;
         for (uint32_t i = 0; i < nPeers; i++) {
-          int peerIdx = (rank + i + 1) % ipcDomainNranks;
+          int peerIdx = (rank + i + 1) % nRanksPerIpcDomain;
           int index = peerIdx < rank ? peerIdx : peerIdx - 1;
           mscclpp::write<int4>(((void**)remoteMemories)[index], dstOffset, tmp);
         }
@@ -203,7 +203,7 @@ __global__ void __launch_bounds__(1024, 1)
       __syncthreads();
       // Copy other ranks' reduced chunks from scratch to result
       for (uint32_t peer = 0; peer < nPeers; peer++) {
-        int remoteRankId = (rank + peer + 1) % ipcDomainNranks;
+        int remoteRankId = (rank + peer + 1) % nRanksPerIpcDomain;
         for (uint32_t step = 0; step < nStepsPerIter * REDUCE_COPY_RATIO; step++) {
           uint32_t offset = baseOffset + chunkSize + remoteRankId * nInt4PerIter + threadIdInRecv +
                             step * blockDim.x * nblocksForRecv;
@@ -224,7 +224,7 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgPipelineAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t scratchSize, int rank, int ipcDomainNranks, int worldSize, size_t inputSize,
+                          size_t scratchSize, int rank, int nRanksPerIpcDomain, int worldSize, size_t inputSize,
                           cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
@@ -248,7 +248,7 @@ struct AllreduceRsAgPipelineAdapter {
     }
     allreduceRsAgPipeline<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
-        ipcDomainNranks, worldSize, nelems, scratchSize, nblocksForPut, nblocksForReduce, nblocksForRecv);
+        nRanksPerIpcDomain, worldSize, nelems, scratchSize, nblocksForPut, nblocksForReduce, nblocksForRecv);
     return cudaGetLastError();
   }
 };
@@ -288,8 +288,8 @@ CommResult AllreduceRsAgPipeline::allreduceKernelFunc(
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemoryHandles_.get(), nullptr, nullptr, 0, 0, this->scratchBufferSize_,
-                                algoCtx->rank, algoCtx->ipcDomainNranks, algoCtx->workSize, inputSize, stream, nullptr,
-                                0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                                algoCtx->rank, algoCtx->nRanksPerIpcDomain, algoCtx->workSize, inputSize, stream,
+                                nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -306,7 +306,7 @@ std::shared_ptr<void> AllreduceRsAgPipeline::initAllreduceContext(std::shared_pt
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   ctx->memorySemaphores = this->scratchSemaphores_;
   ctx->registeredMemories = this->remoteScratchMemories_;

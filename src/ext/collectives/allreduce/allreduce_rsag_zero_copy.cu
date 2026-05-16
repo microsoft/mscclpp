@@ -116,8 +116,8 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgZeroCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t, int rank, int ipcDomainNranks, int worldSize, size_t inputSize, cudaStream_t stream,
-                          void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          size_t, int rank, int nRanksPerIpcDomain, int worldSize, size_t inputSize,
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
@@ -127,16 +127,16 @@ struct AllreduceRsAgZeroCopyAdapter {
         nBlocks = 128;
       }
     }
-    if (ipcDomainNranks == 4) {
+    if (nRanksPerIpcDomain == 4) {
       allreduceRsAgZeroCopy<4, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
-    } else if (ipcDomainNranks == 8) {
+    } else if (nRanksPerIpcDomain == 8) {
       allreduceRsAgZeroCopy<8, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      WARN(ALGO, "AllreduceRsAgZeroCopy only supports ipcDomainNranks of 4 or 8, got: ", ipcDomainNranks);
+      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4 or 8, got: ", nRanksPerIpcDomain);
       return cudaErrorInvalidValue;
     }
     return cudaGetLastError();
@@ -172,9 +172,13 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
   }
   cudaError_t error =
       allreduce(input, nullptr, output, this->baseMemoryChannelHandles_.get(), algoCtx->remoteMemoryHandles.get(),
-                nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->ipcDomainNranks, algoCtx->workSize, inputSize,
+                nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerIpcDomain, algoCtx->workSize, inputSize,
                 stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
+    if (error == cudaErrorInvalidValue) {
+      WARN(ALGO, "AllreduceRsAgZeroCopy received invalid launch arguments: ", cudaGetErrorString(error));
+      return CommResult::CommInvalidArgument;
+    }
     WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
@@ -200,7 +204,7 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   ctx->memorySemaphores = this->semaphores_;
 

@@ -11,8 +11,8 @@ namespace collective {
 template <bool IsOutOfPlace>
 __global__ void __launch_bounds__(1024, 1)
     allgatherFullmesh(void* buff, void* scratch, void* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
-                      int rank, int ipcDomainNranks, [[maybe_unused]] int worldSize, size_t nelems) {
-  const int nPeer = ipcDomainNranks - 1;
+                      int rank, int nRanksPerIpcDomain, [[maybe_unused]] int worldSize, size_t nelems) {
+  const int nPeer = nRanksPerIpcDomain - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
   // assume (nelems * sizeof(T)) is divisible by 16
   const size_t nInt4 = nelems * sizeof(int) / sizeof(int4);
@@ -127,11 +127,11 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
   if ((char*)input == (char*)output + rank * inputSize) {
     allgatherFullmesh<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->ipcDomainNranks, ctx->workSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->workSize, nElem);
   } else {
     allgatherFullmesh<true><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
         (void*)input, this->scratchBuffer_, (void*)output, ctx->memoryChannelDeviceHandles.get(), rank,
-        ctx->ipcDomainNranks, ctx->workSize, nElem);
+        ctx->nRanksPerIpcDomain, ctx->workSize, nElem);
   }
   cudaError_t err = cudaGetLastError();
   if (err != cudaSuccess) {
@@ -148,7 +148,7 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup semaphores
   ctx->memorySemaphores = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection);

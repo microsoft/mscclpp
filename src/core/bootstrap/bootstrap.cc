@@ -468,6 +468,8 @@ int TcpBootstrap::Impl::getNranksPerIpcDomain() {
       ++nRanksPerIpcDomain;
     }
   }
+  INFO(MSCCLPP_INIT, "rank %d IPC domain fabric hash 0x%016llx nRanksPerIpcDomain %d", rank_,
+       static_cast<unsigned long long>(ipcDomainHashes[rank_]), nRanksPerIpcDomain);
   nRanksPerIpcDomain_ = nRanksPerIpcDomain;
   return nRanksPerIpcDomain_;
 }

@@ -15,7 +15,7 @@ namespace collective {
 template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreducePacket(T* buff, T* scratch, T* resultBuff, mscclpp::DeviceHandle<mscclpp::MemoryChannel>* memoryChannels,
-                    size_t channelDataOffset, size_t scratchBufferSize, int rank, int ipcDomainNranks, int worldSize,
+                    size_t channelDataOffset, size_t scratchBufferSize, int rank, int nRanksPerIpcDomain, int worldSize,
                     size_t nelems, void* flags, uint32_t flagBufferSize, uint32_t numScratchBuff
 #if defined(ENABLE_NPKIT)
                     ,
@@ -53,7 +53,7 @@ __global__ void __launch_bounds__(1024, 1)
   else
     nelems = nelems / (sizeof(int) / sizeof(T));
 
-  const int nPeers = ipcDomainNranks - 1;
+  const int nPeers = nRanksPerIpcDomain - 1;
   const size_t nPkts = nelems / 2;
 
   uint32_t flag = ((uint32_t*)flags)[blockIdx.x];
@@ -154,31 +154,32 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct PacketAdapter {
   static cudaError_t call(const void* buff, void* scratch, void* resultBuff, void* memoryChannels, void*,
                           DeviceHandle<SwitchChannel>*, DeviceHandle<SwitchChannel>*, size_t channelInOffset, size_t,
-                          size_t scratchBufferSize, int rank, int ipcDomainNranks, int worldSize, size_t inputSize,
+                          size_t scratchBufferSize, int rank, int nRanksPerIpcDomain, int worldSize, size_t inputSize,
                           cudaStream_t stream, void* flags, uint32_t flagBufferSize, uint32_t numScratchBuff,
                           int nBlocks = 0, int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    // Optimize the number of blocks to be multiple of (worldSize - 1)
-    nBlocks = nBlocks / (worldSize - 1) * (worldSize - 1);
+    // Optimize the number of blocks to be multiple of the IPC-domain peer count.
+    const int nPeers = nRanksPerIpcDomain - 1;
+    nBlocks = nBlocks / nPeers * nPeers;
 #if defined(ENABLE_NPKIT)
     size_t sharedMemSize = sizeof(NpKitEvent) * NPKIT_SHM_NUM_EVENTS;
     allreducePacket<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, sharedMemSize, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        ipcDomainNranks, worldSize, nelems, flags, flagBufferSize, numScratchBuff, NpKit::GetGpuEventCollectContexts(),
-        NpKit::GetCpuTimestamp());
+        nRanksPerIpcDomain, worldSize, nelems, flags, flagBufferSize, numScratchBuff,
+        NpKit::GetGpuEventCollectContexts(), NpKit::GetCpuTimestamp());
 #else
     allreducePacket<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
-        ipcDomainNranks, worldSize, nelems, flags, flagBufferSize, numScratchBuff);
+        nRanksPerIpcDomain, worldSize, nelems, flags, flagBufferSize, numScratchBuff);
 #endif
     return cudaGetLastError();
   }
 };
 
-inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int ipcDomainNranks, int worldSize,
+inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int nRanksPerIpcDomain, int worldSize,
                                                           [[maybe_unused]] DataType dtype) {
-  int nBlocks = (ipcDomainNranks - 1) * 4;
+  int nBlocks = (nRanksPerIpcDomain - 1) * 4;
   int nThreadsPerBlock = 1024;
   if (inputSize >= 32768) {
     nBlocks = (worldSize - 1) * 8;
@@ -229,12 +230,17 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
                                                 const std::unordered_map<std::string, uintptr_t>&,
                                                 DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
+  if (ctx->workSize != ctx->nRanksPerIpcDomain) {
+    WARN(ALGO, "AllreducePacket requires workSize to match nRanksPerIpcDomain, got workSize=", ctx->workSize,
+         ", nRanksPerIpcDomain=", ctx->nRanksPerIpcDomain);
+    return CommResult::CommInvalidArgument;
+  }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->ipcDomainNranks, ctx->workSize, dtype);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->nRanksPerIpcDomain, ctx->workSize, dtype);
   } else {
-    const int nPeers = ctx->workSize - 1;
-    if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+    const int nPeers = ctx->nRanksPerIpcDomain - 1;
+    if (blockAndThreadNum.first < nPeers) {
       return CommResult::CommInvalidArgument;
     }
   }
@@ -252,8 +258,8 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
-                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->ipcDomainNranks, ctx->workSize, inputSize,
-                stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_, this->nSegmentsForScratchBuffer_,
+                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerIpcDomain, ctx->workSize,
+                inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_, this->nSegmentsForScratchBuffer_,
                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN(ALGO, "AllreducePacket failed with error: ", cudaGetErrorString(error));
@@ -268,7 +274,7 @@ std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Comm
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
   ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->ipcDomainNranks = comm->bootstrap()->getNranksPerIpcDomain();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;
   ctx->registeredMemories.pop_back();  // remove the local memory from previous context
