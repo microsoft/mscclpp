@@ -208,30 +208,18 @@ uint64_t getFabricHash(const nvmlGpuFabricInfo_t& fabricInfo) {
 bool tryGetNvmlIpcDomainHash(uint64_t& ipcDomainHash) {
   // Use the current CUDA device; callers must set the rank's device before querying.
   int deviceId;
-  if (cudaGetDevice(&deviceId) != cudaSuccess) {
-    return false;
-  }
-
   char pciBusId[] = "00000000:00:00.0";
-  if (cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), deviceId) != cudaSuccess) {
+  if (cudaGetDevice(&deviceId) != cudaSuccess ||
+      cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), deviceId) != cudaSuccess) {
     return false;
   }
 
   static NvmlState nvml;
-  if (!nvml.isInitialized()) {
-    return false;
-  }
-
   nvmlDevice_t nvmlDevice;
-  if (nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &nvmlDevice) != NVML_SUCCESS) {
-    return false;
-  }
-
   nvmlGpuFabricInfo_t fabricInfo = {};
-  if (nvmlDeviceGetGpuFabricInfo(nvmlDevice, &fabricInfo) != NVML_SUCCESS) {
-    return false;
-  }
-  if (fabricInfo.state != NVML_GPU_FABRIC_STATE_COMPLETED || fabricInfo.status != NVML_SUCCESS) {
+  if (!nvml.isInitialized() || nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &nvmlDevice) != NVML_SUCCESS ||
+      nvmlDeviceGetGpuFabricInfo(nvmlDevice, &fabricInfo) != NVML_SUCCESS ||
+      fabricInfo.state != NVML_GPU_FABRIC_STATE_COMPLETED || fabricInfo.status != NVML_SUCCESS) {
     return false;
   }
 
