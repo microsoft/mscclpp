@@ -39,14 +39,18 @@ if [ "${PLATFORM}" == "rocm" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION "sudo modprobe amdgpu"
 fi
 
-# Install GDRCopy kernel module on host VMs (CUDA only)
+# Install GDRCopy kernel module on host VMs (CUDA only). Reinstall when the loaded
+# version doesn't match GDRDRV_VERSION — mscclpp's GDRCopy path uses gdr_pin_buffer_v2,
+# which requires gdrdrv 2.5.
 GDRCOPY_VERSION="2.5.2"
+GDRDRV_VERSION="2.5"
 if [ "${PLATFORM}" == "cuda" ]; then
   parallel-ssh -i -t 0 -h ${HOSTFILE} -x "-i ${KeyFilePath}" -O $SSH_OPTION \
-    "if lsmod | grep -q gdrdrv; then
-      echo 'gdrdrv module already loaded'
-    else
+    "LOADED=\$(cat /sys/module/gdrdrv/version 2>/dev/null || true)
+    echo \"gdrdrv loaded: \${LOADED:-none} (need ${GDRDRV_VERSION})\"
+    if [ \"\${LOADED}\" != \"${GDRDRV_VERSION}\" ]; then
       set -e
+      sudo rmmod gdrdrv 2>/dev/null || true
       sudo apt-get update -y && sudo apt-get install -y build-essential devscripts debhelper check libsubunit-dev fakeroot pkg-config dkms
       cd /tmp && wget -q https://github.com/NVIDIA/gdrcopy/archive/refs/tags/v${GDRCOPY_VERSION}.tar.gz -O gdrcopy.tar.gz
       tar xzf gdrcopy.tar.gz && cd gdrcopy-${GDRCOPY_VERSION}/packages
