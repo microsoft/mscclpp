@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #include <mscclpp/core.hpp>
-#include <mscclpp/errors.hpp>
 
 #include "allreduce/allreduce_nvls_zero_copy.hpp"
 #include "allreduce/common.hpp"
@@ -195,11 +194,12 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
 
   // setup channels
-  ctx->switchChannels = setupNvlsChannels(this->nvlsConnections_, (void*)sendBasePtr, sendBytes, nSwitchChannels_);
+  ctx->switchChannels =
+      setupNvlsChannels(comm, this->nvlsConnections_, (void*)sendBasePtr, sendBytes, nSwitchChannels_);
   if (input != output) {
     auto nvlsOutConnections = this->nvlsOutConnections_;
     std::vector<mscclpp::SwitchChannel> outChannels =
-        setupNvlsChannels(this->nvlsOutConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
+        setupNvlsChannels(comm, this->nvlsOutConnections_, (void*)recvBasePtr, recvBytes, nSwitchChannels_);
     ctx->switchChannels.insert(ctx->switchChannels.end(), outChannels.begin(), outChannels.end());
   }
 

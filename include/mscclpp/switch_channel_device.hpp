@@ -39,8 +39,7 @@ struct SwitchChannelDeviceHandle {
 
   /// Vectorized multimem load+reduce. The optional `AccumT` template parameter selects the
   /// accumulator: when `AccumT == __half` and `VectorType` is an FP8 vector type, the
-  /// `.acc::f16` variant of the instruction is used (faster but lower precision than the
-  /// default FP32 accumulator). For all other types `AccumT` is ignored.
+  /// `.acc::f16` variant of the instruction is used. For all other types `AccumT` is ignored.
   template <typename VectorType, typename AccumT = void>
   MSCCLPP_DEVICE_INLINE static VectorType multimemLoadReduce(VectorType* ptr) {
     VectorType val;

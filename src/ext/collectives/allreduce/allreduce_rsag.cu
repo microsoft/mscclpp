@@ -144,7 +144,7 @@ struct AllreduceRsAgAdapter {
 
 void AllreduceRsAg::initialize(std::shared_ptr<Communicator> comm) {
   this->conns_ = setupConnections(comm);
-  nChannelsPerConnection_ = 128;
+  nChannelsPerConnection_ = 64;
   comm_ = comm;
   // setup semaphores
   this->scratchSemaphores_ = setupMemorySemaphores(comm, this->conns_, nChannelsPerConnection_);

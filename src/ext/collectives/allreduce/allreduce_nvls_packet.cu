@@ -82,8 +82,7 @@ void AllreduceNvlsPacket::initialize(std::shared_ptr<Communicator> comm) {
   int nSwitchChannels = 1;
   this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels);
   this->switchChannels_ =
-      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, this->scratchBufferSize_, nSwitchChannels);
-  comm->bootstrap()->barrier();
+      setupNvlsChannels(comm, this->nvlsConnections_, this->scratchBuffer_, this->scratchBufferSize_, nSwitchChannels);
 }
 
 AlgorithmCtxKey AllreduceNvlsPacket::generateAllreduceContextKey(const void*, void*, size_t, DataType, bool) {

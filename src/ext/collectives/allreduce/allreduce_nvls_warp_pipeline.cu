@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <algorithm>
 #include <mscclpp/algorithm.hpp>
 
 #include "allreduce/allreduce_nvls_warp_pipeline.hpp"
@@ -141,15 +140,15 @@ struct NvlsWarpPipelineAdapter {
 
 void AllreduceNvlsWarpPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = NUM_NVLS_CONNECTION;
-  nRanksPerIpcDomain_ = comm->bootstrap()->getNranksPerIpcDomain();
+  int nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
   // Per-peer channel allocation must hold 2 * nBlocks entries; default nBlocks = 4 * nRanksPerIpcDomain.
-  nBaseChannels_ = std::max(64, 8 * nRanksPerIpcDomain_);
+  int nBaseChannels = std::max(64, 8 * nRanksPerIpcDomain);
   this->conns_ = setupConnections(comm);
   // setup semaphores
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores =
-      setupMemorySemaphores(comm, this->conns_, nBaseChannels_);
+      setupMemorySemaphores(comm, this->conns_, nBaseChannels);
   // setup base memory channels
-  this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels_);
+  this->baseChannels_ = setupBaseMemoryChannels(this->conns_, memorySemaphores, nBaseChannels);
   this->memoryChannelsDeviceHandle_ = setupBaseMemoryChannelDeviceHandles(this->baseChannels_);
   this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
 }
@@ -192,7 +191,7 @@ std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::share
 
   // setup channels
   ctx->switchChannels =
-      setupNvlsChannels(this->nvlsConnections_, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
+      setupNvlsChannels(comm, this->nvlsConnections_, this->scratchBuffer_, scratchBufferSize_, nSwitchChannels_);
   ctx->switchChannelDeviceHandles = setupNvlsChannelDeviceHandles(ctx->switchChannels);
   return ctx;
 }

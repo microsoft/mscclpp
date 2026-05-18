@@ -57,7 +57,8 @@ std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
 std::vector<std::shared_ptr<NvlsConnection>> setupNvlsConnections(std::shared_ptr<Communicator> comm, size_t size,
                                                                   int numConnections);
 
-std::vector<SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<NvlsConnection>> conns, void* buffer,
+std::vector<SwitchChannel> setupNvlsChannels(std::shared_ptr<Communicator> comm,
+                                             std::vector<std::shared_ptr<NvlsConnection>> conns, void* buffer,
                                              size_t bufferSize, int nSwitchChannels);
 
 std::shared_ptr<DeviceHandle<SwitchChannel>> setupNvlsChannelDeviceHandles(
