@@ -96,6 +96,7 @@ def main():
 
     # Small settings for functional check
     import os as _os
+
     num_tokens = int(_os.environ.get("MSCCLPP_EP_HT_TOKENS", "128"))
     hidden = int(_os.environ.get("MSCCLPP_EP_HT_HIDDEN", "1024"))
     num_topk = int(_os.environ.get("MSCCLPP_EP_HT_TOPK", str(min(4, num_ranks))))
@@ -140,7 +141,13 @@ def main():
 
     # Buffer config for internode HT: needs num_rdma_bytes > 0. Size buffers
     # using max(hidden, bench_hidden) so the optional bench phase fits.
-    cfg = ep.Config(int(os.environ.get("MSCCLPP_EP_NSM","152")), int(os.environ.get("MSCCLPP_EP_NVL_SEND","8")), int(os.environ.get("MSCCLPP_EP_NVL_RECV","256")), int(os.environ.get("MSCCLPP_EP_RDMA_SEND","16")), int(os.environ.get("MSCCLPP_EP_RDMA_RECV","128")))
+    cfg = ep.Config(
+        int(os.environ.get("MSCCLPP_EP_NSM", "152")),
+        int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+        int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
+        int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
+    )
     _bench_on = os.environ.get("MSCCLPP_EP_BENCH", "0") == "1"
     _buf_hidden = max(hidden, int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "0"))) if _bench_on else hidden
     num_nvl_bytes = cfg.get_nvl_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
