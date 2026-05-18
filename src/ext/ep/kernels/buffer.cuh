@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstdint>
+
 #include "configs.cuh"
 #include "exception.cuh"
-#include <cstdint>
 
 namespace mscclpp {
 namespace ep {

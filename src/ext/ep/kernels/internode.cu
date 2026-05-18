@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 #include <limits>
-#include <type_traits>
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
+#include <type_traits>
 
 #include "buffer.cuh"
 #include "configs.cuh"
@@ -22,8 +22,7 @@ namespace ep {
 using NvlPackT = std::conditional_t<NUM_MAX_NVL_PEERS == 8, uint64_t, uint32_t>;
 static_assert(NUM_MAX_NVL_PEERS == 8 || NUM_MAX_NVL_PEERS == 4,
               "NUM_MAX_NVL_PEERS must be 4 or 8 for HT internode kernel");
-static_assert(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(NvlPackT),
-              "NvlPackT size must match NUM_MAX_NVL_PEERS bools");
+static_assert(NUM_MAX_NVL_PEERS * sizeof(bool) == sizeof(NvlPackT), "NvlPackT size must match NUM_MAX_NVL_PEERS bools");
 
 namespace internode {
 
@@ -273,23 +272,19 @@ __host__ __device__ __forceinline__ std::pair<int, int> get_nvl_clean_meta(int h
 }
 
 template <bool kLowLatencyMode, int kNumRDMARanks>
-__global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mapped, int num_ranks,
-                                const int* num_tokens_per_rdma_rank, int* moe_recv_rdma_counter_mapped,
-                                const int* num_tokens_per_expert, int* moe_recv_expert_counter_mapped, int num_experts,
-                                const bool* is_token_in_rank, int num_tokens, int num_channels, int expert_alignment,
-                                const int rdma_clean_offset, const int rdma_num_int_clean, const int nvl_clean_offset,
-                                const int nvl_num_int_clean, int* rdma_channel_prefix_matrix,
-                                int* recv_rdma_rank_prefix_sum, int* gbl_channel_prefix_matrix,
-                                int* recv_gbl_rank_prefix_sum, void* rdma_buffer_ptr, void** buffer_ptrs,
-                                int** task_fifo_ptrs, int head, int rank,
-                                mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                                mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-                                // NVLS Phase 2 — replaces port_channel signal/wait + putWithSignal.
-                                // When `nvls_mc_ptr == nullptr` the legacy PortChannel path runs
-                                // unchanged (fallback for non-NVLS IB platforms).
-                                void* nvls_mc_ptr, void* nvls_dev_ptr,
-                                size_t nvls_off_barrier, size_t nvls_off_data,
-                                uint64_t nvls_epoch, int nvls_per_peer_bytes) {
+__global__ void notify_dispatch(
+    const int* num_tokens_per_rank, int* moe_recv_counter_mapped, int num_ranks, const int* num_tokens_per_rdma_rank,
+    int* moe_recv_rdma_counter_mapped, const int* num_tokens_per_expert, int* moe_recv_expert_counter_mapped,
+    int num_experts, const bool* is_token_in_rank, int num_tokens, int num_channels, int expert_alignment,
+    const int rdma_clean_offset, const int rdma_num_int_clean, const int nvl_clean_offset, const int nvl_num_int_clean,
+    int* rdma_channel_prefix_matrix, int* recv_rdma_rank_prefix_sum, int* gbl_channel_prefix_matrix,
+    int* recv_gbl_rank_prefix_sum, void* rdma_buffer_ptr, void** buffer_ptrs, int** task_fifo_ptrs, int head, int rank,
+    mscclpp::PortChannelDeviceHandle* port_channel_handles, mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+    // NVLS Phase 2 — replaces port_channel signal/wait + putWithSignal.
+    // When `nvls_mc_ptr == nullptr` the legacy PortChannel path runs
+    // unchanged (fallback for non-NVLS IB platforms).
+    void* nvls_mc_ptr, void* nvls_dev_ptr, size_t nvls_off_barrier, size_t nvls_off_data, uint64_t nvls_epoch,
+    int nvls_per_peer_bytes) {
   auto sm_id = static_cast<int>(blockIdx.x);
   auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
   auto num_threads = static_cast<int>(blockDim.x), num_warps = num_threads / 32;
@@ -397,9 +392,8 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
       // the local send region — contiguous from send_buffer(0).
       int* src_ints = rdma_recv_num_tokens_mixed.send_buffer(0);
       const int total_ints = num_elems * kNumRDMARanks;
-      int* mc_slot = reinterpret_cast<int*>(
-          static_cast<char*>(nvls_mc_ptr) + nvls_off_data +
-          static_cast<size_t>(my_global_rank) * slot_stride_bytes);
+      int* mc_slot = reinterpret_cast<int*>(static_cast<char*>(nvls_mc_ptr) + nvls_off_data +
+                                            static_cast<size_t>(my_global_rank) * slot_stride_bytes);
       for (int i = thread_id; i < total_ints; i += num_threads) {
         int val = src_ints[i];
         MSCCLPP_EP_MULTIMEM_ST_RELAXED_U32(mc_slot + i, val);
@@ -425,10 +419,9 @@ __global__ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_co
       // the legacy SymBuffer recv_buffer(s) location.
       for (int s = 0; s < kNumRDMARanks; ++s) {
         const int sender_global = kLowLatencyMode ? s : (s * NUM_MAX_NVL_PEERS + nvl_rank);
-        const int* nvls_src = reinterpret_cast<const int*>(
-            static_cast<char*>(nvls_dev_ptr) + nvls_off_data +
-            static_cast<size_t>(sender_global) * slot_stride_bytes +
-            static_cast<size_t>(rdma_rank) * num_bytes);
+        const int* nvls_src = reinterpret_cast<const int*>(static_cast<char*>(nvls_dev_ptr) + nvls_off_data +
+                                                           static_cast<size_t>(sender_global) * slot_stride_bytes +
+                                                           static_cast<size_t>(rdma_rank) * num_bytes);
         int* dst = rdma_recv_num_tokens_mixed.recv_buffer(s);
         for (int i = thread_id; i < num_elems; i += num_threads) {
           dst[i] = nvls_src[i];
@@ -622,10 +615,8 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
                      int num_max_nvl_chunked_recv_tokens, int** task_fifo_ptrs, int head, int rank, cudaStream_t stream,
                      int64_t num_rdma_bytes, int64_t num_nvl_bytes, bool low_latency_mode,
                      mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                     mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-                     void* nvls_mc_ptr, void* nvls_dev_ptr,
-                     size_t nvls_off_barrier, size_t nvls_off_data,
-                     uint64_t nvls_epoch, int nvls_per_peer_bytes) {
+                     mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_mc_ptr, void* nvls_dev_ptr,
+                     size_t nvls_off_barrier, size_t nvls_off_data, uint64_t nvls_epoch, int nvls_per_peer_bytes) {
 #define NOTIFY_DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                  \
   {                                                                                                                  \
     auto notify_dispatch_func =                                                                                      \
@@ -636,8 +627,8 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
                   expert_alignment, rdma_clean_meta.first, rdma_clean_meta.second, nvl_clean_meta.first,             \
                   nvl_clean_meta.second, rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,                      \
                   gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum, rdma_buffer_ptr, buffer_ptrs, task_fifo_ptrs, \
-                  head, rank, port_channel_handles, memory_channel_handles,                                          \
-                  nvls_mc_ptr, nvls_dev_ptr, nvls_off_barrier, nvls_off_data, nvls_epoch, nvls_per_peer_bytes);      \
+                  head, rank, port_channel_handles, memory_channel_handles, nvls_mc_ptr, nvls_dev_ptr,               \
+                  nvls_off_barrier, nvls_off_data, nvls_epoch, nvls_per_peer_bytes);                                 \
   }                                                                                                                  \
   break
 
@@ -856,10 +847,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         const auto dst_offset = rdma_rank * num_bytes + meta_recv_offset;
         const auto src_offset = dst_rdma_rank * num_bytes + meta_send_offset;
         const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-        const int* src_p = reinterpret_cast<const int*>(
-            reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
-        int* dst_p = reinterpret_cast<int*>(
-            reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+        const int* src_p = reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+        int* dst_p = reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
         const int n_int = (int)(num_bytes / sizeof(int));
         for (int k = lane_id; k < n_int; k += 32) {
           dst_p[k] = src_p[k];
@@ -904,8 +893,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           // Phase 4: head feedback path \u2014 cross-node uses fabric-VA store,
           // self-loop uses local atomic. Both end up in rdma_channel_head;
           // single read via ld_volatile_global covers them. NVLS removed.
-          cached_rdma_channel_head =
-              static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+          cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
         }
       }
       __syncwarp();
@@ -991,8 +979,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     __syncwarp();
 
     // Update last token tail (epilogue). See in-loop note on atomicMax.
-    if (last_rdma_tail_idx >= 0)
-      atomicMax(const_cast<int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
+    if (last_rdma_tail_idx >= 0) atomicMax(const_cast<int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
 
     // Release sequential lock
     lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
@@ -1035,8 +1022,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         if (owner && num_tokens_to_send > 0) {
           auto processed_tail = ld_acquire_cta(const_cast<const int*>(rdma_send_channel_tail + dst_rdma_rank));
           auto num_tokens_processed = processed_tail - last_issued_tail;
-          if (num_tokens_processed == num_tokens_to_send ||
-              num_tokens_processed >= num_max_rdma_chunked_send_tokens) {
+          if (num_tokens_processed == num_tokens_to_send || num_tokens_processed >= num_max_rdma_chunked_send_tokens) {
             int n = min(num_tokens_processed, num_max_rdma_chunked_send_tokens);
             EP_DEVICE_ASSERT(n >= 0 && n <= num_tokens_to_send);
             my_num_tokens_to_issue = n;
@@ -1067,10 +1053,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               // ordering pair (release semantics on multimem.red triggers
               // unspecified launch failure on Azure GB200).
               const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-              const int4* src_p = reinterpret_cast<const int4*>(
-                  reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
-              int4* dst_p = reinterpret_cast<int4*>(
-                  reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+              const int4* src_p =
+                  reinterpret_cast<const int4*>(reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+              int4* dst_p =
+                  reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
               const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
               // Unrolled 8x to give the LSU pipeline more outstanding stores
               // per lane. Each lane handles k, k+32, ..., k+224 per iter
@@ -1120,26 +1106,24 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           if (owner) {
             if (peer_rdma_bases != nullptr && dst_rdma_rank != rdma_rank) {
               const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-              const uintptr_t my_tail_off =
-                  reinterpret_cast<uintptr_t>(rdma_channel_tail.buffer(rdma_rank)) -
-                  reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+              const uintptr_t my_tail_off = reinterpret_cast<uintptr_t>(rdma_channel_tail.buffer(rdma_rank)) -
+                                            reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
               uint64_t* peer_tail = reinterpret_cast<uint64_t*>(
                   reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_tail_off);
               const uint64_t new_tail = (uint64_t)issue_tail + (uint64_t)n_issue;
-              asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_tail), "l"(new_tail) : "memory");
+              asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(peer_tail), "l"(new_tail) : "memory");
             } else {
               // Self-loop: plain release atomic on local slot (no multicast).
-              mscclpp::atomicFetchAdd(
-                  reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
-                  (uint64_t)n_issue, mscclpp::memoryOrderRelease);
+              mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
+                                      (uint64_t)n_issue, mscclpp::memoryOrderRelease);
             }
           }
         } else if (owner) {
           // Legacy non-NVLS path (single-lane).
           if (dst_rdma_rank == rdma_rank) {
             // Update tails
-            mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
-                                    (uint64_t)n_issue, mscclpp::memoryOrderRelease);
+            mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)), (uint64_t)n_issue,
+                                    mscclpp::memoryOrderRelease);
           } else {
             const auto dst_slot_idx = issue_tail % num_max_rdma_chunked_recv_tokens;
             const size_t num_bytes_per_msg = (size_t)num_bytes_per_rdma_token * (size_t)n_issue;
@@ -1147,9 +1131,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                                     dst_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
             const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
                                     dst_slot_idx * num_bytes_per_rdma_token + data_send_offset;
-            const auto port_channel_idx =
-                kLowLatencyMode ? (channel_id * kNumRDMARanks + dst_rdma_rank)
-                                : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
+            const auto port_channel_idx = kLowLatencyMode
+                                              ? (channel_id * kNumRDMARanks + dst_rdma_rank)
+                                              : (channel_id * num_ranks + dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank);
             auto& handle = port_channel_handles[port_channel_idx];
             handle.put(dst_offset, src_offset, num_bytes_per_msg);
 
@@ -1159,9 +1143,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const uint64_t new_tail = (uint64_t)issue_tail + (uint64_t)n_issue;
             *rdma_channel_tail_send_src.buffer(dst_rdma_rank) = new_tail;
             __threadfence_system();
-            const auto src_off_tail =
-                reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
-                reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+            const auto src_off_tail = reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
+                                      reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
             handle.put(rdma_rank * sizeof(uint64_t) + tail_send_offset, src_off_tail, sizeof(uint64_t));
           }
         }
@@ -1271,8 +1254,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             // (sender writes peer's rdma_channel_tail slot). Self-loop tail
             // is a plain local atomic. Both end up in rdma_channel_tail —
             // single read path via ld_acquire_sys_global covers them.
-            cached_rdma_channel_tail =
-                static_cast<int>(ld_acquire_sys_global(rdma_channel_tail.buffer(src_rdma_rank)));
+            cached_rdma_channel_tail = static_cast<int>(ld_acquire_sys_global(rdma_channel_tail.buffer(src_rdma_rank)));
           }
           if (__shfl_sync(0xffffffff, cached_rdma_channel_tail > cached_rdma_channel_head, src_rdma_rank)) break;
         }
@@ -1394,9 +1376,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // last chunks to never trigger head feedback, which deadlocked at
       // larger chunk_send values where 4096 tokens / 10 channels / 2 peers
       // ≈ 205 tokens ⇒ 3 full chunks + 1 partial.
-      const bool any_retired = forward_channel_retired[0] || forward_channel_retired[1] ||
-                               forward_channel_retired[2] || forward_channel_retired[3] ||
-                               forward_channel_retired[4] || forward_channel_retired[5] ||
+      const bool any_retired = forward_channel_retired[0] || forward_channel_retired[1] || forward_channel_retired[2] ||
+                               forward_channel_retired[3] || forward_channel_retired[4] || forward_channel_retired[5] ||
                                forward_channel_retired[6] || forward_channel_retired[7];
       const int head_update_threshold = any_retired ? 1 : max(1, num_max_rdma_chunked_send_tokens / 4);
       if (min_head != std::numeric_limits<int>::max() and min_head >= last_head + head_update_threshold and
@@ -1408,12 +1389,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           // is `peer.rdma_channel_head.buffer(my_rdma_rank)`). Bypasses
           // both broken port_channel.put and the unreliable NVLS counter.
           const int dst_rank_global = lane_id * NUM_MAX_NVL_PEERS + nvl_rank;
-          const uintptr_t my_head_off =
-              reinterpret_cast<uintptr_t>(rdma_channel_head.buffer(rdma_rank)) -
-              reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
-          uint64_t* peer_head = reinterpret_cast<uint64_t*>(
-              reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_head_off);
-          asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_head), "l"((uint64_t)min_head) : "memory");
+          const uintptr_t my_head_off = reinterpret_cast<uintptr_t>(rdma_channel_head.buffer(rdma_rank)) -
+                                        reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+          uint64_t* peer_head =
+              reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_head_off);
+          asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(peer_head), "l"((uint64_t)min_head) : "memory");
         } else if (lane_id == rdma_rank) {
           // Self-loop: plain release atomic on local slot. Cannot use NVLS
           // multimem here \u2014 it fans out to all NVL peers' local buffers
@@ -1428,9 +1408,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           // Absolute-value RDMA WRITE replaces broken HW atomicAdd (see note above).
           *rdma_channel_head_send_src.buffer(lane_id) = (uint64_t)min_head;
           __threadfence_system();
-          const auto src_off_head =
-              reinterpret_cast<uintptr_t>(rdma_channel_head_send_src.buffer(lane_id)) -
-              reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+          const auto src_off_head = reinterpret_cast<uintptr_t>(rdma_channel_head_send_src.buffer(lane_id)) -
+                                    reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
           handle.put(dst_offset, src_off_head, sizeof(uint64_t));
         }
         last_head = min_head;
@@ -1548,9 +1527,8 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens, int rank, int num_ranks,
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
-              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-              void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
-              void* const* peer_rdma_bases) {
+              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
   constexpr int kNumDispatchRDMASenderWarps = 7;
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -1591,8 +1569,7 @@ __global__ void cached_notify(const int rdma_clean_offset, const int rdma_num_in
                               // Phase 4: NVLS multimem barrier path — bypasses port_channel signal/wait
                               // (broken on Azure CX-7 RoCE) by using multimem.red.add + ld.acquire on a
                               // pair of barrier slots (offsets +24 and +32). Both nullptr ⇒ fall back to IB.
-                              void* nvls_mc_ptr, void* nvls_dev_ptr, size_t nvls_off_barrier,
-                              uint64_t nvls_epoch) {
+                              void* nvls_mc_ptr, void* nvls_dev_ptr, size_t nvls_off_barrier, uint64_t nvls_epoch) {
   auto sm_id = static_cast<int>(blockIdx.x);
   auto thread_id = static_cast<int>(threadIdx.x);
   auto num_threads = static_cast<int>(blockDim.x);
@@ -1746,8 +1723,8 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
                    int num_max_nvl_chunked_recv_tokens, int** task_fifo_ptrs, int head, int rank, cudaStream_t stream,
                    int64_t num_rdma_bytes, int64_t num_nvl_bytes, bool is_cached_dispatch, bool low_latency_mode,
                    mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                   mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-                   void* nvls_mc_ptr, void* nvls_dev_ptr, size_t nvls_off_barrier, uint64_t nvls_epoch) {
+                   mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_mc_ptr, void* nvls_dev_ptr,
+                   size_t nvls_off_barrier, uint64_t nvls_epoch) {
   const int num_threads = std::max(128, 32 * num_channels);
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
@@ -1775,8 +1752,8 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
   LAUNCH_KERNEL(&cfg, cached_notify_func, rdma_clean_meta.first, rdma_clean_meta.second, nvl_clean_meta.first,
                 nvl_clean_meta.second, combined_rdma_head, num_combined_tokens, num_channels,
                 rdma_channel_prefix_matrix, rdma_rank_prefix_sum, combined_nvl_head, rdma_buffer_ptr, buffer_ptrs,
-                task_fifo_ptrs, head, rank, num_ranks, is_cached_dispatch, port_channel_handles,
-                memory_channel_handles, nvls_mc_ptr, nvls_dev_ptr, nvls_off_barrier, nvls_epoch);
+                task_fifo_ptrs, head, rank, num_ranks, is_cached_dispatch, port_channel_handles, memory_channel_handles,
+                nvls_mc_ptr, nvls_dev_ptr, nvls_off_barrier, nvls_epoch);
 }
 
 template <int kNumRanks, typename dtype_t, int kMaxNumRanks, typename ReceiveFn, typename ReceiveTWFn>
@@ -2118,8 +2095,8 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
           // Phase 4: head read — cross-node head feedback comes from peer
           // via fabric-VA store, self-loop head from local atomic. Both end
           // up in rdma_channel_head; one read path covers them.
-          int num_used_slots = token_start_idx -
-                               static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(dst_rdma_rank)));
+          int num_used_slots =
+              token_start_idx - static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(dst_rdma_rank)));
           if (num_max_rdma_chunked_recv_tokens - num_used_slots >= num_chunked_tokens) break;
 
           // Timeout check
@@ -2188,20 +2165,17 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             // is available; otherwise single-lane handle.put + flush.
             if (dst_rdma_rank != rdma_rank) {
               const auto rdma_slot_idx = token_start_idx % num_max_rdma_chunked_recv_tokens;
-              const size_t num_bytes_per_msg =
-                  (size_t)num_chunked_tokens * (size_t)num_bytes_per_rdma_token;
-              const auto dst_offset =
-                  rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                  rdma_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
-              const auto src_offset =
-                  dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
-                  rdma_slot_idx * num_bytes_per_rdma_token + data_send_offset;
+              const size_t num_bytes_per_msg = (size_t)num_chunked_tokens * (size_t)num_bytes_per_rdma_token;
+              const auto dst_offset = rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                                      rdma_slot_idx * num_bytes_per_rdma_token + data_recv_offset;
+              const auto src_offset = dst_rdma_rank * (num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token) +
+                                      rdma_slot_idx * num_bytes_per_rdma_token + data_send_offset;
               if (peer_rdma_bases != nullptr) {
                 const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-                const int4* src_p = reinterpret_cast<const int4*>(
-                    reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
-                int4* dst_p = reinterpret_cast<int4*>(
-                    reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
+                const int4* src_p =
+                    reinterpret_cast<const int4*>(reinterpret_cast<uint8_t*>(rdma_buffer_ptr_base) + src_offset);
+                int4* dst_p =
+                    reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + dst_offset);
                 const int n_int4 = (int)(num_bytes_per_msg / sizeof(int4));
                 // Same 8x unroll as dispatch sender for LSU pipelining.
                 const int stride8 = 8 * 32;
@@ -2246,18 +2220,16 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             if (dst_rdma_rank != rdma_rank) {
               if (peer_rdma_bases != nullptr && lane_id == 0) {
                 const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-                const uintptr_t my_tail_off =
-                    reinterpret_cast<uintptr_t>(rdma_channel_tail.buffer(rdma_rank)) -
-                    reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+                const uintptr_t my_tail_off = reinterpret_cast<uintptr_t>(rdma_channel_tail.buffer(rdma_rank)) -
+                                              reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
                 uint64_t* peer_tail = reinterpret_cast<uint64_t*>(
                     reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_tail_off);
                 const uint64_t new_tail = (uint64_t)(token_start_idx + num_chunked_tokens);
-                asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_tail), "l"(new_tail) : "memory");
+                asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(peer_tail), "l"(new_tail) : "memory");
               }
             } else if (lane_id == 0) {
-              mscclpp::atomicFetchAdd(
-                  reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
-                  (uint64_t)num_chunked_tokens, mscclpp::memoryOrderRelease);
+              mscclpp::atomicFetchAdd(reinterpret_cast<uint64_t*>(rdma_channel_tail.buffer(rdma_rank)),
+                                      (uint64_t)num_chunked_tokens, mscclpp::memoryOrderRelease);
             }
           } else if (lane_id == 0) {
             if (dst_rdma_rank == rdma_rank) {
@@ -2280,9 +2252,8 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
               const uint64_t new_tail = (uint64_t)(token_start_idx + num_chunked_tokens);
               *rdma_channel_tail_send_src.buffer(dst_rdma_rank) = new_tail;
               __threadfence_system();
-              const auto src_off_tail =
-                  reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
-                  reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+              const auto src_off_tail = reinterpret_cast<uintptr_t>(rdma_channel_tail_send_src.buffer(dst_rdma_rank)) -
+                                        reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
               handle.put(rdma_rank * sizeof(uint64_t) + tail_send_offset, src_off_tail, sizeof(uint64_t));
             }
           }
@@ -2388,12 +2359,11 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             //   self-loop → local atomicAdd
             if (peer_rdma_bases != nullptr && dst_rdma_rank != rdma_rank) {
               const int dst_rank_global = dst_rdma_rank * NUM_MAX_NVL_PEERS + nvl_rank;
-              const uintptr_t my_head_off =
-                  reinterpret_cast<uintptr_t>(rdma_channel_head.buffer(rdma_rank)) -
-                  reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+              const uintptr_t my_head_off = reinterpret_cast<uintptr_t>(rdma_channel_head.buffer(rdma_rank)) -
+                                            reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
               uint64_t* peer_head = reinterpret_cast<uint64_t*>(
                   reinterpret_cast<uint8_t*>(peer_rdma_bases[dst_rank_global]) + my_head_off);
-              asm volatile("st.release.sys.global.u64 [%0], %1;" :: "l"(peer_head), "l"((uint64_t)min_head) : "memory");
+              asm volatile("st.release.sys.global.u64 [%0], %1;" ::"l"(peer_head), "l"((uint64_t)min_head) : "memory");
             } else if (dst_rdma_rank == rdma_rank) {
               mscclpp::atomicFetchAdd(static_cast<uint64_t*>(rdma_channel_head.buffer(rdma_rank)),
                                       (uint64_t)(min_head - last_rdma_head), mscclpp::memoryOrderRelease);
@@ -2406,9 +2376,8 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
               // Absolute-value RDMA WRITE replaces broken HW atomicAdd.
               *rdma_channel_head_send_src.buffer(dst_rdma_rank) = (uint64_t)min_head;
               __threadfence_system();
-              const auto src_off_head =
-                  reinterpret_cast<uintptr_t>(rdma_channel_head_send_src.buffer(dst_rdma_rank)) -
-                  reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
+              const auto src_off_head = reinterpret_cast<uintptr_t>(rdma_channel_head_send_src.buffer(dst_rdma_rank)) -
+                                        reinterpret_cast<uintptr_t>(rdma_buffer_ptr_base);
               handle.put(dst_offset, src_off_head, sizeof(uint64_t));
             }
             last_rdma_head = min_head;
@@ -2443,9 +2412,8 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              void** buffer_ptrs, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens, int rank,
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
-             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
-             void* const* peer_rdma_bases) {
+             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
+             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
   constexpr int kNumCombineForwarderWarps = 16;
 
 #define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -2458,8 +2426,8 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
                   rdma_rank_prefix_sum, gbl_channel_prefix_matrix, num_tokens, num_combined_tokens, hidden, num_topk, \
                   rdma_buffer_ptr, num_max_rdma_chunked_send_tokens, num_max_rdma_chunked_recv_tokens, buffer_ptrs,   \
                   num_max_nvl_chunked_send_tokens, num_max_nvl_chunked_recv_tokens, rank, num_ranks,                  \
-                  port_channel_handles, memory_channel_handles,                                                       \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases);                         \
+                  port_channel_handles, memory_channel_handles, nvls_head_mc, nvls_head_dev, nvls_tail_mc,            \
+                  nvls_tail_dev, peer_rdma_bases);                                                                    \
   }                                                                                                                   \
   break
 

@@ -431,16 +431,13 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
     cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, cur_dev);
     int max_active_narrow = 0;
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &max_active_narrow,
-        (void*)dispatch<false, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168>,
+        &max_active_narrow, (void*)dispatch<false, true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168>,
         kNumWarpGroupsIpc * kNumWarpsPerGroupIpc * 32, 0);
     const int cap_narrow = max_active_narrow * sm_count;
     ipc_wide = (num_experts > cap_narrow);
   }
-  const int kNumWarpGroups =
-      (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
-  const int kNumWarpsPerGroup =
-      (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
+  const int kNumWarpGroups = (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+  const int kNumWarpsPerGroup = (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
   const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
   // LL dispatch/combine are latency-bound at typical problem sizes: for
@@ -688,16 +685,13 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
     cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, cur_dev);
     int max_active_narrow = 0;
     cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &max_active_narrow,
-        (void*)combine<true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168, kNumMaxTopk>,
+        &max_active_narrow, (void*)combine<true, kNumWarpGroupsIpc, kNumWarpsPerGroupIpc, 7168, kNumMaxTopk>,
         kNumWarpGroupsIpc * kNumWarpsPerGroupIpc * 32, 0);
     const int cap_narrow = max_active_narrow * sm_count;
     ipc_wide = (num_experts > cap_narrow);
   }
-  const int kNumWarpGroups =
-      (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
-  const int kNumWarpsPerGroup =
-      (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
+  const int kNumWarpGroups = (use_ipc_path && !ipc_wide) ? kNumWarpGroupsIpc : kNumWarpGroupsRdma;
+  const int kNumWarpsPerGroup = (use_ipc_path && !ipc_wide) ? kNumWarpsPerGroupIpc : kNumWarpsPerGroupRdma;
   const auto num_warps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto num_sms_base = cell_div(num_experts, kNumWarpGroups);
   // See the comment in `dispatch()` above: combine-recv's per-token loop
