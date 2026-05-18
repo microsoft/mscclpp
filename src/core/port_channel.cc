@@ -1,11 +1,14 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <mscclpp/numa.hpp>
 #include <mscclpp/port_channel.hpp>
 
 #include "api.h"
-#include "debug.h"
+#include "atomic.hpp"
+#include "connection.hpp"
+#include "logger.hpp"
+#include "proxy_impl.hpp"
 
 namespace mscclpp {
 
@@ -34,11 +37,12 @@ MSCCLPP_API_CPP ProxyService::ProxyService(int fifoSize) {
     MSCCLPP_CUDATHROW(cudaSetDevice(cudaDevice));
     if (deviceNumaNode >= 0) {
       numaBind(deviceNumaNode);
-      INFO(MSCCLPP_INIT, "NUMA node of ProxyService proxy thread is set to %d", deviceNumaNode);
+      INFO(CONN, "NUMA node of ProxyService proxy thread is set to ", deviceNumaNode);
     }
   };
   auto handlerFunc = [&](ProxyTrigger triggerRaw) { return handleTrigger(triggerRaw); };
   proxy_ = std::make_shared<Proxy>(handlerFunc, initFunc, fifoSize);
+  proxy_->pimpl_->setProgressHandler([this]() { progressFlushes(); });
 }
 
 MSCCLPP_API_CPP SemaphoreId ProxyService::buildAndAddSemaphore(Communicator& communicator,
@@ -84,9 +88,28 @@ MSCCLPP_API_CPP PortChannel ProxyService::portChannel(SemaphoreId id, MemoryId d
 
 MSCCLPP_API_CPP void ProxyService::startProxy(bool blocking) { proxy_->start(blocking); }
 
-MSCCLPP_API_CPP void ProxyService::stopProxy() { proxy_->stop(); }
+MSCCLPP_API_CPP void ProxyService::stopProxy() {
+  proxy_->stop();
+  // Drain pending flushes. After a bounded loop, force-unblock any still-pending GPU
+  // waiters with a sentinel write (UINT64_MAX > any FIFO position).
+  for (int i = 0; i < 1000 && !pendingFlushPos_.empty(); ++i) {
+    progressFlushes();
+  }
+  if (!pendingFlushPos_.empty()) {
+    WARN(CONN, "stopProxy: ", pendingFlushPos_.size(), " connections still pending; writing sentinel");
+    for (auto& [conn, pos] : pendingFlushPos_) {
+      if (uint64_t* ptr = conn->getFlushDonePtr()) atomicStore(ptr, UINT64_MAX, memoryOrderRelease);
+    }
+    pendingFlushPos_.clear();
+  }
+}
 
 ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
+  // The proxy is the sole FIFO consumer and processes in strict push order, so the FIFO's
+  // tail (between poll() and pop()) matches the value GPU's fifo_.push() returned for this
+  // trigger — use it directly as our per-trigger sequence number.
+  uint64_t pos = proxy_->fifo()->tail();
+
   std::shared_ptr<Host2DeviceSemaphore> semaphore = semaphores_[trigger.fields.semaphoreId];
 
   auto& conn = semaphore->connection();
@@ -114,9 +137,15 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
     numRequests++;
   }
 
-  if (((trigger.fields.type & TriggerSync) && numRequests > 0) ||
-      (maxWriteQueueSize != -1 && numRequests >= maxWriteQueueSize)) {
-    conn.flush();
+  if (trigger.fields.type & TriggerSync) {
+    // Record this TriggerSync's FIFO position. The GPU caller is spinning on
+    // flushDonePos_ > pos; progressFlushes() will publish pos+1 once the CQ drains.
+    // Later TriggerSyncs on the same conn overwrite — CQ drain completes them all at once.
+    conn.impl_->requestFlush();
+    pendingFlushPos_[conn.impl_] = pos;
+    numRequests = 0;
+  } else if (maxWriteQueueSize != -1 && numRequests >= maxWriteQueueSize) {
+    conn.flush();  // flow-control flush stays blocking
     numRequests = 0;
   }
 
@@ -124,12 +153,27 @@ ProxyHandlerResult ProxyService::handleTrigger(ProxyTrigger trigger) {
 }
 
 MSCCLPP_API_CPP BasePortChannel::DeviceHandle BasePortChannel::deviceHandle() const {
-  return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle());
+  auto& conn = semaphore_->connection();
+  return BasePortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(),
+                                       conn.impl_->getFlushDonePtr());
 }
 
 MSCCLPP_API_CPP PortChannel::DeviceHandle PortChannel::deviceHandle() const {
-  return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_,
-                                   src_);
+  auto& conn = semaphore_->connection();
+  return PortChannel::DeviceHandle(semaphoreId_, semaphore_->deviceHandle(), proxy_->fifo()->deviceHandle(), dst_, src_,
+                                   conn.impl_->getFlushDonePtr());
+}
+
+void ProxyService::progressFlushes() {
+  for (auto it = pendingFlushPos_.begin(); it != pendingFlushPos_.end();) {
+    if (it->first->progressFlush()) {
+      // CQ drained: publish pos+1 to unblock GPU waiters whose own pos <= recorded pos.
+      atomicStore(it->first->getFlushDonePtr(), it->second + 1, memoryOrderRelease);
+      it = pendingFlushPos_.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
 }  // namespace mscclpp
