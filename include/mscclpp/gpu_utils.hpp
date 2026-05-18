@@ -165,6 +165,7 @@ void gpuFreePhysical(void* ptr);
 void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream,
                     cudaMemcpyKind kind = cudaMemcpyDefault);
 void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind = cudaMemcpyDefault);
+void gpuMemset(void* ptr, int value, size_t bytes);
 
 /// A template function that allocates memory while ensuring that the memory will be freed when the returned object is
 /// destroyed.
@@ -299,6 +300,12 @@ template <class T = char>
 void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMemcpyDefault) {
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
 }
+
+/// Sets `bytes` of memory at `ptr` to `value` synchronously.
+/// @param ptr Destination address.
+/// @param value Value to set (interpreted as unsigned char per CUDA semantics).
+/// @param bytes Number of bytes to set.
+inline void gpuMemset(void* ptr, int value, size_t bytes) { detail::gpuMemset(ptr, value, bytes); }
 
 /// Check if NVLink SHARP (NVLS) is supported.
 ///

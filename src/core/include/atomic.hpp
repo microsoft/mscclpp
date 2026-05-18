@@ -4,18 +4,16 @@
 #ifndef MSCCLPP_ATOMIC_HPP_
 #define MSCCLPP_ATOMIC_HPP_
 
-#if defined(MSCCLPP_USE_CUDA)
-#ifndef MSCCLPP_DEVICE_CUDA
+// On CUDA host-side compiles, force atomic_device.hpp's CUDA branch so host code uses
+// cuda::atomic_ref (for system-scope ordering with GPU readers). On CUDA device compiles
+// (MSCCLPP_DEVICE_CUDA already set by device.hpp) and on ROCm builds, include normally —
+// atomic_device.hpp's branch selection works correctly without forcing.
+#if defined(MSCCLPP_USE_CUDA) && !defined(MSCCLPP_DEVICE_CUDA)
 #define MSCCLPP_DEVICE_CUDA
 #include <mscclpp/atomic_device.hpp>
 #undef MSCCLPP_DEVICE_CUDA
-#endif  // !defined(MSCCLPP_DEVICE_CUDA)
-#else   // !defined(MSCCLPP_USE_CUDA)
-#ifndef MSCCLPP_DEVICE_HIP
-#define MSCCLPP_DEVICE_HIP
+#else
 #include <mscclpp/atomic_device.hpp>
-#undef MSCCLPP_DEVICE_HIP
-#endif  // !defined(MSCCLPP_DEVICE_HIP)
-#endif  // !defined(MSCCLPP_USE_CUDA)
+#endif
 
 #endif  // MSCCLPP_ATOMIC_HPP_

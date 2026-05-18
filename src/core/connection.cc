@@ -7,13 +7,13 @@
 #include <mscclpp/npkit/npkit.hpp>
 #endif
 
-#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/numa.hpp>
 #include <mscclpp/utils.hpp>
 #include <sstream>
 #include <thread>
 
 #include "api.h"
+#include "atomic.hpp"
 #include "context.hpp"
 #include "endpoint.hpp"
 #include "gpu_utils_internal.hpp"
@@ -43,7 +43,10 @@ const RegisteredMemory::Impl& BaseConnection::getImpl(const RegisteredMemory& me
 Context::Impl& BaseConnection::getImpl(Context& context) { return *(context.pimpl_); }
 
 MSCCLPP_API_CPP BaseConnection::BaseConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint)
-    : context_(context), localEndpoint_(localEndpoint), maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()) {}
+    : context_(context),
+      localEndpoint_(localEndpoint),
+      maxWriteQueueSize_(localEndpoint.maxWriteQueueSize()),
+      gpuFlushDonePos_(detail::gpuCallocHostShared<uint64_t>()) {}
 
 MSCCLPP_API_CPP std::shared_ptr<Context> BaseConnection::context() const { return context_; }
 
@@ -86,6 +89,17 @@ MSCCLPP_API_CPP int Connection::getMaxWriteQueueSize() const { return impl_->get
 CudaIpcConnection::CudaIpcConnection(std::shared_ptr<Context> context, const Endpoint& localEndpoint,
                                      const Endpoint& remoteEndpoint)
     : BaseConnection(context, localEndpoint) {
+  // Log fabric/MNNVL availability exactly once per process so any later cross-node CudaIpc failure
+  // is easy to triage. C++11 magic statics make this thread-safe without an explicit mutex.
+  // NOTE: assigning the message to a std::string first avoids the logger's pointer-formatting
+  // overload from kicking in on the const char* result of the ternary.
+  [[maybe_unused]] static const bool fabricAvailable_ = []() {
+    const bool avail = isFabricMemHandleAvailable();
+    const std::string status = avail ? "available (cross-node CudaIpc via MNNVL/IMEX is supported)"
+                                     : "NOT available (CudaIpc is restricted to intra-node ranks on this system)";
+    INFO(CONN, "CudaIpc transport selected: fabric handles ", status);
+    return avail;
+  }();
   if (localEndpoint.transport() != Transport::CudaIpc || remoteEndpoint.transport() != Transport::CudaIpc) {
     THROW(CONN, Error, ErrorCode::InternalError, "CudaIpc transport is required for CudaIpcConnection");
   }
@@ -505,6 +519,35 @@ void IBConnection::atomicAdd(RegisteredMemory dst, uint64_t dstOffset, int64_t v
                                  static_cast<uint64_t>(value), /*signaled=*/true);
   qp_.lock()->postSend();
   INFO(CONN, "IBConnection atomicAdd: dst ", (uint8_t*)dstMrInfo.addr + dstOffset, ", value ", value);
+}
+
+void IBConnection::requestFlush() {
+  // No-op: IB sends were already posted by prior conn.write() calls in handleTrigger.
+  // progressFlush() drives completion by polling the send CQ.
+}
+
+bool IBConnection::progressFlush() {
+  if (recvThreadError_.load(std::memory_order_acquire)) {
+    THROW(CONN, Error, ErrorCode::SystemError, "IBConnection recv thread failed: ", recvThreadErrorMsg_);
+  }
+
+  auto qp = qp_.lock();
+  if (!qp || qp->getNumSendCqItems() == 0) {
+    return true;  // QP expired or CQ already drained.
+  }
+
+  int wcNum = qp->pollSendCq();
+  if (wcNum < 0) {
+    THROW(NET, IbError, errno, "pollSendCq failed in progressFlush");
+  }
+  for (int i = 0; i < wcNum; ++i) {
+    int status = qp->getSendWcStatus(i);
+    if (status != static_cast<int>(WsStatus::Success)) {
+      THROW(NET, Error, ErrorCode::SystemError,
+            "an IB work item failed in progressFlush: ", qp->getSendWcStatusString(i));
+    }
+  }
+  return qp->getNumSendCqItems() == 0;
 }
 
 // EthernetConnection

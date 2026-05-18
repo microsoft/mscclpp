@@ -24,6 +24,8 @@ def parse_dtype(dtype_str):
     dtype_str = dtype_str.strip().lower()
     if dtype_str == "float16":
         return cp.float16
+    elif dtype_str in ("bfloat16", "bf16"):
+        return cp.float16  # same 2-byte size; mscclpp DataType is resolved from dtype_str
     elif dtype_str == "float32":
         return cp.float32
     elif dtype_str == "int32":
@@ -119,15 +121,18 @@ def parse_size(size_str):
         return int(size_str)
 
 
-def dtype_to_mscclpp_dtype(dtype):
-    if dtype == cp.float16:
+def dtype_to_mscclpp_dtype(dtype_str):
+    dtype_str = dtype_str.strip().lower()
+    if dtype_str == "float16":
         return DataType.float16
-    elif dtype == cp.float32:
+    elif dtype_str in ("bfloat16", "bf16"):
+        return DataType.bfloat16
+    elif dtype_str == "float32":
         return DataType.float32
-    elif dtype == cp.int32:
+    elif dtype_str == "int32":
         return DataType.int32
     else:
-        raise ValueError(f"Unknown data type: {dtype}")
+        raise ValueError(f"Unknown data type: {dtype_str}")
 
 
 def build_bufs(
@@ -205,7 +210,7 @@ def main(
         result_buf.data.ptr,
         input_buf.nbytes,
         result_buf.nbytes,
-        dtype_to_mscclpp_dtype(dtype),
+        dtype_to_mscclpp_dtype(dtype_str),
         execution_plan,
         stream.ptr,
         packet_type,
@@ -231,7 +236,7 @@ def main(
         npkit.shutdown()
     print(
         f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
-        f"data size: {result_buf.nbytes} bytes data type: {dtype().dtype.name} "
+        f"data size: {result_buf.nbytes} bytes data type: {dtype_str} "
         f"packet type: {packet_type}"
     )
     executor = None
@@ -243,7 +248,7 @@ if __name__ == "__main__":
     parser.add_argument("-path", "--execution_plan_path", type=str, required=True)
     parser.add_argument("--size", type=str, required=True)
     parser.add_argument("--in_place", action="store_true", help="flag to define an in-place operation")
-    parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, float32, int32")
+    parser.add_argument("--dtype", type=str, default="float16", help="Choose from float16, bfloat16, float32, int32")
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--n_iters", type=int, default=10)
     parser.add_argument("--n_graph_iters", type=int, default=10)
