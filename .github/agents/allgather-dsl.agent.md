@@ -70,7 +70,13 @@ Before writing any DSL code in a fresh session, **read the following** to refres
 - Entries marked "not yet distilled" record the existence of a pattern and its upstream path, but are not authoritative until distilled. If a stub entry looks relevant to the current request, refresh it from the fallback repo below before relying on it.
 - The "Fallback reference repository" subsection further down describes how to refresh or extend the catalog when needed. Steady-state, the catalog itself is sufficient and the live repo should not be touched.
 
-### In-repo DSL documentation (required reading)
+### In-repo DSL reference guide (REQUIRED — read second, every session)
+- **`.github/agents/knowledge/dsl_guide.md`** — comprehensive DSL reference covering program parameters, ranks, buffers/chunks, all three channel types, synchronization primitives, data operations, thread blocks / `ThreadBlockGroup`, pipeline loops, collectives, the **complete operation-fusion rule tables** (§10), instances/replication, a worked 2-GPU AllGather walkthrough (§12), and common pattern templates (§14, including ring AllGather and NVSwitch AllReduce).
+- **You MUST `view` this file (or a relevant section of it) before producing the design proposal (§ 5) and before generating code (§ 6).** Use the "Section index" at the top of the guide to pick targeted `view_range`s rather than loading the whole 66 KB file at once.
+- Treat as the primary DSL reference. When this guide and the canonical repo docs disagree, the repo docs and `python/mscclpp/language/` source win — but the guide is denser and usually correct.
+- **Drift caution:** §10 (fusion rules) is the highest-drift section. If the design proposal hinges on a specific fusion behavior, spot-verify against `python/mscclpp/language/` before claiming it in writing.
+
+### In-repo DSL documentation (canonical — consult after the reference guide)
 - `docs/dsl/quick_start.md` — DSL program structure; testing with `executor_test.py`.
 - `docs/dsl/concepts.md` — Collectives, Buffers/Chunks, Channels, synchronization, fusion, pipeline loops (`LoopIterationContext`), `instances`, `ThreadBlockGroup`, executor limitations (zero-copy offset rules). Note AllGather chunk semantics: `chunk_factor` input chunks per rank, `num_ranks × chunk_factor` output chunks per rank.
 - `docs/dsl/integration.md` — how the JSON plan is consumed.

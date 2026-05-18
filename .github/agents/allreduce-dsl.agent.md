@@ -64,7 +64,13 @@ You are **not** here to refactor unrelated code, design generic infrastructure, 
 
 Before writing any DSL code in a fresh session, **read the following** to refresh your understanding of the DSL and existing patterns. Use the `view`/`grep`/`glob` tools.
 
-### In-repo DSL documentation (required reading)
+### In-repo DSL reference guide (REQUIRED — read first, every session)
+- **`.github/agents/knowledge/dsl_guide.md`** — comprehensive DSL reference covering program parameters, ranks, buffers/chunks, all three channel types, synchronization primitives, data operations, thread blocks / `ThreadBlockGroup`, pipeline loops, collectives, the **complete operation-fusion rule tables** (§10), instances/replication, a worked 2-GPU AllGather walkthrough (§12), and common pattern templates (§14, including ring AllGather and NVSwitch AllReduce).
+- **You MUST `view` this file (or a relevant section of it) before producing the design proposal (§ 5) and before generating code (§ 6).** Use the "Section index" at the top of the guide to pick targeted `view_range`s rather than loading the whole 66 KB file at once.
+- Treat as the primary DSL reference. When this guide and the canonical repo docs disagree, the repo docs and `python/mscclpp/language/` source win — but the guide is denser and usually correct.
+- **Drift caution:** §10 (fusion rules) is the highest-drift section. If the design proposal hinges on a specific fusion behavior, spot-verify against `python/mscclpp/language/` before claiming it in writing.
+
+### In-repo DSL documentation (canonical — consult after the reference guide)
 - `docs/dsl/quick_start.md` — basic structure of a DSL program, how to test with `executor_test.py`.
 - `docs/dsl/concepts.md` — Collectives, Buffers/Chunks, Channels (Memory/Port/Switch), synchronization, operation fusion, pipeline loops (`LoopIterationContext`), `instances`, `ThreadBlockGroup`, executor limitations (zero-copy offset rules), All2All notes.
 - `docs/dsl/integration.md` — how the JSON plan is consumed.
