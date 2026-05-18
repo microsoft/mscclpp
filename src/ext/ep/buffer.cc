@@ -154,8 +154,7 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
     if (v > 0 && v <= NUM_MAX_NVL_PEERS) local_world_size = v;
   }
   rdma_rank = rank / local_world_size, nvl_rank = rank % local_world_size;
-  num_rdma_ranks = std::max(1, num_ranks / local_world_size),
-  num_nvl_ranks = std::min(num_ranks, local_world_size);
+  num_rdma_ranks = std::max(1, num_ranks / local_world_size), num_nvl_ranks = std::min(num_ranks, local_world_size);
 
   // Get device info
   cudaDeviceProp device_prop = {};
@@ -404,8 +403,7 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // worker ranks cannot reach.
     static const bool fabric_ipc_supported = resolve_fabric_ipc_supported();
     const bool use_fabric_ipc_alloc =
-        mscclpp::isNvlsSupported() && fabric_ipc_supported &&
-        (low_latency_mode || num_rdma_ranks > 1);
+        mscclpp::isNvlsSupported() && fabric_ipc_supported && (low_latency_mode || num_rdma_ranks > 1);
     if (use_fabric_ipc_alloc) {
       rdma_buffer_ptr = mscclpp::detail::gpuCallocPhysical(num_rdma_bytes);
       CUDA_CHECK(cudaMemset(rdma_buffer_ptr, 0, num_rdma_bytes));
@@ -415,8 +413,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
     }
     if (rank == 0) {
       printf("[mscclpp_ep] rdma_buffer allocator: %s (low_latency=%d, nvls=%d, fabric_ipc=%d)\n",
-             use_fabric_ipc_alloc ? "gpuCallocPhysical (fabric-IPC)" : "cudaMalloc",
-             (int)low_latency_mode, (int)mscclpp::isNvlsSupported(), (int)fabric_ipc_supported);
+             use_fabric_ipc_alloc ? "gpuCallocPhysical (fabric-IPC)" : "cudaMalloc", (int)low_latency_mode,
+             (int)mscclpp::isNvlsSupported(), (int)fabric_ipc_supported);
       fflush(stdout);
     }
     bootstrap->barrier();
@@ -584,10 +582,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
       // one slot per global rank (worst-case num_ranks = NUM_MAX_RDMA_PEERS *
       // NUM_MAX_NVL_PEERS). Each rank writes its own slot via `multimem.st`;
       // every receiver then reads the sub-position destined to it.
-      const size_t kPerSenderSlotBytes =
-          static_cast<size_t>(NUM_MAX_RDMA_PEERS) * kNvlsPerPeerBytes;
-      const size_t kMaxRanks =
-          static_cast<size_t>(NUM_MAX_RDMA_PEERS) * NUM_MAX_NVL_PEERS;
+      const size_t kPerSenderSlotBytes = static_cast<size_t>(NUM_MAX_RDMA_PEERS) * kNvlsPerPeerBytes;
+      const size_t kMaxRanks = static_cast<size_t>(NUM_MAX_RDMA_PEERS) * NUM_MAX_NVL_PEERS;
       const size_t data_bytes = kMaxRanks * kPerSenderSlotBytes;
 
       // 256 B alignment for each sub-region to keep `multimem` ops well-aligned.
@@ -612,8 +608,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
       // propagates — there is no clean fallback mid-collective. The
       // `isNvlsSupported()` gate above is the production guard.
       nvls_ht_conn = mscclpp::connectNvlsCollective(communicator, all_ranks, nvls_ht_buffer->bytes());
-      auto sw = nvls_ht_conn->bindAllocatedMemory(
-          reinterpret_cast<CUdeviceptr>(nvls_ht_buffer->data()), nvls_ht_buffer->bytes());
+      auto sw = nvls_ht_conn->bindAllocatedMemory(reinterpret_cast<CUdeviceptr>(nvls_ht_buffer->data()),
+                                                  nvls_ht_buffer->bytes());
       nvls_ht_sc = std::make_shared<mscclpp::SwitchChannel>(std::move(sw));
       auto h = nvls_ht_sc->deviceHandle();
       nvls_ht_mc_ptr = h.mcPtr;
@@ -623,10 +619,9 @@ void Buffer::sync(const std::vector<int>& device_ids,
       // DIAG: print mcPtr/devicePtr/buf-VA per rank to verify whether
       // connectNvlsCollective produced a multicast that actually spans
       // both nodes (suspected: per-node only on Azure GB200).
-      printf(
-          "[mscclpp_ep] NVLS HT diag rank=%d mcPtr=%p devicePtr=%p bufVA=%p bytes=%zu\n",
-          rank, (void*)nvls_ht_mc_ptr, (void*)nvls_ht_dev_ptr,
-          (void*)nvls_ht_buffer->data(), (size_t)nvls_ht_buffer->bytes());
+      printf("[mscclpp_ep] NVLS HT diag rank=%d mcPtr=%p devicePtr=%p bufVA=%p bytes=%zu\n", rank,
+             (void*)nvls_ht_mc_ptr, (void*)nvls_ht_dev_ptr, (void*)nvls_ht_buffer->data(),
+             (size_t)nvls_ht_buffer->bytes());
       fflush(stdout);
 
       bootstrap->barrier();
@@ -635,16 +630,15 @@ void Buffer::sync(const std::vector<int>& device_ids,
         printf(
             "[mscclpp_ep] NVLS HT multicast: enabled=%d total=%zu KB "
             "(tail@%zu head@%zu barrier@%zu data@%zu)\n",
-            (int)nvls_ht_enabled, nvls_ht_total_bytes / 1024, nvls_ht_off_tail, nvls_ht_off_head,
-            nvls_ht_off_barrier, nvls_ht_off_data);
+            (int)nvls_ht_enabled, nvls_ht_total_bytes / 1024, nvls_ht_off_tail, nvls_ht_off_head, nvls_ht_off_barrier,
+            nvls_ht_off_data);
         fflush(stdout);
       }
     } else if (rank == 0) {
       printf(
           "[mscclpp_ep] NVLS HT multicast: disabled (low_latency=%d, num_rdma_ranks=%d, "
           "nvls_supported=%d, fabric_ipc=%d)\n",
-          (int)low_latency_mode, num_rdma_ranks, (int)mscclpp::isNvlsSupported(),
-          (int)fabric_ipc_supported);
+          (int)low_latency_mode, num_rdma_ranks, (int)mscclpp::isNvlsSupported(), (int)fabric_ipc_supported);
       fflush(stdout);
     }
 
@@ -717,8 +711,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
         peer_rdma_bases[r] = remote_mems[r].data();
       }
       CUDA_CHECK(cudaMalloc(&peer_rdma_bases_gpu, sizeof(void*) * num_ranks));
-      CUDA_CHECK(cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases.data(),
-                            sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+      CUDA_CHECK(
+          cudaMemcpy(peer_rdma_bases_gpu, peer_rdma_bases.data(), sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
       if (rank == 0) {
         printf("[mscclpp_ep] Phase 4 fabric-IPC peer bases (rank 0):\n");
         for (int r = 0; r < num_ranks; ++r) {
@@ -1301,10 +1295,8 @@ Buffer::internode_dispatch(
                              buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank,
                              comm_stream, config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks),
                              num_nvl_bytes, true, low_latency_mode, port_channel_handles_device_ptr.get(),
-                             memory_channel_handles_device_ptr.get(),
-                             nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
-                             nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
-                             nvls_ht_off_barrier, nvls_ht_cached_epoch);
+                             memory_channel_handles_device_ptr.get(), nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
+                             nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr, nvls_ht_off_barrier, nvls_ht_cached_epoch);
     move_fifo_slots(2);
   } else {
     rdma_channel_prefix_matrix =
@@ -1329,9 +1321,8 @@ Buffer::internode_dispatch(
         buffer_ptrs_gpu, config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
         config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, low_latency_mode,
         port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-        nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
-        nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
-        nvls_ht_off_barrier, nvls_ht_off_data, nvls_ht_epoch, kNvlsPerPeerBytes);
+        nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr, nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr, nvls_ht_off_barrier,
+        nvls_ht_off_data, nvls_ht_epoch, kNvlsPerPeerBytes);
     move_fifo_slots(3);
 
     // Synchronize total received tokens and tokens per expert
@@ -1396,10 +1387,14 @@ Buffer::internode_dispatch(
   // Phase 3: pass NVLS counter region pointers (head/tail × mc/dev). When
   // `nvls_ht_enabled` is false, all four are nullptr and the kernel falls
   // back to the legacy PortChannel/atomicAdd path.
-  void* nvls_head_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
-  void* nvls_head_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
-  void* nvls_tail_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
-  void* nvls_tail_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
+  void* nvls_head_mc =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
+  void* nvls_head_dev =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
+  void* nvls_tail_mc =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
+  void* nvls_tail_dev =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
   internode::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr, recv_topk_weights_ptr,
                       cached_mode ? nullptr : recv_src_meta->data_ptr(), x.data_ptr(), x_scales_ptr, topk_idx_ptr,
                       topk_weights_ptr, cached_mode ? nullptr : send_rdma_head->data_ptr<int>(),
@@ -1412,9 +1407,8 @@ Buffer::internode_dispatch(
                       rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens, config.num_max_rdma_chunked_recv_tokens,
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
-                      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-                      nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev,
-                      peer_rdma_bases_gpu);
+                      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), nvls_head_mc,
+                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1531,28 +1525,30 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
       config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, false, low_latency_mode,
       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-      nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr,
-      nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr,
-      nvls_ht_off_barrier, (nvls_ht_enabled ? ++nvls_ht_cached_epoch : 0));
+      nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr, nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr, nvls_ht_off_barrier,
+      (nvls_ht_enabled ? ++nvls_ht_cached_epoch : 0));
   move_fifo_slots(2);
 
   auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
   // Phase 3: NVLS counter region pointers for combine kernel.
-  void* combine_nvls_head_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
-  void* combine_nvls_head_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
-  void* combine_nvls_tail_mc = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
-  void* combine_nvls_tail_dev = nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
-  internode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(),
-                     combined_topk_weights_ptr, is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(),
-                     topk_weights_ptr, combined_rdma_head.data_ptr<int>(), combined_nvl_head.data_ptr<int>(),
-                     src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
-                     rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens,
-                     num_combined_tokens, hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
-                     config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
-                     config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels,
-                     low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev,
-                     peer_rdma_bases_gpu);
+  void* combine_nvls_head_mc =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_head) : nullptr;
+  void* combine_nvls_head_dev =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_head) : nullptr;
+  void* combine_nvls_tail_mc =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
+  void* combine_nvls_tail_dev =
+      nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
+  internode::combine(
+      at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(), combined_topk_weights_ptr,
+      is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(), topk_weights_ptr, combined_rdma_head.data_ptr<int>(),
+      combined_nvl_head.data_ptr<int>(), src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
+      rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens, num_combined_tokens,
+      hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
+      config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
+      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels, low_latency_mode,
+      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), combine_nvls_head_mc,
+      combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu);
 
   std::optional<EventHandle> event;
   if (async) {
