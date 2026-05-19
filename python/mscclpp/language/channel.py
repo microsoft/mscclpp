@@ -78,6 +78,7 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = SignalOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_signal(self.src_rank, self.dst_rank, self.channel_type)
 
     def wait(self, tb: int, data_sync: SyncType = SyncType.both, relaxed: bool = False):
         """Wait for a signal through the memory channel.
@@ -99,6 +100,7 @@ class MemoryChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = WaitOperation(tb_channel_ids, self.channel_type, data_sync, relaxed)
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_wait(self.src_rank, self.dst_rank, self.channel_type)
 
     def get(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int = None, tb_group: ThreadBlockGroup = None):
         """Retrieve data from remote memory to local memory.
@@ -508,6 +510,7 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = SignalOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_signal(self.src_rank, self.dst_rank, self.channel_type)
 
     def wait(self, tb: int, data_sync: SyncType = SyncType.both):
         """Wait for a signal through the port channel.
@@ -527,6 +530,7 @@ class PortChannel:
         tb_channel_ids = get_program().setup_channel(tb, self)
         op = WaitOperation(tb_channel_ids, self.channel_type, data_sync)
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_wait(self.src_rank, self.dst_rank, self.channel_type)
 
     def flush(self, tb: int, data_sync: SyncType = SyncType.both):
         """Flush pending operations through the port channel.
@@ -636,6 +640,7 @@ class PortChannel:
         )
 
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_signal(self.src_rank, self.dst_rank, self.channel_type)
 
     def put_with_signal_and_flush(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Send data from local memory to remote memory with signal and flush.
@@ -681,6 +686,7 @@ class PortChannel:
         )
 
         get_program().add_operation(self.src_rank, tb, op)
+        get_program().register_signal(self.src_rank, self.dst_rank, self.channel_type)
 
     def put_packets(self, dst_chunk: Chunk, src_chunk: Chunk, tb: int):
         """Transfer data from local buffer to remote scratch buffer in packet format.
