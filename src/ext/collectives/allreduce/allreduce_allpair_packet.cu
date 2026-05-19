@@ -7,7 +7,7 @@
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -59,8 +59,8 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   if (threadIdx.x == 0) {
     ((uint32_t*)flags)[blockIdx.x] = flag + 1;
   }
-  if (blockIdx.x == 0 && threadIdx.x >= gridDim.x && threadIdx.x < flagSize / sizeof(uint32_t)) {
-    ((uint32_t*)flags)[threadIdx.x] = flag + 1;
+  if (tid >= gridDim.x && tid < flagSize / sizeof(uint32_t)) {
+    ((uint32_t*)flags)[tid] = flag + 1;
   }
 }
 
@@ -80,11 +80,6 @@ struct AllpairAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    // Round nBlocks to multiple of nPeers so every block maps to a valid peer.
-    const int nPeers = worldSize - 1;
-    if (nPeers > 0) {
-      nBlocks = (nBlocks / nPeers) * nPeers;
-    }
     allreduceAllPairs<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
@@ -110,8 +105,17 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
   }
-  // nBlocks must be at least nPeers for allpair — each block maps to one peer.
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
+  }
+  // nBlocks must be a multiple of nPeers so that each block maps to a valid peer.
   const int nPeers = algoCtx->nRanksPerNode - 1;
+  if (nPeers > 0 && blockAndThreadNum.first % nPeers != 0) {
+    INFO(ALGO, "Rounding block number ", blockAndThreadNum.first, " down to the nearest multiple of nPeers=", nPeers);
+    blockAndThreadNum.first = (blockAndThreadNum.first / nPeers) * nPeers;
+  }
   if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
     return CommResult::CommInvalidArgument;
   }
@@ -122,7 +126,8 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
 
   AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
+         ", dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
@@ -131,7 +136,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
                 algoCtx->workSize, inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_,
                 this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
-    WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "AllreducePacket failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;
