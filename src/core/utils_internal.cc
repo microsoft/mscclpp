@@ -248,6 +248,9 @@ TokenPool::TokenPool(size_t nToken) : nToken_(nToken) {
 
 std::shared_ptr<uint64_t> TokenPool::getToken() {
   auto deleter = [self = shared_from_this()](uint64_t* token) {
+    // Zero the slot on release so the next allocator hands out a clean
+    // semaphore counter (matches a freshly-allocated slot).
+    mscclpp::gpuMemset(token, 0, sizeof(uint64_t));
     size_t index = (token - self->baseAddr_) / UINT64_WIDTH;
     size_t bit = (token - self->baseAddr_) % UINT64_WIDTH;
     uint64_t mask = 1UL << bit;

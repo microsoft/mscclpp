@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstdint>
 #include <type_traits>
 
 #include "exception.cuh"
-#include <cstdint>
 
 #define UNROLLED_WARP_COPY(UNROLL_FACTOR, LANE_ID, N, DST, SRC, LD_FUNC, ST_FUNC)                        \
   {                                                                                                      \

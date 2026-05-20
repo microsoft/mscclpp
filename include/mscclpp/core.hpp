@@ -683,6 +683,8 @@ class Connection {
   friend class Semaphore;
   friend class ProxyService;
   friend class BaseConnection;
+  friend struct BasePortChannel;
+  friend struct PortChannel;
 };
 
 /// SemaphoreStub object only used for constructing Semaphore, not for direct use by the user.

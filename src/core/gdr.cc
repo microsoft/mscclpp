@@ -48,7 +48,7 @@ GdrStatus gdrStatus() { return gdrContext()->status(); }
 
 bool gdrEnabled() { return gdrStatus() == GdrStatus::Ok; }
 
-const char* gdrStatusMessage() {
+std::string gdrStatusMessage() {
   switch (gdrStatus()) {
     case GdrStatus::Ok:
       return "GDRCopy initialized successfully";
@@ -181,7 +181,7 @@ GdrStatus gdrStatus() { return GdrStatus::NotBuilt; }
 
 bool gdrEnabled() { return false; }
 
-const char* gdrStatusMessage() { return "mscclpp was not built with GDRCopy support (MSCCLPP_USE_GDRCOPY not set)"; }
+std::string gdrStatusMessage() { return "mscclpp was not built with GDRCopy support (MSCCLPP_USE_GDRCOPY not set)"; }
 
 // GdrMap::Impl — stub (no GDRCopy)
 

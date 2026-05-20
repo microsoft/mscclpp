@@ -59,6 +59,10 @@ if(MSCCLPP_NPKIT_FLAGS)
     target_compile_definitions(mscclpp_obj PRIVATE ${MSCCLPP_NPKIT_FLAGS})
 endif()
 
+if(MSCCLPP_USE_MRC)
+	target_compile_definitions(mscclpp_obj PRIVATE MSCCLPP_USE_MRC)
+endif()
+
 # libmscclpp
 add_library(mscclpp SHARED)
 target_link_libraries(mscclpp PUBLIC mscclpp_obj)
