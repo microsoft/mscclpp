@@ -17,6 +17,7 @@
 #include <mscclpp/switch_channel_device.hpp>
 
 #include "execution_common.hpp"
+#include "logger.hpp"
 #include "reduce_kernel.hpp"
 namespace mscclpp {
 
@@ -876,7 +877,19 @@ class ExecutionKernel {
 #endif
         break;
 #if defined(__FP8_TYPES_EXIST__)
-      case DataType::FLOAT8_E4M3:
+      case DataType::FLOAT8_E4M3FN:
+      case DataType::FLOAT8_E4M3FNUZ:
+#if defined(__FP8_E4M3_IS_FNUZ__)
+        if (dataType == DataType::FLOAT8_E4M3FN) {
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E4M3FN is not natively supported on this platform; use FLOAT8_E4M3FNUZ");
+        }
+#else
+        if (dataType == DataType::FLOAT8_E4M3FNUZ) {
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E4M3FNUZ is not natively supported on this platform; use FLOAT8_E4M3FN");
+        }
+#endif
         executionKernel<__fp8_e4m3, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e4m3*)src, (__fp8_e4m3*)dst, (__fp8_e4m3*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag
@@ -888,6 +901,18 @@ class ExecutionKernel {
 #endif
         break;
       case DataType::FLOAT8_E5M2:
+      case DataType::FLOAT8_E5M2FNUZ:
+#if defined(__FP8_E5M2_IS_FNUZ__)
+        if (dataType == DataType::FLOAT8_E5M2) {
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E5M2 is not natively supported on this platform; use FLOAT8_E5M2FNUZ");
+        }
+#else
+        if (dataType == DataType::FLOAT8_E5M2FNUZ) {
+          THROW(LogSubsys::EXEC, Error, ErrorCode::InvalidUsage,
+                "FLOAT8_E5M2FNUZ is not natively supported on this platform; use FLOAT8_E5M2");
+        }
+#endif
         executionKernel<__fp8_e5m2, PacketType, ReuseScratch><<<nthreadblocks, nthreads, sharedMemSize, stream>>>(
             rank, (__fp8_e5m2*)src, (__fp8_e5m2*)dst, (__fp8_e5m2*)scratch, scratchOffset, scratchChunkSize, plan,
             semaphores, localMemoryIdBegin, flag

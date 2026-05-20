@@ -53,6 +53,8 @@ MSCCLPP_API_CPP void Fifo::pop() {
   atomicStore(pimpl_->tail.get(), curTail + 1, memoryOrderRelease);
 }
 
+MSCCLPP_API_CPP uint64_t Fifo::tail() const { return *(pimpl_->tail); }
+
 MSCCLPP_API_CPP int Fifo::size() const { return pimpl_->size; }
 
 MSCCLPP_API_CPP FifoDeviceHandle Fifo::deviceHandle() const {

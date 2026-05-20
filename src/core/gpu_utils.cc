@@ -267,6 +267,13 @@ void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind) {
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
 
+void gpuMemset(void* ptr, int value, size_t bytes) {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+  CudaStreamWithFlags stream(cudaStreamNonBlocking);
+  MSCCLPP_CUDATHROW(cudaMemsetAsync(ptr, value, bytes, stream));
+  MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
+}
+
 }  // namespace detail
 
 bool isNvlsSupported() {
@@ -283,7 +290,9 @@ bool isNvlsSupported() {
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId));
     MSCCLPP_CUTHROW(cuDeviceGet(&dev, deviceId));
     MSCCLPP_CUTHROW(cuDeviceGetAttribute(&isMulticastSupported, CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED, dev));
-    return isMulticastSupported == 1;
+    result = (isMulticastSupported == 1);
+    isChecked = true;
+    return result;
   }
   return result;
 #endif
@@ -300,9 +309,6 @@ bool isCuMemMapAllocated([[maybe_unused]] void* ptr) {
     return false;
   }
   MSCCLPP_CUTHROW(cuMemRelease(handle));
-  if (!isNvlsSupported()) {
-    throw Error("cuMemMap is used in env without NVLS support", ErrorCode::InvalidUsage);
-  }
   return true;
 #endif
 }

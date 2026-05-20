@@ -55,6 +55,7 @@ option(MSCCLPP_BUILD_EXT_EP "Build Expert-Parallel (MoE dispatch/combine) extens
 option(MSCCLPP_USE_CUDA "Use NVIDIA/CUDA." OFF)
 option(MSCCLPP_USE_ROCM "Use AMD/ROCm." OFF)
 option(MSCCLPP_USE_IB "Use InfiniBand." ON)
+option(MSCCLPP_USE_MRC "Enable MRC support" OFF)
 option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 option(MSCCLPP_ENABLE_COVERAGE "Enable code coverage" OFF)

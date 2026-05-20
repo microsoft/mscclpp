@@ -21,7 +21,10 @@ using __bfloat162 = __hip_bfloat162;
 #if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
 #include <hip/hip_fp8.h>
 
-// Create aliases matching CUDA naming convention for cross-platform compatibility
+// Create aliases matching CUDA naming convention for cross-platform compatibility.
+// Define __FP8_E4M3_IS_FNUZ__ / __FP8_E5M2_IS_FNUZ__ when the platform-native FP8 is the
+// "fnuz" variant (no infinities, NaN-only at 0x80, bias differs from OCP). Dispatch layers
+// use these macros to throw on unsupported variants requested via DataType.
 #if (HIP_VERSION_MAJOR == 6) || (HIP_VERSION_MAJOR > 6 && HIP_FP8_TYPE_FNUZ && !HIP_FP8_TYPE_OCP)
 using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
@@ -29,6 +32,8 @@ using __fp8x2_e4m3 = __hip_fp8x2_e4m3_fnuz;
 using __fp8x2_e5m2 = __hip_fp8x2_e5m2_fnuz;
 using __fp8x4_e4m3 = __hip_fp8x4_e4m3_fnuz;
 using __fp8x4_e5m2 = __hip_fp8x4_e5m2_fnuz;
+#define __FP8_E4M3_IS_FNUZ__
+#define __FP8_E5M2_IS_FNUZ__
 #else
 using __fp8_e4m3 = __hip_fp8_e4m3;
 using __fp8_e5m2 = __hip_fp8_e5m2;
@@ -66,8 +71,8 @@ using __bfloat162 = __nv_bfloat162;
 
 /// Software float8 with 4 exponent bits, 3 mantissa bits, exponent bias = 15.
 /// Format (MSB first): [sign:1][exponent:4][mantissa:3]
-/// No infinities; exp=15 is NaN. Negative zero is NaN (fnuz convention).
-/// Max finite value: 0.9375, min normal: ~6.1e-5, min subnormal: ~7.6e-6.
+/// No infinities, no NaN. Encode saturates to ±1.75 (0x7e/0xfe).
+/// Adapted from the Triton compiler's fp8e4b15 format.
 struct alignas(1) __fp8_e4m3b15 {
   uint8_t __x;
 
@@ -97,35 +102,15 @@ struct alignas(1) __fp8_e4m3b15 {
   /// Algorithm: reinterpret fp8 bits into an fp16 bit pattern with exponent shifted by -8,
   /// then convert fp16 → float32.
   static MSCCLPP_HOST_DEVICE_INLINE float toFloat(uint8_t bits) {
-    // Handle special values: negative zero (0x80) → NaN, exponent=15 → NaN.
-    uint32_t exp = (bits >> 3) & 0xFu;
-    if (bits == 0x80 || exp == 15) {
-      union {
-        uint32_t u;
-        float f;
-      } nan_val = {0x7FC00000u};
-      return nan_val.f;
-    }
-    if (bits == 0) return 0.0f;
-
-    // Triton-style bit manipulation: fp8 → fp16 → fp32.
-    // fp8 layout: [S:1][E:4][M:3]  (bias=15)
-    // fp16 layout: [S:1][E:5][M:10] (bias=15)
-    //
-    // Place fp8 in upper byte of fp16, then right-shift exponent+mantissa by 1
-    // to convert E4 → E5 (both share bias=15). Sign bit stays at bit 15.
+    // Branch-free decode: fp8 → fp16 → fp32, no special-case handling.
+    // Encode saturates to ±1.75, so 0x7f/0xff are never produced.
     // Refer:
     // https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
     uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
     uint16_t sign16 = h & 0x8000u;                // extract sign at fp16 position
     uint16_t nosign = h & 0x7F00u;                // exponent + mantissa (no sign)
-    uint16_t fp16_bits = sign16 | (nosign >> 1);  // shift exponent right by 1
+    uint16_t fp16_bits = sign16 | (nosign >> 1);  // shift exponent right by 1 (E4→E5)
 
-    // For subnormals: when fp8 exponent=0, the above gives fp16 exponent=0
-    // and fp16 mantissa = (fp8_mantissa << 7), which correctly represents
-    // the subnormal fp16 value since both share bias=15.
-
-    // Convert fp16 bits to float via __half (works on host and device, CUDA and HIP).
     union {
       uint16_t u;
       __half h;
@@ -139,14 +124,6 @@ struct alignas(1) __fp8_e4m3b15 {
   /// The key insight is to convert to fp16 first (which shares bias=15 with e4m3b15),
   /// then pack the fp16 bits back into 8 bits by shifting the exponent left by 1.
   static MSCCLPP_HOST_DEVICE_INLINE uint8_t fromFloat(float val) {
-    union {
-      float f;
-      uint32_t u;
-    } in = {val};
-
-    // NaN → 0x80 (negative-zero bit pattern = NaN in fnuz).
-    if ((in.u & 0x7F800000u) == 0x7F800000u && (in.u & 0x007FFFFFu) != 0) return 0x80u;
-
     // Convert float32 → fp16 bits via __half (works on host and device, CUDA and HIP).
     __half h_val = __float2half_rn(val);
     union {
@@ -155,31 +132,18 @@ struct alignas(1) __fp8_e4m3b15 {
     } cvt = {h_val};
     uint16_t fp16_bits = cvt.u;
 
-    // Clamp absolute value to max finite e4m3b15: 0.9375 → fp16 = 0x3B80.
+    // Clamp abs to max encodable value: 1.75 → fp16 = 0x3F00.
+    // Matches Triton: encode saturates, 0x7f/0xff are never produced.
     uint16_t abs_fp16 = fp16_bits & 0x7FFFu;
-    if (abs_fp16 > 0x3B80u) abs_fp16 = 0x3B80u;
+    if (abs_fp16 > 0x3F00u) abs_fp16 = 0x3F00u;
 
     // Reconstruct with sign.
     uint16_t sign16 = fp16_bits & 0x8000u;
 
-    // Triton-style: fp16 → fp8.
-    // fp16 layout: [S:1][E:5][M:10] (bias=15)
-    // fp8 layout:  [S:1][E:4][M:3]  (bias=15)
-    //
-    // mad.lo.u32 a0, a0, 2, 0x00800080  →  (abs_fp16 * 2 + 0x0080)
-    // This shifts left by 1 (undoing the right-shift in decode) and adds rounding bias.
-    // Then: lop3.b32 b0, $1, 0x80008000, a0, 0xea  →  (sign & 0x8000) | a0
-    // Finally: prmt for byte extraction.
-    //
-    // Simplified for scalar: shift abs_fp16 left by 1, add rounding bias, take upper byte.
+    // fp16 → fp8: shift abs left by 1 (undo decode's right-shift), add rounding bias, take upper byte.
     uint16_t adjusted = (uint16_t)(abs_fp16 * 2u + 0x0080u);
-    // The upper byte now contains [E:4][M:3][round_bit].
-    // Combine with sign and extract.
     uint16_t with_sign = sign16 | adjusted;
     uint8_t result = (uint8_t)(with_sign >> 8);
-
-    // Zero → 0x00 (ensure positive zero, not negative zero which is NaN).
-    if ((result & 0x7Fu) == 0) result = 0x00u;
 
     return result;
   }
@@ -199,16 +163,18 @@ namespace mscclpp {
 
 /// Data types supported by mscclpp operations.
 enum class DataType {
-  INT32,           // 32-bit signed integer.
-  UINT32,          // 32-bit unsigned integer.
-  FLOAT16,         // IEEE 754 half precision.
-  FLOAT32,         // IEEE 754 single precision.
-  BFLOAT16,        // bfloat16 precision.
-  FLOAT8_E4M3,     // float8 with E4M3 layout.
-  FLOAT8_E5M2,     // float8 with E5M2 layout.
-  UINT8,           // 8-bit unsigned integer.
-  FLOAT8_E4M3B15,  // float8 with E4M3 layout, bias=15 (software, no HW accel).
-  AUTO = 255,      // Sentinel: resolve to the input dtype at runtime.
+  INT32,            // 32-bit signed integer.
+  UINT32,           // 32-bit unsigned integer.
+  FLOAT16,          // IEEE 754 half precision.
+  FLOAT32,          // IEEE 754 single precision.
+  BFLOAT16,         // bfloat16 precision.
+  FLOAT8_E4M3FN,    // float8 E4M3, OCP variant (NV; AMD HIP > 6 with OCP enabled).
+  FLOAT8_E4M3FNUZ,  // float8 E4M3, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
+  FLOAT8_E5M2,      // float8 E5M2, OCP variant (NV; AMD HIP > 6 with OCP enabled).
+  FLOAT8_E5M2FNUZ,  // float8 E5M2, fnuz variant (AMD HIP 6, or HIP > 6 with FNUZ enabled).
+  UINT8,            // 8-bit unsigned integer.
+  FLOAT8_E4M3B15,   // float8 with E4M3 layout, bias=15 (software, no HW accel).
+  AUTO = 255,       // Sentinel: resolve to the input dtype at runtime.
 };
 
 /// Word array.
@@ -1137,11 +1103,11 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   uint32_t in0;
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<const uint32_t*>(&v)));
-  // Clamp abs to max finite e4m3b15 (0x3B80 = 0.9375 in fp16).
+  // Clamp abs to max encodable e4m3b15 (0x3F00 = 1.75 in fp16).
   uint32_t lo = in0 & 0xFFFFu, hi = in0 >> 16;
   uint32_t alo = lo & 0x7FFFu, ahi = hi & 0x7FFFu;
-  alo = alo < 0x3B80u ? alo : 0x3B80u;
-  ahi = ahi < 0x3B80u ? ahi : 0x3B80u;
+  alo = alo < 0x3F00u ? alo : 0x3F00u;
+  ahi = ahi < 0x3F00u ? ahi : 0x3F00u;
   uint32_t a0 = alo | (ahi << 16);
   a0 = a0 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);
@@ -1152,7 +1118,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
   uint32_t in0 = v.words[0];
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t a0;
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3B803B80u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F003F00u));
   a0 = a0 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);
   uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
@@ -1175,8 +1141,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(v.words[1]));
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t abs1 = in1 & 0x7fff7fffu;
-  uint32_t a0 = __vminu2(abs0, 0x3B803B80u);
-  uint32_t a1 = __vminu2(abs1, 0x3B803B80u);
+  uint32_t a0 = __vminu2(abs0, 0x3F003F00u);
+  uint32_t a1 = __vminu2(abs1, 0x3F003F00u);
   a0 = a0 * 2u + 0x00800080u;
   a1 = a1 * 2u + 0x00800080u;
   uint32_t b0, b1;
@@ -1189,8 +1155,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   uint32_t in0 = v.words[0], in1 = v.words[1];
   uint32_t abs0 = in0 & 0x7fff7fffu, abs1 = in1 & 0x7fff7fffu;
   uint32_t a0, a1;
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3B803B80u));
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a1) : "v"(abs1), "v"(0x3B803B80u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F003F00u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a1) : "v"(abs1), "v"(0x3F003F00u));
   a0 = a0 * 2u + 0x00800080u;
   a1 = a1 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);

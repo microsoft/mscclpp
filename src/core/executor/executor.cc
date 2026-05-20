@@ -7,7 +7,6 @@
 #include <mscclpp/switch_channel.hpp>
 #include <mscclpp/utils.hpp>
 
-#include "debug.h"
 #include "execution_kernel.hpp"
 #include "execution_plan.hpp"
 
@@ -509,8 +508,7 @@ Executor::Executor(std::shared_ptr<Communicator> comm, std::shared_ptr<char> def
 void Executor::execute(int rank, void* sendbuff, void* recvbuff, size_t sendBuffSize,
                        [[maybe_unused]] size_t recvBuffSize, DataType dataType, const ExecutionPlan& plan,
                        cudaStream_t stream, PacketType packetType) {
-  INFO(MSCCLPP_EXECUTOR, "Starting execution with plan: %s, collective: %s", plan.name().c_str(),
-       plan.collective().c_str());
+  INFO(LogSubsys::EXEC, "Starting execution with plan: ", plan.name(), ", collective: ", plan.collective());
   size_t sendMemRange, recvMemRange;
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendMemRange, (CUdeviceptr)sendbuff));

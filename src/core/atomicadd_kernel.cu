@@ -37,11 +37,11 @@ void CudaIpcStream::atomicAdd(uint64_t* dst, int64_t value) {
     CUresult res = cuDeviceGet(&cuDevice, deviceId_);
     if (res != CUDA_SUCCESS) throw Error("cuDeviceGet failed", ErrorCode::InternalError);
 
-    // cuCtxCreate added a `paramsArray` argument in CUDA 12.5 — use the
-    // 4-arg form on new toolkits, fall back to the legacy 3-arg form on
-    // CUDA < 12.5 so we keep compiling against older drivers/toolkits.
+      // cuCtxCreate added a `paramsArray` argument in CUDA 12.5 — use the
+      // 4-arg form on new toolkits, fall back to the legacy 3-arg form on
+      // CUDA < 12.5 so we keep compiling against older drivers/toolkits.
 #if CUDA_VERSION >= 12050
-    res = cuCtxCreate(&proxyAtomicCtx_, NULL, 0, cuDevice);
+    res = cuCtxCreate_v4(&proxyAtomicCtx_, NULL, 0, cuDevice);
 #else
     res = cuCtxCreate(&proxyAtomicCtx_, 0, cuDevice);
 #endif

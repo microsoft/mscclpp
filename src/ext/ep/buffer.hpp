@@ -155,8 +155,8 @@ struct Buffer {
   // Worst-case shape parameters used to size the buffer:
   //   stride_per_channel = num_rdma_ranks * num_rdma_ranks (counter slots)
   // We allocate for `kNvlsMaxChannels` so any `num_sms` config fits.
-  static constexpr int kNvlsMaxChannels = 64;       // num_sms / 2 upper bound
-  static constexpr int kNvlsPerPeerBytes = 1024;    // small-data per (sender, receiver) pair
+  static constexpr int kNvlsMaxChannels = 64;     // num_sms / 2 upper bound
+  static constexpr int kNvlsPerPeerBytes = 1024;  // small-data per (sender, receiver) pair
   // Number of distinct barrier slots in the barrier sub-region (each u64).
   static constexpr int kNvlsBarrierSlots = 8;
 
