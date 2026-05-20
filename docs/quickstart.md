@@ -25,9 +25,9 @@
         ```bash
         sudo apt-get install libnuma-dev
         ```
-    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.8 and Python Development Package
+    * (Optional, for [building the Python module](#install-from-source-python-module)) Python >= 3.10 and Python Development Package
         ```bash
-        sudo apt-get satisfy "python3 (>=3.8), python3-dev (>=3.8)"
+        sudo apt-get satisfy "python3 (>=3.10), python3-dev (>=3.10)"
         ```
         If you don't want to build Python module, you need to set `-DMSCCLPP_BUILD_PYTHON_BINDINGS=OFF` in your `cmake` command (see details in [Install from Source](#install-from-source)).
     * (Optional, for benchmarks) MPI
@@ -100,13 +100,69 @@ There are a few optional CMake options you can set:
 (install-from-source-python-module)=
 ## Install from Source (Python Module)
 
-Python 3.8 or later is required.
+Python 3.10 or later is required.
 
 ```bash
-# For NVIDIA platforms
-$ python -m pip install .
-# For AMD platforms, set the C++ compiler to HIPCC
-$ CXX=/opt/rocm/bin/hipcc python -m pip install .
+# For NVIDIA platforms (specify your CUDA version)
+$ python -m pip install ".[cuda12]"
+# For AMD platforms
+$ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
+```
+
+> **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
+> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source,
+> which requires ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+
+Optional extras can be installed by specifying them in brackets. Available extras:
+- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
+- **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
+- **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
+- **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
+
+```bash
+# Example: install with CUDA 12 and benchmark extras
+$ python -m pip install ".[cuda12,benchmark]"
+# Example: install with all extras for testing on CUDA 12
+$ python -m pip install ".[cuda12,benchmark,test]"
+```
+
+(mrc-support)=
+## MRC Support
+
+MSCCL++ supports execution over **Multi-path Reliable Connection (MRC)**, which enables the use of multiple network paths to improve bandwidth utilization and resilience.
+
+To enable MRC support, you must configure both the **build-time** and **runtime** environments as described below.
+
+---
+
+### 1. Install MRC Verbs Shim
+
+MSCCL++ relies on a custom verbs shim library that intercepts standard `libibverbs` calls and redirects them to an MRC-enabled implementation.
+
+- Install the [MRC verbs shim library](https://github.com/microsoft/mrc-verbs-shim-lib) on all nodes in the cluster.
+- Ensure that the underlying system has MRC support enabled.
+
+---
+
+### 2. Build MSCCL++ with MRC Enabled
+
+Enable MRC support during the build by adding the following CMake option:
+
+```bash
+-DMSCCLPP_USE_MRC=ON
+```
+
+This configures MSCCL++ to use the MRC-enabled verbs layer at runtime.
+
+### 3. Configure Runtime Environment
+
+At runtime, you must configure environment variables to override the default RDMA libraries and link against the MRC-enabled stack:
+
+```bash
+-x MSCCLPP_IBV_SO=:$MRC-SHIM-HOME/libibverbs.so
+-x LD_LIBRARY_PATH=$MRC-SHIM-HOME/mrc-header-lib:$LD_LIBRARY_PATH
+-x VMRC_LIBMRC_SO=/opt/mellanox/doca/lib/aarch64-linux-gnu/libnv_mrc.so"
+-x VMRC_LIBIBVERBS_SO=/lib/aarch64-linux-gnu/libibverbs.so.1
 ```
 
 (vscode-dev-container)=
@@ -158,8 +214,9 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 [Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
 
 ```bash
-# Choose `requirements_*.txt` according to your CUDA/ROCm version.
-$ python3 -m pip install -r ./python/requirements_cuda12.txt
+# Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
+# Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
+$ python3 -m pip install ".[cuda12,benchmark,test]"
 $ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
 ```
 

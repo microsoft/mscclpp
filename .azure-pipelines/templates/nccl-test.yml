@@ -10,6 +10,9 @@ parameters:
   type: string
 - name: vmssName
   type: string
+- name: gpuArch
+  type: string
+  default: '80'
 - name: nvccGencode
   type: string
   default: "-gencode=arch=compute_80,code=sm_80"
@@ -19,6 +22,7 @@ steps:
   parameters:
     subscription:     ${{ parameters.subscription }}
     vmssName:         ${{ parameters.vmssName }}
+    gpuArch:          ${{ parameters.gpuArch }}
     deployArgs:       'nccltest-single-node'
 
 - template: run-remote-task.yml

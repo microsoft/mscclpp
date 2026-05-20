@@ -13,6 +13,10 @@ constexpr auto cudaSuccess = hipSuccess;
 
 #include <iostream>
 
+// Exit code 2 indicates CUDA initialization failure (e.g., driver/toolkit mismatch).
+// This allows callers to distinguish it from other failures and retry with compat libs.
+constexpr int EXIT_CUDA_INIT_FAILURE = 2;
+
 #define CUDACHECK(cmd)                                                \
   do {                                                                \
     cudaError_t e = cmd;                                              \
@@ -25,7 +29,11 @@ constexpr auto cudaSuccess = hipSuccess;
 int main() {
   bool canAccessPeerAll = true;
   int devCount = 0;
-  CUDACHECK(cudaGetDeviceCount(&devCount));
+  cudaError_t err = cudaGetDeviceCount(&devCount);
+  if (err != cudaSuccess) {
+    std::cerr << "Failed: cudaGetDeviceCount(&devCount) returned " << err << std::endl;
+    return EXIT_CUDA_INIT_FAILURE;
+  }
   std::cout << "Detected " << devCount << " device(s)" << std::endl;
   if (devCount >= 2) {
     for (int i = 0; i < devCount; ++i) {

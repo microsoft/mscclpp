@@ -158,11 +158,25 @@ RegisteredMemory::Impl::Impl(const std::vector<char>::const_iterator& begin,
       }
     }
   } else if (transports.has(Transport::CudaIpc)) {
+    // When transports include both CudaIpc and IB (e.g., CudaIpc | IB0),
+    // try CudaIpc first and fall back to IB on failure.
     auto entry = getTransportInfo(Transport::CudaIpc);
-    auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
-    // Create a memory map for the remote GPU memory. The memory map will keep the GpuIpcMem instance alive.
-    this->remoteMemMap = gpuIpcMem->map();
-    this->data = this->remoteMemMap.get();
+    bool hasIB = (transports & AllIBTransports).any();
+    try {
+      auto gpuIpcMem = GpuIpcMem::create(entry.gpuIpcMemHandle);
+      this->remoteMemMap = gpuIpcMem->map();
+      this->data = this->remoteMemMap.get();
+    } catch (const BaseError& e) {
+      if (!hasIB) {
+        throw;
+      }
+      bool isSameHost = (getHostHash() == this->hostHash);
+      if (isSameHost) {
+        WARN(GPU, "CudaIpc import failed on same host, falling back to IB transport: ", e.what());
+      } else {
+        INFO(GPU, "CudaIpc import failed on remote host, falling back to IB transport: ", e.what());
+      }
+    }
   }
   if (this->data != nullptr) {
     INFO(GPU, "Opened CUDA IPC handle at pointer ", this->data);
