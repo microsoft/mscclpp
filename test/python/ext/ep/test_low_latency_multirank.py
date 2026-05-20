@@ -69,13 +69,12 @@ def main():
     rank_offset = 128
     assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
 
-    num_tokens = int(os.environ.get("MSCCLPP_EP_LL_TOKENS", "64"))
+    num_tokens = int(os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128"))
     hidden = int(
-        os.environ.get("MSCCLPP_EP_LL_HIDDEN", "7168")
+        os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "7168")
     )  # LL kernels are compiled for a fixed set; see SWITCH_HIDDEN
-    num_topk = int(os.environ.get("MSCCLPP_EP_LL_TOPK", "4"))
-    num_experts_per_rank = int(os.environ.get("MSCCLPP_EP_LL_EXPERTS_PER_RANK", "4"))
-    num_experts = num_ranks * num_experts_per_rank
+    num_topk = int(os.environ.get("MSCCLPP_EP_BENCH_TOPK", "8"))
+    num_experts = int(os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", "256"))
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
 

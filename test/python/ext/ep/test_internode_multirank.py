@@ -80,10 +80,10 @@ def main():
 
     # Small settings for functional check
     import os as _os
-    num_tokens = int(_os.environ.get("MSCCLPP_EP_HT_TOKENS", "128"))
-    hidden = int(_os.environ.get("MSCCLPP_EP_HT_HIDDEN", "1024"))
-    num_topk = int(_os.environ.get("MSCCLPP_EP_HT_TOPK", str(min(4, num_ranks))))
-    _experts_env = _os.environ.get("MSCCLPP_EP_HT_EXPERTS", "")
+    num_tokens = int(_os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128"))
+    hidden = int(_os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "1024"))
+    num_topk = int(_os.environ.get("MSCCLPP_EP_BENCH_TOPK", str(min(4, num_ranks))))
+    _experts_env = _os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", "")
     num_experts = int(_experts_env) if _experts_env else num_ranks * 4
     assert num_experts % num_ranks == 0
 
