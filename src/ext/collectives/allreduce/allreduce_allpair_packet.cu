@@ -36,13 +36,19 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   const int warpId = threadIdx.x / WARP_SIZE;
   const int lane = threadIdx.x % WARP_SIZE;
   const int nWarpsPerBlock = blockDim.x / WARP_SIZE;
+  // Assign one warp in every block to each peer. Each peer warp sends the
+  // same block-owned stripe, so nBlocks only partitions data and no longer
+  // needs to be grouped by nPeers.
   if (warpId < nPeers) {
     memoryChannels[warpId].putPackets<LL8Packet>(scratchOffset, channelDataOffset, nelems * sizeof(uint32_t),
                                                  lane + blockIdx.x * WARP_SIZE, gridDim.x * WARP_SIZE, flag);
   }
+  // Safe for in-place allreduce: all peer warps must finish reading src for
+  // this block's stripe before any warp writes reduced data back to dst/src.
   __syncthreads();
 
-  // step 2: Reduce Data
+  // Split the same sent stream across all warps for reduction. warpId selects
+  // which strided subset to reduce while lane preserves coalesced packet reads.
   for (size_t idx = lane + blockIdx.x * WARP_SIZE + warpId * WARP_SIZE * gridDim.x; idx < nelems;
        idx += nWarpsPerBlock * WARP_SIZE * gridDim.x) {
     uint32_t data = src[idx];
@@ -113,6 +119,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
     return CommResult::CommInvalidArgument;
   }
   const int nPeers = algoCtx->nRanksPerNode - 1;
+  // The kernel maps peer sends by warpId, so every peer needs a full warp.
   if (blockAndThreadNum.second % WARP_SIZE != 0 || blockAndThreadNum.second / WARP_SIZE < nPeers) {
     WARN(ALGO, "Allpair packet requires at least one full warp per peer, but got nThreadsPerBlock=",
          blockAndThreadNum.second, " and nPeers=", nPeers, ".");
