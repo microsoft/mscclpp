@@ -121,8 +121,9 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   const int nPeers = algoCtx->nRanksPerNode - 1;
   // The kernel maps peer sends by warpId, so every peer needs a full warp.
   if (blockAndThreadNum.second % WARP_SIZE != 0 || blockAndThreadNum.second / WARP_SIZE < nPeers) {
-    WARN(ALGO, "Allpair packet requires at least one full warp per peer, but got nThreadsPerBlock=",
-         blockAndThreadNum.second, " and nPeers=", nPeers, ".");
+    WARN(ALGO,
+         "Allpair packet requires at least one full warp per peer, but got nThreadsPerBlock=", blockAndThreadNum.second,
+         " and nPeers=", nPeers, ".");
     return CommResult::CommInvalidArgument;
   }
   size_t sendBytes;
