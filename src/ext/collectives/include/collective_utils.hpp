@@ -80,6 +80,7 @@ class AlgorithmCtx {
  public:
   int rank;
   int worldSize;
+  int nRanksPerNode;
   int nRanksPerIpcDomain;
 
   std::vector<RegisteredMemory> registeredMemories;
