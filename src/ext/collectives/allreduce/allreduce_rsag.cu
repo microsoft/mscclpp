@@ -185,7 +185,7 @@ CommResult AllreduceRsAg::allreduceKernelFunc(const std::shared_ptr<void> ctx, c
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->baseMemoryChannelHandles_.get(),
                                 this->remoteMemoryHandles_.get(), nullptr, nullptr, 0, 0, 0, algoCtx->rank,
-                                algoCtx->nRanksPerIpcDomain, algoCtx->workSize, inputSize, stream, nullptr, 0, 0,
+                                algoCtx->nRanksPerIpcDomain, algoCtx->worldSize, inputSize, stream, nullptr, 0, 0,
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
@@ -202,7 +202,7 @@ std::shared_ptr<void> AllreduceRsAg::initAllreduceContext(std::shared_ptr<Commun
                                                           size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   ctx->memorySemaphores = this->scratchSemaphores_;

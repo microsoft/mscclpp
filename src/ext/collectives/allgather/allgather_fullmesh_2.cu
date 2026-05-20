@@ -139,11 +139,11 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
   size_t channelOutOffset = *static_cast<size_t*>(ctx->extras["channel_out_offset"].get());
   if ((char*)input == (char*)output + rank * inputSize) {
     allgatherFullmesh2<false><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
-        (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->workSize,
+        (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->worldSize,
         ctx->nRanksPerIpcDomain, nElem);
   } else {
     allgatherFullmesh2<true><<<numBlocksAndThreads.first, numBlocksAndThreads.second, 0, stream>>>(
-        (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->workSize,
+        (void*)input, ctx->memoryChannelDeviceHandles.get(), channelOutOffset, ctx->rank, ctx->worldSize,
         ctx->nRanksPerIpcDomain, nElem);
   }
   cudaError_t err = cudaGetLastError();
@@ -158,7 +158,7 @@ std::shared_ptr<void> AllgatherFullmesh2::initAllgatherContext(std::shared_ptr<m
                                                                void* output, size_t inputSize, mscclpp::DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup semaphores

@@ -230,19 +230,24 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
                                                 const std::unordered_map<std::string, uintptr_t>&,
                                                 DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
-  if (ctx->workSize != ctx->nRanksPerIpcDomain) {
-    WARN(ALGO, "AllreducePacket requires workSize to match nRanksPerIpcDomain, got workSize=", ctx->workSize,
+  if (ctx->worldSize != ctx->nRanksPerIpcDomain) {
+    WARN(ALGO, "AllreducePacket requires worldSize to match nRanksPerIpcDomain, got worldSize=", ctx->worldSize,
          ", nRanksPerIpcDomain=", ctx->nRanksPerIpcDomain);
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
-    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->nRanksPerIpcDomain, ctx->workSize, dtype);
+    blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->nRanksPerIpcDomain, ctx->worldSize, dtype);
   } else {
     const int nPeers = ctx->nRanksPerIpcDomain - 1;
     if (blockAndThreadNum.first < nPeers) {
       return CommResult::CommInvalidArgument;
     }
+  }
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
   }
 
   size_t sendBytes;
@@ -258,7 +263,7 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, ctx->memoryChannelDeviceHandles.get(), nullptr, nullptr, nullptr,
-                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerIpcDomain, ctx->workSize,
+                channelInOffset, 0, this->scratchBufferSize_, ctx->rank, ctx->nRanksPerIpcDomain, ctx->worldSize,
                 inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_, this->nSegmentsForScratchBuffer_,
                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
@@ -273,7 +278,7 @@ std::shared_ptr<void> AllreducePacket::initAllreduceContext(std::shared_ptr<Comm
   auto ctx = std::make_shared<AlgorithmCtx>();
   const int nChannelsPerConnection = maxBlockNum_;
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
   ctx->memorySemaphores = this->memorySemaphores_;
   ctx->registeredMemories = this->registeredMemories_;

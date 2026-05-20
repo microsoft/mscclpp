@@ -223,7 +223,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
   }
   cudaError_t error =
       allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
-                nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerIpcDomain, ctx->workSize, inputSize,
+                nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerIpcDomain, ctx->worldSize, inputSize,
                 stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
@@ -249,7 +249,7 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
                                                               void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup semaphores

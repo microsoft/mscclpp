@@ -169,7 +169,7 @@ CommResult AllreduceNvlsWarpPipeline::allreduceKernelFunc(
   }
   cudaError_t error = allreduce(input, this->scratchBuffer_, output, this->memoryChannelsDeviceHandle_.get(), nullptr,
                                 ctx->switchChannelDeviceHandles.get(), nullptr, 0, 0, this->scratchBufferSize_,
-                                ctx->rank, ctx->nRanksPerIpcDomain, ctx->workSize, inputSize, stream, nullptr, 0, 0,
+                                ctx->rank, ctx->nRanksPerIpcDomain, ctx->worldSize, inputSize, stream, nullptr, 0, 0,
                                 blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
     WARN("AllreduceNvlsWarpPipeline failed with error: %s", cudaGetErrorString(error));
@@ -186,7 +186,7 @@ std::shared_ptr<void> AllreduceNvlsWarpPipeline::initAllreduceContext(std::share
                                                                       void*, size_t, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   // setup channels

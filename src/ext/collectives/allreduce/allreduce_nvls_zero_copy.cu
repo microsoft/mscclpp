@@ -149,17 +149,17 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
     // the number of GPUs. Empirically, 32 blocks works well for 4 GPUs and 16 for 8 GPUs, which
     // follows the formula 128 / nGPUs, clamped to [1, MAX_NBLOCKS].
     if (computeCapabilityMajor_ == 10) {
-      numBlocksAndThreads.first = ::max(1, ::min(128 / ctx->workSize, MAX_NBLOCKS));
+      numBlocksAndThreads.first = ::max(1, ::min(128 / ctx->worldSize, MAX_NBLOCKS));
     }
   }
   if (numBlocksAndThreads.first > MAX_NBLOCKS) {
     WARN("Number of blocks exceeds maximum supported value of %d", MAX_NBLOCKS);
     return CommResult::CommInvalidArgument;
   }
-  cudaError_t error =
-      allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr, nvlsChannels,
-                nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank, ctx->nRanksPerIpcDomain,
-                ctx->workSize, inputSize, stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+  cudaError_t error = allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr,
+                                nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, 0, ctx->rank,
+                                ctx->nRanksPerIpcDomain, ctx->worldSize, inputSize, stream, nullptr, 0, 0,
+                                numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     if (error == cudaErrorNotSupported) {
       WARN("AllreduceNvls does not support the requested data type.");
@@ -185,7 +185,7 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
                                                           const void* input, void* output, size_t, mscclpp::DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
+  ctx->worldSize = comm->bootstrap()->getNranks();
   ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   size_t sendBytes, recvBytes;

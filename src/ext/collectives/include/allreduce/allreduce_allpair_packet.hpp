@@ -30,9 +30,7 @@ class AllreduceAllpairPacket : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
-  // Must be at least MAX_IPC_DOMAIN_NRANKS-1 so the adapter can launch one
-  // block per peer at MNNVL scale.
-  const int maxBlockNum_ = MAX_IPC_DOMAIN_NRANKS - 1;
+  const int maxBlockNum_ = 64;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> memorySemaphores_;
   std::vector<RegisteredMemory> registeredMemories_;

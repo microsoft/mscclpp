@@ -79,7 +79,7 @@ std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHan
 class AlgorithmCtx {
  public:
   int rank;
-  int workSize;
+  int worldSize;
   int nRanksPerIpcDomain;
 
   std::vector<RegisteredMemory> registeredMemories;
