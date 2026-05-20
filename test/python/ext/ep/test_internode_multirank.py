@@ -96,6 +96,7 @@ def main():
 
     # Small settings for functional check
     import os as _os
+
     num_tokens = int(_os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128"))
     hidden = int(_os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "1024"))
     num_topk = int(_os.environ.get("MSCCLPP_EP_BENCH_TOPK", str(min(4, num_ranks))))
