@@ -27,22 +27,24 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   size_t scratchBaseOffset = (flag % numScratchBuff) ? (scratchBufferSize / numScratchBuff) : 0;
   size_t channelScratchOffset = scratchBaseOffset;
 
-  const int nBlocksPerPeer = gridDim.x / nPeers;
-  const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
-  const int tid = threadIdx.x + localBlockIdx * blockDim.x;
-  const int peerIdx = blockIdx.x / nBlocksPerPeer;
-  size_t srcOffset = channelDataOffset;
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   size_t scratchOffset = channelScratchOffset + rank * nelems * sizeof(LL8Packet);
   void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
   uint32_t* src = (uint32_t*)((char*)buff);
   uint32_t* dst = (uint32_t*)((char*)resultBuff);
 
-  // step 1: write data to each peer's scratch buffer
-  memoryChannels[peerIdx].putPackets<LL8Packet>(scratchOffset, srcOffset, nelems * sizeof(uint32_t), tid,
-                                                blockDim.x * nBlocksPerPeer, flag);
+  const int warpId = threadIdx.x / WARP_SIZE;
+  const int lane = threadIdx.x % WARP_SIZE;
+  const int nWarpsPerBlock = blockDim.x / WARP_SIZE;
+  if (warpId < nPeers) {
+    memoryChannels[warpId].putPackets<LL8Packet>(scratchOffset, channelDataOffset, nelems * sizeof(uint32_t),
+                                                 lane + blockIdx.x * WARP_SIZE, gridDim.x * WARP_SIZE, flag);
+  }
+  __syncthreads();
 
   // step 2: Reduce Data
-  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
+  for (size_t idx = lane + blockIdx.x * WARP_SIZE + warpId * WARP_SIZE * gridDim.x; idx < nelems;
+       idx += nWarpsPerBlock * WARP_SIZE * gridDim.x) {
     uint32_t data = src[idx];
     using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
                                       mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
@@ -66,7 +68,7 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
 
 inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int worldSize) {
   if (inputSize < worldSize * sizeof(int)) {
-    return {worldSize - 1, 32};
+    return {worldSize - 1, (worldSize - 1) * WARP_SIZE};
   }
   return {(worldSize - 1) * 4, 512};
 }
@@ -110,13 +112,10 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
          maxBlockNum_, ".");
     return CommResult::CommInvalidArgument;
   }
-  // nBlocks must be a multiple of nPeers so that each block maps to a valid peer.
   const int nPeers = algoCtx->nRanksPerNode - 1;
-  if (nPeers > 0 && blockAndThreadNum.first % nPeers != 0) {
-    INFO(ALGO, "Rounding block number ", blockAndThreadNum.first, " down to the nearest multiple of nPeers=", nPeers);
-    blockAndThreadNum.first = (blockAndThreadNum.first / nPeers) * nPeers;
-  }
-  if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+  if (blockAndThreadNum.second % WARP_SIZE != 0 || blockAndThreadNum.second / WARP_SIZE < nPeers) {
+    WARN(ALGO, "Allpair packet requires at least one full warp per peer, but got nThreadsPerBlock=",
+         blockAndThreadNum.second, " and nPeers=", nPeers, ".");
     return CommResult::CommInvalidArgument;
   }
   size_t sendBytes;
