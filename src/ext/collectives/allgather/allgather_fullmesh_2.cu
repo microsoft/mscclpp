@@ -135,6 +135,15 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
       numBlocksAndThreads.first = 35;
     }
   }
+  if (numBlocksAndThreads.first > nChannelsPerConnection_) {
+    WARN("AllgatherFullmesh2: number of blocks exceeds maximum supported blocks, which is %d",
+         nChannelsPerConnection_);
+    return CommResult::CommInvalidArgument;
+  }
+  if (numBlocksAndThreads.second % WARP_SIZE != 0) {
+    WARN("AllgatherFullmesh2: threads per block must be a multiple of warp size %d", WARP_SIZE);
+    return CommResult::CommInvalidArgument;
+  }
 
   size_t channelOutOffset = *static_cast<size_t*>(ctx->extras["channel_out_offset"].get());
   if ((char*)input == (char*)output + rank * inputSize) {
