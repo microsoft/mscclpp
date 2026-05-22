@@ -169,8 +169,8 @@ std::shared_ptr<void> AllgatherFullmesh::initAllgatherContext(std::shared_ptr<Co
   std::vector<RegisteredMemory> remoteMemories = setupRemoteMemories(comm, ctx->rank, scratchMemory);
 
   // setup channels
-  ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory,
-                                            kMaxBlocks);
+  ctx->memoryChannels =
+      setupMemoryChannels(this->conns_, ctx->memorySemaphores, remoteMemories, localMemory, kMaxBlocks);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
 
   // keep registered memories reference

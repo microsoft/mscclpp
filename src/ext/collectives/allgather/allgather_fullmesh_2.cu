@@ -135,17 +135,18 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
       numBlocksAndThreads.first = 35;
     }
   }
-  if (numBlocksAndThreads.first > nChannelsPerConnection_) {
-    WARN("AllgatherFullmesh2: number of blocks exceeds maximum supported blocks, which is %d",
-         nChannelsPerConnection_);
-    return CommResult::CommInvalidArgument;
-  }
   const int nPeer = ctx->nRanksPerNode - 1;
-  const int nWarp = numBlocksAndThreads.first * numBlocksAndThreads.second / WARP_SIZE;
-  if (numBlocksAndThreads.second % WARP_SIZE != 0 || nWarp % nPeer != 0) {
-    WARN("AllgatherFullmesh2: total number of warps must be a multiple of peer count; got nBlocks=%d, "
-         "nThreadsPerBlock=%d, nPeers=%d",
-         numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
+  if (numBlocksAndThreads.first % nPeer != 0) {
+    WARN("AllgatherFullmesh2: adjusting number of blocks from %d to %d to be a multiple of peer count %d",
+         numBlocksAndThreads.first, (numBlocksAndThreads.first / nPeer) * nPeer, nPeer);
+    numBlocksAndThreads.first = (numBlocksAndThreads.first / nPeer) * nPeer;
+  }
+  if (numBlocksAndThreads.first > nChannelsPerConnection_ || numBlocksAndThreads.first <= 0 ||
+      numBlocksAndThreads.second <= 0) {
+    WARN(
+        "AllgatherFullmesh2: number of blocks must be a positive multiple of peer count and no more than %d, threads "
+        "per block must be positive; got nBlocks=%d, nThreadsPerBlock=%d, nPeers=%d",
+        nChannelsPerConnection_, numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
     return CommResult::CommInvalidArgument;
   }
 
