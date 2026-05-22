@@ -11,6 +11,12 @@ from mscclpp.language.collectives import *
 
 def send_recv(name, nnodes, gpus_per_node, split_mask, instances):
     gpu_size = nnodes * gpus_per_node
+    group_size = split_mask + 1
+    if split_mask < 0 or (split_mask & (split_mask + 1)) != 0 or gpu_size % group_size != 0:
+        raise ValueError(
+            f"split_mask must be of the form 2^k - 1 and gpu_size ({gpu_size}) must be divisible by "
+            f"group_size ({group_size}), got split_mask={hex(split_mask)}"
+        )
     collective = SendRecv(gpu_size, 1, False)
     with CollectiveProgram(
         name,
@@ -33,7 +39,7 @@ def send_recv(name, nnodes, gpus_per_node, split_mask, instances):
         # Then lower.prev(tag1) == higher.next(tag1) and higher.prev(tag0) == lower.next(tag0)
         # When prev != next (3+ nodes), each channel targets a different peer so each gets tag 0
         # and this ordering doesn't matter.
-        group_size = split_mask + 1
+        group_size = group_size
         num_groups = gpu_size // group_size
         next_channels = {}  # channel for sending to next rank
         prev_channels = {}  # channel for receiving from prev rank

@@ -221,6 +221,11 @@ def main(
     split_mask: int = 0,
 ):
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
+    if split_mask < 0 or (split_mask & (split_mask + 1)) != 0 or mscclpp_group.nranks % (split_mask + 1) != 0:
+        raise ValueError(
+            f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
+            f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
+        )
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
