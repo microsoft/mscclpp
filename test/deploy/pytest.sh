@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+sleep 1d
 if [[ $OMPI_COMM_WORLD_RANK == 0 ]]
 then
   pytest /root/mscclpp/python/test/test_mscclpp.py -x -v
