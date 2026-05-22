@@ -86,6 +86,8 @@ def bench_correctness(
         coll = "reduce_scatter"
     elif "allreduce" in collective:
         coll = "all_reduce"
+    elif "alltoall" in collective:
+        coll = "all_to_all"
     elif "sendrecv" in collective:
         coll = "send_recv"
     else:
@@ -249,7 +251,7 @@ def main(
                 result_buf[i].data.ptr,
                 input_buf[i].nbytes,
                 result_buf[i].nbytes,
-                dtype_to_mscclpp_dtype(dtype),
+                dtype_to_mscclpp_dtype(dtype_str),
                 execution_plan,
                 stream.ptr,
                 packet_type,
@@ -262,7 +264,7 @@ def main(
             result_buf.data.ptr,
             input_buf.nbytes,
             result_buf.nbytes,
-            dtype_to_mscclpp_dtype(dtype),
+            dtype_to_mscclpp_dtype(dtype_str),
             execution_plan,
             stream.ptr,
             packet_type,
@@ -291,7 +293,7 @@ def main(
     result_nbytes = result_buf[0].nbytes if sendrecv_mode else result_buf.nbytes
     print(
         f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
-        f"data size: {result_nbytes} bytes data type: {dtype().dtype.name} "
+        f"data size: {result_nbytes} bytes data type: {dtype_str} "
         f"bandwidth: {result_nbytes / (execution_time * 1e-6) / (1024**3):.2f} GB/s, "
         f"packet type: {packet_type}"
     )

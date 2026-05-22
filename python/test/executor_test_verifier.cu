@@ -167,6 +167,7 @@ TEST_DATA_ALL_TO_ALL(int32, int)
     }                                                                                                               \
   }
 
+TEST_DATA_SEND_RECV(bfloat16, __nv_bfloat16)
 TEST_DATA_SEND_RECV(float16, __half)
 TEST_DATA_SEND_RECV(float32, float)
 TEST_DATA_SEND_RECV(int32, int)
