@@ -95,7 +95,6 @@ namespace {
 auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
-  return true;
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
   return hasIBDevices() && !inSameNode;
 };
