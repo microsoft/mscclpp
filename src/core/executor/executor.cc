@@ -94,6 +94,7 @@ struct hash<mscclpp::DeviceExecutionPlanKey> {
 namespace {
 auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
+// TODO(binyli): Need to add NVL domain check.
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
   return hasIBDevices() && !inSameNode;
@@ -108,7 +109,7 @@ namespace mscclpp {
 
 struct ExecutionContext {
   std::shared_ptr<ProxyService> proxyService;
-  std::vector<Connection> connections;  // one connection (unique QP) per channel
+  std::vector<Connection> connections;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections;
   MemoryId localMemoryIdBegin = MemoryId(0);
 
@@ -264,8 +265,7 @@ struct Executor::Impl {
     };
 
     // Create one connection (unique QP) per channel entry. Each channel gets its own
-    // QP — no shared connections. This is required for HostNoAtomic IB mode where each
-    // connection can only forward signals to one semaphore via setSignalForwardingDst.
+    // QP — no shared connections.
     // Use per-peer tag counters so that matched connections between pairs of ranks use
     // the same tag, regardless of the order peers appear in each rank's connected_to list.
     std::unordered_map<int, int> peerTagCounters;
@@ -275,14 +275,18 @@ struct Executor::Impl {
       std::vector<ChannelInfo> channelInfos = plan.impl_->getChannelInfos(channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
-          Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
+          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerNode)
+                                    ? ibTransport
+                                    : Transport::CudaIpc;
           connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));
         }
       }
       channelInfos = plan.impl_->getUnpairedChannelInfos(nranks, channelType);
       for (const auto& info : channelInfos) {
         for (int peer : info.connectedPeers) {
-          Transport transport = useIB(rank, peer, this->nranksPerNode) ? ibTransport : Transport::CudaIpc;
+          Transport transport = channelType == ChannelType::PORT && useIB(rank, peer, this->nranksPerNode)
+                                    ? ibTransport
+                                    : Transport::CudaIpc;
           connFutures.push_back(this->comm->connect(transport, peer, peerTagCounters[peer]++));
         }
       }

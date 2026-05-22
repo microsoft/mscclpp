@@ -308,7 +308,9 @@ if __name__ == "__main__":
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--n_iters", type=int, default=10)
     parser.add_argument("--n_graph_iters", type=int, default=10)
-    parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x0, help="split mask for sendrecv (e.g. 0x3)")
+    parser.add_argument(
+        "--split_mask", type=lambda x: int(x, 0), default=0x0, help="split mask for sendrecv (e.g. 0x3)"
+    )
     args = parser.parse_args()
 
     packet_type = PacketType.LL16

@@ -9,7 +9,7 @@ from mscclpp.language.program import *
 from mscclpp.language.collectives import *
 
 
-def send_recv_test(name, nnodes, gpus_per_node, split_mask):
+def send_recv(name, nnodes, gpus_per_node, split_mask, instances):
     gpu_size = nnodes * gpus_per_node
     collective = SendRecv(gpu_size, 1, False)
     with CollectiveProgram(
@@ -21,7 +21,7 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
         use_double_scratch_buffer=False,
         min_message_size=0,
         max_message_size=2**64 - 1,
-        instances=4
+        instances=instances,
     ):
         # Creating separate port channels for next and prev directions.
         # When prev and next are the same peer (e.g., 2-node ring), both channels go to the same peer
@@ -30,7 +30,7 @@ def send_recv_test(name, nnodes, gpus_per_node, split_mask):
         # "higher" rank so that tags cross-match:
         #   Lower rank:  [next(tag0), prev(tag1)]
         #   Higher rank:  [prev(tag0), next(tag1)]
-        # Then lower.prev(tag1) == higher.next(tag1) ✓ and higher.prev(tag0) == lower.next(tag0) ✓
+        # Then lower.prev(tag1) == higher.next(tag1) and higher.prev(tag0) == lower.next(tag0)
         # When prev != next (3+ nodes), each channel targets a different peer so each gets tag 0
         # and this ordering doesn't matter.
         group_size = split_mask + 1
@@ -82,9 +82,8 @@ parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--nnodes", type=int, default=1, help="number of nodes")
 parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
 parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x3, help="split mask (e.g. 0x3)")
+parser.add_argument("--instances", type=int, default=4, help="number of instances")
 
 args = parser.parse_args()
 
-send_recv_test(
-    args.name, args.nnodes, args.gpus_per_node, args.split_mask
-)
+send_recv(args.name, args.nnodes, args.gpus_per_node, args.split_mask, args.instances)

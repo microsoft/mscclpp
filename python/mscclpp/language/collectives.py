@@ -241,7 +241,7 @@ class AllToAll(Collective):
 class SendRecv(Collective):
     """A SendRecv collective communication pattern.
 
-    SendRecv performs a point-to-point send/receive operation in a ring topology.
+    SendRecv performs a point-to-point send/receive operation.
     Each rank sends its input buffer to the next rank and receives data from the
     previous rank into its output buffer.
 
