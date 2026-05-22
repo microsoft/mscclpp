@@ -82,6 +82,7 @@ function run_pytests()
   echo "==================Run python tests================================"
   mpirun ${MPI_ARGS} -tag-output -np 16 \
   ${MSCCLPP_ENV} \
+  -x PATH \
   -x MSCCLPP_HOME=/root/mscclpp -npernode 8 bash /root/mscclpp/test/deploy/pytest.sh
 }
 
