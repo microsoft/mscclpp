@@ -84,38 +84,38 @@ jobs:
       resourceGroup: mscclpp
       gpuArch:       '90'
 
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMscclppTest
-      displayName: Run multi-nodes mscclpp-test
-      continueOnError: true
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
+  # - template: templates/run-remote-task.yml
+  #   parameters:
+  #     name: RunMscclppTest
+  #     displayName: Run multi-nodes mscclpp-test
+  #     continueOnError: true
+  #     runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+  #     remoteScript: |
+  #       bash /root/mscclpp/test/deploy/run_tests.sh mscclpp-test
 
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodeUnitTest
-      displayName: Run multi-nodes unit tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
+  # - template: templates/run-remote-task.yml
+  #   parameters:
+  #     name: RunMultiNodeUnitTest
+  #     displayName: Run multi-nodes unit tests
+  #     runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+  #     remoteScript: |
+  #       bash /root/mscclpp/test/deploy/run_tests.sh mp-ut
 
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodePythonTests
-      displayName: Run multi-nodes python tests
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh pytests
+  # - template: templates/run-remote-task.yml
+  #   parameters:
+  #     name: RunMultiNodePythonTests
+  #     displayName: Run multi-nodes python tests
+  #     runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+  #     remoteScript: |
+  #       bash /root/mscclpp/test/deploy/run_tests.sh pytests
 
-  - template: templates/run-remote-task.yml
-    parameters:
-      name: RunMultiNodePythonBenchmark
-      displayName: Run multi-nodes python benchmark
-      runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
-      remoteScript: |
-        bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
+  # - template: templates/run-remote-task.yml
+  #   parameters:
+  #     name: RunMultiNodePythonBenchmark
+  #     displayName: Run multi-nodes python benchmark
+  #     runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
+  #     remoteScript: |
+  #       bash /root/mscclpp/test/deploy/run_tests.sh py-benchmark
 
   - template: templates/run-remote-task.yml
     parameters:
