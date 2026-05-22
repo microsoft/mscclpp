@@ -69,7 +69,7 @@ class CustomizedComm:
 
     _TUNE_N_WARMUP = 5
     _TUNE_N_GRAPH_LAUNCHES = 10
-    _TUNE_N_OPS_PER_GRAPH = 500
+    _TUNE_N_OPS_PER_GRAPH = 100
     _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 56, 64, 128]
     _CANDIDATE_NTHREADS = [512, 768, 1024]
     _NBLOCKS_LIMIT = {
@@ -332,7 +332,7 @@ class CustomizedComm:
 # -- Benchmarks (standalone) --------------------------------------------------
 
 
-def _bench_sizes(low=5 * 1024, high=1 << 20):
+def _bench_sizes(low=5 * 1024, high=80 << 20):
     sizes, c = [], low
     while c <= high:
         sizes.append(c)
@@ -464,9 +464,9 @@ def main():
     cc.barrier()
     torch.cuda.synchronize()
 
-    # benchmark_allgather(cc, dtype=dtype)
-    # cc.barrier()
-    # torch.cuda.synchronize()
+    benchmark_allgather(cc, dtype=dtype)
+    cc.barrier()
+    torch.cuda.synchronize()
 
     cc.destroy()
     print(f"rank {local} completed successfully.")
