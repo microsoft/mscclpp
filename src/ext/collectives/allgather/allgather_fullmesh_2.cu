@@ -140,8 +140,12 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
          nChannelsPerConnection_);
     return CommResult::CommInvalidArgument;
   }
-  if (numBlocksAndThreads.second % WARP_SIZE != 0) {
-    WARN("AllgatherFullmesh2: threads per block must be a multiple of warp size %d", WARP_SIZE);
+  const int nPeer = ctx->nRanksPerNode - 1;
+  const int nWarp = numBlocksAndThreads.first * numBlocksAndThreads.second / WARP_SIZE;
+  if (numBlocksAndThreads.second % WARP_SIZE != 0 || nWarp % nPeer != 0) {
+    WARN("AllgatherFullmesh2: total number of warps must be a multiple of peer count; got nBlocks=%d, "
+         "nThreadsPerBlock=%d, nPeers=%d",
+         numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
     return CommResult::CommInvalidArgument;
   }
 
