@@ -124,12 +124,11 @@ CommResult AllgatherFullmesh::allgatherKernelFunc(const std::shared_ptr<void> ct
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
     numBlocksAndThreads = {kMaxBlocks, kMaxThreadsPerBlock};
   }
-  if (numBlocksAndThreads.first > kMaxBlocks) {
-    WARN("AllgatherFullmesh: number of blocks exceeds maximum supported blocks, which is %d", kMaxBlocks);
-    return CommResult::CommInvalidArgument;
-  }
-  if (numBlocksAndThreads.second > kMaxThreadsPerBlock) {
-    WARN("AllgatherFullmesh: threads per block exceeds maximum supported threads, which is %d", kMaxThreadsPerBlock);
+  if (numBlocksAndThreads.first > kMaxBlocks || numBlocksAndThreads.second > kMaxThreadsPerBlock) {
+    WARN(
+        "AllgatherFullmesh: number of blocks must be no more than %d and threads per block must be no more than %d; "
+        "got nBlocks=%d, nThreadsPerBlock=%d",
+        kMaxBlocks, kMaxThreadsPerBlock, numBlocksAndThreads.first, numBlocksAndThreads.second);
     return CommResult::CommInvalidArgument;
   }
   if (numBlocksAndThreads.second % WARP_SIZE != 0) {
