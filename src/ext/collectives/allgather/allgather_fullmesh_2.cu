@@ -18,7 +18,11 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t lid = tid % WARP_SIZE;
   const size_t wid = tid / WARP_SIZE;
 
-  const size_t nThread = blockDim.x * gridDim.x;
+  // Round down to multiple of warp size
+  const size_t nThread = (blockDim.x * gridDim.x) / WARP_SIZE * WARP_SIZE;
+  if (tid >= nThread) {
+    return;
+  }
   const size_t nWarp = nThread / WARP_SIZE;
   const size_t nPeer = nRanksPerNode - 1;
   const size_t chanOffset = nPeer * blockIdx.x;
@@ -136,17 +140,21 @@ CommResult AllgatherFullmesh2::allgatherKernelFunc(const std::shared_ptr<void> c
     }
   }
   const int nPeer = ctx->nRanksPerNode - 1;
-  if (numBlocksAndThreads.first % nPeer != 0) {
-    WARN("AllgatherFullmesh2: adjusting number of blocks from %d to %d to be a multiple of peer count %d",
-         numBlocksAndThreads.first, (numBlocksAndThreads.first / nPeer) * nPeer, nPeer);
-    numBlocksAndThreads.first = (numBlocksAndThreads.first / nPeer) * nPeer;
-  }
+  const int nWarp = numBlocksAndThreads.first * numBlocksAndThreads.second / WARP_SIZE;
   if (numBlocksAndThreads.first > nChannelsPerConnection_ || numBlocksAndThreads.first <= 0 ||
       numBlocksAndThreads.second <= 0) {
     WARN(
         "AllgatherFullmesh2: number of blocks must be a positive multiple of peer count and no more than %d, threads "
         "per block must be positive; got nBlocks=%d, nThreadsPerBlock=%d, nPeers=%d",
         nChannelsPerConnection_, numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
+    return CommResult::CommInvalidArgument;
+  }
+  if (nWarp < nPeer) {
+    WARN(
+        "AllgatherFullmesh2: total number of warps must be no less than peer count; got nBlocks=%d, "
+        "nThreadsPerBlock=%d, "
+        "nPeers=%d",
+        numBlocksAndThreads.first, numBlocksAndThreads.second, nPeer);
     return CommResult::CommInvalidArgument;
   }
 
