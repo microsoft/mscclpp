@@ -63,26 +63,6 @@ def bench_time(n_iters: int, n_graph_iters: int, func: Union[Callable, list[Call
     return cp.cuda.get_elapsed_time(start, end) / n_iters * 1000.0 / n_graph_iters
 
 
-def get_prev_rank(my_rank: int, num_ranks: int, split_mask: int) -> int:
-    """Determine the previous rank in the ring based on the split_mask topology."""
-    group_size = split_mask + 1
-    num_groups = num_ranks // group_size
-    position_in_group = my_rank & split_mask
-    group_id = my_rank // group_size
-    prev_group_id = (group_id - 1 + num_groups) % num_groups
-    return prev_group_id * group_size + position_in_group
-
-
-def get_next_rank(my_rank: int, num_ranks: int, split_mask: int) -> int:
-    """Determine the next rank in the ring based on the split_mask topology."""
-    group_size = split_mask + 1
-    num_groups = num_ranks // group_size
-    position_in_group = my_rank & split_mask
-    group_id = my_rank // group_size
-    next_group_id = (group_id + 1) % num_groups
-    return next_group_id * group_size + position_in_group
-
-
 def bench_correctness(
     collective: str,
     input_buf: Union[cp.ndarray, list[cp.ndarray]],
@@ -138,17 +118,16 @@ def bench_correctness(
                 cur_test = test_buf
                 cur_func = func
 
-            fill_data_params = pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i)
+            fill_data_params = (
+                pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
+            )
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
             cur_func(stream)
             test_data_params = (
                 pack(cur_result, cur_test)
                 + struct.pack("Q", cur_input.nbytes // type_size)
-                + pack(num_ranks, rank, i)
+                + pack(num_ranks, rank, i, split_mask)
             )
-            if "sendrecv" in collective:
-                prev_rank = get_prev_rank(rank, num_ranks, split_mask)
-                test_data_params += pack(prev_rank)
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
     graph.launch(stream)
