@@ -211,8 +211,6 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
   // register input and output memories
   RegisteredMemory inputMemory = comm->registerMemory((void*)input, size, Transport::CudaIpc);
   RegisteredMemory outputMemory = comm->registerMemory(output, size, Transport::CudaIpc);
-  this->inputMemories_.push_back(inputMemory);
-  this->outputMemories_.push_back(outputMemory);
 
   auto remoteInputMemories = setupRemoteMemories(comm, ctx->rank, inputMemory);
   auto remoteOutputMemories = setupRemoteMemories(comm, ctx->rank, outputMemory);

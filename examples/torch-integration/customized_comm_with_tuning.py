@@ -58,8 +58,8 @@ class CustomizedComm:
     """Exposes all_reduce, all_gather, barrier with lazy per-size tuning."""
 
     _TUNE_N_WARMUP = 5
-    _TUNE_N_GRAPH_LAUNCHES = 10
-    _TUNE_N_OPS_PER_GRAPH = 100
+    _TUNE_N_GRAPH_LAUNCHES = 5
+    _TUNE_N_OPS_PER_GRAPH = 20
     _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 56, 64, 128]
     _CANDIDATE_NTHREADS = [512, 768, 1024]
     _NBLOCKS_LIMIT = {

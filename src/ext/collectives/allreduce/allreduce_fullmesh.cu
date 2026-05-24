@@ -9,6 +9,17 @@
 namespace mscclpp {
 namespace collective {
 
+namespace {
+// Per-context cache of input-side MemoryChannels keyed by input pointer.
+// Lifetime is tied to AlgorithmCtx, so entries are released when the ctx is
+// evicted from the framework's context cache (avoids unbounded growth across
+// allreduce calls that pass different input buffers).
+using InputChannelsCache =
+    std::unordered_map<const void*,
+                       std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>;
+constexpr const char* kInputChannelsExtraKey = "inputChannels";
+}  // namespace
+
 template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(512, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
@@ -195,17 +206,17 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
     MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
     channelOutOffset = (char*)output - (char*)recvBasePtr;
   }
-  std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles;
-  if (this->memoryChannelsMap_.find(input) != this->memoryChannelsMap_.end()) {
-    inputChannelHandles = this->memoryChannelsMap_[input].second;
-  } else {
+  auto& inputChannelsCache = *static_cast<InputChannelsCache*>(ctx->extras.at(kInputChannelsExtraKey).get());
+  auto it = inputChannelsCache.find(input);
+  if (it == inputChannelsCache.end()) {
     RegisteredMemory localMemory = comm_->registerMemory(const_cast<void*>(input), inputSize, Transport::CudaIpc);
     std::vector<MemoryChannel> channels =
         setupMemoryChannels(this->conns_, this->inputScratchSemaphores_, this->remoteScratchMemories_, localMemory,
                             nChannelsPerConnection_);
-    this->memoryChannelsMap_[input] = std::make_pair(channels, setupMemoryChannelDeviceHandles(channels));
+    auto handles = setupMemoryChannelDeviceHandles(channels);
+    it = inputChannelsCache.emplace(input, std::make_pair(std::move(channels), std::move(handles))).first;
   }
-  inputChannelHandles = this->memoryChannelsMap_[input].second;
+  std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles = it->second.second;
 
   AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
@@ -267,6 +278,7 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,
                                             nChannelsPerConnection_);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
+  ctx->extras.insert({kInputChannelsExtraKey, std::make_shared<InputChannelsCache>()});
   return ctx;
 }
 
