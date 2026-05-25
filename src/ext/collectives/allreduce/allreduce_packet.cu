@@ -235,6 +235,11 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode, dtype);
   }
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
+  }
 
   size_t sendBytes;
   CUdeviceptr sendBasePtr;
