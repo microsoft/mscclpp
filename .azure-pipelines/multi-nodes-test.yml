@@ -123,6 +123,7 @@ jobs:
       displayName: Run multi-nodes executor tests
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
+        python3 -m pip install .
         HOSTFILE=/root/mscclpp/test/deploy/hostfile_mpi
         PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
         TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
