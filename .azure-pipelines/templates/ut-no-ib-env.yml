@@ -13,7 +13,7 @@ steps:
     vmssName:         ${{ parameters.vmssName }}
     gpuArch:          ${{ parameters.gpuArch }}
     cmakeArgs:        '-DMSCCLPP_USE_IB=OFF'
-    deployArgs:       'single-node-test false'
+    deployArgs:       'single-node-test false cuda'
 
 - template: run-remote-task.yml
   parameters:
@@ -79,7 +79,7 @@ steps:
   inputs:
     targetType: filePath
     filePath: test/deploy/deploy.sh
-    arguments: single-node-test false
+    arguments: single-node-test false cuda
     workingDirectory: $(System.DefaultWorkingDirectory)
 
 - template: run-remote-task.yml
