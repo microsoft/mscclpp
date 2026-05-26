@@ -342,7 +342,8 @@ class GpuBuffer {
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if (CUDA_NVLS_API_AVAILABLE)
     if (isNvlsSupported()) {
-      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      // TODO: pass granularity from the caller instead of using the minimum granularity.
+      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_MINIMUM);
       bytes_ = (nelems * sizeof(T) + gran - 1) / gran * gran / sizeof(T) * sizeof(T);
       memory_ = detail::gpuCallocPhysicalShared<T>(nelems, gran);
       return;

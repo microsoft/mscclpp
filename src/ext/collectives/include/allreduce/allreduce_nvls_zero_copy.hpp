@@ -28,7 +28,7 @@ class AllreduceNvls : public AlgorithmBuilder {
   // Large buffer size because cuMemMap requires offset=0 for multicast handles, so the entire
   // user allocation must be mapped. This only reserves virtual address space; no physical memory
   // is consumed beyond what is actually bound.
-  const size_t nvlsBufferSize_ = (1UL << 36);
+  const size_t nvlsBufferSize_ = (1UL << 34);
   uint32_t nSwitchChannels_;
   std::shared_ptr<DeviceHandle<BaseMemoryChannel>> memoryChannelsDeviceHandle_;
   std::vector<BaseMemoryChannel> baseChannels_;
