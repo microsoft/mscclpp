@@ -89,6 +89,7 @@ function run_pytests()
 function run_py_benchmark()
 {
   echo "==================Run python benchmark================================"
+  sleep 1d # for debugging
   mpirun ${MPI_ARGS} -np 16 \
   ${MSCCLPP_ENV} \
   -x PATH \
