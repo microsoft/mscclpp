@@ -123,13 +123,7 @@ jobs:
       displayName: Run multi-nodes executor tests
       runRemoteArgs: '--hostfile $(System.DefaultWorkingDirectory)/test/deploy/hostfile --host ${{ parameters.vmssName }}000000 --user azureuser'
       remoteScript: |
-        PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
-        TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
-        PYTHON_BIN=/root/venv/bin/python3
-        MPI_ARGS="--allow-run-as-root --bind-to numa -host 10.0.0.5,10.0.0.4 -mca btl_tcp_if_include eth0"
-        MSCCLPP_ENV="-x MSCCLPP_DEBUG=WARN -x MSCCLPP_SOCKET_IFNAME=eth0 -x LD_LIBRARY_PATH=/root/mscclpp/build/lib:\$LD_LIBRARY_PATH"
-        mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer.json --size 1M --in_place
-        mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
+        bash /root/mscclpp/test/deploy/run_tests.sh executor-tests
 
   - template: templates/stop.yml
     parameters:
