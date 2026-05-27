@@ -44,7 +44,7 @@ using EPProxyService = mscclpp::ProxyService;
 //   N=4:  D  479 us / C  568 us
 //   N=8:  D  445 us / C  469 us  <-- knee
 //   N=12: collapses (CPU oversubscription with 8 GPUs/node).
-static int resolve_num_proxy_services() {
+static int resolve_num_proxy_services(int num_ranks, int local_world_size) {
   if (const char* env = std::getenv("MSCCLPP_EP_NUM_PROXIES")) {
     int v = std::atoi(env);
     return v > 0 ? v : 1;
@@ -53,9 +53,13 @@ static int resolve_num_proxy_services() {
   if (cudaGetDevice(&dev) != cudaSuccess) return 8;
   cudaDeviceProp prop{};
   if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return 8;
-  // sm_100+ = Blackwell (GB200 etc.) -- NVSwitch fabric, host proxy not the
-  // bottleneck; sm_90 (Hopper) and earlier benefit from sharding for IB.
-  if (prop.major >= 10) return 1;
+  // sm_100+ = Blackwell (GB200 etc.). NVSwitch fabric makes one proxy
+  // sufficient intranode, but cross-node RDMA still funnels through that
+  // single host thread. When num_rdma_ranks > 1, shard the proxy across
+  // local GPUs so each GPU has its own RDMA-driving thread. (P2)
+  int lws = local_world_size > 0 ? local_world_size : 1;
+  int num_rdma_ranks_local = std::max(1, num_ranks / lws);
+  if (prop.major >= 10) return num_rdma_ranks_local > 1 ? lws : 1;
   return 8;
 }
 
@@ -117,7 +121,13 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
       low_latency_mode(low_latency_mode),
       comm_stream(at::cuda::getStreamFromPool(true)),
       bootstrap(std::make_shared<mscclpp::TcpBootstrap>(rank, num_ranks)) {
-  num_proxy_services = resolve_num_proxy_services();
+  // Resolve local_world_size early so the Blackwell proxy-sharding (P2) can use it.
+  int local_world_size_for_proxy = NUM_MAX_NVL_PEERS;
+  if (const char* env = std::getenv("MSCCLPP_EP_LOCAL_WORLD_SIZE")) {
+    int v = std::atoi(env);
+    if (v > 0 && v <= NUM_MAX_NVL_PEERS) local_world_size_for_proxy = v;
+  }
+  num_proxy_services = resolve_num_proxy_services(num_ranks, local_world_size_for_proxy);
   proxy_services.reserve(num_proxy_services);
   for (int i = 0; i < num_proxy_services; ++i) {
     proxy_services.emplace_back(std::make_shared<EPProxyService>());
