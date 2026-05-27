@@ -99,11 +99,18 @@ function run_py_benchmark()
 function run_executor_tests()
 {
   echo "==================Run multi-node executor tests======================"
+  ALGOS_DIR=/root/mscclpp/test/executor-tests/algos
   PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
   TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
-  PYTHON_BIN=python3
+  PYTHON_BIN=/root/venv/bin/python3
+
+  echo "Generating execution plans"
+  ${PYTHON_BIN} ${ALGOS_DIR}/multi_node_transfer.py --name multi_node_transfer > ${PLANS_DIR}/multi_node_transfer.json
+  ${PYTHON_BIN} ${ALGOS_DIR}/multi_node_transfer_pkt.py --name multi_node_transfer_pkt > ${PLANS_DIR}/multi_node_transfer_pkt.json
+
+  echo "Running multi-node transfer test with in-place buffers"
   mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer.json --size 1M --in_place
-  #mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
+  mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
 }
 
 if [ $# -lt 1 ]; then
