@@ -1529,7 +1529,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
               void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
-  constexpr int kNumDispatchRDMASenderWarps = 7;
+  constexpr int kNumDispatchRDMASenderWarps = 6;
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
   {                                                                                                                    \
