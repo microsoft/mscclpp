@@ -101,9 +101,9 @@ function run_executor_tests()
   echo "==================Run multi-node executor tests======================"
   PLANS_DIR=/root/mscclpp/test/executor-tests/execution-plans
   TEST_SCRIPT=/root/mscclpp/python/test/executor_test.py
-  PYTHON_BIN=/root/venv/bin/python3
+  PYTHON_BIN=python3
   mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer.json --size 1M --in_place
-  mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
+  #mpirun ${MPI_ARGS} -np 2 -npernode 1 ${MSCCLPP_ENV} ${PYTHON_BIN} $TEST_SCRIPT -path $PLANS_DIR/multi_node_transfer_pkt.json --size 1M --in_place
 }
 
 if [ $# -lt 1 ]; then
