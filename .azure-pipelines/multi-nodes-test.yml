@@ -14,7 +14,6 @@ trigger:
 # Do not run multi-nodes-test for PR, we can trigger it manually
 pr: none
 
-
 parameters:
 - name: vmssName
   type: string
@@ -79,10 +78,10 @@ jobs:
 
   - template: templates/deploy.yml
     parameters:
-      subscription:  mscclpp-ci-h100
-      vmssName:      ${{ parameters.vmssName }}
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
       resourceGroup: mscclpp
-      gpuArch:       '90'
+      gpuArch: '90'
 
   - template: templates/run-remote-task.yml
     parameters:
@@ -119,6 +118,6 @@ jobs:
 
   - template: templates/stop.yml
     parameters:
-      subscription:  mscclpp-ci-h100
-      vmssName:      ${{ parameters.vmssName }}
+      subscription: mscclpp-ci-h100
+      vmssName: ${{ parameters.vmssName }}
       resourceGroup: mscclpp

@@ -75,6 +75,7 @@ docker build -t ${TAG_BASE_DEV} \
     --build-arg BASE_IMAGE=${TAG_BASE} \
     --build-arg TARGET=${TARGET} .
 
+
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 GHCR_TAG_BASE_DEV=${GHCR}:base-dev-${TARGET}
 GHCR_TAG_BASE_DEV_ARCH=${GHCR}:base-dev-${TARGET}-${OS_ARCH}
