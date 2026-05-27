@@ -87,7 +87,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--nnodes", type=int, default=1, help="number of nodes")
 parser.add_argument("--gpus_per_node", type=int, help="number of gpus per node")
-parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x3, help="split mask (e.g. 0x3)")
+parser.add_argument("--split_mask", type=lambda x: int(x, 0), default=0x0, help="split mask (e.g. 0x3)")
 parser.add_argument("--instances", type=int, default=4, help="number of instances")
 
 args = parser.parse_args()
