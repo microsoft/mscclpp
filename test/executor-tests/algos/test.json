@@ -1,5 +1,5 @@
 {
-  "name": "multi_node_transfer",
+  "name": "allgather",
   "collective": "allgather",
   "protocol": "LL",
   "inplace": true,
