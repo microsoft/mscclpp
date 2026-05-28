@@ -63,7 +63,6 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     }
     dst[idx] = mscclpp::downcastVector<T, AccumT, uint32_t>(acc);
   }
-  __syncthreads();
   if (threadIdx.x == 0) {
     ((uint32_t*)flags)[blockIdx.x] = flag + 1;
   }
