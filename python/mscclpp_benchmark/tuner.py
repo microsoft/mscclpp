@@ -41,9 +41,6 @@ class OfflineTuner:
         best_time_us = float("inf")
         symmetric_memory = bool(getattr(case, "symmetric_memory", self._symmetric_memory))
         candidates = self._candidate_algorithms(self.comm, case)
-        if self.comm.rank == 0:
-            names = ", ".join(algorithm.name for algorithm, _ in candidates) or "<none>"
-            print(f"[tune] size={case.message_size} candidates={names}", flush=True)
         if not candidates:
             if self.comm.rank == 0:
                 print(
@@ -65,7 +62,7 @@ class OfflineTuner:
                         nthreads=nthreads,
                         symmetric_memory=symmetric_memory,
                     )
-                    if not self._check_correctness(self.comm, case, config, raise_on_unsupported=False):
+                    if not self._check_correctness(self.comm, case, config):
                         self.comm.reset(config)
                         continue
                     self.comm.reset(config)
@@ -88,12 +85,6 @@ class OfflineTuner:
                         symmetric_memory=symmetric_memory,
                         time_us=time_us,
                     )
-                    if self.comm.rank == 0:
-                        print(
-                            f"[tune] size={case.message_size} best={algorithm.name} "
-                            f"nb={nblocks} nt={nthreads} time={time_us:.3f}us",
-                            flush=True,
-                        )
         if best_config is None:
             return self.comm.resolve_config(case)
         return best_config

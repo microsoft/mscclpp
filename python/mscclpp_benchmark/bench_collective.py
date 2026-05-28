@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import math
-import struct
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +13,11 @@ from mpi4py import MPI
 _mscclpp_module = None
 
 from mscclpp_benchmark.comm import Comm
+from mscclpp_benchmark.correctness import (
+    CorrectnessStats,
+    check_correctness as _check_correctness,
+    fill_case_for_benchmark as _fill_case_for_benchmark,
+)
 from mscclpp_benchmark.gpu import capture_graph, init_runtime
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
@@ -94,10 +97,6 @@ class BenchmarkCase:
     symmetric_memory: bool = False
 
 
-def config_accum_dtype(case: BenchmarkCase) -> Any:
-    return case.dtype_spec.accum_dtype or case.dtype_spec.mscclpp_dtype
-
-
 def _device_name() -> str:
     props = cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)
     name = props.get("name", "UNKNOWN")
@@ -174,10 +173,6 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
         supports_reduction_correctness=dtype_spec.supports_reduction_correctness,
         fp8_format=dtype_spec.fp8_format,
     )
-
-
-def _dtype_is_float(dtype: Any) -> bool:
-    return dtype in (cp.float16, cp.float32)
 
 
 def _human_size(size: int) -> str:
@@ -333,167 +328,6 @@ def _make_case(
     )
 
 
-def _fill_case_for_benchmark(case: BenchmarkCase, rank: int) -> None:
-    if case.collective == _ALLREDUCE:
-        case.input.fill(0)
-        return
-    _fill_allgather_input(case, rank)
-    case.output.fill(0)
-    if case.allgather_mode == "in-place":
-        _fill_allgather_input(case, rank)
-
-
-def _fill_case_for_correctness(case: BenchmarkCase, rank: int, iteration: int) -> None:
-    value = iteration * MPI.COMM_WORLD.size + rank
-    if case.collective == _ALLREDUCE:
-        case.input.fill(_dtype_value(case, value))
-        return
-    case.output.fill(0)
-    case.input.fill(_dtype_value(case, value))
-
-
-def _fill_allgather_input(case: BenchmarkCase, rank: int) -> None:
-    value = rank + 1
-    case.input.fill(_dtype_value(case, value))
-
-
-def _dtype_value(case: BenchmarkCase, value: int) -> int:
-    if case.dtype_spec.fp8_format is not None:
-        return _encode_fp8_scalar(case.dtype_spec.fp8_format, _correctness_numeric_value(case, value))
-    if case.dtype_spec.cupy_dtype == cp.uint8:
-        return value % 256
-    return value
-
-
-def _correctness_numeric_value(case: BenchmarkCase, value: int) -> float:
-    if case.dtype_spec.fp8_format is None:
-        return float(value)
-    scale = max(64, MPI.COMM_WORLD.size * MPI.COMM_WORLD.size)
-    return float(value + 1) / float(scale)
-
-
-def _check_correctness(
-    comm: Comm,
-    case: BenchmarkCase,
-    config: TunedConfig,
-    *,
-    raise_on_unsupported: bool = True,
-    niter: int = 1,
-) -> bool:
-    if case.collective == _ALLREDUCE and not case.dtype_spec.supports_reduction_correctness:
-        if not raise_on_unsupported:
-            return True
-        raise ValueError(
-            f"Correctness checking for {case.collective} with {case.dtype_spec.name} is not implemented; "
-            "use --skip-correctness or a numeric dtype"
-        )
-
-    all_ok = True
-    for iteration in range(niter):
-        _fill_case_for_correctness(case, comm.rank, iteration)
-        comm.comm_group.barrier()
-        ret = comm.run(case, config)
-        cp.cuda.runtime.deviceSynchronize()
-        comm.comm_group.barrier()
-        if ret != 0:
-            return False
-
-        expected = _expected_output(case, comm.nranks, iteration)
-        local_ok = _compare_output(case.output, expected)
-        all_ok = all_ok and local_ok
-
-        if not local_ok:
-            mismatch = _mismatch_mask(case.output, expected)
-            print(
-                "not close: "
-                f"iter={iteration}, rank={comm.rank}, output={case.output[mismatch][0]}, "
-                f"expected={expected[mismatch][0]}",
-                flush=True,
-            )
-
-    return bool(MPI.COMM_WORLD.allreduce(all_ok, op=MPI.LAND))
-
-
-def _expected_output(case: BenchmarkCase, nranks: int, iteration: int):
-    if case.collective == _ALLREDUCE:
-        if case.dtype_spec.fp8_format is not None:
-            expected_numeric = sum(
-                _decode_fp8_positive(
-                    case.dtype_spec.fp8_format,
-                    _dtype_value(case, iteration * MPI.COMM_WORLD.size + rank),
-                )
-                for rank in range(nranks)
-            )
-            return cp.full_like(case.output, _encode_fp8_scalar(case.dtype_spec.fp8_format, expected_numeric))
-        expected_value = sum(iteration * MPI.COMM_WORLD.size + rank for rank in range(nranks))
-        return cp.full_like(case.output, _dtype_value(case, expected_value))
-
-    expected = cp.empty_like(case.output)
-    chunk = case.input.size
-    for rank in range(nranks):
-        expected[rank * chunk : (rank + 1) * chunk].fill(_dtype_value(case, iteration * MPI.COMM_WORLD.size + rank))
-    return expected
-
-
-def _compare_output(output, expected) -> bool:
-    if _dtype_is_float(output.dtype.type):
-        return bool(cp.allclose(output, expected, rtol=1.0e-2, atol=2).item())
-    return bool(cp.all(output == expected).item())
-
-
-def _mismatch_mask(output, expected):
-    if _dtype_is_float(output.dtype.type):
-        return ~cp.isclose(output, expected, rtol=1.0e-2, atol=2)
-    return output != expected
-
-
-_FP8_POSITIVE_TABLES: dict[str, list[tuple[int, float]]] = {}
-
-
-def _encode_fp8_scalar(fp8_format: str, value: float) -> int:
-    if value < 0:
-        raise ValueError("FP8 correctness values are expected to be non-negative")
-    if fp8_format == "e4m3b15":
-        return _encode_e4m3b15_scalar(value)
-    table = _FP8_POSITIVE_TABLES.setdefault(fp8_format, _build_fp8_positive_table(fp8_format))
-    return min(table, key=lambda item: abs(item[1] - value))[0]
-
-
-def _encode_e4m3b15_scalar(value: float) -> int:
-    fp16_bits = struct.unpack("<H", struct.pack("<e", float(value)))[0]
-    abs_fp16 = fp16_bits & 0x7FFF
-    if abs_fp16 > 0x3F00:
-        abs_fp16 = 0x3F00
-    sign16 = fp16_bits & 0x8000
-    adjusted = abs_fp16 * 2 + 0x0080
-    return ((sign16 | adjusted) >> 8) & 0xFF
-
-
-def _build_fp8_positive_table(fp8_format: str) -> list[tuple[int, float]]:
-    table = []
-    for byte in range(128):
-        value = _decode_fp8_positive(fp8_format, byte)
-        if not math.isnan(value):
-            table.append((byte, value))
-    return table
-
-
-def _decode_fp8_positive(fp8_format: str, byte: int) -> float:
-    exp = (byte >> 3) & 0xF
-    mant = byte & 0x7
-    if fp8_format == "e4m3fn" and exp == 0xF and mant == 0x7:
-        return float("nan")
-    if exp == 0 and mant == 0:
-        return 0.0
-    if fp8_format == "e4m3fn":
-        return math.ldexp(mant / 8.0, -6) if exp == 0 else math.ldexp(1.0 + mant / 8.0, exp - 7)
-    if fp8_format == "e4m3fnuz":
-        return math.ldexp(mant / 8.0, -7) if exp == 0 else math.ldexp(1.0 + mant / 8.0, exp - 8)
-    if fp8_format == "e4m3b15":
-        return math.ldexp(mant / 8.0, -14) if exp == 0 else math.ldexp(1.0 + mant / 8.0, exp - 15)
-    raise ValueError(f"Unknown FP8 format: {fp8_format}")
-
-
 def _try_measure_case(
     comm: Comm,
     case: BenchmarkCase,
@@ -593,6 +427,18 @@ def _format_table(headers: list[str], rows: list[list[str]]) -> str:
     sep_line = "-+-".join("-" * width for width in widths)
     row_lines = [" | ".join(cell.ljust(width) for cell, width in zip(row, widths)) for row in rows]
     return "\n".join([header_line, sep_line, *row_lines])
+
+
+def _format_stat(value: float | None) -> str:
+    if value is None:
+        return "-"
+    return f"{value:.6g}"
+
+
+def _format_mismatches(stats: CorrectnessStats | None) -> str:
+    if stats is None or stats.total == 0:
+        return "-"
+    return f"{stats.mismatches}/{stats.total}"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -705,8 +551,10 @@ def main(argv: list[str] | None = None) -> None:
                 config_store.upsert(hardware_profile, args.collective, case.message_size, config)
 
             correctness = "SKIP"
+            correctness_stats: CorrectnessStats | None = None
             if not args.skip_correctness:
-                correctness = "PASS" if _check_correctness(comm, case, config, niter=args.correctness_iters) else "FAIL"
+                correctness_stats = _check_correctness(comm, case, config, niter=args.correctness_iters)
+                correctness = "PASS" if correctness_stats else "FAIL"
                 comm.reset(config)
                 if correctness != "PASS":
                     raise RuntimeError(
@@ -738,6 +586,9 @@ def main(argv: list[str] | None = None) -> None:
                     f"{algbw:.2f}",
                     f"{busbw:.2f}",
                     correctness,
+                    _format_stat(None if correctness_stats is None else correctness_stats.max_abs_diff),
+                    _format_stat(None if correctness_stats is None else correctness_stats.mean_abs_diff),
+                    _format_mismatches(correctness_stats),
                 ]
             )
             if comm.rank == 0:
@@ -762,6 +613,9 @@ def main(argv: list[str] | None = None) -> None:
                         "algBW_GB/s",
                         "busBW_GB/s",
                         "check",
+                        "max_diff",
+                        "mean_diff",
+                        "mismatch",
                     ],
                     rows,
                 ),
