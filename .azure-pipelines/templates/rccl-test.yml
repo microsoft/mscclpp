@@ -57,6 +57,14 @@ steps:
       mpirun -np 8 --bind-to numa --allow-run-as-root -x LD_PRELOAD=/root/mscclpp/build/lib/libmscclpp_nccl.so -x MSCCLPP_NCCL_SYMMETRIC_MEMORY=1 -x NCCL_DEBUG=WARN /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
       mpirun -np 8 --bind-to numa --allow-run-as-root /root/rocm-systems/projects/rccl-tests/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -G 20 -w 10 -n 20
 
+- template: run-remote-task.yml
+  parameters:
+    name: PyBench
+    displayName: Run collective benchmarks
+    remoteScript: |
+      mpirun --allow-run-as-root -tag-output -x GPU_MAX_HW_QUEUES=8 -np 8 python3 ./python/mscclpp_benchmark/bench_collective.py --collective allreduce --dtype float8_e4m3b15 --accum-type float32 --autotune
+      mpirun --allow-run-as-root -tag-output -x GPU_MAX_HW_QUEUES=8 -np 8 python3 ./python/mscclpp_benchmark/bench_collective.py --collective allgather --dtype float8_e4m3b15 --autotune
+
 - template: stop.yml
   parameters:
     subscription: ${{ parameters.subscription }}
