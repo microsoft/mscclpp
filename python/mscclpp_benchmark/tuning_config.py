@@ -15,8 +15,8 @@ _KNOWN_GPU_SKUS = ("GB300", "MI300X", "H100", "A100")
 
 @dataclass(frozen=True)
 class HardwareProfile:
-    sku: str
-    scale: int
+    sku: str | None = None
+    scale: int | None = None
 
 
 @dataclass(frozen=True)
@@ -62,10 +62,7 @@ class TunedConfigStore:
             if not isinstance(raw_profiles, list):
                 raise ValueError("MSCCL++ tuned config field 'profiles' must be a list")
             for raw_profile in raw_profiles:
-                profile = HardwareProfile(
-                    sku=normalize_sku(str(raw_profile["sku"])),
-                    scale=_parse_positive_int(raw_profile["scale"], "scale"),
-                )
+                profile = _profile_from_payload(raw_profile)
                 profiles[profile] = _configs_by_collective_from_payload(raw_profile.get("collectives", {}))
             return cls(profiles)
 
@@ -73,19 +70,10 @@ class TunedConfigStore:
         return cls(profiles)
 
     def select(self, profile: HardwareProfile, collective: str, message_size: int) -> TunedConfig | None:
-        for configs_by_collective in (self._profiles.get(profile), self._profiles.get(None)):
-            if not configs_by_collective:
-                continue
-            configs = configs_by_collective.get(collective, [])
-            if not configs:
-                continue
-            sizes = [item.message_size for item in configs]
-            index = bisect_left(sizes, message_size)
-            if index == len(sizes):
-                return configs[-1].config
-            if sizes[index] == message_size or index == 0:
-                return configs[index].config
-            return configs[index - 1].config
+        for _, configs_by_collective in _matching_profiles(self._profiles, profile):
+            config = _select_config(configs_by_collective, collective, message_size)
+            if config is not None:
+                return config
         return None
 
     def upsert(self, profile: HardwareProfile, collective: str, message_size: int, config: TunedConfig) -> None:
@@ -102,12 +90,18 @@ class TunedConfigStore:
         profiles_payload: list[dict[str, Any]] = []
         for profile, configs_by_collective in sorted(
             ((profile, configs) for profile, configs in self._profiles.items() if profile is not None),
-            key=lambda item: (item[0].sku, item[0].scale),
+            key=lambda item: (item[0].sku is None, item[0].sku or "", item[0].scale is None, item[0].scale or 0),
         ):
             collectives: dict[str, list[dict[str, Any]]] = {}
             for collective, configs in sorted(configs_by_collective.items()):
                 collectives[collective] = [_config_entry_payload(item) for item in sorted(configs)]
-            profiles_payload.append({"sku": profile.sku, "scale": profile.scale, "collectives": collectives})
+            profile_payload: dict[str, Any] = {}
+            if profile.sku is not None:
+                profile_payload["sku"] = profile.sku
+            if profile.scale is not None:
+                profile_payload["scale"] = profile.scale
+            profile_payload["collectives"] = collectives
+            profiles_payload.append(profile_payload)
 
         with Path(path).open("w", encoding="utf-8") as handle:
             json.dump({"version": 1, "profiles": profiles_payload}, handle, indent=2)
@@ -121,6 +115,58 @@ def normalize_sku(raw_sku: str) -> str:
             return known_sku
     normalized = re.sub(r"[^A-Z0-9]+", "_", upper_sku).strip("_")
     return normalized or "UNKNOWN"
+
+
+def _profile_from_payload(raw_profile: Any) -> HardwareProfile:
+    if not isinstance(raw_profile, dict):
+        raise ValueError(f"Invalid tuned config profile: {raw_profile!r}")
+    raw_sku = raw_profile.get("sku")
+    return HardwareProfile(
+        sku=None if raw_sku is None else normalize_sku(str(raw_sku)),
+        scale=_optional_positive_int(raw_profile.get("scale"), "scale"),
+    )
+
+
+def _matching_profiles(
+    profiles: dict[HardwareProfile | None, dict[str, list[TunedConfigBySize]]],
+    runtime_profile: HardwareProfile,
+) -> list[tuple[int, dict[str, list[TunedConfigBySize]]]]:
+    matches: list[tuple[int, dict[str, list[TunedConfigBySize]]]] = []
+    for profile, configs_by_collective in profiles.items():
+        specificity = _profile_match_specificity(profile, runtime_profile)
+        if specificity is not None:
+            matches.append((specificity, configs_by_collective))
+    return sorted(matches, key=lambda item: item[0], reverse=True)
+
+
+def _profile_match_specificity(profile: HardwareProfile | None, runtime_profile: HardwareProfile) -> int | None:
+    if profile is None:
+        return -1
+    specificity = 0
+    if profile.sku is not None:
+        if profile.sku != runtime_profile.sku:
+            return None
+        specificity += 1
+    if profile.scale is not None:
+        if profile.scale != runtime_profile.scale:
+            return None
+        specificity += 1
+    return specificity
+
+
+def _select_config(
+    configs_by_collective: dict[str, list[TunedConfigBySize]], collective: str, message_size: int
+) -> TunedConfig | None:
+    configs = configs_by_collective.get(collective, [])
+    if not configs:
+        return None
+    sizes = [item.message_size for item in configs]
+    index = bisect_left(sizes, message_size)
+    if index == len(sizes):
+        return configs[-1].config
+    if sizes[index] == message_size or index == 0:
+        return configs[index].config
+    return configs[index - 1].config
 
 
 def _configs_by_collective_from_payload(payload: Any) -> dict[str, list[TunedConfigBySize]]:
@@ -172,6 +218,10 @@ def _optional_int(value: Any | None) -> int | None:
 
 def _optional_float(value: Any | None) -> float | None:
     return None if value is None else float(value)
+
+
+def _optional_positive_int(value: Any | None, name: str) -> int | None:
+    return None if value is None else _parse_positive_int(value, name)
 
 
 def _optional_bool(value: Any | None) -> bool | None:

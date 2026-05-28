@@ -93,7 +93,7 @@ def _load_runtime() -> _Runtime:
             return runtime
         errors.append(f"cudaGetDeviceCount returned count={count}")
     except ImportError as exc:
-        errors.append(f"cuda-python unavailable: {exc}")
+        errors.append(f"cuda-bindings unavailable: {exc}")
 
     raise RuntimeError("No usable CUDA/HIP Python runtime found: " + "; ".join(errors))
 

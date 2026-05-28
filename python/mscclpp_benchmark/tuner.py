@@ -36,10 +36,23 @@ class OfflineTuner:
         self._measure = measure
         self._symmetric_memory = symmetric_memory
 
-    def tune(self, case: Any) -> TunedConfig:
+    def tune(self, case: Any) -> TunedConfig | None:
         best_config: TunedConfig | None = None
         best_time_us = float("inf")
-        for algorithm, candidate_spec in self._candidate_algorithms(self.comm, case):
+        symmetric_memory = bool(getattr(case, "symmetric_memory", self._symmetric_memory))
+        candidates = self._candidate_algorithms(self.comm, case)
+        if self.comm.rank == 0:
+            names = ", ".join(algorithm.name for algorithm, _ in candidates) or "<none>"
+            print(f"[tune] size={case.message_size} candidates={names}", flush=True)
+        if not candidates:
+            if self.comm.rank == 0:
+                print(
+                    f"[skip] no supported tuning candidates for collective={case.collective} "
+                    f"size={case.message_size}",
+                    flush=True,
+                )
+            return None
+        for algorithm, candidate_spec in candidates:
             for nblocks in self.candidate_nblocks:
                 if candidate_spec.max_nblocks is not None and nblocks > candidate_spec.max_nblocks:
                     continue
@@ -50,7 +63,7 @@ class OfflineTuner:
                         algorithm=algorithm.name,
                         nblocks=nblocks,
                         nthreads=nthreads,
-                        symmetric_memory=self._symmetric_memory,
+                        symmetric_memory=symmetric_memory,
                     )
                     if not self._check_correctness(self.comm, case, config, raise_on_unsupported=False):
                         self.comm.reset(config)
@@ -72,7 +85,7 @@ class OfflineTuner:
                         algorithm=algorithm.name,
                         nblocks=nblocks,
                         nthreads=nthreads,
-                        symmetric_memory=self._symmetric_memory,
+                        symmetric_memory=symmetric_memory,
                         time_us=time_us,
                     )
                     if self.comm.rank == 0:
@@ -157,6 +170,8 @@ def _bench_collective_args(args: argparse.Namespace) -> list[str]:
     ]
     if args.batch_sizes:
         bench_args += ["--batch-sizes", args.batch_sizes]
+    if args.accum_type:
+        bench_args += ["--accum-type", args.accum_type]
     if args.candidate_nblocks:
         bench_args += ["--candidate-nblocks", args.candidate_nblocks]
     if args.candidate_nthreads:

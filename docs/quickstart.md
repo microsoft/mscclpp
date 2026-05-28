@@ -110,11 +110,11 @@ $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 ```
 
 > **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
-> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source
+> The CUDA extras install pre-built CuPy wheels and CUDA Python bindings. The `rocm6` extra installs CuPy from source
 > and HIP Python 6.x, which require ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
 
 Optional extras can be installed by specifying them in brackets. Available extras:
-- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
+- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package and CUDA Python bindings for your CUDA version.
 - **`rocm6`**: Install CuPy from source and HIP Python 6.x for AMD ROCm platforms.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).

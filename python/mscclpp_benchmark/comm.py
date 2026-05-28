@@ -180,6 +180,10 @@ class Comm:
     def algorithms(self) -> dict[str, dict[str, Any]]:
         return self._algorithms_by_collective
 
+    @property
+    def hardware_profile(self) -> HardwareProfile:
+        return self._hardware_profile
+
     def make_allreduce(self, x: Any, *, symmetric_memory: bool = False) -> _AllReduceOp:
         return _AllReduceOp(self, x, symmetric_memory=symmetric_memory)
 
@@ -191,10 +195,17 @@ class Comm:
             return int(self._mpi_comm.Get_size())
         return 1
 
-    def resolve_config(self, case: Any) -> TunedConfig:
+    def resolve_config(self, case: Any, *, symmetric_memory: bool = False) -> TunedConfig:
         dtype_override = getattr(getattr(case, "dtype_spec", None), "mscclpp_dtype", None)
         accum_dtype = getattr(getattr(case, "dtype_spec", None), "accum_dtype", None) or dtype_override
-        return self._resolve_config(case.collective, case.input, dtype_override=dtype_override, accum_dtype=accum_dtype)
+        symmetric_memory = symmetric_memory or bool(getattr(case, "symmetric_memory", False))
+        return self._resolve_config(
+            case.collective,
+            case.input,
+            dtype_override=dtype_override,
+            accum_dtype=accum_dtype,
+            symmetric_memory=symmetric_memory,
+        )
 
     def _resolve_config(
         self,
@@ -203,6 +214,7 @@ class Comm:
         *,
         dtype_override: Any | None = None,
         accum_dtype: Any | None = None,
+        symmetric_memory: bool = False,
     ) -> TunedConfig:
         tuned_config = self._config_store.select(self._hardware_profile, collective, _nbytes(buffer))
         if tuned_config is not None and tuned_config.algorithm in self._algorithms_by_collective.get(collective, {}):
@@ -230,7 +242,12 @@ class Comm:
                     warning_key[2],
                     dim,
                 )
-        return _default_tuned_config(collective, _nbytes(buffer), self._algorithms_by_collective)
+        return _default_tuned_config(
+            collective,
+            _nbytes(buffer),
+            self._algorithms_by_collective,
+            symmetric_memory=symmetric_memory,
+        )
 
     def run(
         self,
@@ -255,14 +272,21 @@ class Comm:
             collective = case.collective
             dtype_override = case.dtype_spec.mscclpp_dtype
             accum_dtype = case.dtype_spec.accum_dtype or dtype_override
+            symmetric_memory = symmetric_memory or bool(getattr(case, "symmetric_memory", False))
             raise_on_error = False
 
         if collective not in self._algorithms_by_collective:
             raise RuntimeError(f"No supported MSCCL++ {collective} algorithm is available")
 
         if config is None:
-            config = self._resolve_config(collective, buffer, dtype_override=dtype_override, accum_dtype=accum_dtype)
-        symmetric_memory = config.symmetric_memory
+            config = self._resolve_config(
+                collective,
+                buffer,
+                dtype_override=dtype_override,
+                accum_dtype=accum_dtype,
+                symmetric_memory=symmetric_memory,
+            )
+        symmetric_memory = symmetric_memory or config.symmetric_memory
         algorithm = self._algorithms_by_collective[collective][config.algorithm]
         output = buffer if output_tensor is None else output_tensor
         dtype = dtype_override if dtype_override is not None else _dtype_to_mscclpp(_dtype(buffer))
@@ -401,15 +425,21 @@ def _ensure_device() -> None:
 
 
 def _default_tuned_config(
-    collective: str, message_size: int, algorithms_by_collective: dict[str, dict[str, Any]]
+    collective: str,
+    message_size: int,
+    algorithms_by_collective: dict[str, dict[str, Any]],
+    *,
+    symmetric_memory: bool = False,
 ) -> TunedConfig:
     if collective == _ALLGATHER_COLLECTIVE:
-        return TunedConfig("default_allgather_fullmesh2")
+        return TunedConfig("default_allgather_fullmesh2", symmetric_memory=symmetric_memory)
     available = algorithms_by_collective.get(collective, {})
+    if symmetric_memory and _mscclpp().is_nvls_supported() and "default_allreduce_nvls_zero_copy" in available:
+        return TunedConfig("default_allreduce_nvls_zero_copy", symmetric_memory=True)
     if message_size <= 512 * 1024 and "default_allreduce_packet" in available:
-        return TunedConfig("default_allreduce_packet")
+        return TunedConfig("default_allreduce_packet", symmetric_memory=symmetric_memory)
     if "default_allreduce_rsag_zero_copy" in available:
-        return TunedConfig("default_allreduce_rsag_zero_copy")
+        return TunedConfig("default_allreduce_rsag_zero_copy", symmetric_memory=symmetric_memory)
     if available:
-        return TunedConfig(next(iter(available)))
+        return TunedConfig(next(iter(available)), symmetric_memory=symmetric_memory)
     raise RuntimeError(f"No MSCCL++ algorithm is available for {collective}")

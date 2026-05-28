@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import struct
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,6 +77,7 @@ class CandidateSpec:
     max_message_size: int | None = None
     max_nblocks: int | None = None
     min_nthreads: int | None = None
+    supported_skus: tuple[str, ...] | None = None
     requires_nvls: bool = False
     requires_symmetric_memory: bool = False
 
@@ -89,6 +91,7 @@ class BenchmarkCase:
     output: cp.ndarray
     dtype_spec: DTypeSpec
     allgather_mode: str
+    symmetric_memory: bool = False
 
 
 def config_accum_dtype(case: BenchmarkCase) -> Any:
@@ -148,6 +151,31 @@ def _parse_dtype(dtype_name: str) -> DTypeSpec:
     )
 
 
+def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec:
+    if accum_type is None:
+        return dtype_spec
+
+    mscclpp = _mscclpp()
+    normalized = accum_type.strip().lower().replace("-", "_")
+    if normalized in {"native", "same", "auto"}:
+        accum_dtype = dtype_spec.mscclpp_dtype
+    elif normalized in {"float16", "fp16", "half"}:
+        accum_dtype = mscclpp.DataType.float16
+    elif normalized in {"float32", "fp32", "float"}:
+        accum_dtype = mscclpp.DataType.float32
+    else:
+        raise ValueError(f"Unsupported accum type {accum_type!r}; use native, float16, or float32")
+
+    return DTypeSpec(
+        name=dtype_spec.name,
+        cupy_dtype=dtype_spec.cupy_dtype,
+        mscclpp_dtype=dtype_spec.mscclpp_dtype,
+        accum_dtype=accum_dtype,
+        supports_reduction_correctness=dtype_spec.supports_reduction_correctness,
+        fp8_format=dtype_spec.fp8_format,
+    )
+
+
 def _dtype_is_float(dtype: Any) -> bool:
     return dtype in (cp.float16, cp.float32)
 
@@ -170,40 +198,72 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
     return values
 
 
-def _candidate_specs(collective: str, message_size: int) -> tuple[CandidateSpec, ...]:
+def _candidate_specs(
+    collective: str, message_size: int, *, symmetric_memory: bool = False
+) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
-        return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=32),)
+        return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
     if collective != _ALLREDUCE:
         raise ValueError(f"Unsupported collective: {collective}")
     if message_size <= 512 * 1024:
-        return (
-            CandidateSpec("default_allreduce_nvls_packet", max_nblocks=16, requires_nvls=True),
+        candidates = (
+            CandidateSpec(
+                "default_allreduce_nvls_packet",
+                max_nblocks=16,
+                supported_skus=("H100", "GB300"),
+                requires_nvls=True,
+            ),
             CandidateSpec("default_allreduce_packet", max_nblocks=56),
             CandidateSpec("default_allreduce_allpair_packet", max_nblocks=56),
         )
-    if message_size <= 4 * 1024 * 1024:
-        return (
+    elif message_size <= 4 * 1024 * 1024:
+        candidates = (
             CandidateSpec("default_allreduce_packet", max_nblocks=56),
             CandidateSpec("default_allreduce_allpair_packet", max_nblocks=56),
             CandidateSpec("default_allreduce_rsag_zero_copy"),
-            CandidateSpec("default_allreduce_fullmesh", max_nblocks=64),
+            CandidateSpec("default_allreduce_fullmesh", max_nblocks=64, supported_skus=("MI300X",)),
         )
-    return (
-        CandidateSpec("default_allreduce_rsag_zero_copy"),
-        CandidateSpec("default_allreduce_fullmesh", max_nblocks=64),
-    )
+    else:
+        candidates = (
+            CandidateSpec("default_allreduce_rsag_zero_copy"),
+            CandidateSpec("default_allreduce_fullmesh", max_nblocks=64, supported_skus=("MI300X",)),
+        )
+    if symmetric_memory:
+        return (
+            CandidateSpec(
+                "default_allreduce_nvls_zero_copy",
+                max_nblocks=32,
+                supported_skus=("H100", "GB300"),
+                requires_nvls=True,
+                requires_symmetric_memory=True,
+            ),
+            *candidates,
+        )
+    return candidates
 
 
 def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, CandidateSpec]]:
     available = comm.algorithms.get(case.collective, {})
     candidates: list[tuple[Any, CandidateSpec]] = []
     seen: set[str] = set()
-    for candidate in _candidate_specs(case.collective, case.message_size):
+    symmetric_memory = case.symmetric_memory
+    profile = getattr(comm, "hardware_profile", None)
+    filtered_out = False
+    for candidate in _candidate_specs(case.collective, case.message_size, symmetric_memory=symmetric_memory):
+        if not _candidate_supports_profile(candidate, profile):
+            filtered_out = True
+            continue
         if candidate.requires_nvls and not _mscclpp().is_nvls_supported():
+            filtered_out = True
+            continue
+        if candidate.requires_symmetric_memory and not symmetric_memory:
+            filtered_out = True
             continue
         if candidate.min_message_size is not None and case.message_size < candidate.min_message_size:
+            filtered_out = True
             continue
         if candidate.max_message_size is not None and case.message_size > candidate.max_message_size:
+            filtered_out = True
             continue
         algorithm = available.get(candidate.algorithm)
         if algorithm is None or algorithm.name in seen:
@@ -212,7 +272,18 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
         candidates.append((algorithm, candidate))
     if candidates:
         return candidates
+    if filtered_out:
+        return []
     return [(algorithm, CandidateSpec(algorithm.name)) for algorithm in available.values()]
+
+
+def _candidate_supports_profile(candidate: CandidateSpec, profile: HardwareProfile | None) -> bool:
+    if candidate.supported_skus is None:
+        return True
+    sku = None if profile is None else profile.sku
+    if not sku or sku == "UNKNOWN":
+        return True
+    return sku in candidate.supported_skus
 
 
 def _make_case(
@@ -222,6 +293,7 @@ def _make_case(
     dtype_spec: DTypeSpec,
     comm_group: Any,
     allgather_mode: str,
+    symmetric_memory: bool = False,
 ) -> BenchmarkCase:
     if collective == _ALLREDUCE:
         memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
@@ -233,6 +305,7 @@ def _make_case(
             output=memory,
             dtype_spec=dtype_spec,
             allgather_mode=allgather_mode,
+            symmetric_memory=symmetric_memory,
         )
 
     if collective != _ALLGATHER:
@@ -256,6 +329,7 @@ def _make_case(
         output=output,
         dtype_spec=dtype_spec,
         allgather_mode=allgather_mode,
+        symmetric_memory=symmetric_memory,
     )
 
 
@@ -344,7 +418,11 @@ def _expected_output(case: BenchmarkCase, nranks: int, iteration: int):
     if case.collective == _ALLREDUCE:
         if case.dtype_spec.fp8_format is not None:
             expected_numeric = sum(
-                _correctness_numeric_value(case, iteration * MPI.COMM_WORLD.size + rank) for rank in range(nranks)
+                _decode_fp8_positive(
+                    case.dtype_spec.fp8_format,
+                    _dtype_value(case, iteration * MPI.COMM_WORLD.size + rank),
+                )
+                for rank in range(nranks)
             )
             return cp.full_like(case.output, _encode_fp8_scalar(case.dtype_spec.fp8_format, expected_numeric))
         expected_value = sum(iteration * MPI.COMM_WORLD.size + rank for rank in range(nranks))
@@ -375,8 +453,20 @@ _FP8_POSITIVE_TABLES: dict[str, list[tuple[int, float]]] = {}
 def _encode_fp8_scalar(fp8_format: str, value: float) -> int:
     if value < 0:
         raise ValueError("FP8 correctness values are expected to be non-negative")
+    if fp8_format == "e4m3b15":
+        return _encode_e4m3b15_scalar(value)
     table = _FP8_POSITIVE_TABLES.setdefault(fp8_format, _build_fp8_positive_table(fp8_format))
     return min(table, key=lambda item: abs(item[1] - value))[0]
+
+
+def _encode_e4m3b15_scalar(value: float) -> int:
+    fp16_bits = struct.unpack("<H", struct.pack("<e", float(value)))[0]
+    abs_fp16 = fp16_bits & 0x7FFF
+    if abs_fp16 > 0x3F00:
+        abs_fp16 = 0x3F00
+    sign16 = fp16_bits & 0x8000
+    adjusted = abs_fp16 * 2 + 0x0080
+    return ((sign16 | adjusted) >> 8) & 0xFF
 
 
 def _build_fp8_positive_table(fp8_format: str) -> list[tuple[int, float]]:
@@ -510,6 +600,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--collective", choices=(_ALLREDUCE, _ALLGATHER), default=_ALLREDUCE)
     parser.add_argument("--d-model", type=int, default=5120)
     parser.add_argument("--dtype", default="float16")
+    parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
     parser.add_argument("--allgather-mode", choices=("in-place", "out-of-place"), default="in-place")
     parser.add_argument("--config-path", help="Optional MSCCL++ tuned config JSON")
@@ -560,7 +651,7 @@ def main(argv: list[str] | None = None) -> None:
     finally:
         local_comm.Free()
 
-    dtype_spec = _parse_dtype(args.dtype)
+    dtype_spec = _with_accum_type(_parse_dtype(args.dtype), args.accum_type)
     batch_sizes = _parse_int_list(args.batch_sizes, _DEFAULT_BATCH_SIZES)
     candidate_nblocks = _parse_int_list(args.candidate_nblocks, _DEFAULT_CANDIDATE_NBLOCKS)
     candidate_nthreads = _parse_int_list(args.candidate_nthreads, _DEFAULT_CANDIDATE_NTHREADS)
@@ -605,8 +696,11 @@ def main(argv: list[str] | None = None) -> None:
                 dtype_spec=dtype_spec,
                 comm_group=comm_group,
                 allgather_mode=args.allgather_mode,
+                symmetric_memory=args.symmetric_memory,
             )
             config = tuner.tune(case) if args.autotune else comm.resolve_config(case)
+            if config is None:
+                continue
             if args.autotune:
                 config_store.upsert(hardware_profile, args.collective, case.message_size, config)
 
