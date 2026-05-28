@@ -24,7 +24,10 @@ dependencies = [
 cuda11 = ["cupy-cuda11x"]
 cuda12 = ["cupy-cuda12x"]
 cuda13 = ["cupy-cuda13x"]
-rocm6 = ["cupy"]
+rocm6 = [
+    "cupy",
+    "hip-python>=6,<7",
+]
 benchmark = [
     "mpi4py",
     "prettytable",

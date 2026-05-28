@@ -110,12 +110,12 @@ $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 ```
 
 > **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
-> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source,
-> which requires ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source
+> and HIP Python 6.x, which require ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
 
 Optional extras can be installed by specifying them in brackets. Available extras:
 - **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
-- **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
+- **`rocm6`**: Install CuPy from source and HIP Python 6.x for AMD ROCm platforms.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
 
@@ -209,16 +209,44 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 
 ## Performance Benchmark
 
-### Python Benchmark
+### Python Benchmark and Tuning
 
-[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run the Python collective benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
 # Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
 $ python3 -m pip install ".[cuda12,benchmark,test]"
-$ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
+
+# Run a benchmark.
+$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
+    python3 ./python/mscclpp_benchmark/bench_collective.py \
+    --collective allreduce --dtype float16
 ```
+
+To autotune launch parameters and save a tuned config:
+
+```bash
+$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
+    python3 -m mscclpp_benchmark.tuner \
+    --collective allreduce \
+    --dim 5120 \
+    --dtype float16 \
+    --scale 8 \
+    --batch-sizes 1,2,4,8 \
+    --output /tmp/mscclpp_tuned_configs.json
+```
+
+Use the tuned config in a benchmark:
+
+```bash
+$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
+    python3 ./python/mscclpp_benchmark/bench_collective.py \
+    --collective allreduce \
+    --dtype float16 \
+    --config-path /tmp/mscclpp_tuned_configs.json
+```
+
 
 (nccl-benchmark)=
 ### NCCL/RCCL Benchmark over MSCCL++
@@ -291,4 +319,3 @@ Version: 0.8.0.post1.dev0+gc632fee37.d20251007
 mscclpp.version
 {'version': '0.8.0.post1.dev0+gc632fee37.d20251007', 'git_commit': 'g50382c567'}
 ```
-
