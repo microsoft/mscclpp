@@ -55,12 +55,6 @@ def check_correctness(
     *,
     niter: int = 1,
 ) -> CorrectnessStats:
-    if case.collective == "allreduce" and not case.dtype_spec.supports_reduction_correctness:
-        raise ValueError(
-            f"Correctness checking for {case.collective} with {case.dtype_spec.name} is not implemented; "
-            "use --skip-correctness or a numeric dtype"
-        )
-
     all_ok = True
     local_max_abs_diff = 0.0
     local_sum_abs_diff = 0.0

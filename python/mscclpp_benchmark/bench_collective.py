@@ -69,7 +69,6 @@ class DTypeSpec:
     cupy_dtype: Any
     mscclpp_dtype: Any
     accum_dtype: Any | None = None
-    supports_reduction_correctness: bool = True
     fp8_format: str | None = None
 
 
@@ -79,7 +78,6 @@ class CandidateSpec:
     min_message_size: int | None = None
     max_message_size: int | None = None
     max_nblocks: int | None = None
-    min_nthreads: int | None = None
     supported_skus: tuple[str, ...] | None = None
     requires_nvls: bool = False
     requires_symmetric_memory: bool = False
@@ -93,7 +91,6 @@ class BenchmarkCase:
     input: cp.ndarray
     output: cp.ndarray
     dtype_spec: DTypeSpec
-    allgather_mode: str
     symmetric_memory: bool = False
 
 
@@ -170,7 +167,6 @@ def _with_accum_type(dtype_spec: DTypeSpec, accum_type: str | None) -> DTypeSpec
         cupy_dtype=dtype_spec.cupy_dtype,
         mscclpp_dtype=dtype_spec.mscclpp_dtype,
         accum_dtype=accum_dtype,
-        supports_reduction_correctness=dtype_spec.supports_reduction_correctness,
         fp8_format=dtype_spec.fp8_format,
     )
 
@@ -193,36 +189,40 @@ def _parse_int_list(raw: str | None, default: tuple[int, ...]) -> tuple[int, ...
     return values
 
 
-def _candidate_specs(
-    collective: str, message_size: int, *, symmetric_memory: bool = False
-) -> tuple[CandidateSpec, ...]:
+def _candidate_specs(collective: str, *, symmetric_memory: bool = False) -> tuple[CandidateSpec, ...]:
     if collective == _ALLGATHER:
         return (CandidateSpec("default_allgather_fullmesh2", max_nblocks=64, supported_skus=("MI300X",)),)
     if collective != _ALLREDUCE:
         raise ValueError(f"Unsupported collective: {collective}")
-    if message_size <= 512 * 1024:
-        candidates = (
-            CandidateSpec(
-                "default_allreduce_nvls_packet",
-                max_nblocks=16,
-                supported_skus=("H100", "GB300"),
-                requires_nvls=True,
-            ),
-            CandidateSpec("default_allreduce_packet", max_nblocks=56),
-            CandidateSpec("default_allreduce_allpair_packet", max_nblocks=56),
-        )
-    elif message_size <= 4 * 1024 * 1024:
-        candidates = (
-            CandidateSpec("default_allreduce_packet", max_nblocks=56),
-            CandidateSpec("default_allreduce_allpair_packet", max_nblocks=56),
-            CandidateSpec("default_allreduce_rsag_zero_copy"),
-            CandidateSpec("default_allreduce_fullmesh", max_nblocks=64, supported_skus=("MI300X",)),
-        )
-    else:
-        candidates = (
-            CandidateSpec("default_allreduce_rsag_zero_copy"),
-            CandidateSpec("default_allreduce_fullmesh", max_nblocks=64, supported_skus=("MI300X",)),
-        )
+    candidates = (
+        CandidateSpec(
+            "default_allreduce_nvls_packet",
+            max_message_size=512 * 1024,
+            max_nblocks=16,
+            supported_skus=("H100", "GB300"),
+            requires_nvls=True,
+        ),
+        CandidateSpec(
+            "default_allreduce_packet",
+            max_message_size=4 * 1024 * 1024,
+            max_nblocks=56,
+        ),
+        CandidateSpec(
+            "default_allreduce_allpair_packet",
+            max_message_size=4 * 1024 * 1024,
+            max_nblocks=56,
+        ),
+        CandidateSpec(
+            "default_allreduce_rsag_zero_copy",
+            min_message_size=512 * 1024 + 1,
+        ),
+        CandidateSpec(
+            "default_allreduce_fullmesh",
+            min_message_size=512 * 1024 + 1,
+            max_nblocks=64,
+            supported_skus=("MI300X",),
+        ),
+    )
     if symmetric_memory:
         return (
             CandidateSpec(
@@ -244,20 +244,17 @@ def _candidate_algorithms(comm: Comm, case: BenchmarkCase) -> list[tuple[Any, Ca
     symmetric_memory = case.symmetric_memory
     profile = getattr(comm, "hardware_profile", None)
     filtered_out = False
-    for candidate in _candidate_specs(case.collective, case.message_size, symmetric_memory=symmetric_memory):
+    for candidate in _candidate_specs(case.collective, symmetric_memory=symmetric_memory):
         if not _candidate_supports_profile(candidate, profile):
+            filtered_out = True
+            continue
+        if not _candidate_supports_message_size(candidate, case.message_size):
             filtered_out = True
             continue
         if candidate.requires_nvls and not _mscclpp().is_nvls_supported():
             filtered_out = True
             continue
         if candidate.requires_symmetric_memory and not symmetric_memory:
-            filtered_out = True
-            continue
-        if candidate.min_message_size is not None and case.message_size < candidate.min_message_size:
-            filtered_out = True
-            continue
-        if candidate.max_message_size is not None and case.message_size > candidate.max_message_size:
             filtered_out = True
             continue
         algorithm = available.get(candidate.algorithm)
@@ -281,6 +278,14 @@ def _candidate_supports_profile(candidate: CandidateSpec, profile: HardwareProfi
     return sku in candidate.supported_skus
 
 
+def _candidate_supports_message_size(candidate: CandidateSpec, message_size: int) -> bool:
+    if candidate.min_message_size is not None and message_size < candidate.min_message_size:
+        return False
+    if candidate.max_message_size is not None and message_size > candidate.max_message_size:
+        return False
+    return True
+
+
 def _make_case(
     *,
     collective: str,
@@ -299,7 +304,6 @@ def _make_case(
             input=memory,
             output=memory,
             dtype_spec=dtype_spec,
-            allgather_mode=allgather_mode,
             symmetric_memory=symmetric_memory,
         )
 
@@ -323,7 +327,6 @@ def _make_case(
         input=input_buffer,
         output=output,
         dtype_spec=dtype_spec,
-        allgather_mode=allgather_mode,
         symmetric_memory=symmetric_memory,
     )
 
@@ -522,7 +525,6 @@ def main(argv: list[str] | None = None) -> None:
         candidate_algorithms=_candidate_algorithms,
         check_correctness=_check_correctness,
         measure=_try_measure_case,
-        symmetric_memory=args.symmetric_memory,
     )
 
     rows: list[list[str]] = []

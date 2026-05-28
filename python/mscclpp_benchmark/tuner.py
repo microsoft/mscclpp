@@ -23,7 +23,6 @@ class OfflineTuner:
         candidate_algorithms: Callable[[Any, Any], list[tuple[Any, Any]]],
         check_correctness: Callable[..., bool],
         measure: Callable[..., float | None],
-        symmetric_memory: bool,
     ) -> None:
         self.comm = comm
         self.candidate_nblocks = tuple(candidate_nblocks)
@@ -34,12 +33,11 @@ class OfflineTuner:
         self._candidate_algorithms = candidate_algorithms
         self._check_correctness = check_correctness
         self._measure = measure
-        self._symmetric_memory = symmetric_memory
 
     def tune(self, case: Any) -> TunedConfig | None:
         best_config: TunedConfig | None = None
         best_time_us = float("inf")
-        symmetric_memory = bool(getattr(case, "symmetric_memory", self._symmetric_memory))
+        symmetric_memory = bool(getattr(case, "symmetric_memory", False))
         candidates = self._candidate_algorithms(self.comm, case)
         if not candidates:
             if self.comm.rank == 0:
@@ -54,8 +52,6 @@ class OfflineTuner:
                 if candidate_spec.max_nblocks is not None and nblocks > candidate_spec.max_nblocks:
                     continue
                 for nthreads in self.candidate_nthreads:
-                    if candidate_spec.min_nthreads is not None and nthreads < candidate_spec.min_nthreads:
-                        continue
                     config = TunedConfig(
                         algorithm=algorithm.name,
                         nblocks=nblocks,

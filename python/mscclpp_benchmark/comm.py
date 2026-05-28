@@ -4,8 +4,7 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 _ALLREDUCE_COLLECTIVE = "allreduce"
@@ -58,41 +57,6 @@ class Buffer:
 
     def data_ptr(self) -> int:
         return int(self.buffer.data())
-
-
-@contextmanager
-def init_mscclpp_comm_group_for_ranks(ranks: list[int], *, name: str) -> Iterator[Any]:
-    del name
-    from mpi4py import MPI
-
-    world_comm = MPI.COMM_WORLD
-    unique_ranks = [int(rank) for rank in ranks]
-    if len(unique_ranks) != len(set(unique_ranks)):
-        raise ValueError(f"Duplicate ranks are not allowed: {unique_ranks}")
-    if world_comm.Get_rank() not in unique_ranks:
-        raise ValueError(f"Rank {world_comm.Get_rank()} is not a member of subgroup {unique_ranks}")
-
-    sub_comm = None
-    if unique_ranks == list(range(world_comm.Get_size())):
-        mpi_comm = world_comm
-    else:
-        subgroup = world_comm.group.Incl(unique_ranks)
-        sub_comm = world_comm.Create_group(subgroup)
-        mpi_comm = sub_comm
-
-    _ensure_device()
-    comm_group = _mscclpp().CommGroup(mpi_comm)
-    setattr(comm_group, "_mpi_comm", mpi_comm)
-    try:
-        yield comm_group
-    finally:
-        destroy = getattr(comm_group, "destroy", None)
-        if callable(destroy):
-            destroy()
-        if sub_comm is not None:
-            free = getattr(sub_comm, "Free", None)
-            if callable(free):
-                free()
 
 
 class _AllReduceOp:
