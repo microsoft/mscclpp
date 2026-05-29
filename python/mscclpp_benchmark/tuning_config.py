@@ -104,8 +104,7 @@ class TunedConfigStore:
             profiles_payload.append(profile_payload)
 
         with Path(path).open("w", encoding="utf-8") as handle:
-            json.dump({"version": 1, "profiles": profiles_payload}, handle, indent=2)
-            handle.write("\n")
+            handle.write(_format_tuned_config_json({"version": 1, "profiles": profiles_payload}))
 
 
 def normalize_sku(raw_sku: str) -> str:
@@ -210,6 +209,21 @@ def _config_entry_payload(item: TunedConfigBySize) -> dict[str, Any]:
     if item.config.time_us is not None:
         payload["time_us"] = item.config.time_us
     return payload
+
+
+def _format_tuned_config_json(payload: dict[str, Any]) -> str:
+    text = json.dumps(payload, indent=2)
+    pattern = re.compile(
+        r"(?m)^(?P<indent> +)\{\n"
+        r'(?P<body>(?P=indent)  "message_size": [^\n]+,?\n(?:(?P=indent)  "[^"]+": [^\n]+,?\n)*)'
+        r"(?P=indent)\}(?P<comma>,?)$"
+    )
+
+    def compact(match: re.Match[str]) -> str:
+        body = " ".join(line.strip() for line in match.group("body").splitlines())
+        return f"{match.group('indent')}{{{body}}}{match.group('comma')}"
+
+    return pattern.sub(compact, text) + "\n"
 
 
 def _optional_int(value: Any | None) -> int | None:
