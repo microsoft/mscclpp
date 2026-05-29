@@ -35,7 +35,7 @@ class TunedConfigBySize:
 
 
 class TunedConfigStore:
-    def __init__(self, profiles: dict[HardwareProfile | None, dict[str, list[TunedConfigBySize]]]) -> None:
+    def __init__(self, profiles: dict[HardwareProfile, dict[str, list[TunedConfigBySize]]]) -> None:
         self._profiles = profiles
 
     @classmethod
@@ -49,24 +49,15 @@ class TunedConfigStore:
 
     @classmethod
     def from_payload(cls, payload: Any) -> "TunedConfigStore":
-        profiles: dict[HardwareProfile | None, dict[str, list[TunedConfigBySize]]] = {}
-        if isinstance(payload, list):
-            profiles[None] = _configs_by_collective_from_payload({"allreduce": payload})
-            return cls(profiles)
-
         if not isinstance(payload, dict):
-            raise ValueError("MSCCL++ tuned config must be a JSON object or list")
-
-        if "profiles" in payload:
-            raw_profiles = payload["profiles"]
-            if not isinstance(raw_profiles, list):
-                raise ValueError("MSCCL++ tuned config field 'profiles' must be a list")
-            for raw_profile in raw_profiles:
-                profile = _profile_from_payload(raw_profile)
-                profiles[profile] = _configs_by_collective_from_payload(raw_profile.get("collectives", {}))
-            return cls(profiles)
-
-        profiles[None] = _configs_by_collective_from_payload(payload.get("collectives", payload))
+            raise ValueError("MSCCL++ tuned config must be a JSON object")
+        raw_profiles = payload.get("profiles")
+        if not isinstance(raw_profiles, list):
+            raise ValueError("MSCCL++ tuned config must contain a 'profiles' list")
+        profiles: dict[HardwareProfile, dict[str, list[TunedConfigBySize]]] = {}
+        for raw_profile in raw_profiles:
+            profile = _profile_from_payload(raw_profile)
+            profiles[profile] = _configs_by_collective_from_payload(raw_profile.get("collectives", {}))
         return cls(profiles)
 
     def select(self, profile: HardwareProfile, collective: str, message_size: int) -> TunedConfig | None:
@@ -89,7 +80,7 @@ class TunedConfigStore:
     def write_path(self, path: str | Path) -> None:
         profiles_payload: list[dict[str, Any]] = []
         for profile, configs_by_collective in sorted(
-            ((profile, configs) for profile, configs in self._profiles.items() if profile is not None),
+            self._profiles.items(),
             key=lambda item: (item[0].sku is None, item[0].sku or "", item[0].scale is None, item[0].scale or 0),
         ):
             collectives: dict[str, list[dict[str, Any]]] = {}
@@ -127,7 +118,7 @@ def _profile_from_payload(raw_profile: Any) -> HardwareProfile:
 
 
 def _matching_profiles(
-    profiles: dict[HardwareProfile | None, dict[str, list[TunedConfigBySize]]],
+    profiles: dict[HardwareProfile, dict[str, list[TunedConfigBySize]]],
     runtime_profile: HardwareProfile,
 ) -> list[tuple[int, dict[str, list[TunedConfigBySize]]]]:
     matches: list[tuple[int, dict[str, list[TunedConfigBySize]]]] = []
@@ -138,9 +129,7 @@ def _matching_profiles(
     return sorted(matches, key=lambda item: item[0], reverse=True)
 
 
-def _profile_match_specificity(profile: HardwareProfile | None, runtime_profile: HardwareProfile) -> int | None:
-    if profile is None:
-        return -1
+def _profile_match_specificity(profile: HardwareProfile, runtime_profile: HardwareProfile) -> int | None:
     specificity = 0
     if profile.sku is not None:
         if profile.sku != runtime_profile.sku:

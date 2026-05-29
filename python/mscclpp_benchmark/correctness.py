@@ -263,7 +263,19 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
 
 
 _FP8_TABLES: dict[str, list[tuple[int, float]]] = {}
+_FP8_DEVICE_TABLES: dict[str, tuple] = {}
 _FP8_SPACING_CACHE: dict[tuple[str, float], float] = {}
+
+
+def _fp8_device_table(fp8_format: str):
+    cached = _FP8_DEVICE_TABLES.get(fp8_format)
+    if cached is None:
+        table = _FP8_TABLES.setdefault(fp8_format, _build_fp8_table(fp8_format))
+        table_bytes = cp.asarray([byte for byte, _ in table], dtype=cp.uint8)
+        table_values = cp.asarray([value for _, value in table], dtype=cp.float32)
+        cached = (table_bytes, table_values)
+        _FP8_DEVICE_TABLES[fp8_format] = cached
+    return cached
 
 
 def _encode_fp8_values(fp8_format: str, values):
@@ -271,9 +283,7 @@ def _encode_fp8_values(fp8_format: str, values):
     if fp8_format == "e4m3b15":
         return _encode_e4m3b15_values(values)
 
-    table = _FP8_TABLES.setdefault(fp8_format, _build_fp8_table(fp8_format))
-    table_bytes = cp.asarray([byte for byte, _ in table], dtype=cp.uint8)
-    table_values = cp.asarray([value for _, value in table], dtype=cp.float32)
+    table_bytes, table_values = _fp8_device_table(fp8_format)
     flat_values = values.ravel()
     flat_encoded = cp.empty(flat_values.shape, dtype=cp.uint8)
     chunk_size = 65536
