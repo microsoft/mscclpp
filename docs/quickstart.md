@@ -218,35 +218,29 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 # Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
 $ python3 -m pip install ".[cuda12,benchmark,test]"
 
-# Run a benchmark.
-$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
-    python3 ./python/mscclpp_benchmark/bench_collective.py \
-    --collective allreduce --dtype float16
 ```
 
 To autotune launch parameters and save a tuned config:
 
 ```bash
 $ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
-    python3 -m mscclpp_benchmark.tuner \
+    python3 -m mscclpp_benchmark.bench_collective \
     --collective allreduce \
-    --dim 5120 \
     --dtype float16 \
-    --scale 8 \
     --batch-sizes 1,2,4,8 \
-    --output /tmp/mscclpp_tuned_configs.json
+    --autotune \
+    --write-config /tmp/mscclpp_tuned_configs.json
 ```
 
 Use the tuned config in a benchmark:
 
 ```bash
 $ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
-    python3 ./python/mscclpp_benchmark/bench_collective.py \
+    python3 -m mscclpp_benchmark.bench_collective \
     --collective allreduce \
     --dtype float16 \
     --config-path /tmp/mscclpp_tuned_configs.json
 ```
-
 
 (nccl-benchmark)=
 ### NCCL/RCCL Benchmark over MSCCL++
