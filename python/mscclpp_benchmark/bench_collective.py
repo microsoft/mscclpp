@@ -292,17 +292,26 @@ def _make_case(
     nelems: int,
     dtype_spec: DTypeSpec,
     comm_group: Any,
-    allgather_mode: str,
+    buffer_mode: str,
     symmetric_memory: bool = False,
 ) -> BenchmarkCase:
+    if buffer_mode not in ("in-place", "out-of-place"):
+        raise ValueError(f"Unsupported buffer mode: {buffer_mode}")
+
     if collective == _ALLREDUCE:
-        memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+        if buffer_mode == "in-place":
+            memory = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            input_buffer = memory
+            output = memory
+        else:
+            input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
+            output = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
         return BenchmarkCase(
             collective=collective,
-            message_size=memory.nbytes,
-            total_size=memory.nbytes,
-            input=memory,
-            output=memory,
+            message_size=input_buffer.nbytes,
+            total_size=output.nbytes,
+            input=input_buffer,
+            output=output,
             dtype_spec=dtype_spec,
             symmetric_memory=symmetric_memory,
         )
@@ -310,15 +319,13 @@ def _make_case(
     if collective != _ALLGATHER:
         raise ValueError(f"Unsupported collective: {collective}")
 
-    if allgather_mode == "in-place":
+    if buffer_mode == "in-place":
         output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
         start = comm_group.my_rank * nelems
         input_buffer = output[start : start + nelems]
-    elif allgather_mode == "out-of-place":
+    else:
         input_buffer = _mscclpp().GpuBuffer(nelems, dtype=dtype_spec.cupy_dtype)
         output = _mscclpp().GpuBuffer(nelems * comm_group.nranks, dtype=dtype_spec.cupy_dtype)
-    else:
-        raise ValueError(f"Unsupported allgather mode: {allgather_mode}")
 
     return BenchmarkCase(
         collective=collective,
@@ -451,7 +458,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dtype", default="float16")
     parser.add_argument("--accum-type", help="Accumulation type for reductions: native, float16, or float32")
     parser.add_argument("--batch-sizes", help="Comma-separated batch sizes; default uses the benchmark sweep")
-    parser.add_argument("--allgather-mode", choices=("in-place", "out-of-place"), default="in-place")
+    parser.add_argument(
+        "--buffer-mode",
+        choices=("in-place", "out-of-place"),
+        default="in-place",
+        help="Buffer layout for the collective: in-place (input aliases output) or out-of-place (separate buffers)",
+    )
     parser.add_argument("--config-path", help="Optional MSCCL++ tuned config JSON")
     parser.add_argument("--write-config", help="Write autotuned configs to this JSON path")
     parser.add_argument("--autotune", action="store_true", help="Tune each benchmark size before timing it")
@@ -543,7 +555,7 @@ def main(argv: list[str] | None = None) -> None:
                 nelems=nelems,
                 dtype_spec=dtype_spec,
                 comm_group=comm_group,
-                allgather_mode=args.allgather_mode,
+                buffer_mode=args.buffer_mode,
                 symmetric_memory=args.symmetric_memory,
             )
             config = tuner.tune(case) if args.autotune else comm.resolve_config(case)

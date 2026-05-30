@@ -64,7 +64,7 @@ steps:
     remoteScript: |
       mpirun --allow-run-as-root -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float8_e4m3b15 --accum-type float32 --autotune
       mpirun --allow-run-as-root -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allreduce --dtype float8_e4m3fnuz --accum-type float32 --autotune
-      mpirun --allow-run-as-root -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float8_e4m3b15 --autotune
+      mpirun --allow-run-as-root -x GPU_MAX_HW_QUEUES=8 -np 8 python3 -m mscclpp_benchmark.bench_collective --collective allgather --dtype float8_e4m3b15 --autotune --buffer-mode out-of-place
 
 - template: stop.yml
   parameters:
