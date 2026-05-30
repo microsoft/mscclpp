@@ -263,19 +263,8 @@ def _comparison_tolerance(case: Any, nranks: int) -> tuple[float, float] | None:
 
 
 _FP8_TABLES: dict[str, list[tuple[int, float]]] = {}
-_FP8_DEVICE_TABLES: dict[str, tuple] = {}
+_FP8_LOOKUP_CACHE: dict[str, tuple[Any, Any]] = {}
 _FP8_SPACING_CACHE: dict[tuple[str, float], float] = {}
-
-
-def _fp8_device_table(fp8_format: str):
-    cached = _FP8_DEVICE_TABLES.get(fp8_format)
-    if cached is None:
-        table = _FP8_TABLES.setdefault(fp8_format, _build_fp8_table(fp8_format))
-        table_bytes = cp.asarray([byte for byte, _ in table], dtype=cp.uint8)
-        table_values = cp.asarray([value for _, value in table], dtype=cp.float32)
-        cached = (table_bytes, table_values)
-        _FP8_DEVICE_TABLES[fp8_format] = cached
-    return cached
 
 
 def _encode_fp8_values(fp8_format: str, values):
@@ -283,15 +272,39 @@ def _encode_fp8_values(fp8_format: str, values):
     if fp8_format == "e4m3b15":
         return _encode_e4m3b15_values(values)
 
-    table_bytes, table_values = _fp8_device_table(fp8_format)
+    # Round each value to the nearest representable FP8 value (ties to even).
+    table_values, table_bytes = _fp8_lookup_arrays(fp8_format)
     flat_values = values.ravel()
-    flat_encoded = cp.empty(flat_values.shape, dtype=cp.uint8)
-    chunk_size = 65536
-    for start in range(0, flat_values.size, chunk_size):
-        end = min(start + chunk_size, flat_values.size)
-        diff = cp.abs(flat_values[start:end, None] - table_values[None, :])
-        flat_encoded[start:end] = table_bytes[cp.argmin(diff, axis=1)]
-    return flat_encoded.reshape(values.shape)
+
+    # For each value find its two surrounding table entries: lower <= value <= upper.
+    upper = cp.clip(cp.searchsorted(table_values, flat_values), 1, table_values.size - 1)
+    lower = upper - 1
+
+    # Pick the closer neighbor; on an exact tie pick the one with an even byte.
+    dist_to_upper = table_values[upper] - flat_values
+    dist_to_lower = flat_values - table_values[lower]
+    upper_is_even = (table_bytes[upper] & cp.uint8(1)) == 0
+    pick_upper = (dist_to_upper < dist_to_lower) | ((dist_to_upper == dist_to_lower) & upper_is_even)
+
+    return cp.where(pick_upper, table_bytes[upper], table_bytes[lower]).reshape(values.shape)
+
+
+def _fp8_lookup_arrays(fp8_format: str):
+    # Cache a sorted (value -> byte) table per format for fast nearest-value lookup.
+    if fp8_format in _FP8_LOOKUP_CACHE:
+        return _FP8_LOOKUP_CACHE[fp8_format]
+
+    # Different bytes can decode to the same value (e.g. +0 and -0); keep one byte per value.
+    byte_for_value: dict[float, int] = {}
+    for byte, value in _FP8_TABLES.setdefault(fp8_format, _build_fp8_table(fp8_format)):
+        if value not in byte_for_value or byte < byte_for_value[value]:
+            byte_for_value[value] = byte
+
+    table = sorted(byte_for_value.items())
+    table_values = cp.asarray([value for value, _ in table], dtype=cp.float32)
+    table_bytes = cp.asarray([byte for _, byte in table], dtype=cp.uint8)
+    _FP8_LOOKUP_CACHE[fp8_format] = (table_values, table_bytes)
+    return _FP8_LOOKUP_CACHE[fp8_format]
 
 
 def _max_fp8_spacing(fp8_format: str, max_abs_value: float) -> float:
@@ -337,6 +350,8 @@ def _build_fp8_table(fp8_format: str) -> list[tuple[int, float]]:
 
 
 def _decode_fp8_scalar(fp8_format: str, byte: int) -> float:
+    if fp8_format == "e4m3fnuz" and byte == 0x80:
+        return float("nan")
     sign = -1.0 if byte & 0x80 else 1.0
     return sign * _decode_fp8_positive(fp8_format, byte & 0x7F)
 
@@ -379,4 +394,7 @@ def _decode_fp8_array(fp8_format: str, values):
     else:
         raise ValueError(f"Unknown FP8 format: {fp8_format}")
 
-    return cp.where(sign == 1, -decoded, decoded)
+    result = cp.where(sign == 1, -decoded, decoded)
+    if fp8_format == "e4m3fnuz":
+        result = cp.where(bits == 0x80, cp.float32(float("nan")), result)
+    return result
