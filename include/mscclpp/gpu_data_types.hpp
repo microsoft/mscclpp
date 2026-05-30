@@ -852,27 +852,17 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e5m2x4>(const f8_e5m2x4& v) {
 
 /// f32x2 -> f8_e4m3x2.
 /// HIP gfx942: float -> fp8 (via __builtin_amdgcn_cvt_pk_fp8_f32).
-/// NVIDIA SM90+: float -> half -> fp8 (via __nv_cvt_halfraw2_to_fp8x2).
-/// NVIDIA pre-SM90: float -> half -> fp8 (via __nv_cvt_halfraw_to_fp8, element-wise).
+/// NVIDIA: float -> fp8 directly (via __nv_cvt_float2_to_fp8x2). On SM89+ this maps to a
+/// single hardware round-to-nearest-even instruction; on older arch it falls back to a
+/// software direct conversion.
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f32x2>(const f32x2& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
   uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[0], v.data[1], 0, false);
   return bit_cast<f8_e4m3x2>(static_cast<__hip_fp8x2_storage_t>(packed));
-#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
-  __half2_raw h2;
-  h2.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
-  h2.y = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
-  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E4M3);
-  return bit_cast<f8_e4m3x2>(fp8x2);
 #elif defined(MSCCLPP_DEVICE_CUDA)
-  __half_raw h0, h1;
-  h0.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
-  h1.x = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
-  f8_e4m3x2 result;
-  result.data[0] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h0, __NV_SATFINITE, __NV_E4M3));
-  result.data[1] = bit_cast<__fp8_e4m3>(__nv_cvt_halfraw_to_fp8(h1, __NV_SATFINITE, __NV_E4M3));
-  return result;
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_float2_to_fp8x2(make_float2(v.data[0], v.data[1]), __NV_SATFINITE, __NV_E4M3);
+  return bit_cast<f8_e4m3x2>(fp8x2);
 #else
   f8_e4m3x2 result;
   result.data[0] = static_cast<__fp8_e4m3>(v.data[0]);
@@ -909,27 +899,17 @@ MSCCLPP_DEVICE_INLINE f8_e4m3x4 to<f8_e4m3x4, f32x4>(const f32x4& v) {
 
 /// f32x2 -> f8_e5m2x2.
 /// HIP gfx942: float -> bf8 (via __builtin_amdgcn_cvt_pk_bf8_f32).
-/// NVIDIA SM90+: float -> half -> fp8 (via __nv_cvt_halfraw2_to_fp8x2 with __NV_E5M2).
-/// NVIDIA pre-SM90: float -> half -> fp8 (via __nv_cvt_halfraw_to_fp8, element-wise).
+/// NVIDIA: float -> fp8 directly (via __nv_cvt_float2_to_fp8x2 with __NV_E5M2). On SM89+ this
+/// maps to a single hardware round-to-nearest-even instruction; on older arch it falls back to a
+/// software direct conversion.
 template <>
 MSCCLPP_DEVICE_INLINE f8_e5m2x2 to<f8_e5m2x2, f32x2>(const f32x2& v) {
 #if defined(MSCCLPP_DEVICE_HIP) && defined(__gfx942__)
   uint32_t packed = __builtin_amdgcn_cvt_pk_bf8_f32(v.data[0], v.data[1], 0, false);
   return bit_cast<f8_e5m2x2>(static_cast<__hip_fp8x2_storage_t>(packed));
-#elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
-  __half2_raw h2;
-  h2.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
-  h2.y = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
-  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E5M2);
-  return bit_cast<f8_e5m2x2>(fp8x2);
 #elif defined(MSCCLPP_DEVICE_CUDA)
-  __half_raw h0, h1;
-  h0.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
-  h1.x = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
-  f8_e5m2x2 result;
-  result.data[0] = bit_cast<__fp8_e5m2>(__nv_cvt_halfraw_to_fp8(h0, __NV_SATFINITE, __NV_E5M2));
-  result.data[1] = bit_cast<__fp8_e5m2>(__nv_cvt_halfraw_to_fp8(h1, __NV_SATFINITE, __NV_E5M2));
-  return result;
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_float2_to_fp8x2(make_float2(v.data[0], v.data[1]), __NV_SATFINITE, __NV_E5M2);
+  return bit_cast<f8_e5m2x2>(fp8x2);
 #else
   f8_e5m2x2 result;
   result.data[0] = static_cast<__fp8_e5m2>(v.data[0]);
