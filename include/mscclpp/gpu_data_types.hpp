@@ -71,7 +71,7 @@ using __bfloat162 = __nv_bfloat162;
 
 /// Software float8 with 4 exponent bits, 3 mantissa bits, exponent bias = 15.
 /// Format (MSB first): [sign:1][exponent:4][mantissa:3]
-/// No infinities, no NaN. Encode saturates to ±1.75 (0x7e/0xfe).
+/// No infinities, no NaN. Encode saturates to ±1.875 (0x7f/0xff).
 /// Adapted from the Triton compiler's fp8e4b15 format.
 struct alignas(1) __fp8_e4m3b15 {
   uint8_t __x;
@@ -103,7 +103,7 @@ struct alignas(1) __fp8_e4m3b15 {
   /// then convert fp16 → float32.
   static MSCCLPP_HOST_DEVICE_INLINE float toFloat(uint8_t bits) {
     // Branch-free decode: fp8 → fp16 → fp32, no special-case handling.
-    // Encode saturates to ±1.75, so 0x7f/0xff are never produced.
+    // Every byte maps to a finite value; encode saturates at ±1.875, so 0x7f/0xff decode to ±1.875.
     // Refer:
     // https://github.com/triton-lang/triton/blob/cf34004b8a67d290a962da166f5aa2fc66751326/python/triton/language/extra/cuda/utils.py#L34
     uint16_t h = (uint16_t)bits << 8;             // place fp8 in upper byte of fp16
@@ -132,10 +132,9 @@ struct alignas(1) __fp8_e4m3b15 {
     } cvt = {h_val};
     uint16_t fp16_bits = cvt.u;
 
-    // Clamp abs to max encodable value: 1.75 → fp16 = 0x3F00.
-    // Matches Triton: encode saturates, 0x7f/0xff are never produced.
+    // Clamp abs to max encodable value: 1.875 → fp16 = 0x3F80 (largest byte 0x7f/0xff).
     uint16_t abs_fp16 = fp16_bits & 0x7FFFu;
-    if (abs_fp16 > 0x3F00u) abs_fp16 = 0x3F00u;
+    if (abs_fp16 > 0x3F80u) abs_fp16 = 0x3F80u;
 
     // Reconstruct with sign.
     uint16_t sign16 = fp16_bits & 0x8000u;
@@ -1083,11 +1082,11 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
 #if defined(MSCCLPP_DEVICE_CUDA)
   uint32_t in0;
   asm("mov.b32 %0, %1;" : "=r"(in0) : "r"(*reinterpret_cast<const uint32_t*>(&v)));
-  // Clamp abs to max encodable e4m3b15 (0x3F00 = 1.75 in fp16).
+  // Clamp abs to max encodable e4m3b15 (0x3F80 = 1.875 in fp16).
   uint32_t lo = in0 & 0xFFFFu, hi = in0 >> 16;
   uint32_t alo = lo & 0x7FFFu, ahi = hi & 0x7FFFu;
-  alo = alo < 0x3F00u ? alo : 0x3F00u;
-  ahi = ahi < 0x3F00u ? ahi : 0x3F00u;
+  alo = alo < 0x3F80u ? alo : 0x3F80u;
+  ahi = ahi < 0x3F80u ? ahi : 0x3F80u;
   uint32_t a0 = alo | (ahi << 16);
   a0 = a0 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);
@@ -1098,7 +1097,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x2 to<f8_e4m3b15x2, f16x2>(const f16x2& v) {
   uint32_t in0 = v.words[0];
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t a0;
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F003F00u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F803F80u));
   a0 = a0 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);
   uint16_t packed = (uint16_t)(((b0 >> 8) & 0xFFu) | ((b0 >> 16) & 0xFF00u));
@@ -1121,8 +1120,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   asm("mov.b32 %0, %1;" : "=r"(in1) : "r"(v.words[1]));
   uint32_t abs0 = in0 & 0x7fff7fffu;
   uint32_t abs1 = in1 & 0x7fff7fffu;
-  uint32_t a0 = __vminu2(abs0, 0x3F003F00u);
-  uint32_t a1 = __vminu2(abs1, 0x3F003F00u);
+  uint32_t a0 = __vminu2(abs0, 0x3F803F80u);
+  uint32_t a1 = __vminu2(abs1, 0x3F803F80u);
   a0 = a0 * 2u + 0x00800080u;
   a1 = a1 * 2u + 0x00800080u;
   uint32_t b0, b1;
@@ -1135,8 +1134,8 @@ MSCCLPP_DEVICE_INLINE f8_e4m3b15x4 to<f8_e4m3b15x4, f16x4>(const f16x4& v) {
   uint32_t in0 = v.words[0], in1 = v.words[1];
   uint32_t abs0 = in0 & 0x7fff7fffu, abs1 = in1 & 0x7fff7fffu;
   uint32_t a0, a1;
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F003F00u));
-  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a1) : "v"(abs1), "v"(0x3F003F00u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a0) : "v"(abs0), "v"(0x3F803F80u));
+  asm volatile("v_pk_min_u16 %0, %1, %2" : "=v"(a1) : "v"(abs1), "v"(0x3F803F80u));
   a0 = a0 * 2u + 0x00800080u;
   a1 = a1 * 2u + 0x00800080u;
   uint32_t b0 = a0 | (in0 & 0x80008000u);

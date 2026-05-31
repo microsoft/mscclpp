@@ -332,9 +332,11 @@ def _fp8_max_abs_value(fp8_format: str) -> float:
 
 
 def _encode_e4m3b15_values(values):
+    # Mirrors the device e4m3b15 encode (gpu_data_types.hpp): clamp the fp16 intermediate
+    # to 0x3F80 (+/-1.875) so the max encodable byte is 0x7F/0xFF.
     fp16_bits = values.astype(cp.float16).view(cp.uint16)
     abs_fp16 = fp16_bits & cp.uint16(0x7FFF)
-    abs_fp16 = cp.minimum(abs_fp16, cp.uint16(0x3F00)).astype(cp.uint32)
+    abs_fp16 = cp.minimum(abs_fp16, cp.uint16(0x3F80)).astype(cp.uint32)
     sign16 = (fp16_bits & cp.uint16(0x8000)).astype(cp.uint32)
     adjusted = abs_fp16 * cp.uint32(2) + cp.uint32(0x0080)
     return (((sign16 | adjusted) >> cp.uint32(8)) & cp.uint32(0xFF)).astype(cp.uint8)

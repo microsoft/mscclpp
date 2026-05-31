@@ -97,7 +97,7 @@ TEST(GpuDataTypesTest, E4m3b15TypeConvert) {
   const float maxFloat = std::numeric_limits<float>::max();
 
   // Each input value maps to the byte at the same index in expectedEncoded. The fp8_e4m3b15 format has no
-  // NaN/Inf encoding, so NaN, Inf, and overflow inputs saturate to +/-1.75.
+  // NaN/Inf encoding, so NaN, Inf, and overflow inputs saturate to +/-1.875 (max byte 0x7f/0xff).
   const auto input = makeArray<float>(0.0f, -0.0f,                // +/-0
                                       0x1.0p-19f, -0x1.0p-19f,    // +/-2^-19: underflows to signed 0
                                       0x1.0p-18f, -0x1.0p-18f,    // +/-2^-18: rounds to min subnormal
@@ -119,10 +119,10 @@ TEST(GpuDataTypesTest, E4m3b15TypeConvert) {
                                                   0x68, 0xe8,   // Boundary rounds to +/-0.25
                                                   0x69, 0xe9,   // Boundary rounds to +/-0.28125
                                                   0x6f, 0xef,   // Boundary rounds to +/-0.46875
-                                                  0x7e, 0xfe,   // Max signed finite
-                                                  0x7e, 0xfe,   // Overflow saturation
-                                                  0x7e, 0xfe,   // Inf saturation
-                                                  0x7e, 0xfe);  // NaN / large negative saturation
+                                                  0x7e, 0xfe,   // Max finite at fp16 grid (1.75)
+                                                  0x7f, 0xff,   // Overflow saturation (1.875)
+                                                  0x7f, 0xff,   // Inf saturation (1.875)
+                                                  0x7f, 0xff);  // NaN / large negative saturation (1.875)
 
   // Raw bytes to decode, with expectedDecoded giving the exact float value at the same index.
   const auto raw = makeArray<uint8_t>(0x00, 0x80,                         // +/-0
