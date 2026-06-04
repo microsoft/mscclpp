@@ -16,7 +16,7 @@ __global__ void __launch_bounds__(1024, 1)
   const size_t tid = threadIdx.x + blockIdx.x * blockDim.x;
   const size_t lid = tid % WARP_SIZE;
   const size_t wid = tid / WARP_SIZE;
-  const size_t nPeer = nRanksPerNode - 1;
+  const size_t nPeer = nRanksPerIpcDomain - 1;
 
   // Round down to multiple of peer count.
   const size_t nThread = (blockDim.x * gridDim.x) / WARP_SIZE / nPeer * nPeer * WARP_SIZE;
