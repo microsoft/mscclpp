@@ -39,6 +39,10 @@ constexpr int MAX_IPC_DOMAIN_NRANKS = 72;
 
 constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // Two 70 MiB buffers for double-buffered packet scratch space.
 
+bool isFp8DataType(DataType dtype);
+bool isNativeFp8DataType(DataType dtype);
+bool isFp8NvlsSupported();
+
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
 
