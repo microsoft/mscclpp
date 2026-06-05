@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include <type_traits>
+
 #include "allreduce/allreduce_rsag.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
@@ -28,7 +30,7 @@ namespace collective {
 //
 // Data is processed in int4-sized (16-byte) units for coalesced memory access,
 // with special handling for any remainder elements at the tail.
-template <ReduceOp OpType, typename T>
+template <ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAg(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                   DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int nRanksPerIpcDomain,
@@ -51,6 +53,8 @@ __global__ void __launch_bounds__(1024, 1)
   int4* resultBuff4 = reinterpret_cast<int4*>((char*)resultBuff);
   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
   DeviceHandle<BaseMemoryChannel>* memoryChannelsLocal = memoryChannels + blockId * nPeers;
+  using AccumVec =
+      std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nelemsPerInt4>>;
 
   uint32_t nInt4PerBlock = nInt4PerRank / gridDim.x;
   uint32_t remainderForBlock = nInt4PerRank % gridDim.x;
@@ -82,13 +86,14 @@ __global__ void __launch_bounds__(1024, 1)
   for (uint32_t idx = threadIdx.x; idx < nInt4PerBlock; idx += blockDim.x) {
     uint32_t offset = idx + offset4 + rank * nInt4PerRank;
     if (offset > lastInt4Index) continue;
-    int4 tmp = scratch4[offset];
+    AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(scratch4[offset]);
     for (uint32_t i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerIpcDomain;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       int4 data = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
-      tmp = calVector<T, OpType>(data, tmp);
+      acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data);
     }
+    int4 tmp = mscclpp::downcastVector<T, AccumT, int4>(acc);
     for (uint32_t i = 0; i < nPeers; i++) {
       int rankIdx = (rank + i + 1) % nRanksPerIpcDomain;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
@@ -135,7 +140,7 @@ struct AllreduceRsAgAdapter {
       nThreadsPerBlock = 1024;
       nBlocks = 64;
     }
-    allreduceRsAg<OpType, T><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
+    allreduceRsAg<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels, switchChannel, remoteMemories, rank,
         nRanksPerIpcDomain, worldSize, nelems);
     return cudaGetLastError();
