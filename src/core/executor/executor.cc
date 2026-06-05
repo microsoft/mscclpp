@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT license.
 
+#include <mscclpp/env.hpp>
 #include <mscclpp/executor.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
@@ -95,6 +96,7 @@ namespace {
 auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
+  if (mscclpp::env()->forceDisableIb) return false;
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
   return hasIBDevices() && !inSameNode;
 };
@@ -290,7 +292,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
+      if (hasIBDevices() && !env()->forceDisableIb) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
