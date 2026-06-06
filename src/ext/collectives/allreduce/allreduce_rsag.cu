@@ -53,8 +53,7 @@ __global__ void __launch_bounds__(1024, 1)
   int4* resultBuff4 = reinterpret_cast<int4*>((char*)resultBuff);
   int4* buff4 = reinterpret_cast<int4*>((char*)buff);
   DeviceHandle<BaseMemoryChannel>* memoryChannelsLocal = memoryChannels + blockId * nPeers;
-  using AccumVec =
-      std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nelemsPerInt4>>;
+  using AccumVec = std::conditional_t<std::is_same_v<T, AccumT>, int4, mscclpp::VectorType<AccumT, nelemsPerInt4>>;
 
   uint32_t nInt4PerBlock = nInt4PerRank / gridDim.x;
   uint32_t remainderForBlock = nInt4PerRank % gridDim.x;

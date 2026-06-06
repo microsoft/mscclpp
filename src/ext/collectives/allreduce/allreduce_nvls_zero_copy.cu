@@ -6,7 +6,7 @@
 #include "allreduce/allreduce_nvls_zero_copy.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -116,17 +116,17 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
                                               [[maybe_unused]] const std::unordered_map<std::string, uintptr_t>& extras,
                                               mscclpp::DataType accumDtype) {
   if (!symmetricMemory_) {
-    WARN("AllreduceNvls requires symmetric memory for now.");
+    WARN(ALGO, "AllreduceNvls requires symmetric memory.");
     return CommResult::CommInvalidArgument;
   }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   if (isNativeFp8DataType(dtype) && !fp8NvlsSupported_) {
-    WARN("FP8 NVLS allreduce requires device support for FP8 multimem reduction.");
+    WARN(ALGO, "FP8 NVLS allreduce requires device support for FP8 multimem reduction.");
     return CommResult::CommInvalidArgument;
   }
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce, dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   size_t sendBytes, recvBytes;
@@ -151,7 +151,7 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
     }
   }
   if (numBlocksAndThreads.first > MAX_NBLOCKS) {
-    WARN("Number of blocks exceeds maximum supported value of %d", MAX_NBLOCKS);
+    WARN(ALGO, "Number of blocks exceeds maximum supported value of ", MAX_NBLOCKS);
     return CommResult::CommInvalidArgument;
   }
   cudaError_t error = allreduce(nullptr, nullptr, nullptr, this->memoryChannelsDeviceHandle_.get(), nullptr,
@@ -160,10 +160,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
                                 numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     if (error == cudaErrorNotSupported) {
-      WARN("AllreduceNvls does not support the requested data type.");
+      WARN(ALGO, "AllreduceNvls does not support the requested data type.");
       return CommResult::CommInvalidArgument;
     }
-    WARN("AllreduceNvls failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "AllreduceNvls failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;
@@ -176,6 +176,9 @@ mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* 
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  INFO(ALGO, "Generated context key with sendBasePtr=", (void*)sendBasePtr, ", recvBasePtr=", (void*)recvBasePtr,
+       ", sendBytes=", sendBytes, ", recvBytes=", recvBytes, ", input offset=", (char*)input - (char*)sendBasePtr,
+       ", output offset=", (char*)output - (char*)recvBasePtr);
   return mscclpp::AlgorithmCtxKey{(void*)sendBasePtr, (void*)recvBasePtr, sendBytes, recvBytes, 0};
 }
 
