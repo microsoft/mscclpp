@@ -39,6 +39,7 @@ def parse_npkit_event_header(npkit_event_header_path):
         "PIPELINE",
         "SEM_RELEASE",
         "SEM_ACQUIRE",
+        "MULTI_STORE",
     ]
     executor_op_to_offset = {}
     for executor_op in executor_ops:

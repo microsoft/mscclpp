@@ -583,6 +583,68 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
   }
 }
+
+template <typename T, bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, void* output, void* scratch,
+                                            uint32_t offset, uint32_t unitSize) {
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    assert(false && "MULTI_STORE is not supported for uint8_t data type");
+    return;
+  }
+#if defined(__FP8_TYPES_EXIST__) && \
+    (!(defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000))
+  else if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    assert(false && "FP8 MULTI_STORE requires sm_100a or newer");
+    return;
+  }
+#endif
+  else {
+    static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
+    const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+    if (size <= 0) {
+      return;
+    }
+    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+    const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+    assert(size % sizeof(T) == 0);
+    assert(srcOffset % sizeof(T) == 0);
+    assert(dstOffset % sizeof(T) == 0);
+
+    // Local (unicast) source load, multicast store to the NVLS switch destination.
+    char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+    char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
+    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
+      const size_t nElem = size / sizeof(T);
+      VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(srcBase);
+      VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dstBase);
+      for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
+        auto val = srcElem[idx];
+        SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
+      }
+    } else {
+      // handle data in 16-byte unit
+      using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
+      const size_t nType16 = size / sizeof(Type16);
+      Type16* src16 = reinterpret_cast<Type16*>(srcBase);
+      Type16* dst16 = reinterpret_cast<Type16*>(dstBase);
+      for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
+        Type16 val = src16[idx];
+        SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
+      }
+      // handle rest of data
+      constexpr int StoreBytes = (sizeof(T) == 8) ? 8 : 4;
+      using TypeRest = mscclpp::VectorType<T, StoreBytes / sizeof(T)>;
+      const size_t processed = nType16 * sizeof(Type16);
+      const size_t nRest = (size - processed) / sizeof(TypeRest);
+      TypeRest* srcR = reinterpret_cast<TypeRest*>(srcBase + processed);
+      TypeRest* dstR = reinterpret_cast<TypeRest*>(dstBase + processed);
+      for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
+        TypeRest val = srcR[idx];
+        SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
+      }
+    }
+  }
+}
 #endif
 
 template <typename T, typename PacketType, bool ReuseScratch>
@@ -716,6 +778,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
     handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+  } else if (opType == OperationType::MULTI_STORE) {
+    handleMultiStore<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {
