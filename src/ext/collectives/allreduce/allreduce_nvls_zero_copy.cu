@@ -176,9 +176,6 @@ mscclpp::AlgorithmCtxKey AllreduceNvls::generateAllreduceContextKey(const void* 
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
-  INFO(ALGO, "Generated context key with sendBasePtr=", (void*)sendBasePtr, ", recvBasePtr=", (void*)recvBasePtr,
-       ", sendBytes=", sendBytes, ", recvBytes=", recvBytes, ", input offset=", (char*)input - (char*)sendBasePtr,
-       ", output offset=", (char*)output - (char*)recvBasePtr);
   return mscclpp::AlgorithmCtxKey{(void*)sendBasePtr, (void*)recvBasePtr, sendBytes, recvBytes, 0};
 }
 
@@ -193,6 +190,9 @@ std::shared_ptr<void> AllreduceNvls::initAllreduceContext(std::shared_ptr<mscclp
   CUdeviceptr sendBasePtr, recvBasePtr;
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
   MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  INFO(ALGO, "Init context with rank=", ctx->rank, ", sendBasePtr=", (void*)sendBasePtr,
+       ", recvBasePtr=", (void*)recvBasePtr, ", sendBytes=", sendBytes, ", recvBytes=", recvBytes,
+       ", input offset=", (char*)input - (char*)sendBasePtr, ", output offset=", (char*)output - (char*)recvBasePtr);
 
   // setup channels
   ctx->switchChannels =
