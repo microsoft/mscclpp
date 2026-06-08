@@ -103,6 +103,19 @@ if(MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
     target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
 endif()
 
+# Experimental: NCCL-EP-style warp-specialized HT dispatch path.
+#  When ON, the internode `dispatch` kernel selects an alternate code path
+#  (guarded by `EP_DISPATCH_NCCLEP`) that ports NVIDIA NCCL-EP's
+#  warp-specialized overlap pipeline (concurrent inter-node fabric-write +
+#  intra-node drain) onto mscclpp MemoryChannel put/signal primitives, to
+#  close the GB200 MNNVL dispatch gap vs NCCL-EP. Default OFF = production path.
+#   -DMSCCLPP_EP_DISPATCH_NCCLEP=ON
+option(MSCCLPP_EP_DISPATCH_NCCLEP
+       "Use the experimental NCCL-EP-ported warp-specialized HT dispatch kernel" OFF)
+if(MSCCLPP_EP_DISPATCH_NCCLEP)
+    target_compile_definitions(mscclpp_ep_cpp PRIVATE EP_DISPATCH_NCCLEP)
+endif()
+
 set_target_properties(mscclpp_ep_cpp PROPERTIES
     PREFIX ""
     POSITION_INDEPENDENT_CODE ON
