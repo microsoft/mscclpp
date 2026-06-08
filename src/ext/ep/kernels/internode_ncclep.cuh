@@ -10,6 +10,16 @@
 #define MSCCLPP_EP_INTERNODE_NCCLEP_CUH_
 #ifdef EP_DISPATCH_NCCLEP
 
+// DIAGNOSTIC PROBE (increment-3 de-risk): when 1, the NVL receiver keeps all
+// control flow (index/head/tail) but SKIPS the actual data copies. This makes
+// recv_x contents wrong for cross-GPU tokens (combine FAILs) but measures the
+// dispatch-time UPPER BOUND of eliminating the cross-GPU receiver drain (the
+// payoff ceiling of the full cross-GPU peer-map direct-write rework). Set to 0
+// for the real kernel.
+#ifndef EP_NCCLEP_DRAIN_NOOP
+#define EP_NCCLEP_DRAIN_NOOP 0
+#endif
+
 template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDispatchRDMASenderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
 __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32), 1)
@@ -903,6 +913,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         int64_t recv_token_idx = __shfl_sync(0xffffffff, total_offset, meta.src_rdma_rank);
         (lane_id == meta.src_rdma_rank) ? (total_offset += 1) : 0;
 
+#if !EP_NCCLEP_DRAIN_NOOP
         // Copy data
         UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
                            nvl_channel_x.buffer() + token_idx_in_buffer * hidden_int4, ld_nc_global, st_na_global);
@@ -923,6 +934,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                        static_cast<int64_t>(ld_nc_global(nvl_channel_topk_idx.buffer() + buffer_idx)));
           st_na_global(recv_topk_weights + recv_idx, ld_nc_global(nvl_channel_topk_weights.buffer() + buffer_idx));
         }
+#endif  // !EP_NCCLEP_DRAIN_NOOP
       }
 
       // Move queue
