@@ -576,64 +576,54 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
   }
 }
 
-template <typename T, bool ReuseScratch>
+template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, void* output, void* scratch,
                                             uint32_t offset, uint32_t unitSize) {
-  if constexpr (std::is_same_v<T, uint8_t>) {
-    assert(false && "MULTI_STORE is not supported for uint8_t data type");
+  // MULTI_STORE is a pure data-movement op: it broadcasts bytes from a local (unicast) source buffer
+  // to the NVLS multicast destination with no reduction. `multimem.st` writes raw register bits without
+  // any type conversion, so the data type is irrelevant here -- we move raw bytes using the widest
+  // available multimem store unit (16 -> 8 -> 4 bytes). This keeps the op fully type agnostic (works for
+  // any dtype, including uint8_t and FP8, on any arch that supports MULTI_STORE).
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size == 0) {
     return;
   }
-#if defined(__FP8_TYPES_EXIST__) && \
-    (!(defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000))
-  else if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-    assert(false && "FP8 MULTI_STORE requires sm_100a or newer");
-    return;
-  }
-#endif
-  else {
-    static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
-    const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
-    if (size <= 0) {
-      return;
-    }
-    const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
-    const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
-    assert(size % sizeof(T) == 0);
-    assert(srcOffset % sizeof(T) == 0);
-    assert(dstOffset % sizeof(T) == 0);
+  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+  // `multimem.st` has a 4-byte minimum granularity, so the moved region must be 4-byte aligned and sized.
+  assert(size % sizeof(uint32_t) == 0);
+  assert(srcOffset % sizeof(uint32_t) == 0);
+  assert(dstOffset % sizeof(uint32_t) == 0);
 
-    // Local (unicast) source load, multicast store to the NVLS switch destination.
-    char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
-    char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
-    if constexpr (std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t>) {
-      const size_t nElem = size / sizeof(T);
-      VectorType<T, 1>* srcElem = reinterpret_cast<VectorType<T, 1>*>(srcBase);
-      VectorType<T, 1>* dstElem = reinterpret_cast<VectorType<T, 1>*>(dstBase);
-      for (size_t idx = threadIdx.x; idx < nElem; idx += blockDim.x) {
-        auto val = srcElem[idx];
-        SwitchChannelDeviceHandle::multimemStore(val, dstElem + idx);
-      }
-    } else {
-      // handle data in 16-byte unit
-      using Type16 = mscclpp::VectorType<T, 16 / sizeof(T)>;
-      const size_t nType16 = size / sizeof(Type16);
-      Type16* src16 = reinterpret_cast<Type16*>(srcBase);
-      Type16* dst16 = reinterpret_cast<Type16*>(dstBase);
-      for (size_t idx = threadIdx.x; idx < nType16; idx += blockDim.x) {
-        Type16 val = src16[idx];
-        SwitchChannelDeviceHandle::multimemStore(val, dst16 + idx);
-      }
-      // handle rest of data
-      constexpr int StoreBytes = (sizeof(T) == 8) ? 8 : 4;
-      using TypeRest = mscclpp::VectorType<T, StoreBytes / sizeof(T)>;
-      const size_t processed = nType16 * sizeof(Type16);
-      const size_t nRest = (size - processed) / sizeof(TypeRest);
-      TypeRest* srcR = reinterpret_cast<TypeRest*>(srcBase + processed);
-      TypeRest* dstR = reinterpret_cast<TypeRest*>(dstBase + processed);
-      for (size_t idx = threadIdx.x; idx < nRest; idx += blockDim.x) {
-        TypeRest val = srcR[idx];
-        SwitchChannelDeviceHandle::multimemStore(val, dstR + idx);
-      }
+  // Local (unicast) source load, multicast store to the NVLS switch destination.
+  char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+  char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
+
+  // Bulk: move data in 16-byte units. The 16-byte vector path requires 16-byte alignment.
+  assert(reinterpret_cast<uintptr_t>(srcBase) % 16 == 0);
+  assert(reinterpret_cast<uintptr_t>(dstBase) % 16 == 0);
+  const size_t n16 = size / 16;
+  f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
+  f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
+  for (size_t idx = threadIdx.x; idx < n16; idx += blockDim.x) {
+    SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
+  }
+
+  // Remainder (size is a multiple of 4, so at most 12 bytes left): one 8-byte then one 4-byte store.
+  size_t done = n16 * 16;
+  if (size - done >= 8) {
+    if (threadIdx.x == 0) {
+      f32x2* src8 = reinterpret_cast<f32x2*>(srcBase + done);
+      f32x2* dst8 = reinterpret_cast<f32x2*>(dstBase + done);
+      SwitchChannelDeviceHandle::multimemStore(src8[0], dst8);
+    }
+    done += 8;
+  }
+  if (size - done >= 4) {
+    if (threadIdx.x == 0) {
+      u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + done);
+      u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + done);
+      SwitchChannelDeviceHandle::multimemStore(src4[0], dst4);
     }
   }
 }
@@ -771,7 +761,7 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
     handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
   } else if (opType == OperationType::MULTI_STORE) {
-    handleMultiStore<T, ReuseScratch>(op, input, output, scratch, offset, unitSize);
+    handleMultiStore<ReuseScratch>(op, input, output, scratch, offset, unitSize);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {
