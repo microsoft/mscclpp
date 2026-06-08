@@ -678,7 +678,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           if (lane_id == src_rdma_rank) direct_recv_idx += 1;
 
           // Hidden
-          UNROLLED_WARP_COPY(5, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
+          UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
                              reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
           shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
 
@@ -710,7 +710,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         int dst_slot_idx = (cached_nvl_channel_tail++) % num_max_nvl_chunked_recv_tokens;
 
         // Copy data
-        UNROLLED_WARP_COPY(5, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
+        UNROLLED_WARP_COPY(28, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
                            reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
         shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
 
@@ -904,7 +904,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         (lane_id == meta.src_rdma_rank) ? (total_offset += 1) : 0;
 
         // Copy data
-        UNROLLED_WARP_COPY(5, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
+        UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
                            nvl_channel_x.buffer() + token_idx_in_buffer * hidden_int4, ld_nc_global, st_na_global);
 
         // Copy source meta
