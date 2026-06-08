@@ -602,27 +602,27 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
   // Bulk: move data in 16-byte units. The 16-byte vector path requires 16-byte alignment.
   assert(reinterpret_cast<uintptr_t>(srcBase) % 16 == 0);
   assert(reinterpret_cast<uintptr_t>(dstBase) % 16 == 0);
-  const size_t n16 = size / 16;
+  const size_t numberOfMoves = size / 16;
   f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
   f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
-  for (size_t idx = threadIdx.x; idx < n16; idx += blockDim.x) {
+  for (size_t idx = threadIdx.x; idx < numberOfMoves; idx += blockDim.x) {
     SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
   }
 
   // Remainder (size is a multiple of 4, so at most 12 bytes left): one 8-byte then one 4-byte store.
-  size_t done = n16 * 16;
-  if (size - done >= 8) {
+  size_t dataMoved = numberOfMoves * 16;
+  if (size - dataMoved >= 8) {
     if (threadIdx.x == 0) {
-      f32x2* src8 = reinterpret_cast<f32x2*>(srcBase + done);
-      f32x2* dst8 = reinterpret_cast<f32x2*>(dstBase + done);
+      f32x2* src8 = reinterpret_cast<f32x2*>(srcBase + dataMoved);
+      f32x2* dst8 = reinterpret_cast<f32x2*>(dstBase + dataMoved);
       SwitchChannelDeviceHandle::multimemStore(src8[0], dst8);
     }
-    done += 8;
+    dataMoved += 8;
   }
-  if (size - done >= 4) {
+  if (size - dataMoved >= 4) {
     if (threadIdx.x == 0) {
-      u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + done);
-      u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + done);
+      u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + dataMoved);
+      u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + dataMoved);
       SwitchChannelDeviceHandle::multimemStore(src4[0], dst4);
     }
   }
