@@ -45,7 +45,7 @@ struct Config {
     EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens <= num_max_rdma_chunked_recv_tokens / 2);
   }
 
-  size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
+  size_t get_nvl_base_bytes(size_t hidden_bytes, int num_ranks) const {
     // Below are some assumptions
     // TODO: add assertions
     constexpr int kNumMaxTopK = 128;
@@ -65,6 +65,35 @@ struct Config {
     num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxScales * sizeof(float);
     num_bytes = ((num_bytes + 127) / 128) * 128;
     return num_bytes;
+  }
+
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 3 (cross-GPU peer-map): a fixed-capacity recv-output pool appended
+  // to the NVL cudaMalloc (AFTER the fifo/task regions, NOT added to
+  // num_nvl_bytes, so it does not count against the INT_MAX-limited registered
+  // size). Peers reach it through the same IPC handle as buffer_ptrs. Holds a
+  // small header (the local recv_gbl_rank_prefix_sum, made peer-readable so a
+  // cross-GPU forwarder can compute the destination's final recv_x index)
+  // followed by the recv_x hidden region. recv_x becomes a zero-copy view of
+  // that region; the cross-GPU forwarder writes hidden straight to the
+  // destination peer's pool, removing the receiver's hidden drain. Falls back to
+  // torch::empty + receiver when num_recv_tokens exceeds the capacity.
+  static constexpr int kEpRecvPoolMaxTokens = 65536;
+  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
+  size_t get_recv_pool_header_bytes(int num_ranks) const {
+    return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+  }
+  // Total bytes of the recv-output pool. Sized for the worst-case hidden so the
+  // Buffer ctor can allocate it without knowing the runtime hidden dim.
+  static size_t recv_pool_bytes_static(int num_ranks) {
+    size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+    size_t b = header + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    return ((b + 127) / 128) * 128;
+  }
+#endif
+
+  size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
+    return get_nvl_base_bytes(hidden_bytes, num_ranks);
   }
 
   size_t get_rdma_buffer_size_hint(int64_t hidden_bytes, int num_ranks) const {
