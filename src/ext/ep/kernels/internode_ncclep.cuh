@@ -38,7 +38,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
              // Phase 4: per-peer fabric-IPC base pointers; when non-null, cross-node data
              // PUTs go directly through NVL72 fabric VA instead of `handle.put` over IB.
-             void* const* peer_rdma_bases) {
+             void* const* peer_rdma_bases,
+             // Increment 3: byte offset of the peer-mapped recv-output pool within each peer's
+             // NVL buffer (buffer_ptrs[peer] + recv_pool_offset). >=0 enables cross-GPU forwarder
+             // direct-write of hidden into the destination's final recv_x; -1 = legacy receiver path.
+             int64_t recv_pool_offset) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -597,12 +601,28 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // unchanged, so combine for same-GPU tokens needs a paired change (gated
     // for dispatch-only measurement).
     const bool fuse_direct = (dst_nvl_rank == nvl_rank);
+    // Increment 3: cross-GPU forwarder direct-write. When the recv-output pool
+    // is active (recv_pool_offset >= 0) and this warp's destination is a DIFFERENT
+    // NVL rank, write hidden straight to the destination peer's recv_x pool at
+    // the final index (peer-read prefix), removing the receiver's hidden drain.
+    const bool xnode_direct = (recv_pool_offset >= 0) and (dst_nvl_rank != nvl_rank);
+    const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * 4 + 127) / 128) * 128;
     int direct_recv_idx = 0;
-    if (fuse_direct && lane_id < kNumRDMARanks) {
+    if (lane_id < kNumRDMARanks and (fuse_direct or xnode_direct)) {
       const int src_global = lane_id * NUM_MAX_NVL_PEERS + nvl_rank;
-      const int gbl_base = (src_global > 0) ? recv_gbl_rank_prefix_sum[src_global - 1] : 0;
+      int gbl_base;
+      if (fuse_direct) {
+        gbl_base = (src_global > 0) ? recv_gbl_rank_prefix_sum[src_global - 1] : 0;
+      } else {
+        // Peer-read the destination GPU's recv_gbl_rank_prefix_sum from its pool
+        // header (published by the host before launch; visible by the time the
+        // forwarder drains, since all intra-node peers are co-launched).
+        const int* dst_prefix =
+            reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(buffer_ptrs[dst_nvl_rank]) + recv_pool_offset);
+        gbl_base = (src_global > 0) ? static_cast<int>(ld_volatile_global(dst_prefix + (src_global - 1))) : 0;
+      }
       direct_recv_idx = gbl_base + my_start_sum;
-      if (not kCachedMode)
+      if (fuse_direct and not kCachedMode)
         recv_gbl_channel_prefix_matrix[src_global * num_channels + channel_id] = direct_recv_idx;
     }
 
@@ -716,12 +736,24 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           continue;
         }
 
-        // Get an empty slot
+        // Get an empty slot (still used for scales/topk/meta staging that the
+        // receiver drains; under xnode_direct the hidden goes straight to the pool)
         int dst_slot_idx = (cached_nvl_channel_tail++) % num_max_nvl_chunked_recv_tokens;
 
-        // Copy data
-        UNROLLED_WARP_COPY(28, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
-                           reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
+        // Hidden copy: increment 3 cross-GPU direct-write to the destination's
+        // recv_x pool at the final index; else legacy nvl_channel staging.
+        if (xnode_direct) {
+          int recv_token_idx = __shfl_sync(0xffffffff, direct_recv_idx, src_rdma_rank);
+          if (lane_id == src_rdma_rank) direct_recv_idx += 1;
+          int4* dst_pool_x = reinterpret_cast<int4*>(
+              reinterpret_cast<uint8_t*>(buffer_ptrs[dst_nvl_rank]) + recv_pool_offset + ep_pool_header_bytes +
+              static_cast<int64_t>(recv_token_idx) * hidden_bytes);
+          UNROLLED_WARP_COPY(28, lane_id, hidden_int4, dst_pool_x, reinterpret_cast<int4*>(shifted), ld_nc_global,
+                             st_na_global);
+        } else {
+          UNROLLED_WARP_COPY(28, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
+                             reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
+        }
         shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
 
         // Copy source meta
@@ -914,9 +946,13 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         (lane_id == meta.src_rdma_rank) ? (total_offset += 1) : 0;
 
 #if !EP_NCCLEP_DRAIN_NOOP
-        // Copy data
-        UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
-                           nvl_channel_x.buffer() + token_idx_in_buffer * hidden_int4, ld_nc_global, st_na_global);
+        // Copy data (hidden) — skipped under increment-3 cross-GPU direct-write:
+        // the producing forwarder already wrote hidden straight to this GPU's
+        // recv_x pool at recv_token_idx. Scales/topk/meta still drain here.
+        if (recv_pool_offset < 0) {
+          UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
+                             nvl_channel_x.buffer() + token_idx_in_buffer * hidden_int4, ld_nc_global, st_na_global);
+        }
 
         // Copy source meta
         if (lane_id == 0 and not kCachedMode) st_na_global(recv_src_meta + recv_token_idx, meta);

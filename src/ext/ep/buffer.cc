@@ -172,7 +172,17 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
 
   if (num_nvl_bytes > 0) {
     // Local IPC: alloc local memory and set local IPC handle
-    CUDA_CHECK(cudaMalloc(&buffer_ptrs[nvl_rank], num_nvl_bytes + fifo_bytes + buffer_ptr_bytes + task_ptr_bytes));
+    int64_t ep_nvl_alloc = num_nvl_bytes + fifo_bytes + buffer_ptr_bytes + task_ptr_bytes;
+#ifdef EP_DISPATCH_NCCLEP
+    // Increment 3: append a peer-mapped recv-output pool AFTER the fifo/task
+    // regions. It is covered by the same IPC handle as buffer_ptrs (peers reach
+    // it via buffer_ptrs[peer] + recv_pool_off_) but is NOT part of
+    // num_nvl_bytes, so it does not count against the INT_MAX registered-size
+    // cap. 128-aligned start.
+    recv_pool_off_ = ((ep_nvl_alloc + 127) / 128) * 128;
+    ep_nvl_alloc = recv_pool_off_ + static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks));
+#endif
+    CUDA_CHECK(cudaMalloc(&buffer_ptrs[nvl_rank], ep_nvl_alloc));
     CUDA_CHECK(cudaIpcGetMemHandle(&ipc_handles[nvl_rank], buffer_ptrs[nvl_rank]));
     buffer_ptrs_gpu =
         reinterpret_cast<void**>(reinterpret_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + num_nvl_bytes + fifo_bytes);
@@ -1360,7 +1370,29 @@ Buffer::internode_dispatch(
   }
 
   // Allocate new tensors
+  int64_t ep_recv_pool_offset = -1;  // >=0 selects the increment-3 direct-write path
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 3 (cross-GPU peer-map): when num_recv_tokens fits the fixed pool,
+  // back recv_x by the peer-mapped pool region (appended to the NVL alloc) so the
+  // cross-GPU forwarder can write hidden straight to the destination's recv_x.
+  // Publish our recv_gbl_rank_prefix_sum into the peer-readable pool header.
+  const size_t ep_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
+  const bool ep_use_direct =
+      (not cached_mode) and num_nvl_bytes > 0 and recv_pool_off_ >= 0 and num_recv_tokens <= Config::kEpRecvPoolMaxTokens;
+  torch::Tensor recv_x;
+  if (ep_use_direct) {
+    ep_recv_pool_offset = recv_pool_off_;
+    void* pool_base = static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + ep_recv_pool_offset;
+    CUDA_CHECK(cudaMemcpyAsync(pool_base, recv_gbl_rank_prefix_sum.data_ptr<int>(),
+                               static_cast<size_t>(num_ranks) * sizeof(int), cudaMemcpyDeviceToDevice, comm_stream));
+    void* recv_x_ptr = static_cast<uint8_t*>(pool_base) + ep_pool_header_bytes;
+    recv_x = torch::from_blob(recv_x_ptr, {num_recv_tokens, hidden}, x.options());
+  } else {
+    recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
+  }
+#else
   auto recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
+#endif
   auto recv_topk_idx = std::optional<torch::Tensor>(), recv_topk_weights = std::optional<torch::Tensor>(),
        recv_x_scales = std::optional<torch::Tensor>();
   auto recv_src_meta = std::optional<torch::Tensor>();
@@ -1418,7 +1450,7 @@ Buffer::internode_dispatch(
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
                       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), nvls_head_mc,
-                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu);
+                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_offset);
 
   // Wait streams
   std::optional<EventHandle> event;
