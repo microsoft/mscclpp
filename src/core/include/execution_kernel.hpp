@@ -609,22 +609,14 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
     SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
   }
 
-  // Remainder (size is a multiple of 4, so at most 12 bytes left): one 8-byte then one 4-byte store.
-  size_t dataMoved = numberOfMoves * 16;
-  if (size - dataMoved >= 8) {
-    if (threadIdx.x == 0) {
-      f32x2* src8 = reinterpret_cast<f32x2*>(srcBase + dataMoved);
-      f32x2* dst8 = reinterpret_cast<f32x2*>(dstBase + dataMoved);
-      SwitchChannelDeviceHandle::multimemStore(src8[0], dst8);
-    }
-    dataMoved += 8;
-  }
-  if (size - dataMoved >= 4) {
-    if (threadIdx.x == 0) {
-      u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + dataMoved);
-      u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + dataMoved);
-      SwitchChannelDeviceHandle::multimemStore(src4[0], dst4);
-    }
+  // Remainder (size is a multiple of 4, so 0/4/8/12 bytes left): move it in 4-byte units so up to three
+  // threads can each issue one store in parallel.
+  const size_t dataMoved = numberOfMoves << 4;  // numberOfMoves * 16
+  const size_t numberOfRest = (size - dataMoved) / 4;
+  u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + dataMoved);
+  u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + dataMoved);
+  for (size_t idx = threadIdx.x; idx < numberOfRest; idx += blockDim.x) {
+    SwitchChannelDeviceHandle::multimemStore(src4[idx], dst4 + idx);
   }
 }
 #endif
