@@ -1516,6 +1516,13 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   }
 }
 
+#ifdef EP_DISPATCH_NCCLEP
+#include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
+#define EP_DISPATCH_KERNEL dispatch_ncclep
+#else
+#define EP_DISPATCH_KERNEL dispatch
+#endif
+
 void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights, void* recv_src_meta,
               const void* x, const float* x_scales, const int64_t* topk_idx, const float* topk_weights,
               int* send_rdma_head, int* send_nvl_head, int* recv_rdma_channel_prefix_matrix,
@@ -1534,10 +1541,10 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
   {                                                                                                                    \
     auto dispatch_func =                                                                                               \
-        low_latency_mode ? (is_cached_dispatch ? dispatch<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
-                                               : dispatch<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
-                         : (is_cached_dispatch ? dispatch<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
-                                               : dispatch<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
+        low_latency_mode ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
+                                               : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
+                         : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
+                                               : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
     LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                  \
                   recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),   \
                   x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,    \
