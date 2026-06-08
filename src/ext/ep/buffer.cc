@@ -174,13 +174,22 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
     // Local IPC: alloc local memory and set local IPC handle
     int64_t ep_nvl_alloc = num_nvl_bytes + fifo_bytes + buffer_ptr_bytes + task_ptr_bytes;
 #ifdef EP_DISPATCH_NCCLEP
-    // Increment 3: append a peer-mapped recv-output pool AFTER the fifo/task
-    // regions. It is covered by the same IPC handle as buffer_ptrs (peers reach
-    // it via buffer_ptrs[peer] + recv_pool_off_) but is NOT part of
-    // num_nvl_bytes, so it does not count against the INT_MAX registered-size
-    // cap. 128-aligned start.
-    recv_pool_off_ = ((ep_nvl_alloc + 127) / 128) * 128;
-    ep_nvl_alloc = recv_pool_off_ + static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks));
+    // Increment 4: allocate the peer-mapped recv-output pool as VMM memory
+    // (cuMem FABRIC/POSIX-FD via gpuCallocPhysical) so peers import TMA-eligible
+    // VAs. Falls back to the increment-3 inline carve (cudaIpc, no TMA) on
+    // platforms without fabric-IPC support.
+    static const bool ep_fabric_pool_ok = mscclpp::isNvlsSupported() && resolve_fabric_ipc_supported();
+    if (ep_fabric_pool_ok) {
+      const size_t ep_pool_bytes = Config::recv_pool_bytes_static(num_ranks);
+      recv_pool_local_ptr_ = mscclpp::detail::gpuCallocPhysical(ep_pool_bytes);
+      CUDA_CHECK(cudaMemset(recv_pool_local_ptr_, 0, ep_pool_bytes));
+    } else {
+      // inc3 fallback: append the pool AFTER the fifo/task regions of the NVL
+      // alloc (reached by peers via buffer_ptrs[peer] + recv_pool_off_), NOT in
+      // num_nvl_bytes so it does not count against the INT_MAX registered cap.
+      recv_pool_off_ = ((ep_nvl_alloc + 127) / 128) * 128;
+      ep_nvl_alloc = recv_pool_off_ + static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks));
+    }
 #endif
     CUDA_CHECK(cudaMalloc(&buffer_ptrs[nvl_rank], ep_nvl_alloc));
     CUDA_CHECK(cudaIpcGetMemHandle(&ipc_handles[nvl_rank], buffer_ptrs[nvl_rank]));
@@ -241,6 +250,15 @@ Buffer::~Buffer() noexcept(false) {
     // Free local buffer and error flag
     CUDA_CHECK(cudaFree(buffer_ptrs[nvl_rank]));
   }
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 4: release the device-side VMM recv-pool base array. The imported
+  // peer mappings are owned by recv_pool_remote_mems_ (auto-released); the local
+  // VMM pool follows the rdma_buffer_ptr convention (reclaimed at process exit).
+  if (recv_pool_ptrs_gpu != nullptr) {
+    CUDA_CHECK(cudaFree(recv_pool_ptrs_gpu));
+    recv_pool_ptrs_gpu = nullptr;
+  }
+#endif
 
   // Free NVSHMEM
   if (num_rdma_bytes > 0) {
@@ -379,6 +397,43 @@ void Buffer::sync(const std::vector<int>& device_ids,
       if (i == nvl_rank) continue;
       memory_channel_handles[i] = memory_channels.rbegin()->deviceHandle();
     }
+
+#ifdef EP_DISPATCH_NCCLEP
+    // Increment 4: exchange the VMM recv-output pool base pointers across the
+    // local NVL peers. registerMemory(ipc) on a gpuCallocPhysical buffer carries
+    // FABRIC/POSIX-FD handles, so the imported `.data()` peer VA is dereferenceable
+    // (and TMA-eligible) — unlike the cudaIpc-mapped buffer_ptrs. Imported
+    // RegisteredMemory is retained in recv_pool_remote_mems_ to keep the mapping.
+    if (recv_pool_local_ptr_ != nullptr) {
+      constexpr int kRecvPoolTag = 7;
+      const size_t ep_pool_bytes = Config::recv_pool_bytes_static(num_ranks);
+      auto pool_mem = communicator->registerMemory(recv_pool_local_ptr_, ep_pool_bytes, ipc_transport);
+      std::vector<std::shared_future<mscclpp::RegisteredMemory>> pool_futs(num_nvl_ranks);
+      for (int i = 0; i < num_nvl_ranks; ++i) {
+        if (i == nvl_rank) continue;
+        auto r = i + rdma_rank * num_nvl_ranks;
+        communicator->sendMemory(pool_mem, r, kRecvPoolTag);
+        pool_futs[i] = communicator->recvMemory(r, kRecvPoolTag);
+      }
+      recv_pool_ptrs_.assign(NUM_MAX_NVL_PEERS, nullptr);
+      recv_pool_ptrs_[nvl_rank] = recv_pool_local_ptr_;
+      recv_pool_remote_mems_.resize(num_nvl_ranks);
+      for (int i = 0; i < num_nvl_ranks; ++i) {
+        if (i == nvl_rank) continue;
+        recv_pool_remote_mems_[i] = pool_futs[i].get();
+        recv_pool_ptrs_[i] = recv_pool_remote_mems_[i].data();
+      }
+      CUDA_CHECK(cudaMalloc(&recv_pool_ptrs_gpu, sizeof(void*) * NUM_MAX_NVL_PEERS));
+      CUDA_CHECK(cudaMemcpy(recv_pool_ptrs_gpu, recv_pool_ptrs_.data(), sizeof(void*) * NUM_MAX_NVL_PEERS,
+                            cudaMemcpyHostToDevice));
+      if (rank == 0) {
+        printf("[mscclpp_ep] inc4 VMM recv-pool peer bases (rank 0):");
+        for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) printf(" [%d]=%p", i, recv_pool_ptrs_[i]);
+        printf("\n");
+        fflush(stdout);
+      }
+    }
+#endif
 
     memory_channel_handles_device_ptr =
         mscclpp::detail::gpuCallocShared<mscclpp::MemoryChannelDeviceHandle>(num_nvl_ranks);
@@ -1370,19 +1425,19 @@ Buffer::internode_dispatch(
   }
 
   // Allocate new tensors
-  int64_t ep_recv_pool_offset = -1;  // >=0 selects the increment-3 direct-write path
+  void** ep_recv_pool_ptrs = nullptr;  // non-null selects the increment-4 VMM direct-write path
 #ifdef EP_DISPATCH_NCCLEP
-  // Increment 3 (cross-GPU peer-map): when num_recv_tokens fits the fixed pool,
-  // back recv_x by the peer-mapped pool region (appended to the NVL alloc) so the
-  // cross-GPU forwarder can write hidden straight to the destination's recv_x.
-  // Publish our recv_gbl_rank_prefix_sum into the peer-readable pool header.
+  // Increment 4 (VMM pool): when num_recv_tokens fits the fixed pool, back recv_x
+  // by the local VMM recv-output pool so the cross-GPU forwarder can write hidden
+  // straight to the destination's recv_x via TMA-eligible peer VAs. Publish our
+  // recv_gbl_rank_prefix_sum into the peer-readable pool header.
   const size_t ep_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
-  const bool ep_use_direct =
-      (not cached_mode) and num_nvl_bytes > 0 and recv_pool_off_ >= 0 and num_recv_tokens <= Config::kEpRecvPoolMaxTokens;
+  const bool ep_use_direct = (not cached_mode) and num_nvl_bytes > 0 and recv_pool_local_ptr_ != nullptr and
+                             recv_pool_ptrs_gpu != nullptr and num_recv_tokens <= Config::kEpRecvPoolMaxTokens;
   torch::Tensor recv_x;
   if (ep_use_direct) {
-    ep_recv_pool_offset = recv_pool_off_;
-    void* pool_base = static_cast<uint8_t*>(buffer_ptrs[nvl_rank]) + ep_recv_pool_offset;
+    ep_recv_pool_ptrs = recv_pool_ptrs_gpu;
+    void* pool_base = recv_pool_local_ptr_;
     CUDA_CHECK(cudaMemcpyAsync(pool_base, recv_gbl_rank_prefix_sum.data_ptr<int>(),
                                static_cast<size_t>(num_ranks) * sizeof(int), cudaMemcpyDeviceToDevice, comm_stream));
     void* recv_x_ptr = static_cast<uint8_t*>(pool_base) + ep_pool_header_bytes;
@@ -1450,7 +1505,7 @@ Buffer::internode_dispatch(
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
                       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), nvls_head_mc,
-                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_offset);
+                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_ptrs);
 
   // Wait streams
   std::optional<EventHandle> event;
