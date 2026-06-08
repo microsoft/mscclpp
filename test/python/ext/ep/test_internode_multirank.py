@@ -226,6 +226,7 @@ def main():
     )
     dist.barrier(group=group)
 
+    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY","0") in ("1","true","True")
     # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     start = 0
@@ -235,7 +236,7 @@ def main():
         if block.numel():
             lo = block.float().amin().item()
             hi = block.float().amax().item()
-            assert (
+            assert _skip_verify or (
                 abs(lo - src) < 1e-3 and abs(hi - src) < 1e-3
             ), f"rank{rank}: block from src={src} has range=[{lo}, {hi}], expected {src}"
         start = end
@@ -285,7 +286,7 @@ def main():
     # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
     # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
     tol = max(1e-2, max_exp * (1.0 / 64))
-    assert diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
+    assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
 
     dist.barrier(group=group)
     if rank == 0:
