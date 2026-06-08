@@ -42,6 +42,17 @@ struct Buffer {
   // Increment 3: byte offset of the peer-mapped recv-output pool within the NVL
   // allocation (buffer_ptrs[*] + recv_pool_off_). -1 until set in the ctor.
   int64_t recv_pool_off_ = -1;
+  // Increment 4: VMM-allocated (cuMem FABRIC/POSIX-FD via gpuCallocPhysical)
+  // recv-output pool. recv_pool_local_ptr_ is this rank's local pool; the peer
+  // bases (imported via registerMemory/recvMemory) live in recv_pool_ptrs_ /
+  // recv_pool_ptrs_gpu. These are TMA-eligible peer VAs (unlike cudaIpc maps).
+  // Non-null recv_pool_local_ptr_ selects the increment-4 VMM direct-write path.
+  void* recv_pool_local_ptr_ = nullptr;
+  std::vector<void*> recv_pool_ptrs_;
+  void** recv_pool_ptrs_gpu = nullptr;
+  // Keep imported peer RegisteredMemory alive so the cuMem mapping persists for
+  // the Buffer's lifetime (recv_pool_ptrs_[*] alias their .data()).
+  std::vector<mscclpp::RegisteredMemory> recv_pool_remote_mems_;
 
   // NVSHMEM Buffer
   int64_t num_rdma_bytes;

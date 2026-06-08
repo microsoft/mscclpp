@@ -93,9 +93,9 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
               void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases,
-              // Increment 3: byte offset of the peer-mapped recv-output pool within the NVL buffer
-              // (>=0 enables cross-GPU forwarder direct-write to recv_x; -1 = legacy receiver path).
-              int64_t recv_pool_offset = -1);
+              // Increment 4: per-peer base pointers of the VMM-allocated recv-output pool
+              // (non-null enables cross-GPU forwarder direct-write to recv_x; nullptr = legacy path).
+              void* const* recv_pool_ptrs = nullptr);
 
 void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_topk_weights, int num_ranks,
                    int num_channels, int num_combined_tokens, int* combined_rdma_head,

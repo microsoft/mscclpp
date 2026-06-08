@@ -1519,7 +1519,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #ifdef EP_DISPATCH_NCCLEP
 #include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
 #define EP_DISPATCH_KERNEL dispatch_ncclep
-#define EP_DISPATCH_EXTRA_ARGS , recv_pool_offset
+#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs
 #else
 #define EP_DISPATCH_KERNEL dispatch
 #define EP_DISPATCH_EXTRA_ARGS
@@ -1537,7 +1537,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, int64_t recv_pool_offset) {
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_ptrs) {
   constexpr int kNumDispatchRDMASenderWarps = 6;
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
