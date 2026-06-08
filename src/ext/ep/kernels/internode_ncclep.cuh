@@ -20,6 +20,14 @@
 #define EP_NCCLEP_DRAIN_NOOP 0
 #endif
 
+// Increment 4 (VMM pool + TMA): when 1, the cross-GPU forwarder writes hidden to
+// the destination peer's VMM recv-output pool via cp.async.bulk (TMA) instead of
+// UNROLLED_WARP_COPY. Requires recv_pool_ptrs to be cuMem (FABRIC/POSIX-FD)
+// peer VAs (gpuCallocPhysical), NOT cudaIpc-mapped memory (which crashes TMA).
+#ifndef EP_NCCLEP_TMA
+#define EP_NCCLEP_TMA 0
+#endif
+
 template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDispatchRDMASenderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
 __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32), 1)
@@ -39,10 +47,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              // Phase 4: per-peer fabric-IPC base pointers; when non-null, cross-node data
              // PUTs go directly through NVL72 fabric VA instead of `handle.put` over IB.
              void* const* peer_rdma_bases,
-             // Increment 3: byte offset of the peer-mapped recv-output pool within each peer's
-             // NVL buffer (buffer_ptrs[peer] + recv_pool_offset). >=0 enables cross-GPU forwarder
-             // direct-write of hidden into the destination's final recv_x; -1 = legacy receiver path.
-             int64_t recv_pool_offset) {
+             // Increment 4: per-peer base pointers of the VMM-allocated (cuMem FABRIC/POSIX-FD)
+             // recv-output pool. recv_pool_ptrs[peer] points at peer's pool header; non-null
+             // enables the cross-GPU forwarder direct-write of hidden into the destination's
+             // final recv_x (TMA-eligible peer VA); nullptr = legacy receiver-drain path.
+             void* const* recv_pool_ptrs) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -169,6 +178,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   __shared__ volatile int forward_channel_head[NUM_MAX_NVL_PEERS][kNumRDMARanks];
   __shared__ volatile bool forward_channel_retired[NUM_MAX_NVL_PEERS];
   auto sync_forwarder_smem = []() { asm volatile("bar.sync 1, %0;" ::"r"((NUM_MAX_NVL_PEERS + 1) * 32)); };
+
+#if EP_NCCLEP_TMA
+  // Increment 4 (TMA): per-forwarder-warp SMEM staging tile + mbarrier for the
+  // cross-GPU direct-write of hidden into the destination peer's VMM recv pool.
+  // One tile/mbar per forwarder warp (warp_id 0..NUM_MAX_NVL_PEERS-1); the
+  // per-token hidden is streamed HBM->SMEM->peer VA in kEpTmaTileBytes chunks.
+  static constexpr int kEpTmaTileBytes = 4096;
+  __shared__ alignas(128) uint8_t ep_tma_tile[NUM_MAX_NVL_PEERS][kEpTmaTileBytes];
+  __shared__ alignas(8) uint64_t ep_tma_mbar[NUM_MAX_NVL_PEERS];
+#endif
 
   if (warp_role == WarpRole::kRDMASender) {
     // Get tasks
@@ -601,11 +620,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // unchanged, so combine for same-GPU tokens needs a paired change (gated
     // for dispatch-only measurement).
     const bool fuse_direct = (dst_nvl_rank == nvl_rank);
-    // Increment 3: cross-GPU forwarder direct-write. When the recv-output pool
-    // is active (recv_pool_offset >= 0) and this warp's destination is a DIFFERENT
+    // Increment 3/4: cross-GPU forwarder direct-write. When the recv-output pool
+    // is active (recv_pool_ptrs != nullptr) and this warp's destination is a DIFFERENT
     // NVL rank, write hidden straight to the destination peer's recv_x pool at
     // the final index (peer-read prefix), removing the receiver's hidden drain.
-    const bool xnode_direct = (recv_pool_offset >= 0) and (dst_nvl_rank != nvl_rank);
+    const bool xnode_direct = (recv_pool_ptrs != nullptr) and (dst_nvl_rank != nvl_rank);
     const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * 4 + 127) / 128) * 128;
     int direct_recv_idx = 0;
     if (lane_id < kNumRDMARanks and (fuse_direct or xnode_direct)) {
@@ -617,8 +636,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         // Peer-read the destination GPU's recv_gbl_rank_prefix_sum from its pool
         // header (published by the host before launch; visible by the time the
         // forwarder drains, since all intra-node peers are co-launched).
-        const int* dst_prefix =
-            reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(buffer_ptrs[dst_nvl_rank]) + recv_pool_offset);
+        const int* dst_prefix = reinterpret_cast<const int*>(recv_pool_ptrs[dst_nvl_rank]);
         gbl_base = (src_global > 0) ? static_cast<int>(ld_volatile_global(dst_prefix + (src_global - 1))) : 0;
       }
       direct_recv_idx = gbl_base + my_start_sum;
@@ -745,11 +763,70 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         if (xnode_direct) {
           int recv_token_idx = __shfl_sync(0xffffffff, direct_recv_idx, src_rdma_rank);
           if (lane_id == src_rdma_rank) direct_recv_idx += 1;
-          int4* dst_pool_x = reinterpret_cast<int4*>(
-              reinterpret_cast<uint8_t*>(buffer_ptrs[dst_nvl_rank]) + recv_pool_offset + ep_pool_header_bytes +
-              static_cast<int64_t>(recv_token_idx) * hidden_bytes);
+#if EP_NCCLEP_TMA_LOCALDST
+          // DIAGNOSTIC: target the LOCAL (non-IPC-imported) VMM pool VA to isolate
+          // whether the TMA launch failure is specific to cross-process IPC peer
+          // targets. Corrupts results (expected); only the launch outcome matters.
+          uint8_t* dst_b = reinterpret_cast<uint8_t*>(recv_pool_ptrs[nvl_rank]) + ep_pool_header_bytes +
+                           static_cast<int64_t>(recv_token_idx) * hidden_bytes;
+#else
+          uint8_t* dst_b = reinterpret_cast<uint8_t*>(recv_pool_ptrs[dst_nvl_rank]) + ep_pool_header_bytes +
+                           static_cast<int64_t>(recv_token_idx) * hidden_bytes;
+#endif
+#if EP_NCCLEP_TMA
+          // Stream HBM(shifted) -> SMEM -> peer VMM VA via cp.async.bulk (TMA).
+          // Proven crash-free against imported cuMem FABRIC/POSIX-FD peer VAs
+          // (would crash for cudaIpc-mapped buffer_ptrs). lane 0 drives the warp's
+          // tile; chunked to bound SMEM. fence.proxy orders async-proxy writes.
+          const uint8_t* src_b = reinterpret_cast<const uint8_t*>(shifted);
+          if (lane_id == 0) {
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile[warp_id]));
+            const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar[warp_id]));
+            size_t off = 0;
+            const size_t total = static_cast<size_t>(hidden_bytes);
+            while (off < total) {
+              const size_t remain = total - off;
+              uint32_t chunk =
+                  static_cast<uint32_t>(remain < (size_t)kEpTmaTileBytes ? remain : (size_t)kEpTmaTileBytes);
+              chunk = (chunk + 15u) & ~15u;
+              // Mirror the validated probe sequence exactly: init -> fence ->
+              // G2S bulk (mbarrier complete_tx) -> arrive.expect_tx -> wait ->
+              // fence -> S2G bulk -> commit -> wait.
+              asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
+              asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+              asm volatile(
+                  "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
+                  "[%0], [%1], %2, [%3];" ::"r"(smem_tile),
+                  "l"(src_b + off), "r"(chunk), "r"(smem_mbar)
+                  : "memory");
+              uint64_t st;
+              asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+                           : "=l"(st)
+                           : "r"(smem_mbar), "r"(chunk));
+              uint32_t done = 0;
+              while (!done) {
+                asm volatile(
+                    "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], 0;"
+                    " selp.u32 %0, 1, 0, p; }"
+                    : "=r"(done)
+                    : "r"(smem_mbar));
+              }
+              asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+              asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b + off),
+                           "r"(smem_tile), "r"(chunk)
+                           : "memory");
+              asm volatile("cp.async.bulk.commit_group;");
+              asm volatile("cp.async.bulk.wait_group 0;");
+              off += chunk;
+            }
+            asm volatile("fence.proxy.async.global;" ::: "memory");
+          }
+          __syncwarp();
+#else
+          int4* dst_pool_x = reinterpret_cast<int4*>(dst_b);
           UNROLLED_WARP_COPY(28, lane_id, hidden_int4, dst_pool_x, reinterpret_cast<int4*>(shifted), ld_nc_global,
                              st_na_global);
+#endif
         } else {
           UNROLLED_WARP_COPY(28, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
                              reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
@@ -949,7 +1026,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         // Copy data (hidden) — skipped under increment-3 cross-GPU direct-write:
         // the producing forwarder already wrote hidden straight to this GPU's
         // recv_x pool at recv_token_idx. Scales/topk/meta still drain here.
-        if (recv_pool_offset < 0) {
+        if (recv_pool_ptrs == nullptr) {
           UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
                              nvl_channel_x.buffer() + token_idx_in_buffer * hidden_int4, ld_nc_global, st_na_global);
         }
