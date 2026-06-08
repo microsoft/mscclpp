@@ -1519,8 +1519,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #ifdef EP_DISPATCH_NCCLEP
 #include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
 #define EP_DISPATCH_KERNEL dispatch_ncclep
+#define EP_DISPATCH_EXTRA_ARGS , recv_pool_offset
 #else
 #define EP_DISPATCH_KERNEL dispatch
+#define EP_DISPATCH_EXTRA_ARGS
 #endif
 
 void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights, void* recv_src_meta,
@@ -1535,7 +1537,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, int64_t recv_pool_offset) {
   constexpr int kNumDispatchRDMASenderWarps = 6;
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -1553,7 +1555,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
                   num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                    \
                   num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                      \
                   num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,      \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases);                          \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);                          \
   }                                                                                                                    \
   break
 

@@ -39,6 +39,9 @@ struct Buffer {
   int64_t num_nvl_bytes;
   void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
   void** buffer_ptrs_gpu = nullptr;
+  // Increment 3: byte offset of the peer-mapped recv-output pool within the NVL
+  // allocation (buffer_ptrs[*] + recv_pool_off_). -1 until set in the ctor.
+  int64_t recv_pool_off_ = -1;
 
   // NVSHMEM Buffer
   int64_t num_rdma_bytes;
