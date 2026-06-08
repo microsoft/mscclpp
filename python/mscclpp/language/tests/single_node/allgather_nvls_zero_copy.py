@@ -53,9 +53,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
         for gpu in range(gpu_size):
             rank = Rank(gpu)
             output_buffer = rank.get_output_buffer()
-            nvls_chan.at_rank(gpu).broadcast(
-                src_chunk=output_buffer[gpu : gpu + 1], buffer_offset=gpu, size=1, tb=0
-            )
+            nvls_chan.at_rank(gpu).broadcast(src_chunk=output_buffer[gpu : gpu + 1], buffer_offset=gpu, size=1, tb=0)
 
         # Synchronization to ensure the GPUs finished
         for gpu in range(gpu_size):

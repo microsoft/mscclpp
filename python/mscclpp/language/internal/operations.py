@@ -926,9 +926,7 @@ class GroupStore(BaseOperation):
 
     def to_dict(self):
         result = {"name": self.name.value}
-        result["src_buff"] = [
-            {"type": self.src_chunk.buffer.value, "index": self.src_chunk.index, "size": self.size}
-        ]
+        result["src_buff"] = [{"type": self.src_chunk.buffer.value, "index": self.src_chunk.index, "size": self.size}]
         result["dst_buff"] = [
             {"switch_channel_id": self.channel_ids[0], "index": self.buffer_offset, "size": self.size}
         ]
