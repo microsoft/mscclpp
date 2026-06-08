@@ -523,6 +523,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Wait counters to arrive
     int num_tokens_to_recv_from_rdma = 0, src_rdma_channel_prefix = 0;
+    int my_start_sum = 0;  // per-lane (src_rdma) channel-local start; used by same-GPU direct-write
     EP_DEVICE_ASSERT(kNumRDMARanks <= 32);
     auto start_time = clock64();
     if (lane_id < kNumRDMARanks) {
@@ -535,6 +536,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           // Notify NVL ranks
           int start_sum = -meta_0 - 1, end_sum = -meta_1 - 1;
           EP_DEVICE_ASSERT(start_sum >= 0 and end_sum >= 0 and end_sum >= start_sum);
+          my_start_sum = start_sum;
           st_relaxed_sys_global(nvl_channel_prefix_start.buffer() + lane_id, -start_sum - 1);
           st_relaxed_sys_global(nvl_channel_prefix_end.buffer() + lane_id, -end_sum - 1);
 
@@ -570,6 +572,29 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Wait shared memory to be cleaned
     sync_forwarder_smem();
+
+    // -------------------------------------------------------------------
+    // Increment 1 (NCCL-EP port): same-GPU fused direct-write. When this
+    // forwarder's destination NVL rank IS the local GPU (dst_nvl_rank ==
+    // nvl_rank), the token arrived on the GPU it is destined for (no NVLink
+    // transpose). Instead of staging through nvl_channel_x and letting a
+    // separate receiver warp copy it to recv_x (the dest-side HBM double-
+    // bounce), write it straight to the final recv_x here; the matching
+    // receiver warp (src_nvl_rank == nvl_rank) is skipped. Final indices are
+    // computed identically to the receiver: recv_gbl_rank_prefix_sum base +
+    // channel-local start_sum + per-source running count (disjoint per
+    // src_global => no collision). combine's send_nvl_head breadcrumb is left
+    // unchanged, so combine for same-GPU tokens needs a paired change (gated
+    // for dispatch-only measurement).
+    const bool fuse_direct = (dst_nvl_rank == nvl_rank);
+    int direct_recv_idx = 0;
+    if (fuse_direct && lane_id < kNumRDMARanks) {
+      const int src_global = lane_id * NUM_MAX_NVL_PEERS + nvl_rank;
+      const int gbl_base = (src_global > 0) ? recv_gbl_rank_prefix_sum[src_global - 1] : 0;
+      direct_recv_idx = gbl_base + my_start_sum;
+      if (not kCachedMode)
+        recv_gbl_channel_prefix_matrix[src_global * num_channels + channel_id] = direct_recv_idx;
+    }
 
     // Forward tokens from RDMA buffer
     // NOTES: always start from the local rank
@@ -645,6 +670,41 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           if (not kCachedMode) send_nvl_head[i * NUM_MAX_NVL_PEERS] = cached_head;
         }
         if (not is_in_dst_nvl_rank) continue;
+
+        // Increment 1: same-GPU fused direct-write to final recv_x (skips
+        // nvl_channel_x staging + the separate receiver copy).
+        if (fuse_direct) {
+          int recv_token_idx = __shfl_sync(0xffffffff, direct_recv_idx, src_rdma_rank);
+          if (lane_id == src_rdma_rank) direct_recv_idx += 1;
+
+          // Hidden
+          UNROLLED_WARP_COPY(5, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
+                             reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
+          shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
+
+          // Source meta
+          if (lane_id == 0 and not kCachedMode) st_na_global(recv_src_meta + recv_token_idx, src_meta);
+          shifted = reinterpret_cast<SourceMeta*>(shifted) + 1;
+
+          // x_scales
+          UNROLLED_WARP_COPY(1, lane_id, num_scales, recv_x_scales + recv_token_idx * num_scales,
+                             reinterpret_cast<float*>(shifted), ld_nc_global, st_na_global);
+          shifted = reinterpret_cast<float*>(shifted) + num_scales;
+
+          // topk_idx / topk_weights (rebased to dst-rank-local expert range)
+          if (lane_id < num_topk) {
+            auto idx_value = ld_nc_global(reinterpret_cast<int*>(shifted) + lane_id);
+            shifted = reinterpret_cast<int*>(shifted) + num_topk;
+            auto weight_value = ld_nc_global(reinterpret_cast<float*>(shifted) + lane_id);
+            idx_value = (idx_value >= dst_rank_expert_begin and idx_value < dst_rank_expert_end)
+                            ? idx_value - dst_rank_expert_begin
+                            : -1;
+            st_na_global(recv_topk_idx + recv_token_idx * num_topk + lane_id, static_cast<int64_t>(idx_value));
+            weight_value = idx_value >= 0 ? weight_value : 0.0f;
+            st_na_global(recv_topk_weights + recv_token_idx * num_topk + lane_id, weight_value);
+          }
+          continue;
+        }
 
         // Get an empty slot
         int dst_slot_idx = (cached_nvl_channel_tail++) % num_max_nvl_chunked_recv_tokens;
@@ -778,6 +838,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // NVL consumers
     // Retrieve rank offset from barrier results (each lane's register stores an RDMA rank)
     int src_nvl_rank = target_rank, total_offset = 0;
+    // Increment 1: same-GPU tokens (src_nvl_rank == nvl_rank) are written
+    // directly to recv_x by the fused forwarder above; skip this receiver warp.
+    if (src_nvl_rank == nvl_rank) return;
     EP_STATIC_ASSERT(kNumRDMARanks <= 32, "Invalid number of RDMA peers");
     if (lane_id < kNumRDMARanks and lane_id * NUM_MAX_NVL_PEERS + src_nvl_rank > 0)
       total_offset = recv_gbl_rank_prefix_sum[lane_id * NUM_MAX_NVL_PEERS + src_nvl_rank - 1];
