@@ -599,19 +599,27 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
   char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
 
-  // Bulk: move data in 16-byte units. The 16-byte vector path requires 16-byte alignment.
-  assert(reinterpret_cast<uintptr_t>(srcBase) % 16 == 0);
-  assert(reinterpret_cast<uintptr_t>(dstBase) % 16 == 0);
-  const size_t numberOfMoves = size / 16;
-  f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
-  f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
-  for (size_t idx = threadIdx.x; idx < numberOfMoves; idx += blockDim.x) {
-    SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
+  // Bulk fast path: move data in 16-byte units. The 16-byte vector store requires both buffers to be
+  // 16-byte aligned. `buffer_alignment` is configurable in the plan (and LoopIterationContext.unit can
+  // shift offsets), so 16-byte alignment is not guaranteed -- check it at runtime and only take the
+  // f32x4 path when it holds. Otherwise we skip straight to the 4-byte fallback loop below.
+  size_t dataMoved = 0;
+  const bool aligned16 =
+      (reinterpret_cast<uintptr_t>(srcBase) % 16 == 0) && (reinterpret_cast<uintptr_t>(dstBase) % 16 == 0);
+  if (aligned16) {
+    const size_t numberOfMoves = size / 16;
+    f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
+    f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
+    for (size_t idx = threadIdx.x; idx < numberOfMoves; idx += blockDim.x) {
+      SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
+    }
+    dataMoved = numberOfMoves << 4;  // numberOfMoves * 16
   }
 
-  // Remainder (size is a multiple of 4, so 0/4/8/12 bytes left): move it in 4-byte units so up to three
-  // threads can each issue one store in parallel.
-  const size_t dataMoved = numberOfMoves << 4;  // numberOfMoves * 16
+  // 4-byte loop: handles whatever the 16-byte path left behind. When the fast path ran this is just the
+  // 0/4/8/12-byte tail; when it was skipped (sub-16-byte alignment) this moves the entire region. The
+  // 4-byte minimum granularity and alignment are guaranteed by the asserts above, so this path is always
+  // safe. Threads stride over the 4-byte units so the work is issued in parallel.
   const size_t numberOfRest = (size - dataMoved) / 4;
   u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + dataMoved);
   u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + dataMoved);
