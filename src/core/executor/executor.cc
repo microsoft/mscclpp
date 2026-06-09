@@ -292,7 +292,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-      if (hasIBDevices() && useIB(rank, bufferType, this->nranksPerNode)) flags |= IBs[rank % this->nranksPerNode];
+      if (hasIBDevices() && mscclpp::env()->forceDisableIb) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
