@@ -629,6 +629,26 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
 }
 #endif
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T, typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input, void* output, void* scratch) {
+  const uint32_t srcOffset = op.inputOffsets[0];
+  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t size = op.inputBufferSizes[0];
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
+
+  PacketType* srcPackets =
+      (PacketType*)((char*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + (srcOffset << 1));
+  PacketType* multiPkt = (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
+
+  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
+    PacketType pkt(data, flag_);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x4*)(&pkt), multiPkt + idx);
+  }
+}
+#endif
+
 template <typename T, typename PacketType, bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handlePipeline(const Operation& op, T* input, T* output, T* scratch
 #if defined(ENABLE_NPKIT)
@@ -762,6 +782,8 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
     handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
   } else if (opType == OperationType::MULTI_STORE) {
     handleMultiStore<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  } else if (opType == OperationType::MULTI_STORE_PKT) {
+    handleMultiStorePkt<T, PacketType>(op, input, output, scratch);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {

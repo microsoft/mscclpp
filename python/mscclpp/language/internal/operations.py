@@ -934,6 +934,38 @@ class GroupStore(BaseOperation):
         return result
 
 
+class GroupStorePacket(BaseOperation):
+    def __init__(
+        self,
+        src_chunk: Chunk,
+        buffer_type: BufferType,
+        buffer_offset: int,
+        size: int,
+        channel_ids: List[int],
+        channel_type: ChannelType = ChannelType.switch,
+    ):
+        super().__init__(Instruction.group_store_packet)
+        self.src_chunk = src_chunk
+        self.buffer_type = buffer_type
+        self.buffer_offset = buffer_offset
+        self.size = size
+        self.channel_ids = channel_ids
+        self.channel_type = channel_type
+
+    def shift_buffers(self, instance, num_instances, replication_function):
+        self.buffer_offset = replication_function(self.buffer_offset, self.size, instance, num_instances)
+        self.src_chunk.index = replication_function(self.src_chunk.index, self.size, instance, num_instances)
+
+    def to_dict(self):
+        result = {"name": self.name.value}
+        result["src_buff"] = [{"type": self.src_chunk.buffer.value, "index": self.src_chunk.index, "size": self.size}]
+        result["dst_buff"] = [
+            {"switch_channel_id": self.channel_ids[0], "index": self.buffer_offset, "size": self.size}
+        ]
+        result["channel_type"] = self.channel_type.value
+        return result
+
+
 @dataclass
 class GroupLoadReduceStore(BaseOperation):
     def __init__(

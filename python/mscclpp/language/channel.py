@@ -959,6 +959,51 @@ class SwitchChannel:
         op = GroupStore(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
         get_program().add_operation(self.src_rank, tb, op)
 
+    def broadcast_packets(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
+        """Broadcast packet-formatted data from source chunk to all ranks in the switch channel.
+
+        Packet variant of :meth:`broadcast`. Emits a ``gstorepkt`` (MULTI_STORE_PKT)
+        operation that multicasts LL-protocol packets (data + flag) from the source
+        chunk to the specified buffer region across all ranks in the rank group, with
+        no explicit barrier required (the packet flag provides synchronization).
+
+        Args:
+            rank (int): The rank that will execute this broadcast operation.
+            src_chunk (Chunk): The source chunk containing packet data to broadcast.
+            buffer_offset (int): The offset in the destination buffer where data will be stored.
+            size (int): The size of data to broadcast.
+            tb (int): The thread block ID that will execute this operation.
+
+        Raises:
+            RuntimeError: If src_chunk rank is not in the rank group, if chunk size
+                doesn't match the required size, or if buffer size is insufficient.
+
+        Example:
+            >>> channel.broadcast_packets(rank=0, src_chunk=chunk, buffer_offset=0, size=1, tb=0)
+        """
+        self.src_rank = rank
+        if src_chunk.rank not in self.rank_group.ranks:
+            raise RuntimeError(
+                f"Destination chunk rank {src_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
+            )
+        if src_chunk.size != size:
+            raise RuntimeError(f"Destination chunk size {src_chunk.size} does not match the required size {size}.")
+
+        for rank in self.rank_group.ranks:
+            if self.buffer_type == BufferType.scratch:
+                buffer_size = get_program().gpus[rank].scratch_chunks
+            else:
+                buffer_size = get_program().buffers[rank][self.buffer_type].size
+
+            if buffer_size < buffer_offset + size:
+                raise RuntimeError(
+                    f"Buffer size {buffer_size} is smaller than required size {buffer_offset + size} for rank {rank}."
+                )
+
+        tb_channel_ids = get_program().setup_channel(tb, self)
+        op = GroupStorePacket(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
+        get_program().add_operation(self.src_rank, tb, op)
+
     class SwitchChannelRankView:
         """A rank-specific view of a SwitchChannel for performing operations.
 
@@ -1022,3 +1067,23 @@ class SwitchChannel:
                 >>> rank_view.broadcast(src_chunk=chunk, buffer_offset=0, size=1, tb=0)
             """
             return self._channel.broadcast(self._rank, src_chunk, buffer_offset, size, tb)
+
+        def broadcast_packets(self, src_chunk: Chunk, buffer_offset, size, tb):
+            """Perform a packet broadcast operation from this rank's perspective.
+
+            Convenience method that calls the underlying channel's broadcast_packets
+            method with this view's rank automatically provided.
+
+            Args:
+                src_chunk (Chunk): The source chunk containing packet data to broadcast.
+                buffer_offset (int): The offset in the destination buffer where data will be stored.
+                size (int): The size of data to broadcast.
+                tb (int): The thread block ID that will execute this operation.
+
+            Returns:
+                The result of the underlying channel's broadcast_packets operation.
+
+            Example:
+                >>> rank_view.broadcast_packets(src_chunk=chunk, buffer_offset=0, size=1, tb=0)
+            """
+            return self._channel.broadcast_packets(self._rank, src_chunk, buffer_offset, size, tb)
