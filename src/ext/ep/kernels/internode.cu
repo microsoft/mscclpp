@@ -635,8 +635,11 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
   constexpr int kNumThreads = 512;
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
-  // Get clean meta
-  auto rdma_clean_meta = get_rdma_clean_meta(hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
+  // Get clean meta. inc5: under MSCCLPP_EP_DIRECT the rdma ring slot excludes
+  // hidden (kEpDirect), so the clean region must match the SMALL slot the kernel
+  // uses, else the cleaned head/tail region != the one the kernel reads.
+  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
+  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
                                              num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
@@ -1751,8 +1754,9 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
   const int num_threads = std::max(128, 32 * num_channels);
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
-  // Get clean meta
-  auto rdma_clean_meta = get_rdma_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
+  // Get clean meta. inc5: match the SMALL rdma slot under MSCCLPP_EP_DIRECT.
+  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
+  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                              num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
