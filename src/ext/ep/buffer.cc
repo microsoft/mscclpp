@@ -262,6 +262,10 @@ Buffer::~Buffer() noexcept(false) {
     CUDA_CHECK(cudaFree(recv_pool_global_ptrs_gpu));
     recv_pool_global_ptrs_gpu = nullptr;
   }
+  if (ep_combine_recv_idx_gpu != nullptr) {
+    CUDA_CHECK(cudaFree(ep_combine_recv_idx_gpu));
+    ep_combine_recv_idx_gpu = nullptr;
+  }
 #endif
 
   // Free NVSHMEM
@@ -840,6 +844,12 @@ void Buffer::sync(const std::vector<int>& device_ids,
             printf("\n");
             fflush(stdout);
           }
+          // inc5 combine-direct (Stage 1): allocate the per-(token, dst global
+          // rank) gather map once, sized for the worst-case source token count.
+          // The dispatch sender fills it; combine gathers from it.
+          if (ep_combine_recv_idx_gpu == nullptr)
+            CUDA_CHECK(cudaMalloc(&ep_combine_recv_idx_gpu,
+                                  sizeof(int) * static_cast<size_t>(Config::kEpRecvPoolMaxTokens) * num_ranks));
         }
       }
 
@@ -1555,7 +1565,7 @@ Buffer::internode_dispatch(
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
                       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), nvls_head_mc,
                       nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_ptrs,
-                      ep_recv_pool_global_ptrs);
+                      ep_recv_pool_global_ptrs, ep_recv_pool_global_ptrs ? ep_combine_recv_idx_gpu : nullptr);
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1695,7 +1705,8 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
       config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels, low_latency_mode,
       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), combine_nvls_head_mc,
-      combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu);
+      combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu,
+      recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);
 
   std::optional<EventHandle> event;
   if (async) {

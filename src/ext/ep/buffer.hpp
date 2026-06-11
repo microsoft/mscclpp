@@ -60,6 +60,11 @@ struct Buffer {
   std::vector<void*> recv_pool_global_ptrs_;
   void** recv_pool_global_ptrs_gpu = nullptr;
   std::vector<mscclpp::RegisteredMemory> recv_pool_global_remote_mems_;
+  // Increment 5 combine-direct (Stage 1): per-(source token, dst global rank)
+  // recv-pool slot index written by the dispatch sender (= ep_my_idx). Lets the
+  // combine path gather each token's contributions straight from the peer pools.
+  // Allocated [kEpRecvPoolMaxTokens * num_ranks] ints under MSCCLPP_EP_DIRECT.
+  int* ep_combine_recv_idx_gpu = nullptr;
 
   // NVSHMEM Buffer
   int64_t num_rdma_bytes;
