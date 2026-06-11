@@ -106,7 +106,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   // below to compute MR-relative offsets for handle.put().
   void* const rdma_buffer_ptr_base = rdma_buffer_ptr;
   auto hidden_bytes = hidden_int4 * sizeof(int4);
-  auto num_bytes_per_rdma_token = get_num_bytes_per_rdma_token(hidden_int4, num_scales, num_topk, num_topk);
+  // inc5: under kEpDirect the rdma ring carries NO hidden (it goes direct to the
+  // dest pool), so the per-token slot excludes hidden -> the coordinator RDMAs
+  // only metadata. hidden_bytes (above) stays full for the pool/source copies.
+  const int ring_hidden_int4 = kEpDirect ? 0 : hidden_int4;
+  const auto ring_hidden_bytes = static_cast<size_t>(ring_hidden_int4) * sizeof(int4);
+  auto num_bytes_per_rdma_token = get_num_bytes_per_rdma_token(ring_hidden_int4, num_scales, num_topk, num_topk);
   auto rdma_channel_data =
       SymBuffer<int8_t>(rdma_buffer_ptr, num_max_rdma_chunked_recv_tokens * num_bytes_per_rdma_token, kNumRDMARanks,
                         channel_id, num_channels);
@@ -372,6 +377,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // hidden region is left unwritten (the forwarder skips it under kEpDirect).
       // Else (inc4a): broadcast hidden into the ring slots for forwarder transpose.
       if (kEpDirect) {
+        // inc5: gather every destination GPU's recv_x slot for this token, then
+        // read `x` from source ONCE and broadcast it to all of them (mirrors the
+        // inc4a st_broadcast pattern). A naive per-destination UNROLLED_WARP_COPY
+        // re-reads `x` from HBM for every target GPU, wasting source bandwidth.
+        int4* ep_dst_pools[kNumTopkRDMARanks * NUM_MAX_NVL_PEERS];
+        int ep_num_pools = 0;
 #pragma unroll
         for (int j = 0; j < num_topk_ranks; ++j) {
           const int node = topk_ranks[j];
@@ -382,13 +393,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             if (not bvals_j[g]) continue;
             const int dg = node * NUM_MAX_NVL_PEERS + g;
             const int recv_idx = __shfl_sync(0xffffffff, ep_my_idx[g], node);
-            int4* dst_pool =
-                reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_pool_header_bytes +
-                                        static_cast<int64_t>(recv_idx) * hidden_bytes);
-            UNROLLED_WARP_COPY(5, lane_id, hidden_int4, dst_pool, x + token_idx * hidden_int4, ld_nc_global,
-                               st_na_global);
+            ep_dst_pools[ep_num_pools++] = reinterpret_cast<int4*>(
+                reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_pool_header_bytes +
+                static_cast<int64_t>(recv_idx) * hidden_bytes);
           }
         }
+        auto st_pool_broadcast = [=](const int key, const int4& value) {
+#pragma unroll
+          for (int j = 0; j < ep_num_pools; ++j) st_na_global(ep_dst_pools[j] + key, value);
+        };
+        UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_pool_broadcast);
       } else {
         auto st_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
@@ -399,7 +413,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       }
 #pragma unroll
       for (int i = 0; i < num_topk_ranks; ++i)
-        dst_send_buffers[i] = reinterpret_cast<int4*>(dst_send_buffers[i]) + hidden_int4;
+        dst_send_buffers[i] = reinterpret_cast<int4*>(dst_send_buffers[i]) + ring_hidden_int4;
 
       // Copy source metadata into symmetric send buffer
       if (lane_id < num_topk_ranks) st_na_global(reinterpret_cast<SourceMeta*>(dst_send_buffers[lane_id]), src_meta);
@@ -781,7 +795,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       for (int i = src_rdma_head, num_tokens_sent = 0; i < src_rdma_tail; ++i) {
         auto rdma_slot_idx = i % num_max_rdma_chunked_recv_tokens;
         void* shifted = rdma_channel_data.recv_buffer(src_rdma_rank) + rdma_slot_idx * num_bytes_per_rdma_token;
-        auto src_meta = ld_nc_global(reinterpret_cast<SourceMeta*>(reinterpret_cast<int8_t*>(shifted) + hidden_bytes));
+        auto src_meta = ld_nc_global(reinterpret_cast<SourceMeta*>(reinterpret_cast<int8_t*>(shifted) + ring_hidden_bytes));
         lane_id == src_rdma_rank ? (num_tokens_to_recv_from_rdma -= 1) : 0;
         bool is_in_dst_nvl_rank = src_meta.is_token_in_nvl_rank(dst_nvl_rank);
         if (lane_id == src_rdma_rank) {
@@ -803,7 +817,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
                                reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
           }
-          shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
+          shifted = reinterpret_cast<int4*>(shifted) + ring_hidden_int4;
 
           // Source meta
           if (lane_id == 0 and not kCachedMode) st_na_global(recv_src_meta + recv_token_idx, src_meta);
@@ -909,7 +923,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           UNROLLED_WARP_COPY(28, lane_id, hidden_int4, nvl_channel_x.buffer() + dst_slot_idx * hidden_int4,
                              reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
         }
-        shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
+        shifted = reinterpret_cast<int4*>(shifted) + ring_hidden_int4;
 
         // Copy source meta
         if (lane_id == 0) st_na_global(nvl_channel_src_meta.buffer() + dst_slot_idx, src_meta);
