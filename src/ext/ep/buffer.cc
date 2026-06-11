@@ -258,6 +258,10 @@ Buffer::~Buffer() noexcept(false) {
     CUDA_CHECK(cudaFree(recv_pool_ptrs_gpu));
     recv_pool_ptrs_gpu = nullptr;
   }
+  if (recv_pool_global_ptrs_gpu != nullptr) {
+    CUDA_CHECK(cudaFree(recv_pool_global_ptrs_gpu));
+    recv_pool_global_ptrs_gpu = nullptr;
+  }
 #endif
 
   // Free NVSHMEM
@@ -794,6 +798,49 @@ void Buffer::sync(const std::vector<int>& device_ids,
           printf("  peer_rdma_bases[%d] = %p\n", r, peer_rdma_bases[r]);
         }
         fflush(stdout);
+      }
+
+      // Increment 5 (inc5 flat-domain dispatch): when MSCCLPP_EP_DIRECT is set,
+      // exchange the cuMem-fabric recv-output pool base to ALL ranks (indexed by
+      // global rank), mirroring the peer_rdma_bases exchange. Lets the RDMA sender
+      // write each token directly into the destination GPU's recv pool over
+      // fabric-VA, removing the rail-aligned rdma_channel bounce + forwarder
+      // transpose. Same cuMem FABRIC handle as inc4a's pool. Env-gated so the
+      // inc4a baseline (MSCCLPP_EP_DIRECT unset) is byte-for-byte unchanged.
+      {
+        const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
+        const bool ep_direct = (e_direct != nullptr && std::atoi(e_direct) != 0);
+        if (ep_direct && recv_pool_local_ptr_ != nullptr) {
+          constexpr int kRecvPoolGlobalTag = 9;
+          const size_t ep_pool_bytes_g = Config::recv_pool_bytes_static(num_ranks);
+          auto pool_mem_g = communicator->registerMemory(recv_pool_local_ptr_, ep_pool_bytes_g, all_transport);
+          for (int r = 0; r < num_ranks; ++r) {
+            if (r == rank) continue;
+            communicator->sendMemory(pool_mem_g, r, kRecvPoolGlobalTag);
+          }
+          std::vector<std::shared_future<mscclpp::RegisteredMemory>> gpool_futs(num_ranks);
+          for (int r = 0; r < num_ranks; ++r) {
+            if (r == rank) continue;
+            gpool_futs[r] = communicator->recvMemory(r, kRecvPoolGlobalTag);
+          }
+          recv_pool_global_ptrs_.assign(num_ranks, nullptr);
+          recv_pool_global_ptrs_[rank] = recv_pool_local_ptr_;
+          recv_pool_global_remote_mems_.resize(num_ranks);
+          for (int r = 0; r < num_ranks; ++r) {
+            if (r == rank) continue;
+            recv_pool_global_remote_mems_[r] = gpool_futs[r].get();
+            recv_pool_global_ptrs_[r] = recv_pool_global_remote_mems_[r].data();
+          }
+          CUDA_CHECK(cudaMalloc(&recv_pool_global_ptrs_gpu, sizeof(void*) * num_ranks));
+          CUDA_CHECK(cudaMemcpy(recv_pool_global_ptrs_gpu, recv_pool_global_ptrs_.data(),
+                                sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+          if (rank == 0) {
+            printf("[mscclpp_ep] inc5 domain-wide recv-pool bases (rank 0):");
+            for (int r = 0; r < num_ranks; ++r) printf(" [%d]=%p", r, recv_pool_global_ptrs_[r]);
+            printf("\n");
+            fflush(stdout);
+          }
+        }
       }
 
       if (low_latency_mode) {
@@ -1426,6 +1473,7 @@ Buffer::internode_dispatch(
 
   // Allocate new tensors
   void** ep_recv_pool_ptrs = nullptr;  // non-null selects the increment-4 VMM direct-write path
+  void** ep_recv_pool_global_ptrs = nullptr;  // inc5: domain-wide pool bases (sender direct-write)
 #ifdef EP_DISPATCH_NCCLEP
   // Increment 4 (VMM pool): when num_recv_tokens fits the fixed pool, back recv_x
   // by the local VMM recv-output pool so the cross-GPU forwarder can write hidden
@@ -1437,6 +1485,7 @@ Buffer::internode_dispatch(
   torch::Tensor recv_x;
   if (ep_use_direct) {
     ep_recv_pool_ptrs = recv_pool_ptrs_gpu;
+    ep_recv_pool_global_ptrs = recv_pool_global_ptrs_gpu;  // inc5: null unless MSCCLPP_EP_DIRECT exchanged
     void* pool_base = recv_pool_local_ptr_;
     CUDA_CHECK(cudaMemcpyAsync(pool_base, recv_gbl_rank_prefix_sum.data_ptr<int>(),
                                static_cast<size_t>(num_ranks) * sizeof(int), cudaMemcpyDeviceToDevice, comm_stream));
@@ -1505,7 +1554,8 @@ Buffer::internode_dispatch(
                       buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
                       rank, num_ranks, cached_mode, comm_stream, num_channels, low_latency_mode,
                       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), nvls_head_mc,
-                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_ptrs);
+                      nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_ptrs,
+                      ep_recv_pool_global_ptrs);
 
   // Wait streams
   std::optional<EventHandle> event;

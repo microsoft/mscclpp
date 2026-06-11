@@ -1519,7 +1519,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #ifdef EP_DISPATCH_NCCLEP
 #include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
 #define EP_DISPATCH_KERNEL dispatch_ncclep
-#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs
+#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs, recv_pool_global_ptrs
 #else
 #define EP_DISPATCH_KERNEL dispatch
 #define EP_DISPATCH_EXTRA_ARGS
@@ -1537,8 +1537,22 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_ptrs) {
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_ptrs,
+              void* const* recv_pool_global_ptrs) {
   constexpr int kNumDispatchRDMASenderWarps = 6;
+
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 5 (inc5): upload MSCCLPP_EP_DIRECT -> __constant__ kEpDirect once.
+  {
+    static bool s_done_direct = false;
+    if (!s_done_direct) {
+      const char* e = std::getenv("MSCCLPP_EP_DIRECT");
+      int v = (e && std::atoi(e) != 0) ? 1 : 0;
+      cudaMemcpyToSymbol(kEpDirect, &v, sizeof(int));
+      s_done_direct = true;
+    }
+  }
+#endif
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
   {                                                                                                                    \
