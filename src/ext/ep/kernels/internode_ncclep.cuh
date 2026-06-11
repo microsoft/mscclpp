@@ -28,6 +28,13 @@
 #define EP_NCCLEP_TMA 0
 #endif
 
+// Increment 5 (inc5): runtime gate for the SENDER direct-write path. When set
+// (env MSCCLPP_EP_DIRECT=1), kRDMASender writes each token's hidden straight to
+// the destination GPU's domain-wide recv pool (recv_pool_global_ptrs[dst_global]),
+// skipping the rdma_channel hidden bounce + forwarder hidden transpose; metadata
+// (scales/topk/meta) still flows the legacy ring->forwarder->receiver path.
+__constant__ int kEpDirect;
+
 template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDispatchRDMASenderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
 __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32), 1)
@@ -51,7 +58,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              // recv-output pool. recv_pool_ptrs[peer] points at peer's pool header; non-null
              // enables the cross-GPU forwarder direct-write of hidden into the destination's
              // final recv_x (TMA-eligible peer VA); nullptr = legacy receiver-drain path.
-             void* const* recv_pool_ptrs) {
+             void* const* recv_pool_ptrs,
+             // Increment 5 (inc5): domain-wide recv-pool bases indexed by GLOBAL rank
+             // (all num_ranks). Non-null + kEpDirect => sender writes hidden direct here.
+             void* const* recv_pool_global_ptrs) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -172,6 +182,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   __shared__ volatile int rdma_send_next_token_idx;
   __shared__ volatile int rdma_send_channel_tail[kNumRDMARanks];
   __shared__ volatile int rdma_send_channel_next_tail[kNumRDMARanks];
+  // inc5: per-dst-GPU (global rank) final recv_x base index + running count, used
+  // by kRDMASender under kEpDirect to write hidden straight to the dest pool.
+  __shared__ int ep_base[kNumRDMARanks * NUM_MAX_NVL_PEERS];
+  __shared__ int ep_count[kNumRDMARanks * NUM_MAX_NVL_PEERS];
   auto sync_rdma_sender_smem = []() { asm volatile("bar.sync 0, %0;" ::"r"((kNumDispatchRDMASenderWarps + 1) * 32)); };
 
   // Forward warp synchronization
@@ -255,6 +269,22 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       }
       __syncwarp();
     }
+
+    // inc5: precompute per-dst-GPU base index into the destination's recv_x pool.
+    // base[dg] = dst's recv_gbl_rank_prefix_sum[rank-1] (peer-read from dg's pool
+    // header) + this channel's start offset for (rank -> dg). Running count is added
+    // per token in the seq-locked section below. No extra barrier: covered by the
+    // sync_rdma_sender_smem() right after.
+    const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * 4 + 127) / 128) * 128;
+    if (kEpDirect and recv_pool_global_ptrs != nullptr) {
+      for (int dg = warp_id * 32 + lane_id; dg < num_ranks; dg += kNumDispatchRDMASenderWarps * 32) {
+        const int* dst_prefix = reinterpret_cast<const int*>(recv_pool_global_ptrs[dg]);
+        int gbl_base = (rank > 0) ? static_cast<int>(ld_volatile_global(dst_prefix + (rank - 1))) : 0;
+        int ch_start = (channel_id == 0) ? 0 : gbl_channel_prefix_matrix[dg * num_channels + channel_id - 1];
+        ep_base[dg] = gbl_base + ch_start;
+        ep_count[dg] = 0;
+      }
+    }
     sync_rdma_sender_smem();
 
     // Iterate over tokens and copy into buffer
@@ -286,6 +316,21 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         }
       }
       __syncwarp();
+
+      // inc5: compute this token's final recv_x index for each destination GPU,
+      // inside the seq-locked region so the running count matches the receiver's
+      // drain order. lane = source NODE; one writer per ep_count[dg].
+      int ep_my_idx[NUM_MAX_NVL_PEERS];
+      if (kEpDirect and lane_id < kNumRDMARanks and rdma_tail_idx >= 0) {
+        const bool* bvals = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
+#pragma unroll
+        for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g)
+          if (bvals[g]) {
+            const int dg = lane_id * NUM_MAX_NVL_PEERS + g;
+            ep_my_idx[g] = ep_base[dg] + ep_count[dg];
+            ep_count[dg] += 1;
+          }
+      }
 
       // Store RDMA head for combine
       if (lane_id < kNumRDMARanks and not kCachedMode)
@@ -322,13 +367,36 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         }
       EP_DEVICE_ASSERT(num_topk_ranks <= kNumTopkRDMARanks);
 
-      // Copy `x` into symmetric send buffer
-      auto st_broadcast = [=](const int key, const int4& value) {
+      // Copy `x` into the send path. inc5 (kEpDirect): write hidden DIRECTLY to
+      // each destination GPU's recv_x pool at its final index; the per-NODE ring
+      // hidden region is left unwritten (the forwarder skips it under kEpDirect).
+      // Else (inc4a): broadcast hidden into the ring slots for forwarder transpose.
+      if (kEpDirect) {
 #pragma unroll
-        for (int j = 0; j < num_topk_ranks; ++j)
-          st_na_global(reinterpret_cast<int4*>(dst_send_buffers[j]) + key, value);
-      };
-      UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_broadcast);
+        for (int j = 0; j < num_topk_ranks; ++j) {
+          const int node = topk_ranks[j];
+          NvlPackT bools_j = broadcast(is_token_in_rank_uint64, node);
+          const bool* bvals_j = reinterpret_cast<const bool*>(&bools_j);
+#pragma unroll
+          for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g) {
+            if (not bvals_j[g]) continue;
+            const int dg = node * NUM_MAX_NVL_PEERS + g;
+            const int recv_idx = __shfl_sync(0xffffffff, ep_my_idx[g], node);
+            int4* dst_pool =
+                reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_pool_header_bytes +
+                                        static_cast<int64_t>(recv_idx) * hidden_bytes);
+            UNROLLED_WARP_COPY(5, lane_id, hidden_int4, dst_pool, x + token_idx * hidden_int4, ld_nc_global,
+                               st_na_global);
+          }
+        }
+      } else {
+        auto st_broadcast = [=](const int key, const int4& value) {
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j)
+            st_na_global(reinterpret_cast<int4*>(dst_send_buffers[j]) + key, value);
+        };
+        UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_broadcast);
+      }
 #pragma unroll
       for (int i = 0; i < num_topk_ranks; ++i)
         dst_send_buffers[i] = reinterpret_cast<int4*>(dst_send_buffers[i]) + hidden_int4;
@@ -372,6 +440,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Release sequential lock
     lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
+
+    // inc5: flush the direct cross-node hidden writes to the fabric so the
+    // destination ranks observe a complete recv_x after the dispatch barrier.
+    if (kEpDirect) __threadfence_system();
   } else if (warp_role == WarpRole::kRDMASenderCoordinator) {
     // NOTES: in case of splitting the issued put at the end of the buffer
     EP_DEVICE_ASSERT(num_max_rdma_chunked_recv_tokens % num_max_rdma_chunked_send_tokens == 0);
@@ -725,9 +797,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           int recv_token_idx = __shfl_sync(0xffffffff, direct_recv_idx, src_rdma_rank);
           if (lane_id == src_rdma_rank) direct_recv_idx += 1;
 
-          // Hidden
-          UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
-                             reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
+          // Hidden (inc5: skipped when kEpDirect — the sender wrote it directly
+          // to the dest pool; here we only advance past the ring hidden region).
+          if (not kEpDirect) {
+            UNROLLED_WARP_COPY(28, lane_id, hidden_int4, recv_x + recv_token_idx * hidden_int4,
+                               reinterpret_cast<int4*>(shifted), ld_nc_global, st_na_global);
+          }
           shifted = reinterpret_cast<int4*>(shifted) + hidden_int4;
 
           // Source meta
@@ -758,9 +833,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         // receiver drains; under xnode_direct the hidden goes straight to the pool)
         int dst_slot_idx = (cached_nvl_channel_tail++) % num_max_nvl_chunked_recv_tokens;
 
-        // Hidden copy: increment 3 cross-GPU direct-write to the destination's
+        // Hidden copy: inc5 (kEpDirect) skips it entirely (sender wrote the dest
+        // pool directly); else increment 3 cross-GPU direct-write to the dest's
         // recv_x pool at the final index; else legacy nvl_channel staging.
-        if (xnode_direct) {
+        if (kEpDirect) {
+          // inc5: hidden already in the dest pool (sender direct-write); skip.
+        } else if (xnode_direct) {
           int recv_token_idx = __shfl_sync(0xffffffff, direct_recv_idx, src_rdma_rank);
           if (lane_id == src_rdma_rank) direct_recv_idx += 1;
 #if EP_NCCLEP_TMA_LOCALDST

@@ -53,6 +53,13 @@ struct Buffer {
   // Keep imported peer RegisteredMemory alive so the cuMem mapping persists for
   // the Buffer's lifetime (recv_pool_ptrs_[*] alias their .data()).
   std::vector<mscclpp::RegisteredMemory> recv_pool_remote_mems_;
+  // Increment 5 (inc5 flat-domain dispatch): domain-wide recv-pool bases indexed
+  // by GLOBAL rank (all num_ranks across the NVLink domain), so the RDMA sender
+  // can write each token directly into the destination GPU's recv pool. Populated
+  // only when MSCCLPP_EP_DIRECT is set. recv_pool_global_ptrs_[rank]==local pool.
+  std::vector<void*> recv_pool_global_ptrs_;
+  void** recv_pool_global_ptrs_gpu = nullptr;
+  std::vector<mscclpp::RegisteredMemory> recv_pool_global_remote_mems_;
 
   // NVSHMEM Buffer
   int64_t num_rdma_bytes;
