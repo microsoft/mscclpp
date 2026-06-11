@@ -1522,7 +1522,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #ifdef EP_DISPATCH_NCCLEP
 #include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
 #define EP_DISPATCH_KERNEL dispatch_ncclep
-#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs, recv_pool_global_ptrs
+#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs, recv_pool_global_ptrs, ep_combine_recv_idx
 #else
 #define EP_DISPATCH_KERNEL dispatch
 #define EP_DISPATCH_EXTRA_ARGS
@@ -1541,7 +1541,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
               void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_ptrs,
-              void* const* recv_pool_global_ptrs) {
+              void* const* recv_pool_global_ptrs, int* ep_combine_recv_idx) {
   constexpr int kNumDispatchRDMASenderWarps = 6;
 
 #ifdef EP_DISPATCH_NCCLEP
@@ -1862,7 +1862,11 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
             // Phase 4 fabric-IPC peer base pointers (nullptr → fall back to handle.put for cross-node data).
-            void* const* peer_rdma_bases) {
+            void* const* peer_rdma_bases,
+            // Increment 5 combine-direct: domain-wide recv-pool bases (by global rank) +
+            // the dispatch gather map. Non-null + kEpDirect => combine gathers each token's
+            // contributions straight from the peer pools and reduces locally (no 2-hop).
+            void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
   enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
   const auto sm_id = static_cast<int>(blockIdx.x);
@@ -1879,6 +1883,39 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
   if (rank == 0 && thread_id == 0 && channel_id == 0) {
     (void)0;
   }
+#ifdef EP_DISPATCH_NCCLEP
+  // inc5 combine-direct: under MSCCLPP_EP_DIRECT, gather each combined token's
+  // contributions DIRECTLY from the peer recv pools (recv_pool_global_ptrs[r] +
+  // header + recv_idx*hidden) and reduce locally, skipping nvl_channel +
+  // forwarder + rdma_channel. recv_idx is the dispatch gather map
+  // (ep_combine_recv_idx[t*num_ranks+r]); this mirrors dispatch's sender-direct
+  // write in reverse. Assumes the combine input lives in the recv pool (DeepEP
+  // contract; the flat test passes recv_x).
+  if (kEpDirect and recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr) {
+    constexpr int kEpNumRanks = kNumRDMARanks * NUM_MAX_NVL_PEERS;
+    const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+    const int warp_id_flat = thread_id / 32;
+    const int num_warps_per_block = static_cast<int>(blockDim.x) / 32;
+    const int global_warp = sm_id * num_warps_per_block + warp_id_flat;
+    const int total_warps = static_cast<int>(gridDim.x) * num_warps_per_block;
+    auto recv_fn = [&](int r, int slot, int hi) -> int4 {
+      return ld_nc_global(reinterpret_cast<const int4*>(reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[r]) +
+                                                        ep_pool_header_bytes) +
+                          static_cast<int64_t>(slot) * hidden_int4 + hi);
+    };
+    auto recv_tw_fn = [&](int, int, int) -> float { return 0.0f; };
+    for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+      const bool is_in =
+          (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
+      const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
+      combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
+                                             combined_x + static_cast<int64_t>(t) * hidden_int4,
+                                             combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
+                                             recv_fn, recv_tw_fn);
+    }
+    return;
+  }
+#endif
   auto role_meta = [=]() -> std::pair<WarpRole, int> {
     auto warp_id = thread_id / 32;
     if (not is_rdma_receiver_sm) {
@@ -2445,7 +2482,8 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
+             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_global_ptrs,
+             const int* ep_combine_recv_idx) {
   constexpr int kNumCombineForwarderWarps = 16;
 
 #define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -2459,7 +2497,7 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
                   rdma_buffer_ptr, num_max_rdma_chunked_send_tokens, num_max_rdma_chunked_recv_tokens, buffer_ptrs,   \
                   num_max_nvl_chunked_send_tokens, num_max_nvl_chunked_recv_tokens, rank, num_ranks,                  \
                   port_channel_handles, memory_channel_handles, nvls_head_mc, nvls_head_dev, nvls_tail_mc,            \
-                  nvls_tail_dev, peer_rdma_bases);                                                                    \
+                  nvls_tail_dev, peer_rdma_bases, recv_pool_global_ptrs, ep_combine_recv_idx);                        \
   }                                                                                                                   \
   break
 

@@ -61,7 +61,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
              void* const* recv_pool_ptrs,
              // Increment 5 (inc5): domain-wide recv-pool bases indexed by GLOBAL rank
              // (all num_ranks). Non-null + kEpDirect => sender writes hidden direct here.
-             void* const* recv_pool_global_ptrs) {
+             void* const* recv_pool_global_ptrs,
+             // Increment 5 combine-direct (Stage 1): [num_tokens * num_ranks] gather map;
+             // sender writes recv_idx per (token, dst global rank) for combine to gather.
+             int* ep_combine_recv_idx) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -334,6 +337,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const int dg = lane_id * NUM_MAX_NVL_PEERS + g;
             ep_my_idx[g] = ep_base[dg] + ep_count[dg];
             ep_count[dg] += 1;
+            // inc5 combine-direct (Stage 1): persist this token's recv-pool slot in
+            // dst GPU dg so combine can gather it directly. Only on the uncached
+            // dispatch (matches the send_*_head breadcrumb tensors).
+            if (ep_combine_recv_idx != nullptr and not kCachedMode)
+              ep_combine_recv_idx[static_cast<int64_t>(token_idx) * num_ranks + dg] = ep_my_idx[g];
           }
       }
 
