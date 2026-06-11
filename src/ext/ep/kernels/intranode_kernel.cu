@@ -173,7 +173,7 @@ __global__ void __launch_bounds__(kNumThreads, 1)
              int* recv_channel_offset, int* send_head, const int4* x, const float* x_scales, const int64_t* topk_idx,
              const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
              int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-             int num_max_send_tokens, int num_recv_buffer_tokens) {
+             int num_max_send_tokens, int num_recv_buffer_tokens, void** recv_pool_ptrs, int64_t recv_pool_header_bytes) {
   const auto num_sms = static_cast<int>(gridDim.x), sm_id = static_cast<int>(blockIdx.x);
   const auto thread_id = static_cast<int>(threadIdx.x);
   const bool is_sender = sm_id % 2 == 0;
@@ -252,6 +252,24 @@ __global__ void __launch_bounds__(kNumThreads, 1)
     }
     __syncwarp();
 
+    // Sender-direct (MSCCLPP_EP_INTRA_DIRECT): precompute this (dst, channel)'s base
+    // index into the destination's peer-mapped recv-output pool, so the sender can
+    // write hidden straight to recv_x's final slot (no ring slot, no receiver drain).
+    // Mirrors the receiver's `total_offset` = rank_prefix_matrix[(src-1)*R+dst] +
+    // channel_prefix_matrix[dst*num_channels + ch-1].
+    int64_t direct_base = 0;
+    int4* direct_dst_pool = nullptr;
+    if (recv_pool_ptrs != nullptr) {
+      const int* dst_rank_prefix = reinterpret_cast<const int*>(buffer_ptrs[responsible_rank]);
+      int rank_off = rank > 0 ? dst_rank_prefix[(rank - 1) * kNumRanks + responsible_rank] : 0;
+      int ch_start = responsible_channel > 0
+                         ? channel_prefix_matrix[responsible_rank * num_channels + responsible_channel - 1]
+                         : 0;
+      direct_base = static_cast<int64_t>(rank_off + ch_start);
+      direct_dst_pool =
+          reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]) + recv_pool_header_bytes);
+    }
+
     // Get tasks
     int token_start_idx, token_end_idx;
     get_channel_task_range(num_tokens, num_channels, responsible_channel, token_start_idx, token_end_idx);
@@ -290,12 +308,19 @@ __global__ void __launch_bounds__(kNumThreads, 1)
         }
 
         // Get an empty slot
+        const int abs_pos = cached_channel_tail_idx;  // running position within (src, dst, channel) = recv_x slot
         int dst_slot_idx = (cached_channel_tail_idx++) % num_recv_buffer_tokens;
         if (cached_channel_tail_idx % num_send_warps_per_rank == send_warp_id_in_rank) {
-          // Copy data
-          auto shifted_channel_x_buffers = channel_x_buffers.buffer() + dst_slot_idx * hidden_int4;
+          // Copy data. Sender-direct writes hidden straight to recv_x's final slot in the
+          // destination's pool; otherwise the 2-hop ring slot (receiver drains it later).
           auto shifted_x = x + token_idx * hidden_int4;
-          UNROLLED_WARP_COPY(5, send_lane_id, hidden_int4, shifted_channel_x_buffers, shifted_x, __ldg, st_na_global);
+          if (recv_pool_ptrs != nullptr) {
+            auto shifted_dst = direct_dst_pool + (direct_base + abs_pos) * hidden_int4;
+            UNROLLED_WARP_COPY(5, send_lane_id, hidden_int4, shifted_dst, shifted_x, __ldg, st_na_global);
+          } else {
+            auto shifted_channel_x_buffers = channel_x_buffers.buffer() + dst_slot_idx * hidden_int4;
+            UNROLLED_WARP_COPY(5, send_lane_id, hidden_int4, shifted_channel_x_buffers, shifted_x, __ldg, st_na_global);
+          }
 
           // Copy source index
           if (send_lane_id == 0) channel_src_idx_buffers[dst_slot_idx] = static_cast<int>(token_idx);
@@ -394,13 +419,15 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 
       // Copy data
       int num_recv_tokens = cached_channel_tail_idx - cached_channel_head_idx;
-      for (int chunk_idx = recv_warp_id_in_rank; chunk_idx < num_recv_tokens; chunk_idx += num_recv_warps_per_rank) {
-        int token_idx_in_buffer = (cached_channel_head_idx + chunk_idx) % num_recv_buffer_tokens;
-        auto shifted_buffer_x_int4 = channel_x_buffers.buffer() + token_idx_in_buffer * hidden_int4;
-        auto shifted_recv_x_int4 = recv_x + static_cast<int64_t>(total_offset + chunk_idx) * hidden_int4;
-        UNROLLED_WARP_COPY(5, recv_lane_id, hidden_int4, shifted_recv_x_int4, shifted_buffer_x_int4, ld_nc_global,
-                           st_na_global);
-      }
+      // Sender-direct: hidden was already written straight to recv_x by the sender; skip the drain.
+      if (recv_pool_ptrs == nullptr)
+        for (int chunk_idx = recv_warp_id_in_rank; chunk_idx < num_recv_tokens; chunk_idx += num_recv_warps_per_rank) {
+          int token_idx_in_buffer = (cached_channel_head_idx + chunk_idx) % num_recv_buffer_tokens;
+          auto shifted_buffer_x_int4 = channel_x_buffers.buffer() + token_idx_in_buffer * hidden_int4;
+          auto shifted_recv_x_int4 = recv_x + static_cast<int64_t>(total_offset + chunk_idx) * hidden_int4;
+          UNROLLED_WARP_COPY(5, recv_lane_id, hidden_int4, shifted_recv_x_int4, shifted_buffer_x_int4, ld_nc_global,
+                             st_na_global);
+        }
 
 // Copy `src_idx`
 #pragma unroll 4
@@ -446,14 +473,16 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
               int* recv_channel_offset, int* send_head, const void* x, const float* x_scales, const int64_t* topk_idx,
               const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
               int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-              int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens) {
+              int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens,
+              void** recv_pool_ptrs, int64_t recv_pool_header_bytes) {
   constexpr int kNumThreads = 512;
 
 #define DISPATCH_LAUNCH_CASE(ranks)                                                                                 \
   LAUNCH_KERNEL(&cfg, dispatch<ranks, kNumThreads>, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_src_idx,   \
                 recv_topk_idx, recv_topk_weights, recv_channel_offset, send_head, reinterpret_cast<const int4*>(x), \
                 x_scales, topk_idx, topk_weights, is_token_in_rank, channel_prefix_matrix, num_tokens, hidden_int4, \
-                num_topk, num_experts, num_scales, buffer_ptrs, rank, num_max_send_tokens, num_recv_buffer_tokens); \
+                num_topk, num_experts, num_scales, buffer_ptrs, rank, num_max_send_tokens, num_recv_buffer_tokens,  \
+                recv_pool_ptrs, recv_pool_header_bytes);                                                            \
   break
 
   // Even-numbered blocks for sending, odd-numbered blocks for receiving.

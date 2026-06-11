@@ -1092,8 +1092,28 @@ Buffer::intranode_dispatch(
         std::vector<int>(moe_recv_expert_counter, moe_recv_expert_counter + num_local_experts);
   }
 
+  // Sender-direct (MSCCLPP_EP_INTRA_DIRECT): make recv_x a zero-copy view of this rank's
+  // peer-mapped recv pool so the sender writes hidden straight to its final slot,
+  // eliminating the 2-hop ring + receiver hidden drain. Falls back to torch::empty.
+  void** ep_intra_recv_pool_ptrs = nullptr;
+  const size_t ep_intra_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
+  const char* e_intra_direct = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
+  const bool ep_intra_direct =
+      e_intra_direct != nullptr && std::atoi(e_intra_direct) != 0 && recv_pool_local_ptr_ != nullptr &&
+      recv_pool_ptrs_gpu != nullptr && num_recv_tokens <= Config::kEpRecvPoolMaxTokens &&
+      static_cast<int64_t>(num_recv_tokens) * hidden * static_cast<int64_t>(x.element_size()) <=
+          static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks)) -
+              static_cast<int64_t>(ep_intra_pool_header_bytes);
+
   // Allocate new tensors
-  auto recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
+  torch::Tensor recv_x;
+  if (ep_intra_direct) {
+    ep_intra_recv_pool_ptrs = recv_pool_ptrs_gpu;
+    void* recv_x_ptr = static_cast<uint8_t*>(recv_pool_local_ptr_) + ep_intra_pool_header_bytes;
+    recv_x = torch::from_blob(recv_x_ptr, {num_recv_tokens, hidden}, x.options());
+  } else {
+    recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
+  }
   auto recv_src_idx = torch::empty({num_recv_tokens}, dtype(torch::kInt32).device(torch::kCUDA));
   auto recv_topk_idx = std::optional<torch::Tensor>(), recv_topk_weights = std::optional<torch::Tensor>(),
        recv_x_scales = std::optional<torch::Tensor>();
@@ -1138,7 +1158,8 @@ Buffer::intranode_dispatch(
                       channel_prefix_matrix.data_ptr<int>(), num_tokens,
                       static_cast<int>(hidden * recv_x.element_size() / sizeof(int4)), num_topk, num_experts,
                       num_scales, buffer_ptrs_gpu, rank, num_ranks, comm_stream, config.num_sms,
-                      config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens);
+                      config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
+                      ep_intra_recv_pool_ptrs, static_cast<int64_t>(ep_intra_pool_header_bytes));
 
   // Wait streams
   std::optional<EventHandle> event;
