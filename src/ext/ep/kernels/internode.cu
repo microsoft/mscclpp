@@ -1754,9 +1754,14 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
   const int num_threads = std::max(128, 32 * num_channels);
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
-  // Get clean meta. inc5: match the SMALL rdma slot under MSCCLPP_EP_DIRECT.
+  // Get clean meta. inc5: only the DISPATCH ring is shrunk under
+  // MSCCLPP_EP_DIRECT (hidden goes direct to the pool); the COMBINE ring still
+  // carries hidden through the rdma channel, so its clean must stay full-slot.
+  // is_cached_dispatch distinguishes the two callers (true=cached dispatch,
+  // false=combine).
   const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
-  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
+  const int clean_hidden_int4 = (ep_direct && is_cached_dispatch) ? 0 : hidden_int4;
+  auto rdma_clean_meta = get_rdma_clean_meta(clean_hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                              num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
