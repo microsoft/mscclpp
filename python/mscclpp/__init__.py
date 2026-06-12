@@ -50,6 +50,8 @@ from ._mscclpp import (
     CppExecutionPlan as ExecutionPlan,
     CppPacketType as PacketType,
     CppRawGpuBuffer as RawGpuBuffer,
+    CppRawGpuBufferPool as RawGpuBufferPool,
+    CppRawGpuBufferPoolAllocation as RawGpuBufferPoolAllocation,
     CppReduceOp as ReduceOp,
     env,
     is_nvls_supported,
@@ -84,6 +86,8 @@ __all__ = [
     "ExecutionPlan",
     "PacketType",
     "RawGpuBuffer",
+    "RawGpuBufferPool",
+    "RawGpuBufferPoolAllocation",
     "ReduceOp",
     "env",
     "version",
@@ -100,6 +104,7 @@ __all__ = [
     "AlgorithmCollection",
     "CommGroup",
     "GpuBuffer",
+    "GpuBufferPool",
     "GpuBufferGranularity",
 ]
 

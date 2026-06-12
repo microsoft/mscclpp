@@ -1,5 +1,5 @@
 # Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# Licensed under the MIT License.
 
 from concurrent.futures import ThreadPoolExecutor
 import os
@@ -30,7 +30,7 @@ from mscclpp import (
     Device,
     DeviceType,
 )
-from mscclpp import CommGroup, GpuBuffer
+from mscclpp import CommGroup, GpuBuffer, GpuBufferPool
 from mscclpp.utils import KernelBuilder, pack
 from ._cpp import _ext
 from .mscclpp_mpi import MpiGroup, parametrize_mpi_groups, mpi_group
@@ -58,6 +58,70 @@ def all_ranks_on_the_same_node(mpi_group: MpiGroup):
     root_ip = mpi_group.comm.bcast(my_ip, 0)
     last_rank_ip = mpi_group.comm.bcast(my_ip, mpi_group.comm.size - 1)
     return last_rank_ip == root_ip
+
+
+@parametrize_mpi_groups(1)
+def test_gpu_buffer_pool(mpi_group: MpiGroup):
+    pool = GpuBufferPool(4096)
+    base_ptr = pool.data
+    buf = pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512)
+    offset = buf.data() - base_ptr
+    assert offset % 512 == 0
+    assert pool.active_bytes == buf.bytes()
+    del buf
+    assert pool.active_bytes == 0
+    assert pool.free_bytes == pool.bytes
+
+    first = pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
+    first_offset = first.data() - base_ptr
+    with pytest.raises(Exception):
+        pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
+    del first
+    second = pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
+    assert second.data() - base_ptr == first_offset
+
+
+@parametrize_mpi_groups(1)
+def test_gpu_buffer_pool_to_torch_dlpack(mpi_group: MpiGroup):
+    torch = pytest.importorskip("torch")
+
+    pool = GpuBufferPool(4096)
+    buf = pool.allocate(16 * torch.empty((), dtype=torch.float32).element_size(), alignment=512)
+    tensor = torch.utils.dlpack.from_dlpack(buf.to_dlpack(data_type=str(torch.float32), shape=[16]))
+    assert tensor.data_ptr() == buf.data()
+    assert tensor.numel() == 16
+    assert tensor.dtype == torch.float32
+    del buf
+    assert pool.active_bytes == tensor.numel() * tensor.element_size()
+    del tensor
+    assert pool.active_bytes == 0
+
+
+@parametrize_mpi_groups(2, 4, 8)
+def test_gpu_buffer_pool_symmetric_offsets(mpi_group: MpiGroup):
+    pool = GpuBufferPool(8192)
+    offsets = []
+
+    first = pool.allocate(64, alignment=256)
+    offsets.append(first.offset())
+    second = pool.allocate(128, alignment=512)
+    offsets.append(second.offset())
+    del first
+
+    reused = pool.allocate(32, alignment=128)
+    offsets.append(reused.offset())
+
+    persistent = pool.allocate(256, alignment=1024, alloc_id=11)
+    persistent_offset = persistent.offset()
+    offsets.append(persistent_offset)
+    del persistent
+
+    persistent_reuse = pool.allocate(256, alignment=1024, alloc_id=11)
+    offsets.append(persistent_reuse.offset())
+    assert persistent_reuse.offset() == persistent_offset
+
+    gathered_offsets = mpi_group.comm.allgather(offsets)
+    assert all(rank_offsets == gathered_offsets[0] for rank_offsets in gathered_offsets)
 
 
 @parametrize_mpi_groups(2, 4, 8, 16)

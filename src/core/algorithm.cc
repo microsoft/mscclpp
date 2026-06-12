@@ -52,17 +52,16 @@ CommResult NativeAlgorithm::execute(std::shared_ptr<Communicator> comm, const vo
   AlgorithmCtxKey ctxKey = contextKeyGenFunc_(input, output, inputSize, outputSize, dtype, symmetricMemory);
   auto it = contexts_.find(ctxKey);
   if (it == contexts_.end()) {
-    INFO(ALGO, name_,
-         " context cache MISS (creating new context, this triggers collective setup): rank=",
-         comm->bootstrap()->getRank(), ", baseSendBuff=", ctxKey.baseSendBuff,
-         ", baseRecvBuff=", ctxKey.baseRecvBuff, ", baseSendSize=", ctxKey.baseSendSize,
-         ", baseRecvSize=", ctxKey.baseRecvSize, ", numContexts(before)=", contexts_.size());
+    INFO(ALGO, name_, " context cache MISS (creating new context, this triggers collective setup): rank=",
+         comm->bootstrap()->getRank(), ", baseSendBuff=", ctxKey.baseSendBuff, ", baseRecvBuff=", ctxKey.baseRecvBuff,
+         ", baseSendSize=", ctxKey.baseSendSize, ", baseRecvSize=", ctxKey.baseRecvSize,
+         ", numContexts(before)=", contexts_.size());
     auto ctx = contextInitFunc_(comm, input, output, inputSize, outputSize, dtype);
     contexts_[ctxKey] = ctx;
   } else {
-    INFO(ALGO, name_, " context cache HIT (reusing context, no collective setup): rank=",
-         comm->bootstrap()->getRank(), ", baseSendBuff=", ctxKey.baseSendBuff,
-         ", baseRecvBuff=", ctxKey.baseRecvBuff, ", numContexts=", contexts_.size());
+    INFO(ALGO, name_, " context cache HIT (reusing context, no collective setup): rank=", comm->bootstrap()->getRank(),
+         ", baseSendBuff=", ctxKey.baseSendBuff, ", baseRecvBuff=", ctxKey.baseRecvBuff,
+         ", numContexts=", contexts_.size());
   }
   return kernelLaunchFunc_(contexts_[ctxKey], input, output, inputSize, outputSize, dtype, op, stream, nBlocks,
                            nThreadsPerBlock, extras, accumDtype);

@@ -1,10 +1,11 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #ifndef MSCCLPP_GPU_UTILS_HPP_
 #define MSCCLPP_GPU_UTILS_HPP_
 
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include "env.hpp"
@@ -401,6 +402,104 @@ class GpuBuffer {
   size_t bytes_;
   int deviceId_;
   std::shared_ptr<T> memory_;
+};
+
+class GpuBufferPoolAllocation;
+
+namespace detail {
+
+class GpuBufferPoolStorage;
+
+}  // namespace detail
+
+/// Represents one allocation from `GpuBufferPool`.
+///
+/// This object owns the lease for a sub-range of a pool allocation. Destroying the last reference to this object
+/// returns the sub-range to the pool. Destruction only updates local pool bookkeeping and does not perform any
+/// cross-rank synchronization.
+class GpuBufferPoolAllocation : public std::enable_shared_from_this<GpuBufferPoolAllocation> {
+ public:
+  GpuBufferPoolAllocation(const GpuBufferPoolAllocation&) = delete;
+  GpuBufferPoolAllocation& operator=(const GpuBufferPoolAllocation&) = delete;
+  GpuBufferPoolAllocation(GpuBufferPoolAllocation&&) = delete;
+  GpuBufferPoolAllocation& operator=(GpuBufferPoolAllocation&&) = delete;
+
+  /// Destructor. Returns the allocation to the owning pool when the last reference is destroyed.
+  ~GpuBufferPoolAllocation();
+
+  /// Returns the number of bytes requested for this allocation.
+  /// @return Number of bytes in this allocation.
+  size_t bytes() const;
+
+  /// Returns this allocation's byte offset from the pool base pointer.
+  /// @return Byte offset from the pool base pointer.
+  size_t offset() const;
+
+  /// Returns the device pointer to this allocation.
+  /// @return Device pointer to this allocation.
+  char* data() const;
+
+  /// Returns the device id of the underlying pool allocation.
+  /// @return Device id of the underlying pool allocation.
+  int deviceId() const;
+
+ private:
+  friend class detail::GpuBufferPoolStorage;
+  GpuBufferPoolAllocation(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset, size_t bytes,
+                          std::optional<uint64_t> allocId);
+
+  std::shared_ptr<detail::GpuBufferPoolStorage> storage_;
+  size_t offset_;
+  size_t bytes_;
+  std::optional<uint64_t> allocId_;
+};
+
+/// A deterministic sub-allocation pool for GPU communication buffers.
+///
+/// The pool allocates one `GpuBuffer<char>` slab and returns reference-counted leases for sub-ranges in that slab.
+/// If all ranks create pools with the same size and make the same allocation calls, returned allocations have identical
+/// offsets from the slab base pointer. Python bindings use this property to build symmetric memory buffers while
+/// relying on normal Python reference counting to return leases to the local pool.
+///
+/// For deterministic reuse across ranks, use the optional allocation id in `allocate()`. An allocation id reserves its
+/// offset for the lifetime of the pool and can be reused only after the previous lease with the same id is destroyed.
+class GpuBufferPool {
+ public:
+  /// Constructs a pool backed by a single `GpuBuffer<char>`.
+  /// @param bytes Number of bytes to reserve in the pool.
+  /// @param granularity Granularity used to size the underlying `GpuBuffer`.
+  explicit GpuBufferPool(size_t bytes, GpuBufferGranularity granularity = GpuBufferGranularity::MultiCastMinimum);
+
+  /// Allocates a sub-range from the pool.
+  /// @param bytes Number of bytes to allocate.
+  /// @param alignment Alignment in bytes for the returned offset.
+  /// @param allocId Optional persistent allocation id for deterministic reuse.
+  /// @return A reference-counted allocation lease.
+  std::shared_ptr<GpuBufferPoolAllocation> allocate(size_t bytes, size_t alignment = 256,
+                                                    std::optional<uint64_t> allocId = std::nullopt);
+
+  /// Returns the number of bytes in the underlying pool allocation.
+  /// @return Number of bytes in the pool.
+  size_t bytes() const;
+
+  /// Returns the number of bytes that are available for new non-persistent allocations.
+  /// @return Number of free bytes.
+  size_t freeBytes() const;
+
+  /// Returns the number of bytes currently held by active allocation leases.
+  /// @return Number of active bytes.
+  size_t activeBytes() const;
+
+  /// Returns the device pointer to the pool base.
+  /// @return Device pointer to the pool base.
+  char* data();
+
+  /// Returns the device id of the underlying pool allocation.
+  /// @return Device id of the underlying pool allocation.
+  int deviceId() const;
+
+ private:
+  std::shared_ptr<detail::GpuBufferPoolStorage> storage_;
 };
 
 }  // namespace mscclpp

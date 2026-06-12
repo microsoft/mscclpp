@@ -1,12 +1,14 @@
 // Copyright (c) Microsoft Corporation.
-// Licensed under the MIT license.
+// Licensed under the MIT License.
 
 #include <dlpack/dlpack.h>
 #include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <memory>
 #include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/gpu_utils.hpp>
 
@@ -14,6 +16,13 @@ namespace nb = nanobind;
 using namespace mscclpp;
 
 constexpr int BYTE_BITS = 8;
+
+struct DlpackContext {
+  DLManagedTensor managedTensor{};
+  std::vector<int64_t> shape;
+  std::vector<int64_t> strides;
+  std::shared_ptr<void> owner;
+};
 
 static DLDeviceType getDeviceType() {
 #if defined(MSCCLPP_USE_ROCM)
@@ -52,63 +61,68 @@ static DLDataType getDlType(std::string type) {
   }
 }
 
-static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::vector<int64_t>& shape,
-                            std::vector<int64_t>& strides) {
-  DLDataType dtype = getDlType(dataType);
-  int64_t* tensorShape = shape.size() > 0 ? new int64_t[shape.size()] : new int64_t[1];
-  int64_t* tensorStrides = strides.size() > 0 ? new int64_t[strides.size()] : nullptr;
-  if (shape.size() == 0) {
-    tensorShape[0] = (int64_t)(buffer.nelems() / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS));
-  } else {
-    for (size_t i = 0; i < shape.size(); ++i) {
-      tensorShape[i] = shape[i];
-    }
-  }
-  for (size_t i = 0; i < strides.size(); ++i) {
-    tensorStrides[i] = strides[i];
-  }
+static void dlpackDeleter(DLManagedTensor* self) { delete static_cast<DlpackContext*>(self->manager_ctx); }
 
-  DLManagedTensor* dlManagedTensor = new DLManagedTensor();
-  dlManagedTensor->dl_tensor.data = buffer.data();
+static void dlpackCapsuleDestructor(PyObject* capsule) {
+  if (PyCapsule_IsValid(capsule, "used_dltensor")) {
+    return;
+  }
+  if (!PyCapsule_IsValid(capsule, "dltensor")) {
+    return;
+  }
+  DLManagedTensor* managedTensor = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(capsule, "dltensor"));
+  if (managedTensor == nullptr) {
+    return;
+  }
+  if (managedTensor->deleter) {
+    managedTensor->deleter(managedTensor);
+  }
+}
+
+static nb::capsule makeDlpack(void* data, size_t bytes, int deviceId, std::shared_ptr<void> owner, std::string dataType,
+                              std::vector<int64_t> shape, std::vector<int64_t> strides) {
+  DLDataType dtype = getDlType(dataType);
+  auto ctx = std::make_unique<DlpackContext>();
+  if (shape.empty()) {
+    ctx->shape.push_back((int64_t)(bytes / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS)));
+  } else {
+    ctx->shape = std::move(shape);
+  }
+  ctx->strides = std::move(strides);
+  ctx->owner = std::move(owner);
+
+  DLManagedTensor* dlManagedTensor = &ctx->managedTensor;
+  dlManagedTensor->dl_tensor.data = data;
   dlManagedTensor->dl_tensor.device.device_type = getDeviceType();
-  dlManagedTensor->dl_tensor.device.device_id = buffer.deviceId();
-  dlManagedTensor->dl_tensor.ndim = shape.size() == 0 ? 1 : shape.size();
-  dlManagedTensor->dl_tensor.strides = tensorStrides;
-  dlManagedTensor->dl_tensor.shape = tensorShape;
+  dlManagedTensor->dl_tensor.device.device_id = deviceId;
+  dlManagedTensor->dl_tensor.ndim = ctx->shape.size();
+  dlManagedTensor->dl_tensor.strides = ctx->strides.empty() ? nullptr : ctx->strides.data();
+  dlManagedTensor->dl_tensor.shape = ctx->shape.data();
   dlManagedTensor->dl_tensor.byte_offset = 0;
   dlManagedTensor->dl_tensor.dtype = dtype;
-  dlManagedTensor->manager_ctx = new GpuBuffer<char>(buffer);
-  dlManagedTensor->deleter = [](DLManagedTensor* self) {
-    delete static_cast<GpuBuffer<char>*>(self->manager_ctx);
-    self->manager_ctx = nullptr;
-    self->dl_tensor.data = nullptr;
-    if (self->dl_tensor.shape != nullptr) {
-      delete[] self->dl_tensor.shape;
-      self->dl_tensor.shape = nullptr;
-      if (self->dl_tensor.strides) {
-        delete[] self->dl_tensor.strides;
-        self->dl_tensor.strides = nullptr;
-      }
-    }
-    delete self;
-  };
+  dlManagedTensor->manager_ctx = ctx.get();
+  dlManagedTensor->deleter = dlpackDeleter;
 
-  PyObject* dlCapsule = PyCapsule_New(static_cast<void*>(dlManagedTensor), "dltensor", [](PyObject* capsule) {
-    if (PyCapsule_IsValid(capsule, "used_dltensor")) {
-      return;
-    }
-    if (!PyCapsule_IsValid(capsule, "dltensor")) {
-      return;
-    }
-    DLManagedTensor* managedTensor = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(capsule, "dltensor"));
-    if (managedTensor == nullptr) {
-      return;
-    }
-    if (managedTensor->deleter) {
-      managedTensor->deleter(managedTensor);
-    }
-  });
+  PyObject* dlCapsule = PyCapsule_New(static_cast<void*>(dlManagedTensor), "dltensor", dlpackCapsuleDestructor);
+  if (dlCapsule == nullptr) {
+    throw Error("Failed to create DLPack capsule.", ErrorCode::InvalidUsage);
+  }
+  ctx.release();
   return nb::steal<nb::capsule>(dlCapsule);
+}
+
+static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::vector<int64_t>& shape,
+                            std::vector<int64_t>& strides) {
+  auto owner = std::make_shared<GpuBuffer<char>>(buffer);
+  return makeDlpack(buffer.data(), buffer.nelems(), buffer.deviceId(), std::move(owner), dataType, shape, strides);
+}
+
+static nb::capsule toDlpack(std::shared_ptr<GpuBufferPoolAllocation> allocation, std::string dataType,
+                            std::vector<int64_t>& shape, std::vector<int64_t>& strides) {
+  void* data = allocation->data();
+  size_t bytes = allocation->bytes();
+  int deviceId = allocation->deviceId();
+  return makeDlpack(data, bytes, deviceId, std::move(allocation), dataType, shape, strides);
 }
 
 void register_gpu_utils(nb::module_& m) {
@@ -131,4 +145,26 @@ void register_gpu_utils(nb::module_& m) {
             return toDlpack(self, dataType, shape, strides);
           },
           nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
+
+  nb::class_<GpuBufferPoolAllocation>(m, "CppRawGpuBufferPoolAllocation")
+      .def("bytes", &GpuBufferPoolAllocation::bytes)
+      .def("offset", &GpuBufferPoolAllocation::offset)
+      .def("data", [](GpuBufferPoolAllocation& self) { return reinterpret_cast<uintptr_t>(self.data()); })
+      .def("device_id", &GpuBufferPoolAllocation::deviceId)
+      .def(
+          "to_dlpack",
+          [](GpuBufferPoolAllocation& self, std::string dataType, std::vector<int64_t> shape,
+             std::vector<int64_t> strides) { return toDlpack(self.shared_from_this(), dataType, shape, strides); },
+          nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
+
+  nb::class_<GpuBufferPool>(m, "CppRawGpuBufferPool")
+      .def(nb::init<size_t, GpuBufferGranularity>(), nb::arg("bytes"),
+           nb::arg("granularity") = GpuBufferGranularity::MultiCastMinimum)
+      .def("bytes", &GpuBufferPool::bytes)
+      .def("free_bytes", &GpuBufferPool::freeBytes)
+      .def("active_bytes", &GpuBufferPool::activeBytes)
+      .def("data", [](GpuBufferPool& self) { return reinterpret_cast<uintptr_t>(self.data()); })
+      .def("device_id", &GpuBufferPool::deviceId)
+      .def("allocate", &GpuBufferPool::allocate, nb::arg("bytes"), nb::arg("alignment") = 256,
+           nb::arg("alloc_id") = std::nullopt);
 }
