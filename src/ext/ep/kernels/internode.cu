@@ -1892,6 +1892,13 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
   // write in reverse. Assumes the combine input lives in the recv pool (DeepEP
   // contract; the flat test passes recv_x).
   if (kEpDirect and recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr) {
+    // kEpNumRanks is the world size for this kernel instantiation (compile-time:
+    // kNumRDMARanks * NUM_MAX_NVL_PEERS, == num_ranks). The fast combine_token<>
+    // discovery maps one warp lane per rank; that is correct AND fast only while
+    // kEpNumRanks <= 32. For >= 16 nodes (kEpNumRanks > 32) its __shfl-by-rank source
+    // lane wraps mod 32 (ranks >= 32 alias 0..31 -> double-count / garbage), so we fall
+    // back to a chunked-ballot discovery that scans ranks in 32-wide chunks. The branch
+    // is `if constexpr`, so <= 8 nodes compile to exactly the original fast path.
     constexpr int kEpNumRanks = kNumRDMARanks * NUM_MAX_NVL_PEERS;
     const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
     const int warp_id_flat = thread_id / 32;
@@ -1904,14 +1911,68 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
                           static_cast<int64_t>(slot) * hidden_int4 + hi);
     };
     auto recv_tw_fn = [&](int, int, int) -> float { return 0.0f; };
-    for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
-      const bool is_in =
-          (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
-      const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
-      combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
-                                             combined_x + static_cast<int64_t>(t) * hidden_int4,
-                                             combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
-                                             recv_fn, recv_tw_fn);
+    if constexpr (kEpNumRanks <= 32) {
+      // Original fast path: one lane per rank; combine_token does compile-time-unrolled
+      // discovery + register-array reduction. Correct because kEpNumRanks <= 32.
+      for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+        const bool is_in =
+            (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
+        const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
+        combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
+                                               combined_x + static_cast<int64_t>(t) * hidden_int4,
+                                               combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
+                                               recv_fn, recv_tw_fn);
+      }
+    } else {
+      // >= 16 nodes (kEpNumRanks > 32): chunked-ballot discovery (lane-per-rank aliases
+      // past 32). A token routes to <= num_topk (<= 8) distinct ranks => <= 8 contributors.
+      constexpr int kEpMaxContrib = 8;
+      constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
+      for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+        // Scan ranks in chunks of 32 and compact the set lanes via ballot. Discovery is
+        // warp-uniform: every lane ends with the same topk_ranks/slot_indices/num_topk_ranks.
+        int topk_ranks[kEpMaxContrib], slot_indices[kEpMaxContrib], num_topk_ranks = 0;
+        for (int base = 0; base < kEpNumRanks; base += 32) {
+          const int r = base + lane_id;
+          const bool is_in =
+              (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+          const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
+          unsigned ballot = __ballot_sync(0xffffffffu, is_in);
+          while (ballot != 0u) {
+            const int l = __ffs(static_cast<int>(ballot)) - 1;
+            if (num_topk_ranks < kEpMaxContrib) {
+              topk_ranks[num_topk_ranks] = base + l;
+              slot_indices[num_topk_ranks] = __shfl_sync(0xffffffffu, slot, l);
+              ++num_topk_ranks;
+            }
+            ballot &= ballot - 1u;
+          }
+        }
+        // Reduce the contributors' hidden rows into combined_x (lane-strided), mirroring
+        // combine_token: #pragma unroll the outer hidden loop + pre-load contributors.
+        int4* combined_row = combined_x + static_cast<int64_t>(t) * hidden_int4;
+#pragma unroll
+        for (int i = lane_id; i < hidden_int4; i += 32) {
+          int4 recv_value_int4[kEpMaxContrib];
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) recv_value_int4[j] = recv_fn(topk_ranks[j], slot_indices[j], i);
+          float values[kDtypePerInt4] = {0};
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) {
+            auto vd = reinterpret_cast<const dtype_t*>(&recv_value_int4[j]);
+#pragma unroll
+            for (int k = 0; k < kDtypePerInt4; ++k) values[k] += static_cast<float>(vd[k]);
+          }
+          int4 out_int4;
+          auto out_dtypes = reinterpret_cast<dtype_t*>(&out_int4);
+#pragma unroll
+          for (int k = 0; k < kDtypePerInt4; ++k) out_dtypes[k] = static_cast<dtype_t>(values[k]);
+          st_na_global(combined_row + i, out_int4);
+        }
+        // combined_topk_weights: gather path contributes 0 (parity with recv_tw_fn).
+        if (lane_id < num_topk)
+          st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+      }
     }
     return;
   }
