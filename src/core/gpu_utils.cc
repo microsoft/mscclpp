@@ -282,8 +282,8 @@ void gpuMemset(void* ptr, int value, size_t bytes) {
 class GpuBufferPoolStorage : public std::enable_shared_from_this<GpuBufferPoolStorage> {
  public:
   GpuBufferPoolStorage(size_t bytes, GpuBufferGranularity granularity);
-  std::shared_ptr<GpuBufferPoolAllocation> allocate(size_t bytes, size_t alignment, std::optional<uint64_t> allocId);
-  void release(size_t offset, std::optional<uint64_t> allocId) noexcept;
+  std::shared_ptr<GpuBufferPool::Buffer> allocate(size_t bytes, size_t alignment);
+  void release(size_t offset) noexcept;
   size_t bytes() const;
   size_t freeBytes() const;
   size_t activeBytes() const;
@@ -291,22 +291,21 @@ class GpuBufferPoolStorage : public std::enable_shared_from_this<GpuBufferPoolSt
   int deviceId() const;
 
  private:
-  struct PersistentBlock {
+  struct Block {
     size_t offset;
     size_t bytes;
-    size_t alignment;
-    bool active;
+    size_t reservedOffset;
+    size_t reservedBytes;
   };
 
   static size_t alignUp(size_t offset, size_t alignment);
-  size_t reserveBlock(size_t bytes, size_t alignment);
+  Block reserveBlock(size_t bytes, size_t alignment);
   void releaseBlock(size_t offset, size_t bytes) noexcept;
 
   mutable std::mutex mutex_;
   GpuBuffer<char> buffer_;
   std::map<size_t, size_t> freeBlocks_;
-  std::unordered_map<size_t, size_t> activeBlocks_;
-  std::unordered_map<uint64_t, PersistentBlock> persistentBlocks_;
+  std::unordered_map<size_t, Block> activeBlocks_;
 };
 
 GpuBufferPoolStorage::GpuBufferPoolStorage(size_t bytes, GpuBufferGranularity granularity)
@@ -328,7 +327,7 @@ size_t GpuBufferPoolStorage::alignUp(size_t offset, size_t alignment) {
   return offset + alignment - remainder;
 }
 
-size_t GpuBufferPoolStorage::reserveBlock(size_t bytes, size_t alignment) {
+GpuBufferPoolStorage::Block GpuBufferPoolStorage::reserveBlock(size_t bytes, size_t alignment) {
   if (bytes == 0) {
     throw Error("GpuBufferPool allocation size must be positive.", ErrorCode::InvalidUsage);
   }
@@ -342,16 +341,15 @@ size_t GpuBufferPoolStorage::reserveBlock(size_t bytes, size_t alignment) {
     }
 
     size_t suffixOffset = alignedOffset + bytes;
-    size_t suffixBytes = blockBytes - prefixBytes - bytes;
+    size_t reservedBytes = prefixBytes + bytes;
+    size_t suffixBytes = blockBytes - reservedBytes;
     freeBlocks_.erase(it);
-    if (prefixBytes > 0) {
-      freeBlocks_[blockOffset] = prefixBytes;
-    }
     if (suffixBytes > 0) {
       freeBlocks_[suffixOffset] = suffixBytes;
     }
-    activeBlocks_[alignedOffset] = bytes;
-    return alignedOffset;
+    Block block{alignedOffset, bytes, blockOffset, reservedBytes};
+    activeBlocks_[alignedOffset] = block;
+    return block;
   }
   throw Error("GpuBufferPool does not have enough free memory for the requested allocation.", ErrorCode::InvalidUsage);
 }
@@ -373,50 +371,21 @@ void GpuBufferPoolStorage::releaseBlock(size_t offset, size_t bytes) noexcept {
   freeBlocks_[offset] = bytes;
 }
 
-std::shared_ptr<GpuBufferPoolAllocation> GpuBufferPoolStorage::allocate(size_t bytes, size_t alignment,
-                                                                        std::optional<uint64_t> allocId) {
+std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPoolStorage::allocate(size_t bytes, size_t alignment) {
   std::lock_guard<std::mutex> lock(mutex_);
-  if (allocId.has_value()) {
-    auto persistent = persistentBlocks_.find(*allocId);
-    if (persistent != persistentBlocks_.end()) {
-      if (persistent->second.bytes != bytes || persistent->second.alignment != alignment) {
-        throw Error("GpuBufferPool persistent allocation size or alignment does not match the previous allocation.",
-                    ErrorCode::InvalidUsage);
-      }
-      if (persistent->second.active) {
-        throw Error("GpuBufferPool persistent allocation is still active.", ErrorCode::InvalidUsage);
-      }
-      persistent->second.active = true;
-      activeBlocks_[persistent->second.offset] = persistent->second.bytes;
-      return std::shared_ptr<GpuBufferPoolAllocation>(
-          new GpuBufferPoolAllocation(shared_from_this(), persistent->second.offset, bytes, allocId));
-    }
-  }
-
-  size_t offset = reserveBlock(bytes, alignment);
-  if (allocId.has_value()) {
-    persistentBlocks_.emplace(*allocId, PersistentBlock{offset, bytes, alignment, true});
-  }
-  return std::shared_ptr<GpuBufferPoolAllocation>(
-      new GpuBufferPoolAllocation(shared_from_this(), offset, bytes, allocId));
+  Block block = reserveBlock(bytes, alignment);
+  return std::shared_ptr<GpuBufferPool::Buffer>(new GpuBufferPool::Buffer(shared_from_this(), block.offset, bytes));
 }
 
-void GpuBufferPoolStorage::release(size_t offset, std::optional<uint64_t> allocId) noexcept {
+void GpuBufferPoolStorage::release(size_t offset) noexcept {
   std::lock_guard<std::mutex> lock(mutex_);
   auto active = activeBlocks_.find(offset);
   if (active == activeBlocks_.end()) {
     return;
   }
-  size_t bytes = active->second;
+  Block block = active->second;
   activeBlocks_.erase(active);
-  if (allocId.has_value()) {
-    auto persistent = persistentBlocks_.find(*allocId);
-    if (persistent != persistentBlocks_.end() && persistent->second.offset == offset) {
-      persistent->second.active = false;
-    }
-    return;
-  }
-  releaseBlock(offset, bytes);
+  releaseBlock(block.reservedOffset, block.reservedBytes);
 }
 
 size_t GpuBufferPoolStorage::bytes() const { return buffer_.bytes(); }
@@ -434,7 +403,7 @@ size_t GpuBufferPoolStorage::activeBytes() const {
   std::lock_guard<std::mutex> lock(mutex_);
   size_t activeBytes = 0;
   for (auto const& block : activeBlocks_) {
-    activeBytes += block.second;
+    activeBytes += block.second.bytes;
   }
   return activeBytes;
 }
@@ -445,26 +414,24 @@ int GpuBufferPoolStorage::deviceId() const { return buffer_.deviceId(); }
 
 }  // namespace detail
 
-GpuBufferPoolAllocation::GpuBufferPoolAllocation(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset,
-                                                 size_t bytes, std::optional<uint64_t> allocId)
-    : storage_(std::move(storage)), offset_(offset), bytes_(bytes), allocId_(allocId) {}
+GpuBufferPool::Buffer::Buffer(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset, size_t bytes)
+    : storage_(std::move(storage)), offset_(offset), bytes_(bytes) {}
 
-GpuBufferPoolAllocation::~GpuBufferPoolAllocation() { storage_->release(offset_, allocId_); }
+GpuBufferPool::Buffer::~Buffer() { storage_->release(offset_); }
 
-size_t GpuBufferPoolAllocation::bytes() const { return bytes_; }
+size_t GpuBufferPool::Buffer::bytes() const { return bytes_; }
 
-size_t GpuBufferPoolAllocation::offset() const { return offset_; }
+size_t GpuBufferPool::Buffer::offset() const { return offset_; }
 
-char* GpuBufferPoolAllocation::data() const { return storage_->data() + offset_; }
+char* GpuBufferPool::Buffer::data() const { return storage_->data() + offset_; }
 
-int GpuBufferPoolAllocation::deviceId() const { return storage_->deviceId(); }
+int GpuBufferPool::Buffer::deviceId() const { return storage_->deviceId(); }
 
 GpuBufferPool::GpuBufferPool(size_t bytes, GpuBufferGranularity granularity)
     : storage_(std::make_shared<detail::GpuBufferPoolStorage>(bytes, granularity)) {}
 
-std::shared_ptr<GpuBufferPoolAllocation> GpuBufferPool::allocate(size_t bytes, size_t alignment,
-                                                                 std::optional<uint64_t> allocId) {
-  return storage_->allocate(bytes, alignment, allocId);
+std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPool::allocate(size_t bytes, size_t alignment) {
+  return storage_->allocate(bytes, alignment);
 }
 
 size_t GpuBufferPool::bytes() const { return storage_->bytes(); }

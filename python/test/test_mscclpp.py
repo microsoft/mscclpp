@@ -72,13 +72,13 @@ def test_gpu_buffer_pool(mpi_group: MpiGroup):
     assert pool.active_bytes == 0
     assert pool.free_bytes == pool.bytes
 
-    first = pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
-    first_offset = first.data() - base_ptr
-    with pytest.raises(Exception):
-        pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
-    del first
-    second = pool.allocate(16 * np.dtype(np.int32).itemsize, alignment=512, alloc_id=7)
-    assert second.data() - base_ptr == first_offset
+    padding_pool = GpuBufferPool(1024)
+    padding_first = padding_pool.allocate(100, alignment=1)
+    padding_second = padding_pool.allocate(100, alignment=256)
+    padding_third = padding_pool.allocate(1, alignment=1)
+    assert padding_first.offset() == 0
+    assert padding_second.offset() == 256
+    assert padding_third.offset() == 356
 
 
 @parametrize_mpi_groups(1)
@@ -110,15 +110,6 @@ def test_gpu_buffer_pool_symmetric_offsets(mpi_group: MpiGroup):
 
     reused = pool.allocate(32, alignment=128)
     offsets.append(reused.offset())
-
-    persistent = pool.allocate(256, alignment=1024, alloc_id=11)
-    persistent_offset = persistent.offset()
-    offsets.append(persistent_offset)
-    del persistent
-
-    persistent_reuse = pool.allocate(256, alignment=1024, alloc_id=11)
-    offsets.append(persistent_reuse.offset())
-    assert persistent_reuse.offset() == persistent_offset
 
     gathered_offsets = mpi_group.comm.allgather(offsets)
     assert all(rank_offsets == gathered_offsets[0] for rank_offsets in gathered_offsets)

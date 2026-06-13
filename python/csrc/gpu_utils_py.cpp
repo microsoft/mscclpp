@@ -83,19 +83,26 @@ static nb::capsule makeDlpack(void* data, size_t bytes, int deviceId, std::share
                               std::vector<int64_t> shape, std::vector<int64_t> strides) {
   DLDataType dtype = getDlType(dataType);
   auto ctx = std::make_unique<DlpackContext>();
+  size_t elementBytes = (dtype.bits * dtype.lanes + 7) / BYTE_BITS;
   if (shape.empty()) {
-    ctx->shape.push_back((int64_t)(bytes / ((dtype.bits * dtype.lanes + 7) / BYTE_BITS)));
+    if (bytes % elementBytes != 0) {
+      throw Error("DLPack buffer size must be divisible by the element size.", ErrorCode::InvalidUsage);
+    }
+    ctx->shape.push_back((int64_t)(bytes / elementBytes));
   } else {
     ctx->shape = std::move(shape);
   }
   ctx->strides = std::move(strides);
+  if (!ctx->strides.empty() && ctx->strides.size() != ctx->shape.size()) {
+    throw Error("DLPack strides must have the same length as shape.", ErrorCode::InvalidUsage);
+  }
   ctx->owner = std::move(owner);
 
   DLManagedTensor* dlManagedTensor = &ctx->managedTensor;
   dlManagedTensor->dl_tensor.data = data;
   dlManagedTensor->dl_tensor.device.device_type = getDeviceType();
   dlManagedTensor->dl_tensor.device.device_id = deviceId;
-  dlManagedTensor->dl_tensor.ndim = ctx->shape.size();
+  dlManagedTensor->dl_tensor.ndim = static_cast<int>(ctx->shape.size());
   dlManagedTensor->dl_tensor.strides = ctx->strides.empty() ? nullptr : ctx->strides.data();
   dlManagedTensor->dl_tensor.shape = ctx->shape.data();
   dlManagedTensor->dl_tensor.byte_offset = 0;
@@ -117,12 +124,12 @@ static nb::capsule toDlpack(GpuBuffer<char> buffer, std::string dataType, std::v
   return makeDlpack(buffer.data(), buffer.nelems(), buffer.deviceId(), std::move(owner), dataType, shape, strides);
 }
 
-static nb::capsule toDlpack(std::shared_ptr<GpuBufferPoolAllocation> allocation, std::string dataType,
+static nb::capsule toDlpack(std::shared_ptr<GpuBufferPool::Buffer> buffer, std::string dataType,
                             std::vector<int64_t>& shape, std::vector<int64_t>& strides) {
-  void* data = allocation->data();
-  size_t bytes = allocation->bytes();
-  int deviceId = allocation->deviceId();
-  return makeDlpack(data, bytes, deviceId, std::move(allocation), dataType, shape, strides);
+  void* data = buffer->data();
+  size_t bytes = buffer->bytes();
+  int deviceId = buffer->deviceId();
+  return makeDlpack(data, bytes, deviceId, std::move(buffer), dataType, shape, strides);
 }
 
 void register_gpu_utils(nb::module_& m) {
@@ -146,15 +153,15 @@ void register_gpu_utils(nb::module_& m) {
           },
           nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
 
-  nb::class_<GpuBufferPoolAllocation>(m, "CppRawGpuBufferPoolAllocation")
-      .def("bytes", &GpuBufferPoolAllocation::bytes)
-      .def("offset", &GpuBufferPoolAllocation::offset)
-      .def("data", [](GpuBufferPoolAllocation& self) { return reinterpret_cast<uintptr_t>(self.data()); })
-      .def("device_id", &GpuBufferPoolAllocation::deviceId)
+  nb::class_<GpuBufferPool::Buffer>(m, "CppRawGpuBufferPoolBuffer")
+      .def("bytes", &GpuBufferPool::Buffer::bytes)
+      .def("offset", &GpuBufferPool::Buffer::offset)
+      .def("data", [](GpuBufferPool::Buffer& self) { return reinterpret_cast<uintptr_t>(self.data()); })
+      .def("device_id", &GpuBufferPool::Buffer::deviceId)
       .def(
           "to_dlpack",
-          [](GpuBufferPoolAllocation& self, std::string dataType, std::vector<int64_t> shape,
-             std::vector<int64_t> strides) { return toDlpack(self.shared_from_this(), dataType, shape, strides); },
+          [](std::shared_ptr<GpuBufferPool::Buffer> self, std::string dataType, std::vector<int64_t> shape,
+             std::vector<int64_t> strides) { return toDlpack(std::move(self), dataType, shape, strides); },
           nb::arg("data_type"), nb::arg("shape") = std::vector<int64_t>(), nb::arg("strides") = std::vector<int64_t>());
 
   nb::class_<GpuBufferPool>(m, "CppRawGpuBufferPool")
@@ -165,6 +172,5 @@ void register_gpu_utils(nb::module_& m) {
       .def("active_bytes", &GpuBufferPool::activeBytes)
       .def("data", [](GpuBufferPool& self) { return reinterpret_cast<uintptr_t>(self.data()); })
       .def("device_id", &GpuBufferPool::deviceId)
-      .def("allocate", &GpuBufferPool::allocate, nb::arg("bytes"), nb::arg("alignment") = 256,
-           nb::arg("alloc_id") = std::nullopt);
+      .def("allocate", &GpuBufferPool::allocate, nb::arg("bytes"), nb::arg("alignment") = 256);
 }
