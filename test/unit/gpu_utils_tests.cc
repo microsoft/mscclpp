@@ -60,3 +60,79 @@ TEST(GpuUtilsTest, Memcpy) {
     EXPECT_EQ(hostBuff[i], hostBuffTmp[i]);
   }
 }
+
+TEST(GpuUtilsTest, BufferPoolBasic) {
+  mscclpp::GpuBufferPool pool(4096);
+
+  auto first = pool.allocate(64, 256);
+  EXPECT_EQ(first->bytes(), size_t(64));
+  EXPECT_EQ(first->offset() % 256, size_t(0));
+  EXPECT_EQ(first->data(), pool.data() + first->offset());
+  EXPECT_EQ(first->deviceId(), pool.deviceId());
+  EXPECT_EQ(pool.activeBytes(), size_t(64));
+
+  auto second = pool.allocate(128, 512);
+  EXPECT_EQ(second->bytes(), size_t(128));
+  EXPECT_EQ(second->offset() % 512, size_t(0));
+  EXPECT_EQ(second->data(), pool.data() + second->offset());
+  EXPECT_EQ(pool.activeBytes(), size_t(64 + 128));
+
+  first.reset();
+  EXPECT_EQ(pool.activeBytes(), size_t(128));
+  second.reset();
+  EXPECT_EQ(pool.activeBytes(), size_t(0));
+  EXPECT_EQ(pool.freeBytes(), pool.bytes());
+}
+
+TEST(GpuUtilsTest, BufferPoolReservesAlignmentPadding) {
+  mscclpp::GpuBufferPool pool(1024);
+
+  auto first = pool.allocate(100, 1);
+  auto second = pool.allocate(100, 256);
+  auto third = pool.allocate(1, 1);
+
+  EXPECT_EQ(first->offset(), size_t(0));
+  EXPECT_EQ(second->offset(), size_t(256));
+  EXPECT_EQ(third->offset(), size_t(356));
+}
+
+TEST(GpuUtilsTest, BufferPoolReuseAfterRelease) {
+  mscclpp::GpuBufferPool pool(1024);
+
+  auto first = pool.allocate(128, 1);
+  auto firstOffset = first->offset();
+  first.reset();
+
+  auto second = pool.allocate(128, 1);
+  EXPECT_EQ(second->offset(), firstOffset);
+  second.reset();
+  EXPECT_EQ(pool.freeBytes(), pool.bytes());
+}
+
+TEST(GpuUtilsTest, BufferPoolThrowsOnInvalidAllocation) {
+  mscclpp::GpuBufferPool pool(1024);
+
+  bool zeroSizeThrows = false;
+  try {
+    (void)pool.allocate(0);
+  } catch (const mscclpp::Error&) {
+    zeroSizeThrows = true;
+  }
+  EXPECT_TRUE(zeroSizeThrows);
+
+  bool zeroAlignmentThrows = false;
+  try {
+    (void)pool.allocate(1, 0);
+  } catch (const mscclpp::Error&) {
+    zeroAlignmentThrows = true;
+  }
+  EXPECT_TRUE(zeroAlignmentThrows);
+
+  bool outOfMemoryThrows = false;
+  try {
+    (void)pool.allocate(pool.bytes() + 1);
+  } catch (const mscclpp::Error&) {
+    outOfMemoryThrows = true;
+  }
+  EXPECT_TRUE(outOfMemoryThrows);
+}
