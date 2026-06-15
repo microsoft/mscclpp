@@ -217,6 +217,8 @@ defaults, **not** the `ep.Config(...)` constructor defaults):
 | `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
 | `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `16`    | Internode only.                        |
 | `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | `128`   | Scale **down** as `num_rdma_ranks` grows (4n→128, 8n→64, 16n→32) to keep the RDMA buffer under the 2 GiB `INT_MAX` limit. |
+| `MSCCLPP_EP_DIRECT`       | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only.** `1` enables the sender direct-write dispatch **and** receiver gather-direct combine (see [GB200 direct-path optimization](#gb200-direct-path-optimization-mscclpp_ep_direct--mscclpp_ep_intra_direct)). Unset = byte-identical 2-hop baseline. |
+| `MSCCLPP_EP_INTRA_DIRECT` | — (runtime `getenv`)                 | unset   | **GB200 single-node only.** `1` enables sender direct-write for the intra-node kernel. Independent of `MSCCLPP_EP_DIRECT` (see below). |
 
 Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
 tokens=4096, experts=256, topk=8):
@@ -225,6 +227,48 @@ tokens=4096, experts=256, topk=8):
   dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg.
 - LL internode: defaults → dispatch ~**16 817 GB/s** agg
   (262 GB/s per rank), combine ~**21 148 GB/s** agg.
+
+### GB200 direct-path optimization (`MSCCLPP_EP_DIRECT` / `MSCCLPP_EP_INTRA_DIRECT`)
+
+On GB200 NVL72 the cross-node "RDMA send" is a cuMem-fabric VA write over
+NVLink, so a sender can reach any peer GPU's recv pool directly. Two
+env-gated flags exploit this to remove the classic DeepEP 2-hop (forwarder
+transpose on dispatch / ring drain on intra-node), turning a
+structural-/handshake-bound copy into a bandwidth-bound 1-hop that scales
+with SM count. Both default **off**, and the binary is byte-identical to the
+2-hop baseline when unset (one `.so`, runtime `getenv`-gated).
+
+- **`MSCCLPP_EP_DIRECT=1`** — internode HT (`test_internode_multirank.py`).
+  One master flag that turns on **both**:
+  - *Dispatch sender direct-write:* `kRDMASender` writes each token's hidden
+    straight to `recv_pool_global_ptrs[dst] + header + idx*hidden_bytes`
+    (1 hop), instead of the forwarder transpose to local NVL peers (2 hops).
+  - *Combine receiver gather-direct:* each token gathers its top-k expert
+    contributions directly from the peer recv pools and reduces locally,
+    skipping the `nvl_channel + forwarder + rdma_channel` path.
+  - *Prerequisite:* cross-node fabric-IPC pool mapping — auto-detected on
+    GB200; force with `MSCCLPP_EP_FABRIC_IPC=1` if needed. The combine input
+    must live in the recv pool (DeepEP contract; satisfied by the round-trip,
+    where combine input = dispatch output).
+- **`MSCCLPP_EP_INTRA_DIRECT=1`** — single-node
+  (`test_intranode_multirank.py`), a **separate** flag for the intra-node
+  kernel. The sender writes hidden into the destination GPU's peer-mapped
+  pool and the receiver skips the ring drain.
+
+Measured on Azure GB200 NVL72 (2 nodes × 4 GPU, HIDDEN=7168, tokens=4096,
+topk=8, experts=256):
+
+- HT internode dispatch+combine round-trip (NSM=20): **~3 850 µs → ~1 750 µs
+  (−54 %)** vs the 2-hop baseline; the win grows with node count.
+- HT intra-node `INTRA_DIRECT=1` dispatch scales **980 µs (16 SM) → 285 µs
+  (152 SM, ~206 GB/s per rank)**, whereas the 2-hop baseline is SM-flat at
+  ~3.8 ms.
+
+> **Single-node launch note.** Launch the intra-node test with an explicit
+> `127.0.0.1` rendezvous (not `torchrun --standalone`, whose hostname
+> rendezvous is not DNS-resolvable on these nodes) and set
+> `NCCL_NET_PLUGIN=none` + `NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3` so NCCL's
+> built-in IB probe does not crash `ep.Buffer` construction.
 
 ## Layout
 
