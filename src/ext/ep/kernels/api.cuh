@@ -40,7 +40,8 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
               int* recv_channel_offset, int* send_head, const void* x, const float* x_scales, const int64_t* topk_idx,
               const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
               int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-              int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens);
+              int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens,
+              void** recv_pool_ptrs = nullptr, int64_t recv_pool_header_bytes = 0);
 
 void cached_notify_combine(void** buffer_ptrs, int* send_head, int num_channels, int num_recv_tokens,
                            int num_memset_int, int** task_fifo_ptrs, int head, int rank, int num_ranks,
@@ -92,7 +93,16 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases);
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases,
+              // Increment 4: per-peer base pointers of the VMM-allocated recv-output pool
+              // (non-null enables cross-GPU forwarder direct-write to recv_x; nullptr = legacy path).
+              void* const* recv_pool_ptrs = nullptr,
+              // Increment 5 (inc5): domain-wide recv-pool bases indexed by GLOBAL rank
+              // (sender direct-write under kEpDirect; nullptr = inactive).
+              void* const* recv_pool_global_ptrs = nullptr,
+              // Increment 5 combine-direct (Stage 1): per-(token, dst global rank) recv-pool
+              // slot index written by the sender; consumed by combine's gather path.
+              int* ep_combine_recv_idx = nullptr);
 
 void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_topk_weights, int num_ranks,
                    int num_channels, int num_combined_tokens, int* combined_rdma_head,
@@ -113,7 +123,10 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases);
+             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases,
+             // Increment 5 combine-direct: peer recv-pool bases + dispatch gather map
+             // (non-null + kEpDirect => combine gathers from pools; nullptr = legacy 2-hop).
+             void* const* recv_pool_global_ptrs = nullptr, const int* ep_combine_recv_idx = nullptr);
 
 }  // namespace internode
 

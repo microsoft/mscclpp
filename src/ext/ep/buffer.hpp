@@ -39,6 +39,32 @@ struct Buffer {
   int64_t num_nvl_bytes;
   void* buffer_ptrs[NUM_MAX_NVL_PEERS] = {nullptr};
   void** buffer_ptrs_gpu = nullptr;
+  // Increment 3: byte offset of the peer-mapped recv-output pool within the NVL
+  // allocation (buffer_ptrs[*] + recv_pool_off_). -1 until set in the ctor.
+  int64_t recv_pool_off_ = -1;
+  // Increment 4: VMM-allocated (cuMem FABRIC/POSIX-FD via gpuCallocPhysical)
+  // recv-output pool. recv_pool_local_ptr_ is this rank's local pool; the peer
+  // bases (imported via registerMemory/recvMemory) live in recv_pool_ptrs_ /
+  // recv_pool_ptrs_gpu. These are TMA-eligible peer VAs (unlike cudaIpc maps).
+  // Non-null recv_pool_local_ptr_ selects the increment-4 VMM direct-write path.
+  void* recv_pool_local_ptr_ = nullptr;
+  std::vector<void*> recv_pool_ptrs_;
+  void** recv_pool_ptrs_gpu = nullptr;
+  // Keep imported peer RegisteredMemory alive so the cuMem mapping persists for
+  // the Buffer's lifetime (recv_pool_ptrs_[*] alias their .data()).
+  std::vector<mscclpp::RegisteredMemory> recv_pool_remote_mems_;
+  // Increment 5 (inc5 flat-domain dispatch): domain-wide recv-pool bases indexed
+  // by GLOBAL rank (all num_ranks across the NVLink domain), so the RDMA sender
+  // can write each token directly into the destination GPU's recv pool. Populated
+  // only when MSCCLPP_EP_DIRECT is set. recv_pool_global_ptrs_[rank]==local pool.
+  std::vector<void*> recv_pool_global_ptrs_;
+  void** recv_pool_global_ptrs_gpu = nullptr;
+  std::vector<mscclpp::RegisteredMemory> recv_pool_global_remote_mems_;
+  // Increment 5 combine-direct (Stage 1): per-(source token, dst global rank)
+  // recv-pool slot index written by the dispatch sender (= ep_my_idx). Lets the
+  // combine path gather each token's contributions straight from the peer pools.
+  // Allocated [kEpRecvPoolMaxTokens * num_ranks] ints under MSCCLPP_EP_DIRECT.
+  int* ep_combine_recv_idx_gpu = nullptr;
 
   // NVSHMEM Buffer
   int64_t num_rdma_bytes;

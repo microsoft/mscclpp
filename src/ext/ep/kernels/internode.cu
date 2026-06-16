@@ -632,8 +632,11 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
   constexpr int kNumThreads = 512;
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
-  // Get clean meta
-  auto rdma_clean_meta = get_rdma_clean_meta(hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
+  // Get clean meta. inc5: under MSCCLPP_EP_DIRECT the rdma ring slot excludes
+  // hidden (kEpDirect), so the clean region must match the SMALL slot the kernel
+  // uses, else the cleaned head/tail region != the one the kernel reads.
+  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
+  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
                                              num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
@@ -1511,6 +1514,15 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   }
 }
 
+#ifdef EP_DISPATCH_NCCLEP
+#include "internode_ncclep.cuh"  // warp-specialized NCCL-EP-ported dispatch_ncclep<>
+#define EP_DISPATCH_KERNEL dispatch_ncclep
+#define EP_DISPATCH_EXTRA_ARGS , recv_pool_ptrs, recv_pool_global_ptrs, ep_combine_recv_idx
+#else
+#define EP_DISPATCH_KERNEL dispatch
+#define EP_DISPATCH_EXTRA_ARGS
+#endif
+
 void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights, void* recv_src_meta,
               const void* x, const float* x_scales, const int64_t* topk_idx, const float* topk_weights,
               int* send_rdma_head, int* send_nvl_head, int* recv_rdma_channel_prefix_matrix,
@@ -1523,16 +1535,30 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               bool is_cached_dispatch, cudaStream_t stream, int num_channels, bool low_latency_mode,
               mscclpp::PortChannelDeviceHandle* port_channel_handles,
               mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
+              void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_ptrs,
+              void* const* recv_pool_global_ptrs, int* ep_combine_recv_idx) {
   constexpr int kNumDispatchRDMASenderWarps = 6;
+
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 5 (inc5): upload MSCCLPP_EP_DIRECT -> __constant__ kEpDirect once.
+  {
+    static bool s_done_direct = false;
+    if (!s_done_direct) {
+      const char* e = std::getenv("MSCCLPP_EP_DIRECT");
+      int v = (e && std::atoi(e) != 0) ? 1 : 0;
+      cudaMemcpyToSymbol(kEpDirect, &v, sizeof(int));
+      s_done_direct = true;
+    }
+  }
+#endif
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
   {                                                                                                                    \
     auto dispatch_func =                                                                                               \
-        low_latency_mode ? (is_cached_dispatch ? dispatch<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
-                                               : dispatch<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
-                         : (is_cached_dispatch ? dispatch<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
-                                               : dispatch<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
+        low_latency_mode ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
+                                               : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
+                         : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
+                                               : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
     LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                  \
                   recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),   \
                   x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,    \
@@ -1541,7 +1567,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
                   num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                    \
                   num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                      \
                   num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,      \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases);                          \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);                          \
   }                                                                                                                    \
   break
 
@@ -1723,8 +1749,14 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
   const int num_threads = std::max(128, 32 * num_channels);
   const auto num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
 
-  // Get clean meta
-  auto rdma_clean_meta = get_rdma_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
+  // Get clean meta. inc5: only the DISPATCH ring is shrunk under
+  // MSCCLPP_EP_DIRECT (hidden goes direct to the pool); the COMBINE ring still
+  // carries hidden through the rdma channel, so its clean must stay full-slot.
+  // is_cached_dispatch distinguishes the two callers (true=cached dispatch,
+  // false=combine).
+  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
+  const int clean_hidden_int4 = (ep_direct && is_cached_dispatch) ? 0 : hidden_int4;
+  auto rdma_clean_meta = get_rdma_clean_meta(clean_hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                              num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
@@ -1825,7 +1857,11 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
             // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
             // Phase 4 fabric-IPC peer base pointers (nullptr → fall back to handle.put for cross-node data).
-            void* const* peer_rdma_bases) {
+            void* const* peer_rdma_bases,
+            // Increment 5 combine-direct: domain-wide recv-pool bases (by global rank) +
+            // the dispatch gather map. Non-null + kEpDirect => combine gathers each token's
+            // contributions straight from the peer pools and reduces locally (no 2-hop).
+            void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
   enum class WarpRole { kNVLSender, kNVLAndRDMAForwarder, kRDMAReceiver, kCoordinator };
 
   const auto sm_id = static_cast<int>(blockIdx.x);
@@ -1842,6 +1878,100 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
   if (rank == 0 && thread_id == 0 && channel_id == 0) {
     (void)0;
   }
+#ifdef EP_DISPATCH_NCCLEP
+  // inc5 combine-direct: under MSCCLPP_EP_DIRECT, gather each combined token's
+  // contributions DIRECTLY from the peer recv pools (recv_pool_global_ptrs[r] +
+  // header + recv_idx*hidden) and reduce locally, skipping nvl_channel +
+  // forwarder + rdma_channel. recv_idx is the dispatch gather map
+  // (ep_combine_recv_idx[t*num_ranks+r]); this mirrors dispatch's sender-direct
+  // write in reverse. Assumes the combine input lives in the recv pool (DeepEP
+  // contract; the flat test passes recv_x).
+  if (kEpDirect and recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr) {
+    // kEpNumRanks is the world size for this kernel instantiation (compile-time:
+    // kNumRDMARanks * NUM_MAX_NVL_PEERS, == num_ranks). The fast combine_token<>
+    // discovery maps one warp lane per rank; that is correct AND fast only while
+    // kEpNumRanks <= 32. For >= 16 nodes (kEpNumRanks > 32) its __shfl-by-rank source
+    // lane wraps mod 32 (ranks >= 32 alias 0..31 -> double-count / garbage), so we fall
+    // back to a chunked-ballot discovery that scans ranks in 32-wide chunks. The branch
+    // is `if constexpr`, so <= 8 nodes compile to exactly the original fast path.
+    constexpr int kEpNumRanks = kNumRDMARanks * NUM_MAX_NVL_PEERS;
+    const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+    const int warp_id_flat = thread_id / 32;
+    const int num_warps_per_block = static_cast<int>(blockDim.x) / 32;
+    const int global_warp = sm_id * num_warps_per_block + warp_id_flat;
+    const int total_warps = static_cast<int>(gridDim.x) * num_warps_per_block;
+    auto recv_fn = [&](int r, int slot, int hi) -> int4 {
+      return ld_nc_global(reinterpret_cast<const int4*>(reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[r]) +
+                                                        ep_pool_header_bytes) +
+                          static_cast<int64_t>(slot) * hidden_int4 + hi);
+    };
+    auto recv_tw_fn = [&](int, int, int) -> float { return 0.0f; };
+    if constexpr (kEpNumRanks <= 32) {
+      // Original fast path: one lane per rank; combine_token does compile-time-unrolled
+      // discovery + register-array reduction. Correct because kEpNumRanks <= 32.
+      for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+        const bool is_in =
+            (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
+        const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
+        combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
+                                               combined_x + static_cast<int64_t>(t) * hidden_int4,
+                                               combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
+                                               recv_fn, recv_tw_fn);
+      }
+    } else {
+      // >= 16 nodes (kEpNumRanks > 32): chunked-ballot discovery (lane-per-rank aliases
+      // past 32). A token routes to <= num_topk (<= 8) distinct ranks => <= 8 contributors.
+      constexpr int kEpMaxContrib = 8;
+      constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
+      for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+        // Scan ranks in chunks of 32 and compact the set lanes via ballot. Discovery is
+        // warp-uniform: every lane ends with the same topk_ranks/slot_indices/num_topk_ranks.
+        int topk_ranks[kEpMaxContrib], slot_indices[kEpMaxContrib], num_topk_ranks = 0;
+        for (int base = 0; base < kEpNumRanks; base += 32) {
+          const int r = base + lane_id;
+          const bool is_in =
+              (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+          const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
+          unsigned ballot = __ballot_sync(0xffffffffu, is_in);
+          while (ballot != 0u) {
+            const int l = __ffs(static_cast<int>(ballot)) - 1;
+            if (num_topk_ranks < kEpMaxContrib) {
+              topk_ranks[num_topk_ranks] = base + l;
+              slot_indices[num_topk_ranks] = __shfl_sync(0xffffffffu, slot, l);
+              ++num_topk_ranks;
+            }
+            ballot &= ballot - 1u;
+          }
+        }
+        // Reduce the contributors' hidden rows into combined_x (lane-strided), mirroring
+        // combine_token: #pragma unroll the outer hidden loop + pre-load contributors.
+        int4* combined_row = combined_x + static_cast<int64_t>(t) * hidden_int4;
+#pragma unroll
+        for (int i = lane_id; i < hidden_int4; i += 32) {
+          int4 recv_value_int4[kEpMaxContrib];
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) recv_value_int4[j] = recv_fn(topk_ranks[j], slot_indices[j], i);
+          float values[kDtypePerInt4] = {0};
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) {
+            auto vd = reinterpret_cast<const dtype_t*>(&recv_value_int4[j]);
+#pragma unroll
+            for (int k = 0; k < kDtypePerInt4; ++k) values[k] += static_cast<float>(vd[k]);
+          }
+          int4 out_int4;
+          auto out_dtypes = reinterpret_cast<dtype_t*>(&out_int4);
+#pragma unroll
+          for (int k = 0; k < kDtypePerInt4; ++k) out_dtypes[k] = static_cast<dtype_t>(values[k]);
+          st_na_global(combined_row + i, out_int4);
+        }
+        // combined_topk_weights: gather path contributes 0 (parity with recv_tw_fn).
+        if (lane_id < num_topk)
+          st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+      }
+    }
+    return;
+  }
+#endif
   auto role_meta = [=]() -> std::pair<WarpRole, int> {
     auto warp_id = thread_id / 32;
     if (not is_rdma_receiver_sm) {
@@ -2408,7 +2538,8 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
              int num_ranks, cudaStream_t stream, int num_channels, bool low_latency_mode,
              mscclpp::PortChannelDeviceHandle* port_channel_handles,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, void* nvls_head_mc, void* nvls_head_dev,
-             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases) {
+             void* nvls_tail_mc, void* nvls_tail_dev, void* const* peer_rdma_bases, void* const* recv_pool_global_ptrs,
+             const int* ep_combine_recv_idx) {
   constexpr int kNumCombineForwarderWarps = 16;
 
 #define COMBINE_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -2422,7 +2553,7 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
                   rdma_buffer_ptr, num_max_rdma_chunked_send_tokens, num_max_rdma_chunked_recv_tokens, buffer_ptrs,   \
                   num_max_nvl_chunked_send_tokens, num_max_nvl_chunked_recv_tokens, rank, num_ranks,                  \
                   port_channel_handles, memory_channel_handles, nvls_head_mc, nvls_head_dev, nvls_tail_mc,            \
-                  nvls_tail_dev, peer_rdma_bases);                                                                    \
+                  nvls_tail_dev, peer_rdma_bases, recv_pool_global_ptrs, ep_combine_recv_idx);                        \
   }                                                                                                                   \
   break
 
