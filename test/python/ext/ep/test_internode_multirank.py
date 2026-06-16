@@ -226,7 +226,7 @@ def main():
     )
     dist.barrier(group=group)
 
-    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY","0") in ("1","true","True")
+    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY", "0") in ("1", "true", "True")
     # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     start = 0

@@ -836,8 +836,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
             recv_pool_global_ptrs_[r] = recv_pool_global_remote_mems_[r].data();
           }
           CUDA_CHECK(cudaMalloc(&recv_pool_global_ptrs_gpu, sizeof(void*) * num_ranks));
-          CUDA_CHECK(cudaMemcpy(recv_pool_global_ptrs_gpu, recv_pool_global_ptrs_.data(),
-                                sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+          CUDA_CHECK(cudaMemcpy(recv_pool_global_ptrs_gpu, recv_pool_global_ptrs_.data(), sizeof(void*) * num_ranks,
+                                cudaMemcpyHostToDevice));
           if (rank == 0) {
             printf("[mscclpp_ep] inc5 domain-wide recv-pool bases (rank 0):");
             for (int r = 0; r < num_ranks; ++r) printf(" [%d]=%p", r, recv_pool_global_ptrs_[r]);
@@ -1503,7 +1503,7 @@ Buffer::internode_dispatch(
   }
 
   // Allocate new tensors
-  void** ep_recv_pool_ptrs = nullptr;  // non-null selects the increment-4 VMM direct-write path
+  void** ep_recv_pool_ptrs = nullptr;         // non-null selects the increment-4 VMM direct-write path
   void** ep_recv_pool_global_ptrs = nullptr;  // inc5: domain-wide pool bases (sender direct-write)
 #ifdef EP_DISPATCH_NCCLEP
   // Increment 4 (VMM pool): when num_recv_tokens fits the fixed pool, back recv_x
@@ -1717,17 +1717,17 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
   void* combine_nvls_tail_dev =
       nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
-  internode::combine(
-      at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(), combined_topk_weights_ptr,
-      is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(), topk_weights_ptr, combined_rdma_head.data_ptr<int>(),
-      combined_nvl_head.data_ptr<int>(), src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
-      rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens, num_combined_tokens,
-      hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
-      config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
-      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels, low_latency_mode,
-      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), combine_nvls_head_mc,
-      combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu,
-      recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);
+  internode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(),
+                     combined_topk_weights_ptr, is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(),
+                     topk_weights_ptr, combined_rdma_head.data_ptr<int>(), combined_nvl_head.data_ptr<int>(),
+                     src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
+                     rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens,
+                     num_combined_tokens, hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
+                     config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
+                     config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels,
+                     low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev,
+                     peer_rdma_bases_gpu, recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);
 
   std::optional<EventHandle> event;
   if (async) {
