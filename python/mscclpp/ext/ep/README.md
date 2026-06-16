@@ -1,4 +1,4 @@
-# Expert Parallel Python API Design Draft
+# Expert Parallel Python API Design
 
 This document proposes a simplified Python API for MoE expert-parallel
 dispatch and combine. It is a design draft for review, not a committed API
