@@ -12,6 +12,9 @@ from mscclpp.language.collectives import *
 def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size, instances):
     # Packet (LL protocol) NVLS AllGather, tuned for small-message latency.
     #
+    # Tuned launch defaults (64-GPU GB200 MNNVL, 1K-32K): instances=1, num_threads_per_block=256
+    # (~6.2us, ~2x faster than tpb=1024). instances>=2 deadlocks at this scale, so keep instances=1.
+    #
     # Unlike allgather_nvls_zero_copy.py (Simple protocol + full-mesh barriers around
     # an NVLS multimem store), this variant carries an LL flag inside every packet, so
     # the broadcast is self-synchronizing and NO signal/wait barriers are needed. Each
@@ -65,7 +68,7 @@ parser = argparse.ArgumentParser()
 
 parser.add_argument("--name", type=str, help="name of the program")
 parser.add_argument("--num_gpus", type=int, help="number of gpus")
-parser.add_argument("--num_threads_per_block", type=int, default=1024, help="number of threads per block")
+parser.add_argument("--num_threads_per_block", type=int, default=256, help="number of threads per block")
 parser.add_argument("--min_message_size", type=int, default=0, help="minimum message size")
 parser.add_argument("--max_message_size", type=int, default=2**64 - 1, help="maximum message size")
 parser.add_argument("--instances", type=int, default=1, help="number of instances (parallel threadblocks)")
