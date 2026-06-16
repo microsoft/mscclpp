@@ -700,12 +700,3 @@ expert_output = fp8_grouped_mlp(
 
 output = moe_comm.combine(expert_output, handle)
 ```
-
-## Open questions
-
-- Whether `weights` should be required for dispatch or allowed to be `None`
-  for unweighted combine.
-- Whether `DispatchHandle` should copy `topk_ids` and `weights` for safety or
-  hold references for lower overhead.
-- How to represent backend-specific quantization formats beyond FP8, NVFP4,
-  and MXFP8 without growing the dispatch argument list.
