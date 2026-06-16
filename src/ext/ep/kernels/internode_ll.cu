@@ -311,8 +311,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
     const auto dst_expert_local_idx = responsible_expert_idx % num_local_experts;
     const auto num_tokens_sent = shared_num_tokens_sent_per_expert[responsible_expert_idx - sm_id * kNumWarpGroups];
 
-    while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2)
-      ;
+    while (ld_acquire_global(atomic_finish_counter_per_expert + responsible_expert_idx) != FINISHED_SUM_TAG * 2);
     if (dst_rank != rank) {
       if constexpr (kIpcPath) {
         // Single writer per (dst_expert_local_idx, rank) slot, so a
@@ -364,8 +363,7 @@ LOW_LATENCY_DISPATCH_RECV:
     EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
     if (sub_warp_id == 1 and lane_id == 0) {
       int64_t raw;
-      while ((raw = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * num_ranks + src_rank)) == 0)
-        ;
+      while ((raw = ld_acquire_sys_global(rdma_recv_count + local_expert_idx * num_ranks + src_rank)) == 0);
       num_recv_tokens = static_cast<int>(-raw - 1);
       recv_token_begin_idx = atomicAdd(packed_recv_count + local_expert_idx, num_recv_tokens);
       shared_num_recv_tokens[warp_group_id] = num_recv_tokens;
@@ -589,8 +587,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
     EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
     asm volatile("bar.sync %0, %1;" ::"r"(warp_group_id + 1), "r"(kNumWarpsPerGroup * 32));
     if (sub_warp_id == 1 and lane_id == 0) {
-      while (ld_acquire_global(atomic_clean_flag) == 0)
-        ;
+      while (ld_acquire_global(atomic_clean_flag) == 0);
       if (dst_rank != rank) {
         if constexpr (kIpcPath) {
           auto peer_flag =
@@ -616,8 +613,7 @@ LOW_LATENCY_COMBINE_RECV:
   if (responsible_expert_idx < num_experts) {
     EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
     if (sub_warp_id == 0 and lane_id == 0)
-      while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0)
-        ;
+      while (ld_acquire_sys_global(rdma_recv_flag + responsible_expert_idx) == 0);
   }
   cg::this_grid().sync();
 

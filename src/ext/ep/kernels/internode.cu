@@ -474,8 +474,7 @@ __global__ void notify_dispatch(
         sum += rdma_recv_num_tokens_mixed.recv_buffer(i)[NUM_MAX_NVL_PEERS + num_rdma_experts];
         recv_rdma_rank_prefix_sum[i] = sum;
       }
-      while (ld_volatile_global(moe_recv_rdma_counter_mapped) != -1)
-        ;
+      while (ld_volatile_global(moe_recv_rdma_counter_mapped) != -1);
       *moe_recv_rdma_counter_mapped = sum;
     }
 
@@ -506,8 +505,7 @@ __global__ void notify_dispatch(
         sum += nvl_recv_num_tokens_per_rank.buffer(src_nvl_rank)[src_rdma_rank];
         recv_gbl_rank_prefix_sum[i] = sum;
       }
-      while (ld_volatile_global(moe_recv_counter_mapped) != -1)
-        ;
+      while (ld_volatile_global(moe_recv_counter_mapped) != -1);
       *moe_recv_counter_mapped = sum;
     }
     if (thread_id < num_nvl_experts) {
@@ -515,8 +513,7 @@ __global__ void notify_dispatch(
 #pragma unroll
       for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) sum += nvl_recv_num_tokens_per_expert.buffer(i)[thread_id];
       sum = (sum + expert_alignment - 1) / expert_alignment * expert_alignment;
-      while (ld_volatile_global(moe_recv_expert_counter_mapped + thread_id) != -1)
-        ;
+      while (ld_volatile_global(moe_recv_expert_counter_mapped + thread_id) != -1);
       moe_recv_expert_counter_mapped[thread_id] = sum;
     }
 
@@ -881,8 +878,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             *reinterpret_cast<const NvlPackT*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
 
       // Acquire sequential lock
-      while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
-        ;
+      while (lane_id == 0 and rdma_send_next_token_idx != token_idx);
       __syncwarp();
 
       // Acquire next tail
@@ -974,8 +970,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Epilogue
     // Acquire sequential lock
-    while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
-      ;
+    while (lane_id == 0 and rdma_send_next_token_idx != token_idx);
     __syncwarp();
 
     // Update last token tail (epilogue). See in-loop note on atomicMax.
@@ -1816,7 +1811,7 @@ template <bool kLowLatencyMode, int kNumRDMARanks, typename dtype_t, int kNumCom
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks),
           int kNumWarpsPerForwarder =
               (kNumCombineForwarderWarps / kNumRDMARanks > 0) ? kNumCombineForwarderWarps / kNumRDMARanks : 1,
-          int kNumForwarders = kNumRDMARanks* kNumWarpsPerForwarder,
+          int kNumForwarders = kNumRDMARanks * kNumWarpsPerForwarder,
           int kNumRDMAReceivers = kNumForwarders + NUM_MAX_NVL_PEERS>
 __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32, 1)
     combine(int4* combined_x, float* combined_topk_weights, const bool* is_combined_token_in_rank, const int4* x,
