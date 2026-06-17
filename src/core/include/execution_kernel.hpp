@@ -639,7 +639,8 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
 
   PacketType* srcPackets =
       (PacketType*)((char*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + (srcOffset << 1));
-  PacketType* multiPkt = (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
+  PacketType* multiPkt =
+      (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
 
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
