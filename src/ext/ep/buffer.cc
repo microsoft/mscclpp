@@ -1323,11 +1323,33 @@ Buffer::internode_dispatch(
   // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from other ranks, which can be quite long.
   pybind11::gil_scoped_release release;
 
-  const int num_channels = config.num_sms / 2;
+  int num_channels = config.num_sms / 2;
   EP_HOST_ASSERT(config.num_sms % 2 == 0);
   EP_HOST_ASSERT(0 < get_num_rdma_ranks() and get_num_rdma_ranks() <= NUM_MAX_RDMA_PEERS);
 
   bool cached_mode = cached_rdma_channel_prefix_matrix.has_value();
+  // inc6 (kEpFlat): MSCCLPP_EP_DISPATCH_NSM caps the flat dispatch block count
+  // (== num_channels, since the flat all-sender path launches one sender block per
+  // channel) independently of config.num_sms. num_channels is the token-partitioning
+  // granularity shared by notify_dispatch, the prefix-matrix allocations, and the
+  // dispatch grid, so changing it here keeps the whole dispatch pipeline self-consistent
+  // (the NSM sweep already varied num_channels 8..76 with byte-correct recv). Capped at
+  // config.num_sms/2 because the RDMA/NVL ring buffers were sized for that many channels;
+  // it can only reduce the dispatch SM count to free SMs, never grow it. Flat-only; the
+  // 2-hop path must keep num_channels == config.num_sms/2.
+#ifdef EP_DISPATCH_NCCLEP
+  if (not cached_mode) {
+    const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
+    const char* e_flat = std::getenv("MSCCLPP_EP_FLAT");
+    const bool ep_flat = (e_flat && std::atoi(e_flat) != 0) && (e_direct && std::atoi(e_direct) != 0);
+    const char* e_dnsm = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
+    if (ep_flat && e_dnsm != nullptr) {
+      const int dnsm = std::atoi(e_dnsm);
+      const int max_channels = config.num_sms / 2;
+      if (dnsm >= 1) num_channels = (dnsm < max_channels) ? dnsm : max_channels;
+    }
+  }
+#endif
   if (cached_mode) {
     EP_HOST_ASSERT(cached_rdma_channel_prefix_matrix.has_value());
     EP_HOST_ASSERT(cached_recv_rdma_rank_prefix_sum.has_value());
@@ -1660,6 +1682,21 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
   const int num_channels = config.num_sms / 2;
   EP_HOST_ASSERT(config.num_sms % 2 == 0);
 
+  // inc6 (kEpFlat): detect the flat direct-gather combine up front. Under flat the
+  // gather path ignores the per-channel prefix matrices entirely (they are vestigial
+  // and, with MSCCLPP_EP_DISPATCH_NSM, may be sized for a different channel count), so
+  // their num_channels shape checks below are relaxed. The flag is reused later to skip
+  // cached_notify and to honor MSCCLPP_EP_COMBINE_NSM.
+  bool ep_flat_combine = false;
+#ifdef EP_DISPATCH_NCCLEP
+  {
+    const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
+    const char* e_flat = std::getenv("MSCCLPP_EP_FLAT");
+    const bool ep_flat = (e_flat && std::atoi(e_flat) != 0) && (e_direct && std::atoi(e_direct) != 0);
+    ep_flat_combine = ep_flat and recv_pool_global_ptrs_gpu != nullptr and ep_combine_recv_idx_gpu != nullptr;
+  }
+#endif
+
   // Shape and contiguous checks
   EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous());
   EP_HOST_ASSERT(src_meta.dim() == 2 and src_meta.is_contiguous() and src_meta.scalar_type() == torch::kByte);
@@ -1683,9 +1720,10 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
   EP_HOST_ASSERT(src_meta.size(1) == internode::get_source_meta_bytes());
   EP_HOST_ASSERT(is_combined_token_in_rank.size(1) == num_ranks);
   EP_HOST_ASSERT(rdma_channel_prefix_matrix.size(0) == num_rdma_ranks and
-                 rdma_channel_prefix_matrix.size(1) == num_channels);
+                 (ep_flat_combine or rdma_channel_prefix_matrix.size(1) == num_channels));
   EP_HOST_ASSERT(rdma_rank_prefix_sum.size(0) == num_rdma_ranks);
-  EP_HOST_ASSERT(gbl_channel_prefix_matrix.size(0) == num_ranks and gbl_channel_prefix_matrix.size(1) == num_channels);
+  EP_HOST_ASSERT(gbl_channel_prefix_matrix.size(0) == num_ranks and
+                 (ep_flat_combine or gbl_channel_prefix_matrix.size(1) == num_channels));
   EP_HOST_ASSERT(combined_rdma_head.dim() == 2 and combined_rdma_head.size(0) == num_combined_tokens and
                  combined_rdma_head.size(1) == num_rdma_ranks);
   EP_HOST_ASSERT(combined_nvl_head.dim() == 2 and combined_nvl_head.size(1) == NUM_MAX_NVL_PEERS);
@@ -1719,16 +1757,51 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
   EP_HOST_ASSERT(config.num_max_nvl_chunked_recv_tokens % num_rdma_ranks == 0);
   EP_HOST_ASSERT(config.num_max_nvl_chunked_send_tokens <= config.num_max_nvl_chunked_recv_tokens / num_rdma_ranks);
 
-  internode::cached_notify(
-      hidden_int4, 0, 0, num_topk, num_ranks, num_channels, num_combined_tokens, combined_rdma_head.data_ptr<int>(),
-      rdma_channel_prefix_matrix.data_ptr<int>(), rdma_rank_prefix_sum.data_ptr<int>(),
-      combined_nvl_head.data_ptr<int>(), rdma_buffer_ptr, config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu,
-      config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
-      config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, false, low_latency_mode,
-      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
-      nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr, nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr, nvls_ht_off_barrier,
-      (nvls_ht_enabled ? ++nvls_ht_cached_epoch : 0));
-  move_fifo_slots(2);
+  // inc6 (kEpFlat): under the flat all-sender path the combine kernel early-returns
+  // to the pure direct-gather branch (recv_pool_global_ptrs + ep_combine_recv_idx),
+  // so it never touches the rdma/nvl ring or the head breadcrumbs. cached_notify's
+  // ring cleanup + head-prep is therefore unnecessary AND unsafe: its sm_id>=3 branch
+  // indexes rdma_channel_prefix_matrix (the forwarder-produced recv_rdma_channel_prefix_matrix)
+  // to derive token ranges, then writes combined_nvl_head over that range. Under
+  // all-sender flat the forwarder is removed so those tensors are never written ->
+  // garbage ranges -> out-of-bounds writes (illegal memory access). Skip the whole
+  // cached_notify + fifo-advance step under flat; the direct gather needs none of it.
+  // (ep_flat_combine was computed once near the top of this function.)
+  if (not ep_flat_combine) {
+    internode::cached_notify(
+        hidden_int4, 0, 0, num_topk, num_ranks, num_channels, num_combined_tokens, combined_rdma_head.data_ptr<int>(),
+        rdma_channel_prefix_matrix.data_ptr<int>(), rdma_rank_prefix_sum.data_ptr<int>(),
+        combined_nvl_head.data_ptr<int>(), rdma_buffer_ptr, config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu,
+        config.num_max_nvl_chunked_recv_tokens, task_fifo_ptrs_gpu, head, rank, comm_stream,
+        config.get_rdma_buffer_size_hint(hidden_int4 * sizeof(int4), num_ranks), num_nvl_bytes, false, low_latency_mode,
+        port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+        nvls_ht_enabled ? nvls_ht_mc_ptr : nullptr, nvls_ht_enabled ? nvls_ht_dev_ptr : nullptr, nvls_ht_off_barrier,
+        (nvls_ht_enabled ? ++nvls_ht_cached_epoch : 0));
+    move_fifo_slots(2);
+  }
+
+  // inc6 (kEpFlat): the flat combine is a pure direct-gather whose grid is
+  // independent of the dispatch channel partitioning -- it strides every warp over
+  // num_combined_tokens and never indexes the per-channel prefix matrices. The
+  // combine SM sweep showed it saturates the NVLink ceiling at ~76 blocks, so the
+  // grid can be capped independently of config.num_sms via MSCCLPP_EP_COMBINE_NSM
+  // (combine block count; default keeps the dispatch-tied num_channels*2). Only
+  // applied under flat; the 2-hop combine MUST keep num_channels matching the
+  // prefix-matrix column count, so its grid is left untouched. Capped at
+  // num_channels (=config.num_sms/2) so the combine grid never exceeds the SM budget.
+  int combine_grid_channels = num_channels;
+#ifdef EP_DISPATCH_NCCLEP
+  if (ep_flat_combine) {
+    const char* e_cnsm = std::getenv("MSCCLPP_EP_COMBINE_NSM");
+    if (e_cnsm != nullptr) {
+      int cnsm_blocks = std::atoi(e_cnsm);
+      if (cnsm_blocks >= 2) {
+        int cnsm_channels = cnsm_blocks / 2;
+        combine_grid_channels = (cnsm_channels < num_channels) ? cnsm_channels : num_channels;
+      }
+    }
+  }
+#endif
 
   auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
   // Phase 3: NVLS counter region pointers for combine kernel.
@@ -1747,7 +1820,7 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens, num_combined_tokens,
       hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
       config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
-      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, num_channels, low_latency_mode,
+      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, combine_grid_channels, low_latency_mode,
       port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), combine_nvls_head_mc,
       combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu,
       recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);

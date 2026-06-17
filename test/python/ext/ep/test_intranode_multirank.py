@@ -107,7 +107,7 @@ def main():
     # Allocate Buffer (intranode only: num_rdma_bytes=0). Size the NVL buffer
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
-        int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        int(os.environ.get("MSCCLPP_EP_NSM", os.environ.get("MSCCLPP_EP_NUM_SMS", "20"))),
         int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
         int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
     )
