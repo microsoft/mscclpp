@@ -183,7 +183,7 @@ elseif(MSCCLPP_USE_CUDA)
 	    endif()
     endif()
 elseif(MSCCLPP_USE_ROCM)
-    set(MSCCLPP_GPU_ARCHS gfx90a gfx941 gfx942)
+    set(MSCCLPP_GPU_ARCHS gfx90a gfx942)
 endif()
 
 message(STATUS "GPU architectures: ${MSCCLPP_GPU_ARCHS}")
