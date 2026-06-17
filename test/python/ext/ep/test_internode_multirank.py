@@ -227,6 +227,7 @@ def main():
     dist.barrier(group=group)
 
     _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY","0") in ("1","true","True")
+    _disp_only = os.environ.get("MSCCLPP_EP_BENCH_DISPATCH_ONLY","0") in ("1","true","True")
     # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     start = 0
@@ -261,36 +262,44 @@ def main():
     # matrices passed here must be the RECEIVER-side ones returned by dispatch
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
-        recv_x,
-        recv_topk_weights,
-        recv_src_meta,
-        is_token_in_rank,
-        recv_rdma_channel_prefix_matrix,
-        recv_rdma_rank_prefix_sum,
-        recv_gbl_channel_prefix_matrix,
-        send_rdma_head,
-        send_nvl_head,
-        cfg,
-        None,
-        False,
-        False,
-    )
+    if not _disp_only:
+        combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
+            recv_x,
+            recv_topk_weights,
+            recv_src_meta,
+            is_token_in_rank,
+            recv_rdma_channel_prefix_matrix,
+            recv_rdma_rank_prefix_sum,
+            recv_gbl_channel_prefix_matrix,
+            send_rdma_head,
+            send_nvl_head,
+            cfg,
+            None,
+            False,
+            False,
+        )
 
-    num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
-    expected = num_dst * float(rank)
-    got = combined_x.float().mean(dim=1)
-    diff = (got - expected).abs().max().item()
-    max_exp = expected.abs().max().item()
-    print(f"[combine r{rank}] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
-    # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
-    # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
-    tol = max(1e-2, max_exp * (1.0 / 64))
-    assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
+        num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
+        expected = num_dst * float(rank)
+        got = combined_x.float().mean(dim=1)
+        diff = (got - expected).abs().max().item()
+        max_exp = expected.abs().max().item()
+        print(f"[combine r{rank}] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
+        # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
+        # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
+        tol = max(1e-2, max_exp * (1.0 / 64))
+        assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
 
-    dist.barrier(group=group)
-    if rank == 0:
-        print("PASS", flush=True)
+        dist.barrier(group=group)
+        if rank == 0:
+            print("PASS", flush=True)
+    else:
+        # inc6 (kEpFlat) all-sender ceiling probe: combine deadlocks without the
+        # forwarder/receiver breadcrumbs (send_nvl_head, *_channel_prefix_matrix).
+        # Skip it; the dispatch correctness check above already validated recv_x.
+        dist.barrier(group=group)
+        if rank == 0:
+            print("PASS (dispatch-only)", flush=True)
 
     # ------------------------------------------------------------------
     # Optional benchmark (enable with MSCCLPP_EP_BENCH=1).
@@ -408,7 +417,8 @@ def main():
         dout = _dispatch()
         torch.cuda.synchronize()
         dist.barrier(group=group)
-        _combine(dout)
+        if not _disp_only:
+            _combine(dout)
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
@@ -429,12 +439,17 @@ def main():
     dist.barrier(group=group)
 
     # Time combine alone (reusing the same dispatch output each iter).
-    start_ev.record()
-    for _ in range(iters):
-        _combine(dout)
-    end_ev.record()
-    torch.cuda.synchronize()
-    comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+    if _disp_only:
+        # inc6 ceiling probe: no combine. Mirror dispatch time so the downstream
+        # BW math (which divides by combine time) stays crash-free.
+        comb_us = disp_us
+    else:
+        start_ev.record()
+        for _ in range(iters):
+            _combine(dout)
+        end_ev.record()
+        torch.cuda.synchronize()
+        comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
 
     # Per-rank "send bytes" matches NCCL-EP's `ep_bench` accounting (`RDMA_send`):
     # bench_tokens * hidden * sizeof(bf16). Each rank ships its `bench_tokens`
@@ -519,7 +534,8 @@ def main():
     c_recv_rdma_bw = rdma_send_bytes / comb_t_s / 1e9
     if rank == 0:
         print(
-            f"[bench internode HT] nodes={num_nodes} num_ranks={num_ranks} "
+            f"[bench internode HT]{' (dispatch-only)' if _disp_only else ''} "
+            f"nodes={num_nodes} num_ranks={num_ranks} "
             f"tokens={bench_tokens} hidden={bench_hidden} "
             f"experts={bench_num_experts} topk={bench_num_topk} "
             f"warmup={warmup} iters={iters}",

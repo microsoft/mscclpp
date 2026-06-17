@@ -235,6 +235,52 @@ EP_STATIC_ASSERT(sizeof(SourceMeta) % sizeof(int) == 0, "Invalid size of `Source
 
 int get_source_meta_bytes() { return sizeof(SourceMeta); }
 
+// Increment 6 (kEpFlat): post-dispatch metadata drain kernel. Under the flat path
+// the sender wrote each token's metadata (SourceMeta + scales + topk_idx/weights,
+// topk RAW) into the destination pool's META region at the token's final recv slot.
+// This kernel runs on comm_stream right after the dispatch kernel (which, with the
+// receiver still present, guarantees all senders' pool writes are visible by the
+// time it exits), and copies the pool meta into the recv_* output tensors with the
+// topk expert-range rebase the receiver would have done. One thread per recv token.
+__global__ void flat_meta_drain_kernel(const uint8_t* __restrict__ pool_base, int64_t meta_base, int num_recv_tokens,
+                                       SourceMeta* __restrict__ recv_src_meta, float* __restrict__ recv_x_scales,
+                                       int64_t* __restrict__ recv_topk_idx, float* __restrict__ recv_topk_weights,
+                                       int num_scales, int num_topk, int expert_begin, int expert_end,
+                                       int64_t meta_slot_bytes) {
+  for (int t = blockIdx.x * blockDim.x + threadIdx.x; t < num_recv_tokens; t += gridDim.x * blockDim.x) {
+    const uint8_t* m = pool_base + meta_base + static_cast<int64_t>(t) * meta_slot_bytes;
+    if (recv_src_meta != nullptr) recv_src_meta[t] = *reinterpret_cast<const SourceMeta*>(m);
+    const float* sdat = reinterpret_cast<const float*>(m + sizeof(SourceMeta));
+    if (recv_x_scales != nullptr)
+      for (int s = 0; s < num_scales; ++s) recv_x_scales[static_cast<int64_t>(t) * num_scales + s] = sdat[s];
+    const int* idat = reinterpret_cast<const int*>(m + sizeof(SourceMeta) + num_scales * sizeof(float));
+    const float* wdat = reinterpret_cast<const float*>(idat + num_topk);
+    if (recv_topk_idx != nullptr) {
+      for (int k = 0; k < num_topk; ++k) {
+        const int idx = idat[k];
+        const int local = (idx >= expert_begin and idx < expert_end) ? idx - expert_begin : -1;
+        recv_topk_idx[static_cast<int64_t>(t) * num_topk + k] = static_cast<int64_t>(local);
+        recv_topk_weights[static_cast<int64_t>(t) * num_topk + k] = (local >= 0) ? wdat[k] : 0.0f;
+      }
+    }
+  }
+}
+
+void flat_meta_drain(void* pool_base, int64_t meta_base, int num_recv_tokens, void* recv_src_meta, float* recv_x_scales,
+                     int64_t* recv_topk_idx, float* recv_topk_weights, int num_scales, int num_topk, int num_experts,
+                     int num_ranks, int rank, int64_t meta_slot_bytes, cudaStream_t stream) {
+  if (num_recv_tokens <= 0) return;
+  const int num_local_experts = num_experts / num_ranks;
+  const int expert_begin = rank * num_local_experts;
+  const int expert_end = expert_begin + num_local_experts;
+  constexpr int kThreads = 256;
+  const int kBlocks = (num_recv_tokens + kThreads - 1) / kThreads;
+  flat_meta_drain_kernel<<<kBlocks, kThreads, 0, stream>>>(
+      reinterpret_cast<const uint8_t*>(pool_base), meta_base, num_recv_tokens,
+      reinterpret_cast<SourceMeta*>(recv_src_meta), recv_x_scales, recv_topk_idx, recv_topk_weights, num_scales,
+      num_topk, expert_begin, expert_end, meta_slot_bytes);
+}
+
 __host__ __device__ __forceinline__ int get_num_bytes_per_rdma_token(int hidden_int4, int num_scales, int num_topk_idx,
                                                                      int num_topk_weights) {
   return static_cast<int>(align(hidden_int4 * sizeof(int4) + sizeof(SourceMeta) + num_scales * sizeof(float) +
@@ -1555,6 +1601,18 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
       s_done_direct = true;
     }
   }
+  // Increment 6 (inc6): upload MSCCLPP_EP_FLAT -> __constant__ kEpFlat once.
+  // Flat all-sender path requires kEpDirect; treated as off if direct is off.
+  {
+    static bool s_done_flat = false;
+    if (!s_done_flat) {
+      const char* ed = std::getenv("MSCCLPP_EP_DIRECT");
+      const char* ef = std::getenv("MSCCLPP_EP_FLAT");
+      int v = (ef && std::atoi(ef) != 0 && ed && std::atoi(ed) != 0) ? 1 : 0;
+      cudaMemcpyToSymbol(kEpFlat, &v, sizeof(int));
+      s_done_flat = true;
+    }
+  }
 #endif
 
 #define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
@@ -1579,7 +1637,17 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
   EP_HOST_ASSERT((topk_idx == nullptr) == (topk_weights == nullptr));
   EP_HOST_ASSERT((recv_topk_idx == nullptr) == (recv_topk_weights == nullptr));
 
-  SETUP_LAUNCH_CONFIG(num_channels * 2, (kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32, stream);
+  // inc6 (kEpFlat): the FLAT all-sender path launches 1 block per channel (no
+  // forwarder blocks); the default inc5 2-hop path launches 2 blocks per channel.
+  int ep_grid_blocks = num_channels * 2;
+#ifdef EP_DISPATCH_NCCLEP
+  {
+    const char* ed = std::getenv("MSCCLPP_EP_DIRECT");
+    const char* ef = std::getenv("MSCCLPP_EP_FLAT");
+    if (ef && std::atoi(ef) != 0 && ed && std::atoi(ed) != 0) ep_grid_blocks = num_channels;
+  }
+#endif
+  SETUP_LAUNCH_CONFIG(ep_grid_blocks, (kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32, stream);
   SWITCH_RDMA_RANKS(DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
 }

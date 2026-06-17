@@ -80,14 +80,32 @@ struct Config {
   // torch::empty + receiver when num_recv_tokens exceeds the capacity.
   static constexpr int kEpRecvPoolMaxTokens = 65536;
   static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
+  // Increment 6 (MSCCLPP_EP_FLAT flat all-sender dispatch): a per-token metadata
+  // region appended AFTER the worst-case hidden region. Under the flat path the
+  // sender writes SourceMeta + scales + topk straight into the destination pool's
+  // meta region at the token's final recv slot (no forwarder/ring), and a local
+  // consumer copies it into the recv_* output tensors. 128B/token covers
+  // SourceMeta(8) + topk_idx/weights + scales for the validated shapes; the region
+  // is allocated unconditionally (cheap vs the GiB hidden region) but only touched
+  // when kEpFlat is set, so the inc5 2-hop path is byte-identical when unset.
+  static constexpr int64_t kEpRecvPoolMetaBytes = 128;  // per-token meta slot (128B aligned)
   size_t get_recv_pool_header_bytes(int num_ranks) const {
     return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
   }
-  // Total bytes of the recv-output pool. Sized for the worst-case hidden so the
-  // Buffer ctor can allocate it without knowing the runtime hidden dim.
-  static size_t recv_pool_bytes_static(int num_ranks) {
+  // Byte offset (from pool base) where the inc6 meta region starts: after the
+  // header and the full worst-case hidden region, so it never overlaps the
+  // runtime-packed hidden tokens regardless of the runtime hidden dim.
+  static size_t get_recv_pool_meta_base(int num_ranks) {
     size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-    size_t b = header + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    size_t hidden = static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    return ((header + hidden + 127) / 128) * 128;
+  }
+  // Total bytes of the recv-output pool. Sized for the worst-case hidden so the
+  // Buffer ctor can allocate it without knowing the runtime hidden dim, plus the
+  // inc6 per-token meta region.
+  static size_t recv_pool_bytes_static(int num_ranks) {
+    size_t meta_base = get_recv_pool_meta_base(num_ranks);
+    size_t b = meta_base + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMetaBytes);
     return ((b + 127) / 128) * 128;
   }
 #endif

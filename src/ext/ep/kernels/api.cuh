@@ -104,6 +104,14 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
               // slot index written by the sender; consumed by combine's gather path.
               int* ep_combine_recv_idx = nullptr);
 
+// Increment 6 (kEpFlat): post-dispatch metadata drain. Copies per-token metadata
+// the sender wrote into the destination pool's META region into the recv_* output
+// tensors (topk rebased to this rank's local expert range). Launched on the comm
+// stream right after `dispatch` when MSCCLPP_EP_FLAT is set.
+void flat_meta_drain(void* pool_base, int64_t meta_base, int num_recv_tokens, void* recv_src_meta, float* recv_x_scales,
+                     int64_t* recv_topk_idx, float* recv_topk_weights, int num_scales, int num_topk, int num_experts,
+                     int num_ranks, int rank, int64_t meta_slot_bytes, cudaStream_t stream);
+
 void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_topk_weights, int num_ranks,
                    int num_channels, int num_combined_tokens, int* combined_rdma_head,
                    const int* rdma_channel_prefix_matrix, const int* rdma_rank_prefix_sum, int* combined_nvl_head,

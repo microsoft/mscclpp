@@ -35,6 +35,16 @@
 // (scales/topk/meta) still flows the legacy ring->forwarder->receiver path.
 __constant__ int kEpDirect;
 
+// Increment 6 (inc6): runtime gate for the FLAT all-sender dispatch path. When
+// set (env MSCCLPP_EP_FLAT=1, requires kEpDirect), the sender ALSO writes each
+// token's metadata (SourceMeta + scales + topk) straight into the destination
+// pool's meta region at the token's final recv slot, a per-(dst,channel) fabric
+// counter signals completion, and a lightweight LOCAL consumer copies the pool
+// meta into the recv_* output tensors -- eliminating the forwarder + both
+// coordinator roles so dispatch can launch an all-sender grid (num_channels =
+// num_sms). Unset => byte-identical inc5 2-hop metadata path.
+__constant__ int kEpFlat;
+
 template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDispatchRDMASenderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
 __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32), 1)
@@ -75,8 +85,13 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
   const auto sm_id = static_cast<int>(blockIdx.x);
   const auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
-  const auto num_channels = static_cast<int>(gridDim.x) / 2, channel_id = sm_id / 2;
-  const bool is_forwarder = sm_id % 2 == 0;
+  // inc6 (kEpFlat): the FLAT all-sender path launches 1 block per channel
+  // (gridDim.x == num_channels) with no forwarder blocks, so every block is a
+  // sender. The inc5 2-hop path launches 2 blocks per channel (sender + forwarder),
+  // hence the /2; channel_id and is_forwarder follow the same split.
+  const auto num_channels = kEpFlat ? static_cast<int>(gridDim.x) : static_cast<int>(gridDim.x) / 2;
+  const auto channel_id = kEpFlat ? sm_id : sm_id / 2;
+  const bool is_forwarder = kEpFlat ? false : (sm_id % 2 == 0);
   const auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
 
   const auto role_meta = [=]() -> std::pair<WarpRole, int> {
@@ -294,6 +309,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // per token in the seq-locked section below. No extra barrier: covered by the
     // sync_rdma_sender_smem() right after.
     const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * 4 + 127) / 128) * 128;
+    // inc6 (kEpFlat): byte offset of the per-token metadata region in the recv pool,
+    // and the per-token meta slot size. MUST match Config::get_recv_pool_meta_base /
+    // recv_pool_bytes_static (config.hpp): header + worst-case hidden region, padded to
+    // 128; kEpFlatMetaBytes per token. The sender writes SourceMeta + scales + topk here
+    // so a local consumer can produce recv_* without the forwarder/ring 2-hop.
+    constexpr int64_t kEpFlatPoolMaxTokens = 65536;     // == Config::kEpRecvPoolMaxTokens
+    constexpr int64_t kEpFlatPoolMaxHiddenBytes = 16384;  // == Config::kEpRecvPoolMaxHiddenBytes
+    constexpr int64_t kEpFlatMetaBytes = 128;           // == Config::kEpRecvPoolMetaBytes
+    const int64_t ep_meta_base =
+        ((ep_pool_header_bytes + kEpFlatPoolMaxTokens * kEpFlatPoolMaxHiddenBytes + 127) / 128) * 128;
     if (kEpDirect and recv_pool_global_ptrs != nullptr) {
       for (int dg = warp_id * 32 + lane_id; dg < num_ranks; dg += kNumDispatchRDMASenderWarps * 32) {
         const int* dst_prefix = reinterpret_cast<const int*>(recv_pool_global_ptrs[dg]);
@@ -326,11 +351,17 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       int rdma_tail_idx = -1;
       if (is_token_in_rank_uint64 != 0) {
         rdma_tail_idx = rdma_send_channel_next_tail[lane_id]++;
-        while (rdma_tail_idx - cached_rdma_channel_head >= num_max_rdma_chunked_recv_tokens) {
-          // Phase 4: head feedback path \u2014 cross-node uses fabric-VA store,
-          // self-loop uses local atomic. Both end up in rdma_channel_head;
-          // single read via ld_volatile_global covers them. NVLS removed.
-          cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+        // inc6 (kEpFlat): no forwarder drains the ring, so the head never advances
+        // and this flow-control wait would deadlock. The all-sender path writes
+        // hidden + metadata straight to the dest pool; rdma_tail_idx is still used
+        // below only as the per-node "token in rank" flag (>= 0) and combine head.
+        if (!kEpFlat) {
+          while (rdma_tail_idx - cached_rdma_channel_head >= num_max_rdma_chunked_recv_tokens) {
+            // Phase 4: head feedback path \u2014 cross-node uses fabric-VA store,
+            // self-loop uses local atomic. Both end up in rdma_channel_head;
+            // single read via ld_volatile_global covers them. NVLS removed.
+            cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+          }
         }
       }
       __syncwarp();
@@ -493,6 +524,47 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         };
         UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_pool_broadcast);
 #endif
+        // inc6 (kEpFlat): write this token's metadata (SourceMeta + scales + topk) straight
+        // into each destination GPU's pool META region at the token's final recv slot, so a
+        // local consumer can produce recv_* without the forwarder + ring 2-hop. Mirrors the
+        // ep_dst_pools capture loop (warp-uniform over (node, g)); fields are written
+        // warp-cooperatively. topk_idx is stored RAW; the consumer rebases to its own expert
+        // range. The per-token __threadfence_system() in the epilogue publishes these writes.
+        // NOTE: only active under kEpFlat; the inc5 2-hop path (kEpFlat unset) is unchanged.
+        if (kEpFlat) {
+          // 8 (SourceMeta) + num_scales*4 + num_topk*4 (idx) + num_topk*4 (weights) must fit.
+          EP_DEVICE_ASSERT(static_cast<int64_t>(sizeof(SourceMeta)) +
+                               static_cast<int64_t>(num_scales) * 4 +
+                               static_cast<int64_t>(num_topk) * 8 <=
+                           kEpFlatMetaBytes);
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) {
+            const int node = topk_ranks[j];
+            SourceMeta sm_j = broadcast(src_meta, j);
+            NvlPackT bools_j = broadcast(is_token_in_rank_uint64, node);
+            const bool* bvals_j = reinterpret_cast<const bool*>(&bools_j);
+#pragma unroll
+            for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g) {
+              if (not bvals_j[g]) continue;
+              const int dg = node * NUM_MAX_NVL_PEERS + g;
+              const int recv_idx = __shfl_sync(0xffffffff, ep_my_idx[g], node);
+              uint8_t* mbase = reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_meta_base +
+                               static_cast<int64_t>(recv_idx) * kEpFlatMetaBytes;
+              if (lane_id == 0) st_na_global(reinterpret_cast<SourceMeta*>(mbase), sm_j);
+              float* sdst = reinterpret_cast<float*>(mbase + sizeof(SourceMeta));
+              for (int s = lane_id; s < num_scales; s += 32)
+                st_na_global(sdst + s, ld_nc_global(x_scales + token_idx * num_scales + s));
+              if (lane_id < num_topk) {
+                int* idst = reinterpret_cast<int*>(mbase + sizeof(SourceMeta) + num_scales * sizeof(float));
+                float* wdst = reinterpret_cast<float*>(idst + num_topk);
+                st_na_global(idst + lane_id,
+                             static_cast<int>(ld_nc_global(topk_idx + token_idx * num_topk + lane_id)));
+                st_na_global(wdst + lane_id, ld_nc_global(topk_weights + token_idx * num_topk + lane_id));
+              }
+            }
+          }
+          __syncwarp();
+        }
       } else {
         auto st_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
@@ -554,6 +626,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Synchronize shared memory
     sync_rdma_sender_smem();
+    // inc6 (kEpFlat): the all-sender path delivers hidden + metadata directly to
+    // the destination pools, so there is no RDMA ring to coordinate. The barrier
+    // above keeps the sender warps' bar.sync 0 balanced (7 warps); after it this
+    // coordinator warp exits.
+    if (kEpFlat) return;
     if (lane_id == 0 && channel_id == 0 && rank == 0) {
       (void)0;
     }
@@ -1137,6 +1214,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     }
   } else {
     // NVL consumers
+    // inc6 (kEpFlat): the all-sender path has no forwarder feeding the NVL receive
+    // buffers, so these consumer warps would spin to the timeout trap. The flat
+    // metadata drain (flat_meta_drain) produces recv_* from the pool instead.
+    if (kEpFlat) return;
     // Retrieve rank offset from barrier results (each lane's register stores an RDMA rank)
     int src_nvl_rank = target_rank, total_offset = 0;
     // Increment 1: same-GPU tokens (src_nvl_rank == nvl_rank) are written

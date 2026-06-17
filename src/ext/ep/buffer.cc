@@ -1588,6 +1588,29 @@ Buffer::internode_dispatch(
                       nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases_gpu, ep_recv_pool_ptrs,
                       ep_recv_pool_global_ptrs, ep_recv_pool_global_ptrs ? ep_combine_recv_idx_gpu : nullptr);
 
+#ifdef EP_DISPATCH_NCCLEP
+  // Increment 6 (kEpFlat): when MSCCLPP_EP_FLAT is set, the sender wrote each token's
+  // metadata straight into the destination pool's META region. Drain it into the
+  // recv_* output tensors on comm_stream right after dispatch. With the receiver role
+  // still present (approach 1), the dispatch kernel does not exit until all senders'
+  // pool writes are visible, so this same-stream drain sees complete metadata (the
+  // same guarantee inc5's recv_x relies on). Overwrites the receiver's metadata output
+  // with identical values; this validates the flat producer before the receiver is
+  // removed in the all-sender stage.
+  {
+    const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
+    const char* e_flat = std::getenv("MSCCLPP_EP_FLAT");
+    const bool ep_flat = (e_flat && std::atoi(e_flat) != 0) && (e_direct && std::atoi(e_direct) != 0);
+    if (ep_flat and ep_use_direct and not cached_mode and topk_idx.has_value()) {
+      const int64_t ep_meta_base = static_cast<int64_t>(Config::get_recv_pool_meta_base(num_ranks));
+      internode::flat_meta_drain(recv_pool_local_ptr_, ep_meta_base, num_recv_tokens,
+                                 recv_src_meta->data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr,
+                                 recv_topk_weights_ptr, num_scales, num_topk, num_experts, num_ranks, rank,
+                                 Config::kEpRecvPoolMetaBytes, comm_stream);
+    }
+  }
+#endif
+
   // Wait streams
   std::optional<EventHandle> event;
   if (async) {
