@@ -209,6 +209,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   static constexpr int kEpTmaTileBytes = 4096;
   __shared__ alignas(128) uint8_t ep_tma_tile[NUM_MAX_NVL_PEERS][kEpTmaTileBytes];
   __shared__ alignas(8) uint64_t ep_tma_mbar[NUM_MAX_NVL_PEERS];
+  // inc5 sender-direct TMA ring (NCCL-EP g2s_s2g_pipe pattern): per-sender-warp ring
+  // of kEpTmaSndNStage tiles+mbars. The slot rotates PER CHUNK so no two back-to-back
+  // cp.async.bulk ops reuse the same tile+mbar to a cross-node fabric VA -- the
+  // validated fault trigger (single-slot reuse). Sender warps run on the odd (sender)
+  // SM blocks, disjoint from the forwarder blocks. chunkb=2048 x NStage=2 keeps total
+  // SMEM identical to the prior single-slot 4096 layout (6*2*2048 == 6*4096).
+  static constexpr int kEpTmaSndChunkBytes = 2048;
+  static constexpr int kEpTmaSndNStage = 2;  // ring depth (per-chunk drain; 2 keeps SMEM == single-slot 4096)
+  __shared__ alignas(128) uint8_t ep_tma_tile_snd[kNumDispatchRDMASenderWarps][kEpTmaSndNStage][kEpTmaSndChunkBytes];
+  __shared__ alignas(8) uint64_t ep_tma_mbar_snd[kNumDispatchRDMASenderWarps][kEpTmaSndNStage];
 #endif
 
   if (warp_role == WarpRole::kRDMASender) {
@@ -406,11 +416,83 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 static_cast<int64_t>(recv_idx) * hidden_bytes);
           }
         }
+#if EP_NCCLEP_TMA
+        // inc5 + TMA ring, LANE-STRIPED broadcast (NCCL-EP hybrid_ep.cuh S2G shape):
+        // lane 0 streams each chunk HBM->SMEM once into the ring stage tile (G2S,
+        // mbarrier complete_tx); the whole warp then waits on that mbarrier and fans the
+        // staged tile out S2G with ONE destination pool per lane (lane j' issues dst =
+        // j', j'+32, ...), matching NCCL-EP's per-lane cp.async.bulk fan-out instead of
+        // a serial lane-0 loop (the prior data-scramble source). Each chunk's S2G is
+        // drained (wait_group 0) before the next chunk reuses a tile, so there is no
+        // tile-reuse hazard; the 2-stage ring keeps SMEM identical to the single-slot
+        // layout. fence.proxy publishes the writes before the dispatch barrier.
+        if (ep_num_pools > 0) {
+          const uint8_t* src_b = reinterpret_cast<const uint8_t*>(x + token_idx * hidden_int4);
+          size_t off = 0;
+          const size_t total = static_cast<size_t>(hidden_bytes);
+          int ring_item = 0;
+          while (off < total) {
+            const size_t remain = total - off;
+            uint32_t chunk =
+                static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
+            chunk = (chunk + 15u) & ~15u;
+            const int stage = ring_item % kEpTmaSndNStage;
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile_snd[warp_id][stage]));
+            const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
+            // G2S: lane 0 fills the staged tile for this chunk (mbarrier complete_tx).
+            if (lane_id == 0) {
+              asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
+              asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+              asm volatile(
+                  "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
+                  "[%0], [%1], %2, [%3];" ::"r"(smem_tile),
+                  "l"(src_b + off), "r"(chunk), "r"(smem_mbar)
+                  : "memory");
+              uint64_t st;
+              asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+                           : "=l"(st)
+                           : "r"(smem_mbar), "r"(chunk));
+            }
+            // Whole warp waits on the G2S mbarrier so every S2G lane sees the filled tile.
+            __syncwarp();
+            uint32_t done = 0;
+            while (!done) {
+              asm volatile(
+                  "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], 0;"
+                  " selp.u32 %0, 1, 0, p; }"
+                  : "=r"(done)
+                  : "r"(smem_mbar));
+            }
+            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            // S2G: lane-striped fan-out -- one destination pool per lane.
+            bool issued = false;
+            for (int j = lane_id; j < ep_num_pools; j += 32) {
+              uint8_t* dst_b = reinterpret_cast<uint8_t*>(ep_dst_pools[j]) + off;
+              asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b),
+                           "r"(smem_tile), "r"(chunk)
+                           : "memory");
+              issued = true;
+            }
+            if (issued) {
+              asm volatile("cp.async.bulk.commit_group;");
+              asm volatile("cp.async.bulk.wait_group 0;");
+            }
+            // All S2G drained before the next chunk's G2S reuses a tile.
+            __syncwarp();
+            off += chunk;
+            ++ring_item;
+          }
+          // Publish the direct cross-node writes to the fabric before the dispatch barrier.
+          asm volatile("fence.proxy.async.global;" ::: "memory");
+        }
+        __syncwarp();
+#else
         auto st_pool_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
           for (int j = 0; j < ep_num_pools; ++j) st_na_global(ep_dst_pools[j] + key, value);
         };
         UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_pool_broadcast);
+#endif
       } else {
         auto st_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
