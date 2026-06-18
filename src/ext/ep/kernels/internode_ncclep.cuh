@@ -342,6 +342,17 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     int cached_rdma_channel_head = 0, last_rdma_tail_idx = -1;
     auto send_buffer =
         lane_id == rdma_rank ? rdma_channel_data.recv_buffer(lane_id) : rdma_channel_data.send_buffer(lane_id);
+#if EP_NCCLEP_TMA
+    // B-depth-1: TMA S2G pipeline state carried ACROSS tokens so the per-token full drain
+    // (wait_group 0) is eliminated -- up to kEpTmaSndInFlight S2G groups stay in flight across
+    // token boundaries. ep_tma_gbase = global ring-stage base (continuous chunk index, advances
+    // by nchunks each token); ep_tma_in_flight = S2G groups committed but not yet drained.
+    // Safe across tokens for the same reason as within a token: NStage(4) > InFlight(2), so the
+    // stage a new G2S reuses (g) was last used by chunk g-NStage <= g-4, which is already drained
+    // by the lazy wait_group.read(InFlight) before it is overwritten.
+    int ep_tma_gbase = 0;
+    int ep_tma_in_flight = 0;
+#endif
     for (token_idx = token_start_idx + warp_id; token_idx < token_end_idx; token_idx += kNumDispatchRDMASenderWarps) {
       // Read RDMA rank existence
       NvlPackT is_token_in_rank_uint64 = 0;
@@ -477,7 +488,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             uint32_t csz =
                 static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
             csz = (csz + 15u) & ~15u;
-            const int stage = ci % kEpTmaSndNStage;
+            const int stage = (ep_tma_gbase + ci) % kEpTmaSndNStage;
             const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile_snd[warp_id][stage]));
             const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
             asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
@@ -497,7 +508,6 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
           if (lane_id == 0) issue_g2s(0);
           __syncwarp();
 
-          int in_flight = 0;
           for (int c = 0; c < nchunks; ++c) {
             // Produce the next chunk's G2S so it overlaps this chunk's S2G drain.
             if (lane_id == 0 and c + 1 < nchunks) issue_g2s(c + 1);
@@ -508,7 +518,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             uint32_t csz =
                 static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
             csz = (csz + 15u) & ~15u;
-            const int stage = c % kEpTmaSndNStage;
+            const int stage = (ep_tma_gbase + c) % kEpTmaSndNStage;
             const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile_snd[warp_id][stage]));
             const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
 
@@ -532,20 +542,20 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               issued = true;
             }
             if (issued) asm volatile("cp.async.bulk.commit_group;");
-            ++in_flight;
+            ++ep_tma_in_flight;
             // Lazy drain: bound in-flight S2G to kEpTmaSndInFlight (compile-time immediate).
             // wait_group.read also guarantees the drained group's SMEM reads are done, so
             // its ring tile is safe to refill by a future G2S one iteration later.
-            if (in_flight > kEpTmaSndInFlight) {
+            if (ep_tma_in_flight > kEpTmaSndInFlight) {
               if (issued) asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(kEpTmaSndInFlight) : "memory");
-              --in_flight;
+              --ep_tma_in_flight;
             }
             __syncwarp();
           }
-          // Epilogue: drain all remaining S2G, then publish writes to the fabric.
-          asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
-          __syncwarp();
-          asm volatile("fence.proxy.async.global;" ::: "memory");
+          // B-depth-1: NO per-token drain -- carry in-flight S2G groups + the ring stage
+          // (ep_tma_gbase) to the next token so consecutive tokens' S2G NVLink writes overlap
+          // each other (removes the per-token full-drain bubble = ~1 NVLink RT/token at low SM).
+          ep_tma_gbase += nchunks;
         }
         __syncwarp();
 #else
@@ -648,6 +658,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // Release sequential lock
     lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
 
+#if EP_NCCLEP_TMA
+    // B-depth-1: single drain of all cross-token in-flight TMA S2G groups at warp end
+    // (replaces the per-token wait_group 0), then publish to the generic proxy before the
+    // metadata threadfence below so the post-barrier consumer sees complete hidden + meta.
+    if (kEpDirect) {
+      asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+      __syncwarp();
+      asm volatile("fence.proxy.async.global;" ::: "memory");
+    }
+#endif
     // inc5: flush the direct cross-node hidden writes to the fabric so the
     // destination ranks observe a complete recv_x after the dispatch barrier.
     if (kEpDirect) __threadfence_system();
