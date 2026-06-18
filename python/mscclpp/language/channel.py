@@ -984,10 +984,10 @@ class SwitchChannel:
         self.src_rank = rank
         if src_chunk.rank not in self.rank_group.ranks:
             raise RuntimeError(
-                f"Destination chunk rank {src_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
+                f"Source chunk rank {src_chunk.rank} is not part of the rank group {self.rank_group.ranks}."
             )
         if src_chunk.size != size:
-            raise RuntimeError(f"Destination chunk size {src_chunk.size} does not match the required size {size}.")
+            raise RuntimeError(f"Source chunk size {src_chunk.size} does not match the required size {size}.")
 
         for rank in self.rank_group.ranks:
             if self.buffer_type == BufferType.scratch:
