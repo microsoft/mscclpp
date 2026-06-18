@@ -28,18 +28,19 @@
 #define EP_NCCLEP_TMA 0
 #endif
 
-// B-depth-3: per-sender-warp TMA S2G ring geometry (shared with the host launcher
-// so it can size the DYNAMIC shared-memory allocation + cudaFuncSetAttribute opt-in).
-// Half-token (7168B) tiles -> 2 cp.async.bulk S2G per destination per token instead of
-// 14 (the old 1024B sub-chunk), cutting TMA descriptor-issue overhead ~7x. The ring is
-// kNumDispatchRDMASenderWarps(6) x NSTAGE(4) x 7168 = 172032 B (168 KB) > the 48 KB static
-// cap, so it lives in dynamic shared memory; chunk MUST be a multiple of 128 (TMA align)
-// and a divisor-friendly size of the 14336 B bf16 hidden (7168 -> exactly 2 chunks).
+// B-depth-3 (full-token variant): per-sender-warp TMA S2G ring geometry (shared with the
+// host launcher so it can size the DYNAMIC shared-memory allocation + cudaFuncSetAttribute
+// opt-in). WHOLE-token (14336B) tiles -> just 1 cp.async.bulk S2G per destination per token
+// (matches NCCL-EP's single whole-token op), vs 2 for the half-token / 14 for the old 1024B
+// sub-chunk. The ring is kNumDispatchRDMASenderWarps(6) x NSTAGE(2) x 14336 = 172032 B (168 KB)
+// -- full-token forces NSTAGE=2 to stay under the GB200 ~227KB/block opt-in cap (NSTAGE>=3 would
+// be >=252KB). chunk MUST be a multiple of 128 (TMA align); 14336 = the full bf16 hidden so each
+// token is a single chunk (nchunks=1), and the pipeline overlap is purely cross-token.
 #ifndef EP_TMA_SND_CHUNK_BYTES
-#define EP_TMA_SND_CHUNK_BYTES 7168
+#define EP_TMA_SND_CHUNK_BYTES 14336
 #endif
 #ifndef EP_TMA_SND_NSTAGE
-#define EP_TMA_SND_NSTAGE 4
+#define EP_TMA_SND_NSTAGE 2
 #endif
 
 // Increment 5 (inc5): runtime gate for the SENDER direct-write path. When set
@@ -253,9 +254,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   // (NCCL-EP issues 1 whole-token op; this halves the gap). Host opts in to the >48KB ring
   // via cudaFuncAttributeMaxDynamicSharedMemorySize + cfg.dynamicSmemBytes (EP_TMA_SND_*).
   static constexpr int kEpTmaSndChunkBytes = EP_TMA_SND_CHUNK_BYTES;
-  static constexpr int kEpTmaSndNStage = EP_TMA_SND_NSTAGE;  // ring depth (lazy drain; >=3 required for overlap)
-  static constexpr int kEpTmaSndInFlight = kEpTmaSndNStage - 2;  // S2G groups kept in flight (=2)
+  static constexpr int kEpTmaSndNStage = EP_TMA_SND_NSTAGE;  // ring depth (lazy drain; >=3 for within-token overlap)
+  // S2G groups kept in flight: NStage-2 when there is within-token slack (half-token NSTAGE>=4),
+  // clamped to >=1 so the full-token NSTAGE=2 case keeps 1 cross-token S2G in flight.
+  static constexpr int kEpTmaSndInFlight = (kEpTmaSndNStage - 2) >= 1 ? (kEpTmaSndNStage - 2) : 1;
   EP_STATIC_ASSERT(kEpTmaSndInFlight >= 1, "InFlight must be >=1 for pipelining");
+  EP_STATIC_ASSERT(kEpTmaSndInFlight < kEpTmaSndNStage, "InFlight must be < NStage (drain-before-reuse)");
   EP_STATIC_ASSERT(kEpTmaSndChunkBytes % 128 == 0, "TMA tile must be 128B aligned");
   // Dynamic per-warp ring: ep_tma_tile_snd_dyn[(warp_id*NStage + stage) * chunk]. 128B-aligned
   // base for TMA. The mbarrier array stays static (tiny: 6*4*8 = 192B).
