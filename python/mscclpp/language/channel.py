@@ -967,6 +967,11 @@ class SwitchChannel:
         chunk to the specified buffer region across all ranks in the rank group, with
         no explicit barrier required (the packet flag provides synchronization).
 
+        Note: this implementation reads each source packet (waiting on its flag) to
+        ensure the data is ready before re-broadcasting it as a new packet. This read
+        is what guarantees readiness here; other implementations where the source data
+        is known to be ready may skip the read and store the payload directly.
+
         Both the source chunk and the destination buffer must be scratch buffers,
         because the data is broadcast in LL (Low Latency) packet format (data + flag).
 
