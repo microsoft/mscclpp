@@ -1001,7 +1001,9 @@ class SwitchChannel:
                 )
 
         tb_channel_ids = get_program().setup_channel(tb, self)
-        op = GroupStorePacket(src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type)
+        op = GroupStore(
+            src_chunk, self.buffer_type, buffer_offset, size, tb_channel_ids, self.channel_type, use_packet=True
+        )
         get_program().add_operation(self.src_rank, tb, op)
 
     class SwitchChannelRankView:
