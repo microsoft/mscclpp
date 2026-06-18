@@ -16,8 +16,8 @@ using __bfloat16 = __hip_bfloat16;
 using __bfloat162 = __hip_bfloat162;
 #define __CUDA_BF16_TYPES_EXIST__
 
-// AMD FP8 support - Use fnuz types for HIP 6.0 or when HIP_FP8_TYPE_FNUZ is enabled and HIP_FP8_TYPE_OCP is not
-// enabled. Otherwise, use the standard FP8 types.
+// AMD FP8 support. Host compilation may expose both FNUZ and OCP types, so the CMake
+// MSCCLPP_ROCM_USE_FNUZ_FP8 option controls whether native FP8 aliases use FNUZ.
 #if defined(HIP_VERSION_MAJOR) && (HIP_VERSION_MAJOR >= 6)
 #include <hip/hip_fp8.h>
 
@@ -25,7 +25,7 @@ using __bfloat162 = __hip_bfloat162;
 // Define __FP8_E4M3_IS_FNUZ__ / __FP8_E5M2_IS_FNUZ__ when the platform-native FP8 is the
 // "fnuz" variant (no infinities, NaN-only at 0x80, bias differs from OCP). Dispatch layers
 // use these macros to throw on unsupported variants requested via DataType.
-#if (HIP_VERSION_MAJOR == 6) || (HIP_VERSION_MAJOR > 6 && HIP_FP8_TYPE_FNUZ && !HIP_FP8_TYPE_OCP)
+#if defined(MSCCLPP_ROCM_FP8_FNUZ) || (HIP_FP8_TYPE_FNUZ && !HIP_FP8_TYPE_OCP)
 using __fp8_e4m3 = __hip_fp8_e4m3_fnuz;
 using __fp8_e5m2 = __hip_fp8_e5m2_fnuz;
 using __fp8x2_e4m3 = __hip_fp8x2_e4m3_fnuz;
