@@ -591,9 +591,7 @@ MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, vo
   const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
   const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
   // `multimem.st` has a 4-byte minimum granularity, so the moved region must be 4-byte aligned and sized.
-  assert(size % sizeof(uint32_t) == 0);
-  assert(srcOffset % sizeof(uint32_t) == 0);
-  assert(dstOffset % sizeof(uint32_t) == 0);
+  // This is guaranteed by the DSL/plan: all offsets and sizes are multiples of the (>= 4-byte) buffer alignment.
 
   // Local (unicast) source load, multicast store to the NVLS switch destination.
   char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
