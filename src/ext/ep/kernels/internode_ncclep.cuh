@@ -28,6 +28,20 @@
 #define EP_NCCLEP_TMA 0
 #endif
 
+// B-depth-3: per-sender-warp TMA S2G ring geometry (shared with the host launcher
+// so it can size the DYNAMIC shared-memory allocation + cudaFuncSetAttribute opt-in).
+// Half-token (7168B) tiles -> 2 cp.async.bulk S2G per destination per token instead of
+// 14 (the old 1024B sub-chunk), cutting TMA descriptor-issue overhead ~7x. The ring is
+// kNumDispatchRDMASenderWarps(6) x NSTAGE(4) x 7168 = 172032 B (168 KB) > the 48 KB static
+// cap, so it lives in dynamic shared memory; chunk MUST be a multiple of 128 (TMA align)
+// and a divisor-friendly size of the 14336 B bf16 hidden (7168 -> exactly 2 chunks).
+#ifndef EP_TMA_SND_CHUNK_BYTES
+#define EP_TMA_SND_CHUNK_BYTES 7168
+#endif
+#ifndef EP_TMA_SND_NSTAGE
+#define EP_TMA_SND_NSTAGE 4
+#endif
+
 // Increment 5 (inc5): runtime gate for the SENDER direct-write path. When set
 // (env MSCCLPP_EP_DIRECT=1), kRDMASender writes each token's hidden straight to
 // the destination GPU's domain-wide recv pool (recv_pool_global_ptrs[dst_global]),
@@ -233,13 +247,19 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   // 8-node low-SM dispatch cliff). Pipeline: produce 1 chunk ahead, keep kEpTmaSndInFlight
   // S2G groups in flight, reuse a tile only after its S2G has drained (proven safe for
   // produce-ahead=1 + InFlight=NStage-2; the drained-stage index trails the refill stage
-  // by exactly one iteration). chunkb=1024 x NStage=4 keeps SMEM == the prior 2x2048 ring
-  // (6*4*1024 == 6*2*2048 == 24576 B); the deeper ring is what enables the overlap.
-  static constexpr int kEpTmaSndChunkBytes = 1024;
-  static constexpr int kEpTmaSndNStage = 4;       // ring depth (lazy drain; >=3 required for overlap)
+  // by exactly one iteration). B-depth-3: chunk is now HALF-token (7168B) and the ring
+  // lives in DYNAMIC shared memory (6*4*7168 = 168KB > 48KB static cap), so each token is
+  // 2 cp.async.bulk S2G per destination instead of 14 -- fewer, larger TMA descriptors
+  // (NCCL-EP issues 1 whole-token op; this halves the gap). Host opts in to the >48KB ring
+  // via cudaFuncAttributeMaxDynamicSharedMemorySize + cfg.dynamicSmemBytes (EP_TMA_SND_*).
+  static constexpr int kEpTmaSndChunkBytes = EP_TMA_SND_CHUNK_BYTES;
+  static constexpr int kEpTmaSndNStage = EP_TMA_SND_NSTAGE;  // ring depth (lazy drain; >=3 required for overlap)
   static constexpr int kEpTmaSndInFlight = kEpTmaSndNStage - 2;  // S2G groups kept in flight (=2)
   EP_STATIC_ASSERT(kEpTmaSndInFlight >= 1, "InFlight must be >=1 for pipelining");
-  __shared__ alignas(128) uint8_t ep_tma_tile_snd[kNumDispatchRDMASenderWarps][kEpTmaSndNStage][kEpTmaSndChunkBytes];
+  EP_STATIC_ASSERT(kEpTmaSndChunkBytes % 128 == 0, "TMA tile must be 128B aligned");
+  // Dynamic per-warp ring: ep_tma_tile_snd_dyn[(warp_id*NStage + stage) * chunk]. 128B-aligned
+  // base for TMA. The mbarrier array stays static (tiny: 6*4*8 = 192B).
+  extern __shared__ __align__(128) uint8_t ep_tma_tile_snd_dyn[];
   __shared__ alignas(8) uint64_t ep_tma_mbar_snd[kNumDispatchRDMASenderWarps][kEpTmaSndNStage];
 #endif
 
@@ -489,7 +509,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
             csz = (csz + 15u) & ~15u;
             const int stage = (ep_tma_gbase + ci) % kEpTmaSndNStage;
-            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile_snd[warp_id][stage]));
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
+                ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
             const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
             asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
             asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
@@ -519,7 +540,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                 static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
             csz = (csz + 15u) & ~15u;
             const int stage = (ep_tma_gbase + c) % kEpTmaSndNStage;
-            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(ep_tma_tile_snd[warp_id][stage]));
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
+                ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
             const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
 
             // Whole warp waits on this chunk's G2S mbarrier so every S2G lane sees the tile.

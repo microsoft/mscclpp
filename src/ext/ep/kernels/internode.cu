@@ -1622,6 +1622,18 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
                                                : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
                          : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
                                                : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
+    if (EP_NCCLEP_TMA) {                                                                                               \
+      /* B-depth-3: opt in to the >48KB dynamic-shared half-token TMA send ring (EP_TMA_SND_*). */                     \
+      const size_t ep_dyn_bytes =                                                                                      \
+          (size_t)kNumDispatchRDMASenderWarps * EP_TMA_SND_NSTAGE * EP_TMA_SND_CHUNK_BYTES;                            \
+      static bool s_ep_dyn_attr = false;                                                                               \
+      if (!s_ep_dyn_attr) {                                                                                            \
+        CUDA_CHECK(cudaFuncSetAttribute(dispatch_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                    \
+                                        static_cast<int>(ep_dyn_bytes)));                                              \
+        s_ep_dyn_attr = true;                                                                                          \
+      }                                                                                                                \
+      cfg.dynamicSmemBytes = ep_dyn_bytes;                                                                             \
+    }                                                                                                                  \
     LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                  \
                   recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),   \
                   x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,    \
