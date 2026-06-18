@@ -28,6 +28,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
         gpu_size,
         instances=instances,
         protocol="LL",
+        auto_sync=False,
         num_threads_per_block=num_threads_per_block,
         use_double_scratch_buffer=True,
         min_message_size=min_message_size,
