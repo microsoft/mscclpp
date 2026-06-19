@@ -43,6 +43,9 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
 
     localGpuIpcMemHandle = GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(data));
+    if (localGpuIpcMemHandle->typeFlags == GpuIpcMemHandle::Type::None) {
+      THROW(GPU, Error, ErrorCode::Aborted, "Failed to create GpuIpcMemHandle for address ", data);
+    }
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
     transportInfo.gpuIpcMemHandle = *localGpuIpcMemHandle;
