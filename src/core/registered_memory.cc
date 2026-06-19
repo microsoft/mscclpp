@@ -43,9 +43,6 @@ RegisteredMemory::Impl::Impl(void* data, size_t size, TransportFlags transports,
     CudaDeviceGuard deviceGuard(detail::gpuIdFromAddress(data));
 
     localGpuIpcMemHandle = GpuIpcMemHandle::create(reinterpret_cast<CUdeviceptr>(data));
-    if (localGpuIpcMemHandle->typeFlags == GpuIpcMemHandle::Type::None) {
-      THROW(GPU, Error, ErrorCode::Aborted, "Failed to create GpuIpcMemHandle for address ", data);
-    }
     TransportInfo transportInfo;
     transportInfo.transport = Transport::CudaIpc;
     transportInfo.gpuIpcMemHandle = *localGpuIpcMemHandle;
@@ -100,11 +97,14 @@ MSCCLPP_API_CPP std::vector<char> RegisteredMemory::serialize() const {
   for (auto& entry : pimpl_->transportInfos) {
     detail::serialize(result, entry.transport);
     if (entry.transport == Transport::CudaIpc) {
+      if (entry.gpuIpcMemHandle.typeFlags == GpuIpcMemHandle::Type::None) {
+        THROW(GPU, Error, ErrorCode::InternalError, "GpuIpcMemHandle type is None");
+      }
       detail::serialize(result, entry.gpuIpcMemHandle);
     } else if (AllIBTransports.has(entry.transport)) {
       detail::serialize(result, entry.ibMrInfo);
     } else {
-      throw Error("Unknown transport", ErrorCode::InternalError);
+      THROW(GPU, Error, ErrorCode::InternalError, "Unknown transport");
     }
   }
   return result;

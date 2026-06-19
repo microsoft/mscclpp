@@ -376,7 +376,6 @@ def _measure_case(
     n_ops_per_graph: int,
 ) -> float:
     _fill_case_for_benchmark(case, comm.rank)
-    comm.comm_group.barrier()
     if comm.run(case, config) != 0:
         raise RuntimeError("algorithm returned non-zero status")
     cp.cuda.runtime.deviceSynchronize()
@@ -607,6 +606,9 @@ def main(argv: list[str] | None = None) -> None:
             )
             if comm.rank == 0:
                 print(".", end="", flush=True)
+            # TODO: remove this after rocm7.2 bug is fixed
+            del case
+            comm.comm_group.barrier()
 
         if args.write_config and comm.rank == 0:
             config_store.write_path(args.write_config)
