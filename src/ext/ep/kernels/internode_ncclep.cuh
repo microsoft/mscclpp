@@ -107,6 +107,19 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   const auto num_channels = kEpFlat ? static_cast<int>(gridDim.x) : static_cast<int>(gridDim.x) / 2;
   const auto channel_id = kEpFlat ? sm_id : sm_id / 2;
   const bool is_forwarder = kEpFlat ? false : (sm_id % 2 == 0);
+  // inc7 (atomicthr): per-channel routing-lock removal is a CROSSOVER vs channel
+  // count. num_channels == config.num_sms/2 (buffer.cc), and tokens/channel =
+  // num_tokens/num_channels. At LOW channel count (many tokens/channel) the
+  // per-token sequential lock dominates -> atomicAdd slot assignment (no spin)
+  // wins big: 8 ch (NSM16) -21.6%, 12 ch (NSM24) -21.1%, 14 ch (NSM28) -4.2%.
+  // At HIGH channel count (few tokens/channel) the lock was already cheap AND the
+  // 6 sender warps contend on the shared-mem atomics -> net regression: 16 ch
+  // (NSM32) +8.6%. Measured crossover is between 14 and 16 channels (~14.7), so
+  // use atomics at <=14 channels (every validated win) and keep the proven lock
+  // above it (the validated regression). num_channels is grid-uniform so this is
+  // a block-uniform branch (no warp divergence).
+  constexpr int kEpAtomicRouteMaxChannels = 14;
+  const bool ep_use_atomic_route = kEpFlat and (num_channels <= kEpAtomicRouteMaxChannels);
   const auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
 
   const auto role_meta = [=]() -> std::pair<WarpRole, int> {
@@ -384,15 +397,26 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         is_token_in_rank_uint64 =
             *reinterpret_cast<const NvlPackT*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
 
-      // Acquire sequential lock
-      while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+      // inc7 (atomicthr): under kEpFlat AND low channel count the per-channel
+      // SEQUENTIAL LOCK is REMOVED (ep_use_atomic_route). Slot assignment uses
+      // atomicAdd on the shared counters (below) -> dense but order-independent
+      // packing. Correctness holds because (a) the receiver's recv_x check is
+      // amin/amax over each source's cross-rank block (order-agnostic; every token
+      // from a given source lands in that source's reserved [gbl_base, ..) range
+      // regardless of within-channel order), and (b) combine gathers via the self-
+      // consistent ep_combine_recv_idx map. The lock path (high channel count or
+      // non-flat 2-hop, whose coordinator forwards a MONOTONIC rdma_send_channel_tail
+      // to peers) is UNCHANGED -- keeps the spin-wait + plain ++.
+      while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
         ;
       __syncwarp();
 
-      // Acquire next tail
+      // Acquire next tail (atomic when lock removed: 6 sender warps race; plain ++
+      // under the lock where it is single-threaded == the committed behavior).
       int rdma_tail_idx = -1;
       if (is_token_in_rank_uint64 != 0) {
-        rdma_tail_idx = rdma_send_channel_next_tail[lane_id]++;
+        rdma_tail_idx = ep_use_atomic_route ? atomicAdd(const_cast<int*>(rdma_send_channel_next_tail + lane_id), 1)
+                                            : rdma_send_channel_next_tail[lane_id]++;
         // inc6 (kEpFlat): no forwarder drains the ring, so the head never advances
         // and this flow-control wait would deadlock. The all-sender path writes
         // hidden + metadata straight to the dest pool; rdma_tail_idx is still used
@@ -411,6 +435,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // inc5: compute this token's final recv_x index for each destination GPU,
       // inside the seq-locked region so the running count matches the receiver's
       // drain order. lane = source NODE; one writer per ep_count[dg].
+      // inc7 (scanexp1): the running-count increments MUST stay ordered (inside the
+      // lock), but the *global* breadcrumb stores (ep_combine_recv_idx, send_rdma_head)
+      // target unique per-(token,dst) addresses and are order-independent, so they are
+      // DEFERRED to after the lock release. This shrinks the serialized critical section
+      // to just the shared-memory counter math, taking the per-token serialized
+      // global-store latency out of the lock chain (NSM16 diagnostic).
       int ep_my_idx[NUM_MAX_NVL_PEERS];
       if (kEpDirect and lane_id < kNumRDMARanks and rdma_tail_idx >= 0) {
         const bool* bvals = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
@@ -418,19 +448,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g)
           if (bvals[g]) {
             const int dg = lane_id * NUM_MAX_NVL_PEERS + g;
-            ep_my_idx[g] = ep_base[dg] + ep_count[dg];
-            ep_count[dg] += 1;
-            // inc5 combine-direct (Stage 1): persist this token's recv-pool slot in
-            // dst GPU dg so combine can gather it directly. Only on the uncached
-            // dispatch (matches the send_*_head breadcrumb tensors).
-            if (ep_combine_recv_idx != nullptr and not kCachedMode)
-              ep_combine_recv_idx[static_cast<int64_t>(token_idx) * num_ranks + dg] = ep_my_idx[g];
+            // inc7 (atomicthr): atomic running-count when the lock is removed
+            // (order-independent); plain ++ under the lock (== committed, serialized).
+            if (ep_use_atomic_route) {
+              ep_my_idx[g] = ep_base[dg] + atomicAdd(&ep_count[dg], 1);
+            } else {
+              ep_my_idx[g] = ep_base[dg] + ep_count[dg];
+              ep_count[dg] += 1;
+            }
           }
       }
-
-      // Store RDMA head for combine
-      if (lane_id < kNumRDMARanks and not kCachedMode)
-        send_rdma_head[token_idx * kNumRDMARanks + lane_id] = rdma_tail_idx;
 
       // Update last token tail. In-loop writes are sequenced by the
       // per-channel sequential lock and the warp-stride property of the
@@ -443,8 +470,26 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         st_release_cta(const_cast<const int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
       last_rdma_tail_idx = rdma_tail_idx;
 
-      // Release sequential lock
-      lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
+      // Release sequential lock (lock path only; atomic-route removed the lock above)
+      if (!ep_use_atomic_route and lane_id == 0) rdma_send_next_token_idx += 1;
+
+      // inc7 (scanexp1): DEFERRED global breadcrumb stores, now OUTSIDE the lock so
+      // they run in parallel across the sender warps. Addresses are unique per
+      // (token_idx, dst), so out-of-lock ordering is correctness-preserving. ep_my_idx[g]
+      // and rdma_tail_idx persist in registers from the in-lock computation above.
+      if (kEpDirect and ep_combine_recv_idx != nullptr and not kCachedMode and lane_id < kNumRDMARanks and
+          rdma_tail_idx >= 0) {
+        const bool* bvals = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
+#pragma unroll
+        for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g)
+          if (bvals[g])
+            ep_combine_recv_idx[static_cast<int64_t>(token_idx) * num_ranks + lane_id * NUM_MAX_NVL_PEERS + g] =
+                ep_my_idx[g];
+      }
+
+      // Store RDMA head for combine (deferred, post-lock; unique per (token, node)).
+      if (lane_id < kNumRDMARanks and not kCachedMode)
+        send_rdma_head[token_idx * kNumRDMARanks + lane_id] = rdma_tail_idx;
 
       // Broadcast tails
       SourceMeta src_meta;
@@ -673,16 +718,17 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     }
 
     // Epilogue
-    // Acquire sequential lock
-    while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+    // Acquire sequential lock (lock path only; atomic-route removed the lock)
+    while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
       ;
     __syncwarp();
 
-    // Update last token tail (epilogue). See in-loop note on atomicMax.
+    // Update last token tail (epilogue). Dead under kEpFlat (coordinator returns
+    // before reading rdma_send_channel_tail); kept for the non-flat path.
     if (last_rdma_tail_idx >= 0) atomicMax(const_cast<int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
 
-    // Release sequential lock
-    lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
+    // Release sequential lock (lock path only)
+    if (!ep_use_atomic_route and lane_id == 0) rdma_send_next_token_idx += 1;
 
 #if EP_NCCLEP_TMA
     // B-depth-1: single drain of all cross-token in-flight TMA S2G groups at warp end
