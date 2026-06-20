@@ -1328,27 +1328,18 @@ Buffer::internode_dispatch(
   EP_HOST_ASSERT(0 < get_num_rdma_ranks() and get_num_rdma_ranks() <= NUM_MAX_RDMA_PEERS);
 
   bool cached_mode = cached_rdma_channel_prefix_matrix.has_value();
-  // inc6 (kEpFlat): MSCCLPP_EP_DISPATCH_NSM caps the flat dispatch block count
+  // inc6/inc7 (kEpFlat): MSCCLPP_EP_DISPATCH_NSM sets the flat dispatch block count
   // (== num_channels, since the flat all-sender path launches one sender block per
   // channel) independently of config.num_sms. num_channels is the token-partitioning
   // granularity shared by notify_dispatch, the prefix-matrix allocations, and the
-  // dispatch grid, so changing it here keeps the whole dispatch pipeline self-consistent
-  // (the NSM sweep already varied num_channels 8..76 with byte-correct recv). Capped at
-  // config.num_sms/2 because the RDMA/NVL ring buffers were sized for that many channels;
-  // it can only reduce the dispatch SM count to free SMs, never grow it. Flat-only; the
-  // 2-hop path must keep num_channels == config.num_sms/2.
+  // dispatch grid, so resolving it here keeps the whole dispatch pipeline self-consistent
+  // (the NSM sweep already varied num_channels 8..76 with byte-correct recv). Clamped to
+  // [1, config.num_sms] (the flat path has no forwarder, so it can use the FULL SM budget:
+  // num_sms=16 + MSCCLPP_EP_DISPATCH_NSM=16 -> 16 blocks, matching NCCL-EP); the matching
+  // RDMA/NVL buffer is sized for the same channel count via ep_buffer_channels(). Unset ->
+  // num_sms/2 (byte-identical default). Flat-only; the 2-hop path keeps num_sms/2.
 #ifdef EP_DISPATCH_NCCLEP
-  if (not cached_mode) {
-    const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
-    const char* e_flat = std::getenv("MSCCLPP_EP_FLAT");
-    const bool ep_flat = (e_flat && std::atoi(e_flat) != 0) && (e_direct && std::atoi(e_direct) != 0);
-    const char* e_dnsm = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
-    if (ep_flat && e_dnsm != nullptr) {
-      const int dnsm = std::atoi(e_dnsm);
-      const int max_channels = config.num_sms / 2;
-      if (dnsm >= 1) num_channels = (dnsm < max_channels) ? dnsm : max_channels;
-    }
-  }
+  if (not cached_mode) num_channels = ep_flat_dispatch_channels(config.num_sms);
 #endif
   if (cached_mode) {
     EP_HOST_ASSERT(cached_rdma_channel_prefix_matrix.has_value());

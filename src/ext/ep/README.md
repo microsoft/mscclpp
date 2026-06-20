@@ -220,7 +220,7 @@ defaults, **not** the `ep.Config(...)` constructor defaults):
 | `MSCCLPP_EP_DIRECT`       | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only.** `1` enables the sender direct-write dispatch **and** receiver gather-direct combine (see [GB200 direct-path optimization](#gb200-direct-path-optimization-mscclpp_ep_direct--mscclpp_ep_intra_direct)). Unset = byte-identical 2-hop baseline. |
 | `MSCCLPP_EP_INTRA_DIRECT` | — (runtime `getenv`)                 | unset   | **GB200 single-node only.** `1` enables sender direct-write for the intra-node kernel. Independent of `MSCCLPP_EP_DIRECT` (see below). |
 | `MSCCLPP_EP_FLAT`         | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only; requires `MSCCLPP_EP_DIRECT=1`.** `1` enables the flat all-sender dispatch (removes the forwarder / coordinator / receiver roles; per-token metadata goes straight to the dest recv pool) + direct-gather combine (see [flat all-sender path](#gb200-flat-all-sender-path-mscclpp_ep_flat)). Unset = the `MSCCLPP_EP_DIRECT` path. |
-| `MSCCLPP_EP_DISPATCH_NSM` | — (runtime `getenv`)                 | `num_sms`/2 | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Caps the all-sender dispatch block count independently of `num_sms`; clamped to `[1, num_sms/2]`. Lower it to free SMs for overlapping compute. |
+| `MSCCLPP_EP_DISPATCH_NSM` | — (runtime `getenv`)                 | `num_sms`/2 | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Sets the all-sender dispatch block count independently of `num_sms`; clamped to `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM budget — e.g. `num_sms=16` + `DISPATCH_NSM=16` → 16 blocks). The RDMA/NVL buffers are auto-sized to match. Lower it to free SMs for overlapping compute, or set it to `num_sms` to maximize dispatch throughput. |
 | `MSCCLPP_EP_COMBINE_NSM`  | — (runtime `getenv`)                 | `num_sms`   | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Caps the combine block count independently of `num_sms`; clamped to `[2, num_sms]`. Flat combine saturates ~76 blocks. |
 
 Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
@@ -291,8 +291,9 @@ block counts can be capped **independently** of `num_sms` to free SMs for
 overlapping compute:
 
 - `MSCCLPP_EP_DISPATCH_NSM=<N>` — flat dispatch block count, clamped to
-  `[1, num_sms/2]` (flat dispatch is all-sender, so its max grid is
-  `num_sms/2`). Default = `num_sms/2`.
+  `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM
+  budget; the RDMA/NVL buffers are auto-sized to the chosen count).
+  Default = `num_sms/2`.
 - `MSCCLPP_EP_COMBINE_NSM=<N>` — flat combine block count, clamped to
   `[2, num_sms]`. Default = `num_sms`.
 

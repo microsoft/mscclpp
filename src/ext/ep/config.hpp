@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstdlib>
+
 #include "kernels/api.cuh"
 #include "kernels/exception.cuh"
 
@@ -16,6 +18,33 @@ dtype_t cell_div(dtype_t a, dtype_t b) {
 template <typename dtype_t>
 dtype_t align(dtype_t a, dtype_t b) {
   return cell_div<dtype_t>(a, b) * b;
+}
+
+// inc7: resolve the flat all-sender dispatch channel count (== block count).
+// Default num_sms/2; MSCCLPP_EP_DISPATCH_NSM (flat path only) overrides it, clamped
+// to [1, num_sms] (was [1, num_sms/2]). The flat path launches one sender block per
+// channel (no forwarder), so it can use the FULL SM budget with a SINGLE knob:
+// num_sms=16 + MSCCLPP_EP_DISPATCH_NSM=16 -> 16 dispatch blocks (matching NCCL-EP).
+// Non-flat or unset -> num_sms/2 (byte-identical default).
+inline int ep_flat_dispatch_channels(int num_sms) {
+  const char* f = std::getenv("MSCCLPP_EP_FLAT");
+  const char* d = std::getenv("MSCCLPP_EP_DIRECT");
+  if (!(f != nullptr && std::atoi(f) != 0 && d != nullptr && std::atoi(d) != 0)) return num_sms / 2;
+  const char* e = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
+  if (e == nullptr) return num_sms / 2;
+  const int n = std::atoi(e);
+  if (n < 1) return num_sms / 2;
+  return n < num_sms ? n : num_sms;
+}
+
+// Channel count the RDMA/NVL buffers must hold: the larger of the flat dispatch
+// channels and the default num_sms/2 (which the combine grid still uses). Sizing for
+// the max keeps both kernels' per-channel offsets in bounds when DISPATCH_NSM raises
+// or lowers the dispatch channel count relative to num_sms/2.
+inline int ep_buffer_channels(int num_sms) {
+  const int dc = ep_flat_dispatch_channels(num_sms);
+  const int half = num_sms / 2;
+  return dc > half ? dc : half;
 }
 
 struct Config {
@@ -54,7 +83,9 @@ struct Config {
     EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS or num_sms % 2 == 0);
     const auto num_rdma_ranks = std::max(num_ranks / NUM_MAX_NVL_PEERS, 1);
     const auto num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
-    const int num_channels = num_sms / 2;
+    // inc7: size for the resolved flat dispatch channel count (MSCCLPP_EP_DISPATCH_NSM
+    // may raise it to num_sms); defaults to num_sms/2 when unset.
+    const int num_channels = ep_buffer_channels(num_sms);
 
     size_t num_bytes = 0;
     num_bytes += num_channels * num_nvl_ranks * (2 * num_rdma_ranks + 3) * sizeof(int);
@@ -125,7 +156,9 @@ struct Config {
     EP_HOST_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0);
     EP_HOST_ASSERT(num_sms % 2 == 0);
     const int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
-    const int num_channels = num_sms / 2;
+    // inc7: size for the resolved flat dispatch channel count (MSCCLPP_EP_DISPATCH_NSM
+    // may raise it to num_sms); defaults to num_sms/2 when unset.
+    const int num_channels = ep_buffer_channels(num_sms);
 
     size_t num_bytes = 0;
     num_bytes += num_channels * num_rdma_ranks * (NUM_MAX_NVL_PEERS * 2 + 2) * 2 * sizeof(int);
