@@ -1924,6 +1924,93 @@ __device__ int combine_token(bool is_token_in_rank, int head_idx, int lane_id, i
   return topk_ranks[0];
 }
 
+// inc8 (combine extract): the FLAT direct-gather combine path, extracted from the
+// unified `combine` kernel into its own lean kernel. RATIONALE: the unified kernel
+// carries the heavy 2-hop forwarder code, so it compiles to ~80 registers and is
+// register-limited to 1 resident block/SM (25 warps). Under flat, only this gather
+// runs (the forwarder is dead code) yet it inherits that 80-reg / 1-block ceiling,
+// starving the NVLink pull-gather of the warp-level parallelism it needs to hide
+// the (latency-, not bandwidth-bound) remote ld_nc_global reads. Extracting it lets
+// the gather compile to far fewer registers, so a full 1024-thread block (32 warps)
+// fits per SM at the same SM budget -> more warps in flight -> better latency hiding.
+// The token-strided loop is grid/block-agnostic, so correctness is independent of
+// the launch geometry. Logic is byte-for-byte the same reduction as the unified
+// kernel's flat branch (combine_token for <=8 nodes, chunked-ballot for >8).
+template <typename dtype_t, int kNumRDMARanks>
+__global__ void __launch_bounds__(1024, 1)
+    combine_flat_gather(int4* combined_x, float* combined_topk_weights, const bool* is_combined_token_in_rank,
+                        int num_combined_tokens, int hidden, int num_topk, int num_ranks,
+                        void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
+  const auto lane_id = get_lane_id();
+  const auto hidden_int4 = hidden / static_cast<int>(sizeof(int4) / sizeof(dtype_t));
+  constexpr int kEpNumRanks = kNumRDMARanks * NUM_MAX_NVL_PEERS;
+  const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+  const int warp_id_flat = static_cast<int>(threadIdx.x) / 32;
+  const int num_warps_per_block = static_cast<int>(blockDim.x) / 32;
+  const int global_warp = static_cast<int>(blockIdx.x) * num_warps_per_block + warp_id_flat;
+  const int total_warps = static_cast<int>(gridDim.x) * num_warps_per_block;
+  auto recv_fn = [&](int r, int slot, int hi) -> int4 {
+    return ld_nc_global(reinterpret_cast<const int4*>(reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[r]) +
+                                                      ep_pool_header_bytes) +
+                        static_cast<int64_t>(slot) * hidden_int4 + hi);
+  };
+  auto recv_tw_fn = [&](int, int, int) -> float { return 0.0f; };
+  if constexpr (kEpNumRanks <= 32) {
+    for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+      const bool is_in =
+          (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
+      const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
+      combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
+                                             combined_x + static_cast<int64_t>(t) * hidden_int4,
+                                             combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
+                                             recv_fn, recv_tw_fn);
+    }
+  } else {
+    constexpr int kEpMaxContrib = 8;
+    constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
+    for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+      int topk_ranks[kEpMaxContrib], slot_indices[kEpMaxContrib], num_topk_ranks = 0;
+      for (int base = 0; base < kEpNumRanks; base += 32) {
+        const int r = base + lane_id;
+        const bool is_in =
+            (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+        const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
+        unsigned ballot = __ballot_sync(0xffffffffu, is_in);
+        while (ballot != 0u) {
+          const int l = __ffs(static_cast<int>(ballot)) - 1;
+          if (num_topk_ranks < kEpMaxContrib) {
+            topk_ranks[num_topk_ranks] = base + l;
+            slot_indices[num_topk_ranks] = __shfl_sync(0xffffffffu, slot, l);
+            ++num_topk_ranks;
+          }
+          ballot &= ballot - 1u;
+        }
+      }
+      int4* combined_row = combined_x + static_cast<int64_t>(t) * hidden_int4;
+#pragma unroll
+      for (int i = lane_id; i < hidden_int4; i += 32) {
+        int4 recv_value_int4[kEpMaxContrib];
+#pragma unroll
+        for (int j = 0; j < num_topk_ranks; ++j) recv_value_int4[j] = recv_fn(topk_ranks[j], slot_indices[j], i);
+        float values[kDtypePerInt4] = {0};
+#pragma unroll
+        for (int j = 0; j < num_topk_ranks; ++j) {
+          auto vd = reinterpret_cast<const dtype_t*>(&recv_value_int4[j]);
+#pragma unroll
+          for (int k = 0; k < kDtypePerInt4; ++k) values[k] += static_cast<float>(vd[k]);
+        }
+        int4 out_int4;
+        auto out_dtypes = reinterpret_cast<dtype_t*>(&out_int4);
+#pragma unroll
+        for (int k = 0; k < kDtypePerInt4; ++k) out_dtypes[k] = static_cast<dtype_t>(values[k]);
+        st_na_global(combined_row + i, out_int4);
+      }
+      if (lane_id < num_topk)
+        st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+    }
+  }
+}
+
 template <bool kLowLatencyMode, int kNumRDMARanks, typename dtype_t, int kNumCombineForwarderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks),
           int kNumWarpsPerForwarder =
@@ -2650,6 +2737,37 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
   EP_HOST_ASSERT(num_max_nvl_chunked_recv_tokens / num_rdma_ranks >
                  std::max(num_max_rdma_chunked_send_tokens, num_max_nvl_chunked_send_tokens));
   EP_HOST_ASSERT(type == CUDA_R_16BF);
+
+#ifdef EP_DISPATCH_NCCLEP
+  // inc8 (combine extract): FLAT direct-gather path -> launch the lean
+  // combine_flat_gather kernel instead of the unified (forwarder-heavy) combine.
+  // Same SM budget (num_channels*2 blocks) but a full 1024-thread block (32 warps)
+  // per SM, vs the unified kernel's register-limited 25 warps -> more warp-level
+  // parallelism to hide the NVLink pull-gather latency. recv_pool_global_ptrs +
+  // ep_combine_recv_idx are non-null only on the flat direct path (same gate the
+  // unified kernel used to select its gather branch), so the 2-hop path is untouched.
+  // CROSSOVER (mirrors the inc7 dispatch atomic threshold): the lean kernel's bigger
+  // blocks win when blocks are FEW (low SM, many tokens/block, latency-bound) but add
+  // scheduling overhead when blocks are MANY (high SM): 8n combine 16blk 1086->952,
+  // 24blk 820->790, but 32blk 753->784 (+4%). Gate to num_channels<=14 (==<=28 blocks),
+  // the same channel threshold inc7 uses for dispatch; above it the unified kernel
+  // (which still runs its flat gather branch) is faster.
+  constexpr int kEpCombineLeanMaxChannels = 14;
+  if (recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr and num_channels <= kEpCombineLeanMaxChannels) {
+#define COMBINE_FLAT_GATHER_CASE(num_rdma_ranks)                                                           \
+  {                                                                                                       \
+    auto gather_func = combine_flat_gather<nv_bfloat16, num_rdma_ranks>;                                  \
+    LAUNCH_KERNEL(&cfg, gather_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,          \
+                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks,            \
+                  recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
+  }                                                                                                       \
+  break
+    SETUP_LAUNCH_CONFIG(num_channels * 2, 1024, stream);
+    SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_CASE);
+#undef COMBINE_FLAT_GATHER_CASE
+    return;
+  }
+#endif
 
   SETUP_LAUNCH_CONFIG(num_channels * 2, (NUM_MAX_NVL_PEERS + num_forwarder_warps + 1) * 32, stream);
   SWITCH_RDMA_RANKS(COMBINE_LAUNCH_CASE);
