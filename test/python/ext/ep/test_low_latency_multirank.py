@@ -93,22 +93,24 @@ def main():
     for _ in range(min(10, num_tokens)):
         topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
 
-    num_rdma_bytes = ep.Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
+    moe_comm = ep.MoECommunicator(
+        comm=group,
+        num_experts=num_experts,
+        num_local_experts=num_local_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode="ll",
+        num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+    )
+    buf = moe_comm.buffer
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
             f"num_experts={num_experts} num_topk={num_topk} "
-            f"num_rdma_bytes={num_rdma_bytes}",
+            f"num_rdma_bytes={buf.num_rdma_bytes}",
             flush=True,
         )
-
-    buf = ep.Buffer(
-        group,
-        num_nvl_bytes=0,
-        num_rdma_bytes=num_rdma_bytes,
-        low_latency_mode=True,
-        num_qps_per_rank=max(1, num_experts // num_ranks),
-    )
     print(
         f"[rank {rank}] Buffer created is_available={buf.is_available()} "
         f"is_internode={buf.is_internode_available()}",
@@ -121,35 +123,12 @@ def main():
     print(f"[rank {rank}] pre-dispatch", flush=True)
 
     # --- Dispatch ---
-    # Return tuple (7 items):
-    #   packed_recv_x, packed_recv_x_scales (optional, FP8-only),
-    #   packed_recv_count, packed_recv_src_info, packed_recv_layout_range,
-    #   event, hook
-    (
-        packed_recv_x,
-        _packed_recv_x_scales,
-        packed_recv_count,
-        packed_recv_src_info,
-        packed_recv_layout_range,
-        _event,
-        recv_hook,
-    ) = buf.low_latency_dispatch(
-        x,
-        topk_idx,
-        num_tokens,
-        num_experts,
-        False,
-        False,
-        True,  # use_fp8, async, return_recv_hook
-    )
-    # Send phase launched on compute_stream; wait for local launch.
-    torch.cuda.synchronize()
-    dist.barrier(group=group)
-    print(f"[rank {rank}] dispatch-send done, calling hook", flush=True)
-    recv_hook()  # Recv phase.
+    dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
+    packed_recv_x = dispatch_out.tokens
+    packed_recv_count = dispatch_out.num_tokens_per_expert
+    packed_recv_layout_range = handle.layout_range
     torch.cuda.synchronize()
     print(f"[rank {rank}] post-dispatch", flush=True)
-    handle = (packed_recv_src_info, packed_recv_layout_range)
     # packed_recv_x: [num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]
     # packed_recv_count: [num_local_experts] int32
 
@@ -162,7 +141,7 @@ def main():
         expert_id = rank * num_local_experts + i
         recv_count = int(packed_recv_count[i].item())
         expected_count = int((all_topk_idx == expert_id).sum().item())
-        recv_layout_range = handle[1][i]
+        recv_layout_range = packed_recv_layout_range[i]
         layout_sum = int((recv_layout_range & int_mask).sum().item())
         assert (
             recv_count == expected_count
@@ -187,24 +166,7 @@ def main():
     # returns sum(x * weight) across experts.
     simulated_gemm_x = packed_recv_x.clone()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
-    # Signature: (x, topk_idx, topk_weights, src_info, layout_range,
-    #             num_max_dispatch_tokens_per_rank, num_experts,
-    #             zero_copy, async, return_recv_hook, out)
-    src_info, layout_range = handle[0], handle[1]
-    combined_x, _event, _hook = buf.low_latency_combine(
-        simulated_gemm_x,
-        None,
-        topk_idx,
-        topk_weights,
-        src_info,
-        layout_range,
-        num_tokens,
-        num_experts,
-        False,
-        False,
-        False,  # zero_copy, async, return_recv_hook
-        out,
-    )
+    combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
 
     # Analytical expected: each token i, weighted sum over topk entries that
     # are not -1. Every expert returns the original x[i] (since simulated
@@ -236,47 +198,8 @@ def main():
     warmup = int(os.environ.get("MSCCLPP_EP_BENCH_WARMUP", "5"))
     iters = int(os.environ.get("MSCCLPP_EP_BENCH_ITERS", "20"))
 
-    # Hoist dispatch's output tensors out of the timed loop. The largest
-    # (`packed_recv_x`, ~58 MB at 7K hidden) costs ~10us cumulative across
-    # the four torch::empty calls per iter; reusing them brings the bench
-    # in line with NCCL-EP `ep_bench` which preallocates output buffers.
-    num_local_experts = num_experts // num_ranks
-    bench_packed_recv_x = torch.empty(
-        (num_local_experts, num_ranks * num_tokens, hidden),
-        dtype=torch.bfloat16,
-        device="cuda",
-    )
-    bench_packed_recv_src_info = torch.empty(
-        (num_local_experts, num_ranks * num_tokens),
-        dtype=torch.int32,
-        device="cuda",
-    )
-    bench_packed_recv_layout_range = torch.empty(
-        (num_local_experts, num_ranks),
-        dtype=torch.int64,
-        device="cuda",
-    )
-    bench_packed_recv_count = torch.empty(
-        (num_local_experts,),
-        dtype=torch.int32,
-        device="cuda",
-    )
-
     def _dispatch():
-        return buf.low_latency_dispatch(
-            x,
-            topk_idx,
-            num_tokens,
-            num_experts,
-            False,
-            False,
-            False,  # use_fp8, async, return_recv_hook
-            bench_packed_recv_x,
-            None,  # x_scales (FP8 only)
-            bench_packed_recv_src_info,
-            bench_packed_recv_layout_range,
-            bench_packed_recv_count,
-        )
+        return moe_comm.dispatch(x, topk_idx, topk_weights)
 
     # Hoist combine's output-tensor allocation out of the timed loop so the
     # measurement reflects the kernel cost. (The original test also cloned the
@@ -285,21 +208,8 @@ def main():
     bench_out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
 
     def _combine(dout, out_):
-        recv_x, _scales, _cnt, src_info_, layout_range_, _ev, _hk = dout
-        buf.low_latency_combine(
-            recv_x,
-            None,
-            topk_idx,
-            topk_weights,
-            src_info_,
-            layout_range_,
-            num_tokens,
-            num_experts,
-            False,
-            False,
-            False,
-            out_,
-        )
+        dispatch_out_, handle_ = dout
+        moe_comm.combine(dispatch_out_.tokens, handle_, out=out_)
 
     for _ in range(warmup):
         _combine(_dispatch(), bench_out)
@@ -315,7 +225,7 @@ def main():
     end_ev.record()
     torch.cuda.synchronize()
     disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
-    recv_tokens = int(dout[2].sum().item())  # packed_recv_count summed over local experts
+    recv_tokens = int(dout[0].num_tokens_per_expert.sum().item())
 
     dist.barrier(group=group)
     start_ev.record()

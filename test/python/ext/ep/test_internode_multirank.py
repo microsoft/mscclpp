@@ -169,7 +169,7 @@ def main():
     )
     assert buf.is_available() and buf.is_internode_available()
 
-    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(
+    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(
         topk_idx, num_experts, None, False, False
     )
     assert torch.allclose(ref_rank, num_tokens_per_rank)
@@ -203,7 +203,7 @@ def main():
         send_rdma_head,
         send_nvl_head,
         _event,
-    ) = buf.runtime.internode_dispatch(
+    ) = buf.internode_dispatch(
         x,
         None,
         topk_idx,
@@ -261,7 +261,7 @@ def main():
     # matrices passed here must be the RECEIVER-side ones returned by dispatch
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
+    combined_x, combined_topk_weights, _ = buf.internode_combine(
         recv_x,
         recv_topk_weights,
         recv_src_meta,
@@ -362,7 +362,7 @@ def main():
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
     def _dispatch():
-        return buf.runtime.internode_dispatch(
+        return buf.internode_dispatch(
             x_b,
             None,
             topk_idx_b,
@@ -386,7 +386,7 @@ def main():
 
     def _combine(dout):
         rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
-        buf.runtime.internode_combine(
+        buf.internode_combine(
             rx,
             rtw,
             rsm,

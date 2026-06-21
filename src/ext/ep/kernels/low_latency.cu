@@ -156,8 +156,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* packedRecvX, float* packedRecvXSca
   int recvTokenBeginIdx;
   EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
   if (subWarpId == 1 and laneId == 0) {
-    int64_t raw;
-    while ((raw = ld_acquire_sys_global(rdmaRecvCount + localExpertIdx * numRanks + srcRank)) == 0);
+    const auto raw = waitSignalNonZero(rdmaRecvCount + localExpertIdx * numRanks + srcRank);
     numRecvTokens = static_cast<int>(-raw - 1);
     recvTokenBeginIdx = atomicAdd(packedRecvCount + localExpertIdx, numRecvTokens);
     sharedNumRecvTokens[warpGroupId] = numRecvTokens;
@@ -322,23 +321,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     const auto numTokensSent = sharedNumTokensSentPerExpert[responsibleExpertIdx - smId * kNumWarpGroups];
 
     while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
-    if (dstRank != rank) {
-      if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
-        // Single writer per (dstExpertLocalIdx, rank) slot, so a
-        // release-ordered store on the peer-mapped counter is enough.
-        auto peerCounter = reinterpret_cast<int64_t*>(
-            peerMappedPtrOf(reinterpret_cast<uint64_t>(rdmaRecvCount + dstExpertLocalIdx * numRanks + rank),
-                            peerRdmaBases, rdmaBufferPtr, dstRank));
-        storeRelease(peerCounter, static_cast<int64_t>(-numTokensSent - 1));
-      } else {
-        auto* counterPtr = rdmaRecvCount + dstExpertLocalIdx * numRanks + rank;
-        const auto off = portChannelOffsetOf(reinterpret_cast<uint64_t>(counterPtr), rdmaBufferPtr);
-        portChannelHandles[dstExpertLocalIdx * numRanks + dstRank].atomicAdd(off,
-                                                                             static_cast<int64_t>(-numTokensSent - 1));
-      }
-    } else {
-      storeRelease(rdmaRecvCount + dstExpertLocalIdx * numRanks + rank, static_cast<int64_t>(-numTokensSent - 1));
-    }
+    auto* counterPtr = rdmaRecvCount + dstExpertLocalIdx * numRanks + rank;
+    auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + dstExpertLocalIdx * numRanks + dstRank;
+    publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
+                              portChannelHandle, peerRdmaBases, ranksPerIpcDomain);
 
     atomicCounterPerExpert[responsibleExpertIdx] = 0;
     atomicFinishCounterPerExpert[responsibleExpertIdx] = 0;
@@ -669,19 +655,10 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
       asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 1), "r"(kNumWarpsPerGroup * 32));
       if (subWarpId == 1 and laneId == 0) {
         while (ld_acquire_global(atomicCleanFlag) == 0);
-        if (dstRank != rank) {
-          if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
-            auto peerFlag = reinterpret_cast<int64_t*>(peerMappedPtrOf(
-                reinterpret_cast<uint64_t>(rdmaRecvFlag + globalExpertIdx), peerRdmaBases, rdmaBufferPtr, dstRank));
-            storeRelease(peerFlag, static_cast<int64_t>(1));
-          } else {
-            auto* flagPtr = rdmaRecvFlag + globalExpertIdx;
-            const auto off = portChannelOffsetOf(reinterpret_cast<uint64_t>(flagPtr), rdmaBufferPtr);
-            portChannelHandles[localExpertIdx * numRanks + dstRank].atomicAdd(off, static_cast<int64_t>(1));
-          }
-        } else {
-          storeRelease(rdmaRecvFlag + globalExpertIdx, static_cast<int64_t>(1));
-        }
+        auto* flagPtr = rdmaRecvFlag + globalExpertIdx;
+        auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + localExpertIdx * numRanks + dstRank;
+        publishSingleWriterSignal(flagPtr, static_cast<int64_t>(1), rank, dstRank, rdmaBufferPtr, portChannelHandle,
+                                  peerRdmaBases, ranksPerIpcDomain);
         atomicAddReleaseDevice(atomicCleanFlag, -1);
       }
       __syncwarp();
@@ -692,8 +669,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
 
   if (responsibleExpertIdx < numExperts) {
     EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
-    if (subWarpId == 0 and laneId == 0)
-      while (ld_acquire_sys_global(rdmaRecvFlag + responsibleExpertIdx) == 0);
+    if (subWarpId == 0 and laneId == 0) waitSignalNonZero(rdmaRecvFlag + responsibleExpertIdx);
   }
   cg::this_grid().sync();
 

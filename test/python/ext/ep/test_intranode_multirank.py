@@ -127,7 +127,7 @@ def main():
     assert buf.is_available()
 
     # get_dispatch_layout sanity
-    ref_rank, _, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(topk_idx, num_experts, None, False, False)
+    ref_rank, _, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(topk_idx, num_experts, None, False, False)
     assert torch.allclose(ref_rank, num_tokens_per_rank)
     assert torch.allclose(ref_exp, num_tokens_per_expert)
     assert torch.allclose(ref_in_rank, is_token_in_rank)
@@ -147,7 +147,7 @@ def main():
         recv_src_idx,
         send_head,
         _event,
-    ) = buf.runtime.intranode_dispatch(
+    ) = buf.intranode_dispatch(
         x,
         None,
         topk_idx,
@@ -188,7 +188,7 @@ def main():
     handle_rank_prefix_matrix = rank_prefix_matrix
     handle_channel_prefix_matrix = recv_channel_prefix_matrix
 
-    combined_x, combined_topk_weights, _ = buf.runtime.intranode_combine(
+    combined_x, combined_topk_weights, _ = buf.intranode_combine(
         recv_x,
         recv_topk_weights,
         handle_recv_src_idx,
@@ -281,7 +281,7 @@ def main():
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
     def _dispatch():
-        return buf.runtime.intranode_dispatch(
+        return buf.intranode_dispatch(
             x_b,
             None,
             topk_idx_b,
@@ -315,7 +315,7 @@ def main():
         # topk_idx/topk_weights (those require num_experts > 0). We still get
         # send_head/rank_prefix_matrix/channel_prefix_matrix/recv_src_idx out
         # of dispatch -- enough to drive combine.
-        return buf.runtime.intranode_dispatch(
+        return buf.intranode_dispatch(
             x_b,
             None,
             None,
@@ -335,7 +335,7 @@ def main():
 
     def _combine(dout):
         rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev = dout
-        buf.runtime.intranode_combine(
+        buf.intranode_combine(
             rx,
             rtw,
             rsi,

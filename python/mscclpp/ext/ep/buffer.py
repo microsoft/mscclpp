@@ -25,7 +25,8 @@ Current status (see ``src/ext/ep/README.md``):
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Tuple
+from dataclasses import dataclass
+from typing import List, Optional
 
 import torch
 import torch.distributed as dist
@@ -43,6 +44,78 @@ Config = _cpp.Config
 EventHandle = _cpp.EventHandle
 
 
+@dataclass
+class MoECommunicatorConfig:
+    """Configuration for the high-level MoE dispatch/combine API."""
+
+    comm: Optional[dist.ProcessGroup] = None
+    device: Optional[torch.device | int] = None
+    num_experts: int = 0
+    num_local_experts: Optional[int] = None
+    local_expert_start: Optional[int] = None
+    hidden_size: int = 0
+    topk: int = 0
+    max_tokens_per_rank: int = 0
+    max_recv_tokens_per_rank: Optional[int] = None
+    mode: str = "ll"
+    output_layout: Optional[str] = None
+    input_dtype: Optional[torch.dtype] = None
+    quant_format: Optional[str] = None
+    num_nvl_bytes: Optional[int] = None
+    num_rdma_bytes: Optional[int] = None
+    num_rdma_qps_per_rank: int = 12
+    num_sms: int = 20
+    comm_stream: Optional[torch.cuda.Stream] = None
+    enable_overlap: bool = False
+
+
+@dataclass
+class QuantScales:
+    local: Optional[torch.Tensor] = None
+    global_scale: Optional[torch.Tensor] = None
+    format: Optional[str] = None
+    block_size: Optional[int] = None
+
+
+@dataclass
+class DispatchOutput:
+    tokens: torch.Tensor
+    scales: Optional[QuantScales]
+    num_tokens_per_expert: torch.Tensor | list[int]
+    expert_offsets: Optional[torch.Tensor] = None
+    layout: str = "flat_expert_major"
+
+
+@dataclass
+class DispatchHandle:
+    """Opaque dispatch metadata consumed by :meth:`MoECommunicator.combine`."""
+
+    topk_ids: torch.Tensor
+    weights: torch.Tensor
+    src_info: torch.Tensor
+    layout_range: torch.Tensor
+    num_max_dispatch_tokens_per_rank: int
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    num_local_experts: int
+    local_expert_start: int
+    layout: str
+    output_scales: Optional[QuantScales] = None
+
+
+@dataclass
+class CommOverlapConfig:
+    op: str
+    level: str = "op"
+    stream: Optional[torch.cuda.Stream] = None
+    wait_event: Optional[torch.cuda.Event] = None
+    signal: Optional[torch.Tensor] = None
+    num_comm_sms: Optional[int] = None
+    block_m: Optional[int] = None
+    block_ready_value: Optional[int] = None
+
+
 class Buffer:
     """Core expert-parallel (EP) communication buffer.
 
@@ -57,10 +130,9 @@ class Buffer:
         Size of the RDMA scratch buffer. Required (>0) for internode HT and
         low-latency modes.
     low_latency_mode:
-        Enable the low-latency dispatch/combine path. This mode uses only
-        the RDMA buffer (``num_rdma_bytes``) and drives every peer through
-        MSCCL++ ``PortChannel``; consequently, it works cross-node with any
-        topology but is still pending H100 hardware validation.
+        Enable low-latency buffer setup for :class:`MoECommunicator`. New
+        callers should use :class:`MoECommunicator` instead of direct LL
+        methods on ``Buffer``.
     num_qps_per_rank:
         Ignored for intranode mode.
     """
@@ -84,15 +156,15 @@ class Buffer:
         self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self.runtime = _cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
+        self._runtime = _cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
 
         # Exchange device IDs + IPC handles + (for RDMA) the MSCCL++ unique id.
         device_ids: List[Optional[int]] = [None] * self.group_size
-        local_device_id = self.runtime.get_local_device_id()
+        local_device_id = self._runtime.get_local_device_id()
         dist.all_gather_object(device_ids, local_device_id, group)
 
         ipc_handles: List[Optional[bytes]] = [None] * self.group_size
-        local_ipc_handle = self.runtime.get_local_ipc_handle()
+        local_ipc_handle = self._runtime.get_local_ipc_handle()
         dist.all_gather_object(ipc_handles, local_ipc_handle, group)
 
         root_unique_id: Optional[bytes] = None
@@ -103,38 +175,38 @@ class Buffer:
             raise ValueError("num_qps_per_rank must be > 0")
 
         if self.rank == 0:
-            root_unique_id = self.runtime.create_unique_id()
+            root_unique_id = self._runtime.create_unique_id()
         broadcast_list = [root_unique_id]
         dist.broadcast_object_list(broadcast_list, src=0, group=group)
         root_unique_id = broadcast_list[0]
         assert root_unique_id is not None
-        self.runtime.connect(root_unique_id)
+        self._runtime.connect(root_unique_id)
 
         # sync() expects Sequence[bytearray | None] / bytearray | None.
         ipc_handles_ba = [bytearray(h) if h is not None else None for h in ipc_handles]
-        self.runtime.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
+        self._runtime.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
 
     # ------------------------------------------------------------------
     # Sanity helpers
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        return self.runtime.is_available()
+        return self._runtime.is_available()
 
     def is_internode_available(self) -> bool:
-        return self.runtime.is_internode_available()
+        return self._runtime.is_internode_available()
 
     def get_local_device_id(self) -> int:
-        return self.runtime.get_local_device_id()
+        return self._runtime.get_local_device_id()
 
     def get_num_rdma_ranks(self) -> int:
-        return self.runtime.get_num_rdma_ranks()
+        return self._runtime.get_num_rdma_ranks()
 
     def get_rdma_rank(self) -> int:
-        return self.runtime.get_rdma_rank()
+        return self._runtime.get_rdma_rank()
 
     def get_root_rdma_rank(self, global_: bool) -> int:
-        return self.runtime.get_root_rdma_rank(global_)
+        return self._runtime.get_root_rdma_rank(global_)
 
     # ------------------------------------------------------------------
     # Layout / dispatch / combine (thin pass-through wrappers).
@@ -149,45 +221,343 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
     ):
-        return self.runtime.get_dispatch_layout(
+        return self._runtime.get_dispatch_layout(
             topk_idx, num_experts, previous_event, async_finish, allocate_on_comm_stream
         )
 
     def intranode_dispatch(self, *args, **kwargs):
-        return self.runtime.intranode_dispatch(*args, **kwargs)
+        return self._runtime.intranode_dispatch(*args, **kwargs)
 
     def intranode_combine(self, *args, **kwargs):
-        return self.runtime.intranode_combine(*args, **kwargs)
+        return self._runtime.intranode_combine(*args, **kwargs)
 
     def internode_dispatch(self, *args, **kwargs):
-        return self.runtime.internode_dispatch(*args, **kwargs)
+        return self._runtime.internode_dispatch(*args, **kwargs)
 
     def internode_combine(self, *args, **kwargs):
-        return self.runtime.internode_combine(*args, **kwargs)
-
-    def clean_low_latency_buffer(self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int) -> None:
-        self.runtime.clean_low_latency_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
-
-    def low_latency_dispatch(self, *args, **kwargs):
-        return self.runtime.low_latency_dispatch(*args, **kwargs)
-
-    def low_latency_combine(self, *args, **kwargs):
-        return self.runtime.low_latency_combine(*args, **kwargs)
-
-    def get_next_low_latency_combine_buffer(self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int):
-        return self.runtime.get_next_low_latency_combine_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
+        return self._runtime.internode_combine(*args, **kwargs)
 
     def get_local_buffer_tensor(
         self, dtype: torch.dtype, offset: int = 0, use_rdma_buffer: bool = False
     ) -> torch.Tensor:
-        return self.runtime.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
+        return self._runtime.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
 
-    # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def get_low_latency_rdma_size_hint(
-        num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
-    ) -> int:
-        return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
+class MoECommunicator:
+    """High-level MoE communicator API for dispatch/combine.
+
+    The first implementation supports the low-latency backend and keeps the
+    existing :class:`Buffer` API available for advanced or compatibility use.
+    """
+
+    def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
+        if config is not None and kwargs:
+            raise ValueError("Pass either MoECommunicatorConfig or keyword arguments, not both")
+        if config is None:
+            if "group" in kwargs and "comm" not in kwargs:
+                kwargs["comm"] = kwargs.pop("group")
+            config = MoECommunicatorConfig(**kwargs)
+
+        if config.device is not None:
+            torch.cuda.set_device(config.device)
+
+        group = config.comm
+        if group is None:
+            if not dist.is_initialized():
+                raise ValueError("MoECommunicator requires a process group or an initialized torch.distributed group")
+            group = dist.group.WORLD
+
+        self.group = group
+        self.rank: int = group.rank()
+        self.world_size: int = group.size()
+        self.local_rank: int = torch.cuda.current_device()
+        self.device = torch.device("cuda", self.local_rank)
+
+        self.mode = config.mode.lower()
+        if self.mode != "ll":
+            raise NotImplementedError("MoECommunicator currently supports only mode='ll'")
+
+        self.output_layout = config.output_layout or "padded_expert_major"
+        if self.output_layout != "padded_expert_major":
+            raise NotImplementedError("low-latency mode currently supports only padded_expert_major output")
+
+        self.num_experts = config.num_experts
+        self.hidden_size = config.hidden_size
+        self.topk = config.topk
+        self.max_tokens_per_rank = config.max_tokens_per_rank
+        if self.num_experts <= 0 or self.hidden_size <= 0 or self.topk <= 0 or self.max_tokens_per_rank <= 0:
+            raise ValueError("num_experts, hidden_size, topk, and max_tokens_per_rank must be positive")
+        if self.num_experts % self.world_size != 0:
+            raise ValueError("low-latency mode requires num_experts divisible by world_size")
+
+        self.num_local_experts = config.num_local_experts
+        if self.num_local_experts is None:
+            self.num_local_experts = self.num_experts // self.world_size
+        if self.num_local_experts * self.world_size != self.num_experts:
+            raise NotImplementedError("only even contiguous expert placement is currently supported")
+
+        self.local_expert_start = config.local_expert_start
+        if self.local_expert_start is None:
+            self.local_expert_start = self.rank * self.num_local_experts
+
+        if config.max_recv_tokens_per_rank not in (None, self.max_tokens_per_rank):
+            raise NotImplementedError("low-latency mode currently uses max_tokens_per_rank as recv capacity")
+        if config.input_dtype not in (None, torch.bfloat16):
+            raise NotImplementedError("low-latency dispatch currently supports BF16 input only")
+
+        self.quant_format = _normalize_quant_format(config.quant_format)
+        self.dispatch_use_fp8 = self.quant_format == "fp8_e4m3"
+        if self.quant_format not in (None, "fp8_e4m3"):
+            raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
+
+        num_nvl_bytes = config.num_nvl_bytes or 0
+        num_rdma_bytes = config.num_rdma_bytes
+        if num_rdma_bytes is None:
+            num_rdma_bytes = _get_low_latency_rdma_size_hint(
+                self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
+            )
+
+        self.comm_stream = config.comm_stream
+        if self.comm_stream is not None:
+            raise NotImplementedError("custom comm_stream is not wired into the low-latency Buffer yet")
+        self.enable_overlap = config.enable_overlap
+        self.num_sms = config.num_sms
+        self._dispatch_tokens: Optional[torch.Tensor] = None
+        self._dispatch_scales: Optional[torch.Tensor] = None
+        self._dispatch_src_info: Optional[torch.Tensor] = None
+        self._dispatch_layout_range: Optional[torch.Tensor] = None
+        self._dispatch_count: Optional[torch.Tensor] = None
+
+        self.buffer = Buffer(
+            group,
+            num_nvl_bytes=num_nvl_bytes,
+            num_rdma_bytes=num_rdma_bytes,
+            low_latency_mode=True,
+            num_qps_per_rank=config.num_rdma_qps_per_rank,
+        )
+
+    def dispatch(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor] = None,
+        scales: Optional[QuantScales] = None,
+    ) -> tuple[DispatchOutput, DispatchHandle]:
+        self._validate_dispatch_inputs(input, topk_ids, weights, scales)
+        if weights is None:
+            weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
+
+        output_tensors = self._get_dispatch_output_tensors(input.device)
+        packed_tokens, packed_scales, num_tokens_per_expert, src_info, layout_range, _event, _hook = (
+            self.buffer._runtime.low_latency_dispatch(
+                input,
+                topk_ids,
+                self.max_tokens_per_rank,
+                self.num_experts,
+                self.dispatch_use_fp8,
+                False,
+                False,
+                *output_tensors,
+            )
+        )
+        output_scales = None
+        if packed_scales is not None:
+            output_scales = QuantScales(local=packed_scales, format="fp8_e4m3", block_size=128)
+
+        dispatch_out = DispatchOutput(
+            tokens=packed_tokens,
+            scales=output_scales,
+            num_tokens_per_expert=num_tokens_per_expert,
+            expert_offsets=None,
+            layout=self.output_layout,
+        )
+        handle = DispatchHandle(
+            topk_ids=topk_ids,
+            weights=weights,
+            src_info=src_info,
+            layout_range=layout_range,
+            num_max_dispatch_tokens_per_rank=self.max_tokens_per_rank,
+            num_experts=self.num_experts,
+            num_tokens=input.size(0),
+            hidden_size=self.hidden_size,
+            num_local_experts=self.num_local_experts,
+            local_expert_start=self.local_expert_start,
+            layout=self.output_layout,
+            output_scales=output_scales,
+        )
+        return dispatch_out, handle
+
+    def _get_dispatch_output_tensors(self, device: torch.device) -> tuple[
+        torch.Tensor,
+        Optional[torch.Tensor],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        token_dtype = torch.float8_e4m3fn if self.dispatch_use_fp8 else torch.bfloat16
+        if (
+            self._dispatch_tokens is None
+            or self._dispatch_tokens.device != device
+            or self._dispatch_tokens.dtype != token_dtype
+        ):
+            self._dispatch_tokens = torch.empty(
+                (self.num_local_experts, slots_per_expert, self.hidden_size),
+                dtype=token_dtype,
+                device=device,
+            )
+            self._dispatch_src_info = torch.empty(
+                (self.num_local_experts, slots_per_expert),
+                dtype=torch.int32,
+                device=device,
+            )
+            self._dispatch_layout_range = torch.empty(
+                (self.num_local_experts, self.world_size),
+                dtype=torch.int64,
+                device=device,
+            )
+            self._dispatch_count = torch.empty(
+                (self.num_local_experts,),
+                dtype=torch.int32,
+                device=device,
+            )
+            self._dispatch_scales = None
+            if self.dispatch_use_fp8:
+                num_scales = self.hidden_size // 128
+                scales_storage = torch.empty(
+                    (self.num_local_experts, num_scales, slots_per_expert),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                self._dispatch_scales = scales_storage.transpose(1, 2)
+
+        assert self._dispatch_tokens is not None
+        assert self._dispatch_src_info is not None
+        assert self._dispatch_layout_range is not None
+        assert self._dispatch_count is not None
+        return (
+            self._dispatch_tokens,
+            self._dispatch_scales,
+            self._dispatch_src_info,
+            self._dispatch_layout_range,
+            self._dispatch_count,
+        )
+
+    def combine(
+        self,
+        expert_output: torch.Tensor,
+        handle: DispatchHandle,
+        *,
+        out: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        self._validate_combine_inputs(expert_output, handle, out)
+        x_scales = None
+        if _is_fp8_e4m3_tensor(expert_output):
+            if handle.output_scales is None or handle.output_scales.local is None:
+                raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
+            x_scales = handle.output_scales.local
+
+        combined, _event, _hook = self.buffer._runtime.low_latency_combine(
+            expert_output,
+            x_scales,
+            handle.topk_ids,
+            handle.weights,
+            handle.src_info,
+            handle.layout_range,
+            handle.num_max_dispatch_tokens_per_rank,
+            handle.num_experts,
+            False,
+            False,
+            False,
+            out,
+        )
+        return combined
+
+    def dispatch_async(self, *args, **kwargs):
+        raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
+
+    def combine_async(self, *args, **kwargs):
+        raise NotImplementedError("combine_async is not implemented for MoECommunicator yet")
+
+    def create_overlap_config(
+        self,
+        op: str,
+        *,
+        handle: Optional[DispatchHandle] = None,
+        level: str = "op",
+    ) -> CommOverlapConfig:
+        if op not in ("dispatch", "combine"):
+            raise ValueError("op must be 'dispatch' or 'combine'")
+        if level != "op":
+            raise NotImplementedError("block-level overlap is not implemented yet")
+        if op == "combine" and handle is None:
+            raise ValueError("combine overlap config requires a DispatchHandle")
+        return CommOverlapConfig(op=op, level=level, stream=self.comm_stream)
+
+    def _validate_dispatch_inputs(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor],
+        scales: Optional[QuantScales],
+    ) -> None:
+        if scales is not None and (scales.local is not None or scales.global_scale is not None):
+            raise NotImplementedError("low-latency dispatch does not support quantized input scales yet")
+        if input.dim() != 2 or not input.is_contiguous():
+            raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
+        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
+            raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
+        if input.size(1) != self.hidden_size:
+            raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
+        if input.size(0) > self.max_tokens_per_rank:
+            raise ValueError("input token count exceeds max_tokens_per_rank")
+        if topk_ids.dim() != 2 or not topk_ids.is_contiguous():
+            raise ValueError("topk_ids must be a contiguous [num_tokens, topk] tensor")
+        if topk_ids.device != input.device or topk_ids.dtype != torch.int64:
+            raise ValueError("topk_ids must be an int64 CUDA tensor on the same device as input")
+        if topk_ids.shape != (input.size(0), self.topk):
+            raise ValueError("topk_ids shape must match [input.size(0), configured topk]")
+        if weights is not None:
+            if weights.dim() != 2 or not weights.is_contiguous():
+                raise ValueError("weights must be a contiguous [num_tokens, topk] tensor")
+            if weights.device != input.device or weights.dtype != torch.float32:
+                raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
+            if weights.shape != topk_ids.shape:
+                raise ValueError("weights shape must match topk_ids")
+
+    def _validate_combine_inputs(
+        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
+    ) -> None:
+        if handle.num_experts != self.num_experts or handle.hidden_size != self.hidden_size:
+            raise ValueError("DispatchHandle does not belong to this MoECommunicator configuration")
+        if expert_output.dim() != 3 or not expert_output.is_contiguous():
+            raise ValueError("expert_output must keep dispatch output's contiguous padded expert-major layout")
+        expected_shape = (self.num_local_experts, self.world_size * self.max_tokens_per_rank, self.hidden_size)
+        if tuple(expert_output.shape) != expected_shape:
+            raise ValueError(f"expert_output shape must be {expected_shape}")
+        if expert_output.dtype not in (torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
+            raise ValueError("expert_output must be BF16 or FP8 E4M3")
+        if out is not None:
+            expected_out_shape = (handle.num_tokens, self.hidden_size)
+            if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
+                raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
+
+
+def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
+    if fmt is None:
+        return None
+    normalized = fmt.lower().replace("-", "_")
+    if normalized in ("fp8", "fp8_e4m3", "f8e4m3", "float8_e4m3fn"):
+        return "fp8_e4m3"
+    return normalized
+
+
+def _is_fp8_e4m3_tensor(tensor: torch.Tensor) -> bool:
+    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+    return fp8_dtype is not None and tensor.dtype == fp8_dtype
+
+
+def _get_low_latency_rdma_size_hint(
+    num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
+) -> int:
+    return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)

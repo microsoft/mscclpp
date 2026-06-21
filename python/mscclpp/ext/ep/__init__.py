@@ -8,6 +8,26 @@ See ``src/ext/ep/README.md`` in the repository for migration status. The
 paths.
 """
 
-from .buffer import Buffer, Config, EventHandle  # noqa: F401
+from .buffer import (  # noqa: F401
+    Buffer,
+    CommOverlapConfig,
+    Config,
+    DispatchHandle,
+    DispatchOutput,
+    EventHandle,
+    MoECommunicator,
+    MoECommunicatorConfig,
+    QuantScales,
+)
 
-__all__ = ["Buffer", "Config", "EventHandle"]
+__all__ = [
+    "Buffer",
+    "CommOverlapConfig",
+    "Config",
+    "DispatchHandle",
+    "DispatchOutput",
+    "EventHandle",
+    "MoECommunicator",
+    "MoECommunicatorConfig",
+    "QuantScales",
+]

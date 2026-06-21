@@ -49,8 +49,38 @@ MSCCLPP_DEVICE_INLINE void channelBarrierBlock(mscclpp::PortChannelDeviceHandle*
 }
 
 template <typename T>
-MSCCLPP_DEVICE_INLINE void storeRelease(T* ptr, T value) {
-  st_na_release(ptr, value);
+MSCCLPP_DEVICE_INLINE void publishSignalDirect(T* slot, T value) {
+  mscclpp::atomicStore<T, mscclpp::scopeSystem>(slot, value, mscclpp::memoryOrderRelease);
+}
+
+template <typename T>
+MSCCLPP_DEVICE_INLINE T waitSignalNonZero(T* slot) {
+  T value;
+  while ((value = mscclpp::atomicLoad<T, mscclpp::scopeSystem>(slot, mscclpp::memoryOrderAcquire)) == T{0});
+  return value;
+}
+
+// Publish a non-zero signal value to a slot that is reset to zero and has
+// exactly one publisher per epoch. Direct local/IPC paths use release stores;
+// PortChannel uses remote atomic add, which is equivalent under this contract.
+MSCCLPP_DEVICE_INLINE void publishSingleWriterSignal(int64_t* localSlot, int64_t value, int rank, int peerRank,
+                                                     void* rdmaBufferPtr,
+                                                     mscclpp::PortChannelDeviceHandle* portChannelHandle,
+                                                     void* const* peerBases, int ranksPerIpcDomain) {
+  if (peerRank == rank) {
+    publishSignalDirect(localSlot, value);
+    return;
+  }
+
+  if (peerBases != nullptr && isIpcPeer(rank, peerRank, ranksPerIpcDomain)) {
+    auto* peerSlot = reinterpret_cast<int64_t*>(
+        peerMappedPtrOf(reinterpret_cast<uint64_t>(localSlot), peerBases, rdmaBufferPtr, peerRank));
+    publishSignalDirect(peerSlot, value);
+    return;
+  }
+
+  const auto off = portChannelOffsetOf(reinterpret_cast<uint64_t>(localSlot), rdmaBufferPtr);
+  portChannelHandle->atomicAdd(off, value);
 }
 
 MSCCLPP_DEVICE_INLINE void atomicAddReleaseDevice(int* ptr, int value) {
