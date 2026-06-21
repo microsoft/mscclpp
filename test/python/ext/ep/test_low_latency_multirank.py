@@ -193,6 +193,7 @@ def main():
     src_info, layout_range = handle[0], handle[1]
     combined_x, _event, _hook = buf.low_latency_combine(
         simulated_gemm_x,
+        None,
         topk_idx,
         topk_weights,
         src_info,
@@ -287,6 +288,7 @@ def main():
         recv_x, _scales, _cnt, src_info_, layout_range_, _ev, _hk = dout
         buf.low_latency_combine(
             recv_x,
+            None,
             topk_idx,
             topk_weights,
             src_info_,

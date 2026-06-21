@@ -58,6 +58,7 @@ endif()
 Python_add_library(mscclpp_ep_cpp MODULE ${EP_SOURCES})
 
 target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
+target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_AVOID_BFLOAT16_ALIAS)
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include

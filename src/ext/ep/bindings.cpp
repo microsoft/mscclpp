@@ -77,6 +77,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
            py::arg("return_recv_hook"), py::arg("out_packed_recv_x") = py::none(),
            py::arg("out_packed_recv_x_scales") = py::none(), py::arg("out_packed_recv_src_info") = py::none(),
            py::arg("out_packed_recv_layout_range") = py::none(), py::arg("out_packed_recv_count") = py::none())
-      .def("low_latency_combine", &mscclpp::ep::Buffer::low_latency_combine)
+      .def("low_latency_combine", &mscclpp::ep::Buffer::low_latency_combine, py::arg("x"), py::arg("x_scales"),
+           py::arg("topk_idx"), py::arg("topk_weights"), py::arg("src_info"), py::arg("layout_range"),
+           py::arg("num_max_dispatch_tokens_per_rank"), py::arg("num_experts"), py::arg("zero_copy"), py::arg("async"),
+           py::arg("return_recv_hook"), py::arg("out") = py::none())
       .def("get_next_low_latency_combine_buffer", &mscclpp::ep::Buffer::get_next_low_latency_combine_buffer);
 }

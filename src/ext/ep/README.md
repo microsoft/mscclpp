@@ -290,7 +290,7 @@ src/ext/ep/
     ├── intranode_kernel.cu     — intranode dispatch/combine kernels
     ├── internode.cu            — internode HT dispatch/combine + layout
     │                            (incl. NVLS multimem fast path for GB200)
-    └── internode_ll.cu         — internode LL dispatch/combine
+    └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
 
 python/mscclpp/ext/ep/
 ├── __init__.py                 — reexports Buffer / Config / EventHandle
@@ -472,7 +472,7 @@ Env knobs:
 
 ### Phase 3 — Low-Latency (RDMA + CUDA-IPC) — DONE
 
-Port `DeepEP/csrc/kernels/internode_ll.cu` and cross-reference
+Port `DeepEP/csrc/kernels/internode_ll.cu` as `kernels/low_latency.cu` and cross-reference
 `nccl/contrib/nccl_ep/device/low_latency.cu`. The nccl_ep reference is
 modular (see `device_primitives.cuh`, `hybrid_ep.cuh`) and uses NCCL
 Device API; the translation table is:

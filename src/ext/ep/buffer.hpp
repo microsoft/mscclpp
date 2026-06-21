@@ -127,9 +127,10 @@ struct Buffer {
   // Populated in ``sync()`` when ``low_latency_mode``; empty otherwise.
   std::vector<void*> peer_rdma_bases;
   void** peer_rdma_bases_gpu = nullptr;
-  // MemoryChannels over CUDA IPC used only for the LL barrier ring.
+  // Base MemoryChannels over CUDA IPC used only for the LL barrier ring.
   std::vector<mscclpp::MemoryChannel> ll_memory_channels;
-  std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
+  int ll_ranks_per_ipc_domain = 0;
   bool ll_ipc_ready = false;
 
   // NVLS multicast for HT internode (Wide Proposal B2).
@@ -279,9 +280,9 @@ struct Buffer {
                        const std::optional<torch::Tensor>& out_packed_recv_count = std::nullopt);
 
   std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>> low_latency_combine(
-      const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-      const torch::Tensor& src_info, const torch::Tensor& layout_range, int num_max_dispatch_tokens_per_rank,
-      int num_experts, bool zero_copy, bool async, bool return_recv_hook,
+      const torch::Tensor& x, const std::optional<torch::Tensor>& x_scales, const torch::Tensor& topk_idx,
+      const torch::Tensor& topk_weights, const torch::Tensor& src_info, const torch::Tensor& layout_range,
+      int num_max_dispatch_tokens_per_rank, int num_experts, bool zero_copy, bool async, bool return_recv_hook,
       const std::optional<torch::Tensor>& out = std::nullopt);
 
   torch::Tensor get_next_low_latency_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts);
