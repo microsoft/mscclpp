@@ -2028,13 +2028,16 @@ __global__ void __launch_bounds__(1024, 1)
 // one cp.async.bulk G2S per contributor into a per-warp SMEM tile; all lanes then reduce the
 // chunk from SMEM. SMEM/block = kWarps * kStages * kMaxContrib * kChunkInt4 * 16 bytes
 // (independent of hidden), so it requires the >48KB dynamic-shared opt-in (cudaFuncSetAttribute
-// at launch). Defaults (chunk=64 int4 = 1KB descriptors, 12 warps, 2 stages) tuned on GB200
+// at launch). Defaults (chunk=64 int4 = 1KB descriptors, 14 warps, 2 stages) tuned on GB200
 // sm_100 @ hidden=7168 bf16; overridable at compile time via -D for other shapes.
 #ifndef EP_CMB_TMA_CHUNK_INT4
 #define EP_CMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors; 896 int4 / 64 = 14 chunks @ hidden=7168 bf16)
 #endif
 #ifndef EP_CMB_TMA_WARPS
-#define EP_CMB_TMA_WARPS 12  // warps (tokens) per block; SMEM = WARPS*STAGES*8*CHUNK_INT4*16 bytes
+#define EP_CMB_TMA_WARPS 14  // warps (tokens) per block; SMEM = WARPS*STAGES*8*CHUNK_INT4*16 bytes.
+                             // 14 is the throughput sweet spot at hidden=7168: more warps need a
+                             // smaller chunk to fit SMEM, and the smaller TMA descriptors then cost
+                             // more than the extra token-parallelism buys.
 #endif
 #ifndef EP_CMB_TMA_STAGES
 #define EP_CMB_TMA_STAGES 2  // pipeline depth (outstanding chunks in flight)
