@@ -2011,6 +2011,185 @@ __global__ void __launch_bounds__(1024, 1)
   }
 }
 
+// TMA-staged flat-combine gather. Stages each contributor's hidden-chunk from the remote
+// NVLink recv pools into shared memory via cp.async.bulk (TMA), then reduces from SMEM and
+// stores the combined token locally. This is the default flat direct-gather combine path.
+//
+// RATIONALE: the synchronous variant (combine_flat_gather) hides remote-NVLink read latency
+// purely with memory-level parallelism + occupancy (per-thread int4[kMaxContrib] register
+// batching x warps), which caps occupancy at ~50% and regresses once the grid has many
+// blocks. Staging through TMA instead lets the async copy engine track many outstanding bulk
+// loads at low register cost, so latency hiding no longer competes with occupancy -- it wins
+// at every channel count (no crossover) and at every node scale. Topology is single-hop
+// NVLink (one MNNVL LSA domain), so this is an apples-to-apples gather, not a 2-hop reduce.
+//
+// SHAPE: token-per-warp; the hidden row is split into kChunkInt4-sized chunks streamed through
+// a kStages-deep software pipeline (prefetch kStages-1 chunks ahead). Per chunk, lane 0 posts
+// one cp.async.bulk G2S per contributor into a per-warp SMEM tile; all lanes then reduce the
+// chunk from SMEM. SMEM/block = kWarps * kStages * kMaxContrib * kChunkInt4 * 16 bytes
+// (independent of hidden), so it requires the >48KB dynamic-shared opt-in (cudaFuncSetAttribute
+// at launch). Defaults (chunk=64 int4 = 1KB descriptors, 12 warps, 2 stages) tuned on GB200
+// sm_100 @ hidden=7168 bf16; overridable at compile time via -D for other shapes.
+#ifndef EP_CMB_TMA_CHUNK_INT4
+#define EP_CMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors; 896 int4 / 64 = 14 chunks @ hidden=7168 bf16)
+#endif
+#ifndef EP_CMB_TMA_WARPS
+#define EP_CMB_TMA_WARPS 12  // warps (tokens) per block; SMEM = WARPS*STAGES*8*CHUNK_INT4*16 bytes
+#endif
+#ifndef EP_CMB_TMA_STAGES
+#define EP_CMB_TMA_STAGES 2  // pipeline depth (outstanding chunks in flight)
+#endif
+
+template <typename dtype_t, int kNumRDMARanks>
+__global__ void __launch_bounds__(EP_CMB_TMA_WARPS * 32, 1)
+    combine_flat_gather_tma(int4* combined_x, float* combined_topk_weights,
+                            const bool* is_combined_token_in_rank, int num_combined_tokens, int hidden, int num_topk,
+                            int num_ranks, void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
+  constexpr int kMaxContrib = 8;
+  constexpr int kChunkInt4 = EP_CMB_TMA_CHUNK_INT4;
+  constexpr int kWarps = EP_CMB_TMA_WARPS;
+  constexpr int kStages = EP_CMB_TMA_STAGES;  // pipeline depth (outstanding chunks in flight)
+  constexpr int kChunkBytes = kChunkInt4 * static_cast<int>(sizeof(int4));
+  constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
+  constexpr int kEpNumRanks = kNumRDMARanks * NUM_MAX_NVL_PEERS;
+
+  const auto lane_id = get_lane_id();
+  const int warp_id = static_cast<int>(threadIdx.x) / 32;
+  const auto hidden_int4 = hidden / static_cast<int>(sizeof(int4) / sizeof(dtype_t));
+  const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
+
+  // Dynamic SMEM: [kWarps][kStages][kMaxContrib][kChunkBytes] staging tiles, then [kWarps][kStages] mbarriers.
+  extern __shared__ uint8_t smem_raw[];
+  const size_t per_warp_stage_bytes = static_cast<size_t>(kStages) * kMaxContrib * kChunkBytes;
+  uint8_t* my_stage = smem_raw + warp_id * per_warp_stage_bytes;
+  uint64_t* mbar_base = reinterpret_cast<uint64_t*>(smem_raw + static_cast<size_t>(kWarps) * per_warp_stage_bytes);
+  uint64_t* my_mbar = mbar_base + warp_id * kStages;
+  auto stage_buf = [&](int s, int j) -> uint8_t* {
+    return my_stage + (static_cast<size_t>(s) * kMaxContrib + j) * kChunkBytes;
+  };
+
+  const int global_warp = static_cast<int>(blockIdx.x) * kWarps + warp_id;
+  const int total_warps = static_cast<int>(gridDim.x) * kWarps;
+  const int nchunks = (hidden_int4 + kChunkInt4 - 1) / kChunkInt4;
+
+  for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+    // ---- discovery: which ranks contributed to this token + their recv slots ----
+    int topk_ranks[kMaxContrib], slot_indices[kMaxContrib], num_topk_ranks = 0;
+    for (int base = 0; base < kEpNumRanks; base += 32) {
+      const int r = base + lane_id;
+      const bool is_in =
+          (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+      const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
+      unsigned ballot = __ballot_sync(0xffffffffu, is_in);
+      while (ballot != 0u) {
+        const int l = __ffs(static_cast<int>(ballot)) - 1;
+        if (num_topk_ranks < kMaxContrib) {
+          topk_ranks[num_topk_ranks] = base + l;
+          slot_indices[num_topk_ranks] = __shfl_sync(0xffffffffu, slot, l);
+          ++num_topk_ranks;
+        }
+        ballot &= ballot - 1u;
+      }
+    }
+
+    int4* combined_row = combined_x + static_cast<int64_t>(t) * hidden_int4;
+
+    // lane 0 posts all contributors' TMA G2S loads for one chunk into stage s.
+    auto issue_loads = [&](int s, int c0, int csize_int4) {
+      if (lane_id == 0) {
+        const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
+        asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(mbar_a));
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+        const uint32_t cbytes = static_cast<uint32_t>(csize_int4 * static_cast<int>(sizeof(int4)));
+        for (int j = 0; j < num_topk_ranks; ++j) {
+          const uint8_t* src = reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[topk_ranks[j]]) +
+                               ep_pool_header_bytes +
+                               static_cast<int64_t>(slot_indices[j]) * hidden_int4 * static_cast<int64_t>(sizeof(int4)) +
+                               static_cast<int64_t>(c0) * sizeof(int4);
+          const uint32_t dst = static_cast<uint32_t>(__cvta_generic_to_shared(stage_buf(s, j)));
+          asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(
+                           dst),
+                       "l"(src), "r"(cbytes), "r"(mbar_a)
+                       : "memory");
+        }
+        uint64_t st;
+        asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+                     : "=l"(st)
+                     : "r"(mbar_a), "r"(static_cast<uint32_t>(cbytes * num_topk_ranks)));
+      }
+    };
+
+    // all lanes wait for stage s's loads, then fence so generic reads see the async-proxy writes.
+    auto wait_stage = [&](int s) {
+      if (lane_id == 0) {
+        const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
+        uint32_t done = 0;
+        while (!done) {
+          asm volatile(
+              "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], 0;"
+              " selp.u32 %0, 1, 0, p; }"
+              : "=r"(done)
+              : "r"(mbar_a));
+        }
+      }
+      __syncwarp();
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    };
+
+    auto reduce_store = [&](int s, int c0, int csize_int4) {
+      for (int i = lane_id; i < csize_int4; i += 32) {
+        float values[kDtypePerInt4];
+#pragma unroll
+        for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) values[k] = 0.0f;
+#pragma unroll
+        for (int j = 0; j < kMaxContrib; ++j) {
+          if (j >= num_topk_ranks) break;
+          const int4 v = *reinterpret_cast<const int4*>(stage_buf(s, j) + i * static_cast<int>(sizeof(int4)));
+          auto vd = reinterpret_cast<const dtype_t*>(&v);
+#pragma unroll
+          for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) values[k] += static_cast<float>(vd[k]);
+        }
+        int4 out_int4;
+        auto out_d = reinterpret_cast<dtype_t*>(&out_int4);
+#pragma unroll
+        for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) out_d[k] = static_cast<dtype_t>(values[k]);
+        st_na_global(combined_row + c0 + i, out_int4);
+      }
+    };
+
+    // Software pipeline: prologue issues the first kStages-1 chunks; each iteration issues
+    // chunk c+(kStages-1) while waiting on + reducing chunk c. Each stage has its own SMEM
+    // buffer + mbarrier, so up to kStages-1 chunks (x num_topk_ranks TMA loads each) stay in
+    // flight, giving the async copy engine the memory-level parallelism cmbext gets from its
+    // per-thread int4[8] batching -- but at low register cost.
+#pragma unroll
+    for (int p = 0; p < kStages - 1; ++p) {
+      if (p < nchunks) {
+        const int c0 = p * kChunkInt4;
+        const int csize = (c0 + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0);
+        issue_loads(p % kStages, c0, csize);
+      }
+    }
+    for (int c = 0; c < nchunks; ++c) {
+      const int s = c % kStages;
+      const int c0 = c * kChunkInt4;
+      const int csize = (c0 + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0);
+      const int cn = c + (kStages - 1);
+      if (cn < nchunks) {
+        const int sn = cn % kStages;
+        const int c0n = cn * kChunkInt4;
+        const int csizen = (c0n + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0n);
+        issue_loads(sn, c0n, csizen);
+      }
+      wait_stage(s);
+      reduce_store(s, c0, csize);
+      __syncwarp();
+    }
+    if (lane_id < num_topk)
+      st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+  }
+}
+
 template <bool kLowLatencyMode, int kNumRDMARanks, typename dtype_t, int kNumCombineForwarderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks),
           int kNumWarpsPerForwarder =
@@ -2739,21 +2918,55 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
   EP_HOST_ASSERT(type == CUDA_R_16BF);
 
 #ifdef EP_DISPATCH_NCCLEP
-  // inc8 (combine extract): FLAT direct-gather path -> launch the lean
-  // combine_flat_gather kernel instead of the unified (forwarder-heavy) combine.
-  // Same SM budget (num_channels*2 blocks) but a full 1024-thread block (32 warps)
-  // per SM, vs the unified kernel's register-limited 25 warps -> more warp-level
-  // parallelism to hide the NVLink pull-gather latency. recv_pool_global_ptrs +
-  // ep_combine_recv_idx are non-null only on the flat direct path (same gate the
-  // unified kernel used to select its gather branch), so the 2-hop path is untouched.
-  // CROSSOVER (mirrors the inc7 dispatch atomic threshold): the lean kernel's bigger
-  // blocks win when blocks are FEW (low SM, many tokens/block, latency-bound) but add
-  // scheduling overhead when blocks are MANY (high SM): 8n combine 16blk 1086->952,
-  // 24blk 820->790, but 32blk 753->784 (+4%). Gate to num_channels<=14 (==<=28 blocks),
-  // the same channel threshold inc7 uses for dispatch; above it the unified kernel
-  // (which still runs its flat gather branch) is faster.
-  constexpr int kEpCombineLeanMaxChannels = 14;
-  if (recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr and num_channels <= kEpCombineLeanMaxChannels) {
+  // FLAT direct-gather combine path. recv_pool_global_ptrs + ep_combine_recv_idx are non-null
+  // only on the flat direct path (MSCCLPP_EP_DIRECT); every other configuration falls through
+  // to the unified 2-hop combine below, byte-for-byte unchanged.
+  if (recv_pool_global_ptrs != nullptr and ep_combine_recv_idx != nullptr) {
+    // Default: TMA-staged gather (combine_flat_gather_tma). The async copy engine hides the
+    // remote-NVLink read latency at low register cost, so it wins at every channel count (no
+    // crossover) and every node scale, and beats NCCL-EP. Escape hatch MSCCLPP_EP_COMBINE_TMA=0
+    // falls back to the synchronous lean gather.
+    static const bool ep_combine_tma_disabled = [] {
+      const char* e = std::getenv("MSCCLPP_EP_COMBINE_TMA");
+      return e != nullptr and std::atoi(e) == 0;
+    }();
+    if (not ep_combine_tma_disabled) {
+      constexpr int kCmbTmaWarps = EP_CMB_TMA_WARPS;
+      constexpr int kCmbTmaChunkInt4 = EP_CMB_TMA_CHUNK_INT4;
+      constexpr int kCmbTmaStages = EP_CMB_TMA_STAGES;
+      constexpr int kCmbTmaMaxContrib = 8;
+      // SMEM is independent of hidden (staging tiles + per-stage mbarriers). >48KB -> opt in.
+      const size_t cmb_tma_smem =
+          static_cast<size_t>(kCmbTmaWarps) * kCmbTmaStages * kCmbTmaMaxContrib * kCmbTmaChunkInt4 * sizeof(int4) +
+          static_cast<size_t>(kCmbTmaWarps) * kCmbTmaStages * sizeof(uint64_t);
+#define COMBINE_FLAT_GATHER_TMA_CASE(num_rdma_ranks)                                                       \
+  {                                                                                                       \
+    auto tma_func = combine_flat_gather_tma<nv_bfloat16, num_rdma_ranks>;                                 \
+    CUDA_CHECK(cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                \
+                                    static_cast<int>(cmb_tma_smem)));                                      \
+    cudaLaunchConfig_t cfg = {static_cast<unsigned>(num_channels * 2),                                    \
+                              static_cast<unsigned>(kCmbTmaWarps * 32), cmb_tma_smem, stream, nullptr,    \
+                              0};                                                                          \
+    cudaLaunchAttribute a[1];                                                                             \
+    a[0].id = cudaLaunchAttributeCooperative;                                                             \
+    a[0].val.cooperative = 1;                                                                             \
+    cfg.attrs = a;                                                                                        \
+    cfg.numAttrs = 1;                                                                                     \
+    LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,             \
+                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks,            \
+                  recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
+    break;                                                                                                \
+  }
+      SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_TMA_CASE);
+#undef COMBINE_FLAT_GATHER_TMA_CASE
+      return;
+    }
+    // Fallback (MSCCLPP_EP_COMBINE_TMA=0): synchronous lean gather. Its full 1024-thread blocks
+    // hide latency with register MLP + occupancy, which wins when blocks are few but regresses
+    // at high SM -- so it is gated to a low channel count; above it, the unified kernel's flat
+    // gather branch runs.
+    constexpr int kEpCombineLeanMaxChannels = 14;
+    if (num_channels <= kEpCombineLeanMaxChannels) {
 #define COMBINE_FLAT_GATHER_CASE(num_rdma_ranks)                                                           \
   {                                                                                                       \
     auto gather_func = combine_flat_gather<nv_bfloat16, num_rdma_ranks>;                                  \
@@ -2762,10 +2975,11 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
                   recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
   }                                                                                                       \
   break
-    SETUP_LAUNCH_CONFIG(num_channels * 2, 1024, stream);
-    SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_CASE);
+      SETUP_LAUNCH_CONFIG(num_channels * 2, 1024, stream);
+      SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_CASE);
 #undef COMBINE_FLAT_GATHER_CASE
-    return;
+      return;
+    }
   }
 #endif
 

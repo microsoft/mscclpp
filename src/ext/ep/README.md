@@ -222,6 +222,7 @@ defaults, **not** the `ep.Config(...)` constructor defaults):
 | `MSCCLPP_EP_FLAT`         | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only; requires `MSCCLPP_EP_DIRECT=1`.** `1` enables the flat all-sender dispatch (removes the forwarder / coordinator / receiver roles; per-token metadata goes straight to the dest recv pool) + direct-gather combine (see [flat all-sender path](#gb200-flat-all-sender-path-mscclpp_ep_flat)). Unset = the `MSCCLPP_EP_DIRECT` path. |
 | `MSCCLPP_EP_DISPATCH_NSM` | — (runtime `getenv`)                 | `num_sms`/2 | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Sets the all-sender dispatch block count independently of `num_sms`; clamped to `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM budget — e.g. `num_sms=16` + `DISPATCH_NSM=16` → 16 blocks). The RDMA/NVL buffers are auto-sized to match. Lower it to free SMs for overlapping compute, or set it to `num_sms` to maximize dispatch throughput. |
 | `MSCCLPP_EP_COMBINE_NSM`  | — (runtime `getenv`)                 | `num_sms`   | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Caps the combine block count independently of `num_sms`; clamped to `[2, num_sms]`. Flat combine saturates ~76 blocks. |
+| `MSCCLPP_EP_COMBINE_TMA`  | — (runtime `getenv`)                 | `1` (on) | **Flat path only (`MSCCLPP_EP_FLAT=1` + `MSCCLPP_EP_DIRECT=1`).** Selects the combine flat-gather implementation. Default (`1`) uses the TMA-staged gather (`cp.async.bulk` contributor rows → SMEM → reduce), which hides remote-NVLink read latency via the async copy engine and wins at every channel count and node scale. `0` falls back to the synchronous register-MLP gather (lean kernel ≤14 channels, else the unified flat branch). |
 
 Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
 tokens=4096, experts=256, topk=8):
@@ -281,9 +282,12 @@ pair per channel and routes per-token metadata through the 2-hop RDMA ring →
 forwarder → NVL-receiver pipeline; the flat path removes the forwarder,
 sender-coordinator, and NVL-receiver roles entirely, so dispatch launches
 **all-sender** (one block per channel) and each sender writes its tokens'
-metadata straight into the destination recv pool. Combine is the same
-direct-gather as `MSCCLPP_EP_DIRECT` (it already needs no forwarder); a small
-post-dispatch drain copies the pool metadata into the `recv_*` output tensors.
+metadata straight into the destination recv pool. Combine is a flat
+direct-gather (no forwarder); by default it uses a **TMA-staged** gather that
+streams each contributor's hidden chunks through shared memory via `cp.async.bulk`
+(`MSCCLPP_EP_COMBINE_TMA=1`, the default), letting the async copy engine hide the
+remote-NVLink read latency. A small post-dispatch drain copies the pool metadata
+into the `recv_*` output tensors.
 
 Because both legs are now bandwidth-bound 1-hops, they saturate the NVLink
 write/read ceiling well below the full SM grid, so the dispatch and combine
