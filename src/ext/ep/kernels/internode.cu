@@ -2028,29 +2028,38 @@ __global__ void __launch_bounds__(1024, 1)
 // one cp.async.bulk G2S per contributor into a per-warp SMEM tile; all lanes then reduce the
 // chunk from SMEM. SMEM/block = kWarps * kStages * kMaxContrib * kChunkInt4 * 16 bytes
 // (independent of hidden), so it requires the >48KB dynamic-shared opt-in (cudaFuncSetAttribute
-// at launch). Defaults (chunk=64 int4 = 1KB descriptors, 14 warps, 2 stages) tuned on GB200
-// sm_100 @ hidden=7168 bf16; overridable at compile time via -D for other shapes.
+// at launch). Defaults (chunk=64 int4 = 1KB descriptors, 2 stages) tuned on GB200 sm_100 @
+// hidden=7168 bf16; the warp (token) count per block is channel-adaptive (see below);
+// overridable at compile time via -D for other shapes.
 #ifndef EP_CMB_TMA_CHUNK_INT4
 #define EP_CMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors; 896 int4 / 64 = 14 chunks @ hidden=7168 bf16)
 #endif
-#ifndef EP_CMB_TMA_WARPS
-#define EP_CMB_TMA_WARPS 14  // warps (tokens) per block; SMEM = WARPS*STAGES*8*CHUNK_INT4*16 bytes.
-                             // 14 is the throughput sweet spot at hidden=7168: more warps need a
-                             // smaller chunk to fit SMEM, and the smaller TMA descriptors then cost
-                             // more than the extra token-parallelism buys.
+// Warp (token) count per block is CHANNEL-ADAPTIVE. More warps add token-parallelism, which wins
+// when the grid has FEW blocks (low SM → many tokens/block, latency-bound), but at high block
+// counts the marginal warp costs more scheduling than it buys (measured crossover: 14 warps is
+// -2..-9% at <=10 channels but +3% at 16 channels). So use the WIDE count up to a channel
+// threshold and the NARROW count above it. SMEM/block (WIDE 14w * 2 stages * 8 contrib * 64
+// int4 * 16B = 229KB) fits the sm_100 dynamic-shared cap.
+#ifndef EP_CMB_TMA_WARPS_WIDE
+#define EP_CMB_TMA_WARPS_WIDE 14  // <= EP_CMB_TMA_WARPS_MAXCH channels (low SM): more token-parallelism
+#endif
+#ifndef EP_CMB_TMA_WARPS_NARROW
+#define EP_CMB_TMA_WARPS_NARROW 12  // > EP_CMB_TMA_WARPS_MAXCH channels (high SM): less scheduling overhead
+#endif
+#ifndef EP_CMB_TMA_WARPS_MAXCH
+#define EP_CMB_TMA_WARPS_MAXCH 12  // channel threshold (NSM16/8ch, NSM20/10ch use WIDE; NSM32/16ch uses NARROW)
 #endif
 #ifndef EP_CMB_TMA_STAGES
 #define EP_CMB_TMA_STAGES 2  // pipeline depth (outstanding chunks in flight)
 #endif
 
-template <typename dtype_t, int kNumRDMARanks>
-__global__ void __launch_bounds__(EP_CMB_TMA_WARPS * 32, 1)
+template <typename dtype_t, int kNumRDMARanks, int kWarps>
+__global__ void __launch_bounds__(kWarps * 32, 1)
     combine_flat_gather_tma(int4* combined_x, float* combined_topk_weights,
                             const bool* is_combined_token_in_rank, int num_combined_tokens, int hidden, int num_topk,
                             int num_ranks, void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
   constexpr int kMaxContrib = 8;
   constexpr int kChunkInt4 = EP_CMB_TMA_CHUNK_INT4;
-  constexpr int kWarps = EP_CMB_TMA_WARPS;
   constexpr int kStages = EP_CMB_TMA_STAGES;  // pipeline depth (outstanding chunks in flight)
   constexpr int kChunkBytes = kChunkInt4 * static_cast<int>(sizeof(int4));
   constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
@@ -2934,22 +2943,23 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
       return e != nullptr and std::atoi(e) == 0;
     }();
     if (not ep_combine_tma_disabled) {
-      constexpr int kCmbTmaWarps = EP_CMB_TMA_WARPS;
       constexpr int kCmbTmaChunkInt4 = EP_CMB_TMA_CHUNK_INT4;
       constexpr int kCmbTmaStages = EP_CMB_TMA_STAGES;
       constexpr int kCmbTmaMaxContrib = 8;
-      // SMEM is independent of hidden (staging tiles + per-stage mbarriers). >48KB -> opt in.
-      const size_t cmb_tma_smem =
-          static_cast<size_t>(kCmbTmaWarps) * kCmbTmaStages * kCmbTmaMaxContrib * kCmbTmaChunkInt4 * sizeof(int4) +
-          static_cast<size_t>(kCmbTmaWarps) * kCmbTmaStages * sizeof(uint64_t);
-#define COMBINE_FLAT_GATHER_TMA_CASE(num_rdma_ranks)                                                       \
+      // Channel-adaptive warp (token) count: WIDE up to EP_CMB_TMA_WARPS_MAXCH channels (low SM,
+      // latency-bound), NARROW above it (high SM, where the marginal warp costs more scheduling
+      // than it buys). Each branch instantiates its own kernel + sets its own SMEM attribute.
+      const bool cmb_wide = (num_channels <= EP_CMB_TMA_WARPS_MAXCH);
+#define COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, WARPS)                                              \
   {                                                                                                       \
-    auto tma_func = combine_flat_gather_tma<nv_bfloat16, num_rdma_ranks>;                                 \
+    auto tma_func = combine_flat_gather_tma<nv_bfloat16, num_rdma_ranks, WARPS>;                          \
+    const size_t cmb_tma_smem =                                                                           \
+        static_cast<size_t>(WARPS) * kCmbTmaStages * kCmbTmaMaxContrib * kCmbTmaChunkInt4 * sizeof(int4) + \
+        static_cast<size_t>(WARPS) * kCmbTmaStages * sizeof(uint64_t);                                    \
     CUDA_CHECK(cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                \
                                     static_cast<int>(cmb_tma_smem)));                                      \
     cudaLaunchConfig_t cfg = {static_cast<unsigned>(num_channels * 2),                                    \
-                              static_cast<unsigned>(kCmbTmaWarps * 32), cmb_tma_smem, stream, nullptr,    \
-                              0};                                                                          \
+                              static_cast<unsigned>((WARPS) * 32), cmb_tma_smem, stream, nullptr, 0};     \
     cudaLaunchAttribute a[1];                                                                             \
     a[0].id = cudaLaunchAttributeCooperative;                                                             \
     a[0].val.cooperative = 1;                                                                             \
@@ -2958,10 +2968,14 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
     LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,             \
                   is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks,            \
                   recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
-    break;                                                                                                \
   }
+#define COMBINE_FLAT_GATHER_TMA_CASE(num_rdma_ranks)                                                       \
+  if (cmb_wide) COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_WIDE)                      \
+  else COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_NARROW)                             \
+  break
       SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_TMA_CASE);
 #undef COMBINE_FLAT_GATHER_TMA_CASE
+#undef COMBINE_FLAT_GATHER_TMA_LAUNCH
       return;
     }
     // Fallback (MSCCLPP_EP_COMBINE_TMA=0): synchronous lean gather. Its full 1024-thread blocks
