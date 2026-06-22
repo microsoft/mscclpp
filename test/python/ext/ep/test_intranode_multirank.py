@@ -5,7 +5,7 @@
 Launch with:
     torchrun --nproc_per_node=<N> test/python/ext/ep/test_intranode_multirank.py
 
-Tests that Buffer::sync() succeeds across N GPUs on a single node and that
+Tests that ExpertParallelRuntime sync succeeds across N GPUs on a single node and that
 a round-trip dispatch + combine preserves data (sum of top-k weighted copies).
 
 Set ``MSCCLPP_EP_BENCH=1`` to also run a post-correctness benchmark pass
@@ -104,7 +104,7 @@ def main():
     # Token payload = rank id (cast to bf16) so we can check correctness
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Allocate Buffer (intranode only: num_rdma_bytes=0). Size the NVL buffer
+    # Allocate runtime (intranode only: num_rdma_bytes=0). Size the NVL buffer
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
         int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
@@ -121,9 +121,9 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating Buffer", flush=True)
-    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
-    print(f"[rank {rank}] Buffer created is_available={buf.is_available()}", flush=True)
+    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
+    buf = ep.ExpertParallelRuntime(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
+    print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
     assert buf.is_available()
 
     # get_dispatch_layout sanity
@@ -246,14 +246,14 @@ def main():
         return
 
     # Rebuild inputs at bench size. Keep same layout recipe as above but at
-    # larger (num_tokens, hidden); Buffer is sized off the original cfg+hidden,
+    # larger (num_tokens, hidden); runtime is sized off the original cfg+hidden,
     # so bench must fit within num_nvl_bytes. If it doesn't, we skip.
     if bench_hidden * x.element_size() > (num_nvl_bytes // max(1, num_ranks)):
         if rank == 0:
             print(
                 f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
                 f"> per-peer budget {num_nvl_bytes // num_ranks}. "
-                f"Rerun with a larger Buffer or smaller hidden.",
+                f"Rerun with a larger runtime or smaller hidden.",
                 flush=True,
             )
         return

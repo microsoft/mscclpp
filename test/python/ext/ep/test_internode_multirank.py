@@ -139,7 +139,7 @@ def main():
 
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Buffer config for internode HT: needs num_rdma_bytes > 0. Size buffers
+    # Runtime config for internode HT: needs num_rdma_bytes > 0. Size buffers
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
         int(os.environ.get("MSCCLPP_EP_NSM", "152")),
@@ -160,10 +160,12 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating Buffer", flush=True)
-    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False)
+    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
+    buf = ep.ExpertParallelRuntime(
+        group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
+    )
     print(
-        f"[rank {rank}] Buffer created is_available={buf.is_available()} "
+        f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()} "
         f"is_internode={buf.is_internode_available()}",
         flush=True,
     )
@@ -248,7 +250,7 @@ def main():
     # the various *_channel_prefix_matrix tensors can still be in flight on
     # the comm stream when combine launches, producing a deadlock inside the
     # combine forwarder (NVL check never advances). Investigate proper
-    # stream-dependency hand-off in Buffer::internode_dispatch.
+    # stream-dependency hand-off in ExpertParallelRuntime.internode_dispatch.
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
@@ -319,7 +321,7 @@ def main():
             print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
-    # Respect the Buffer's pre-sized num_nvl_bytes / num_rdma_bytes budget.
+    # Respect the runtime's pre-sized num_nvl_bytes / num_rdma_bytes budget.
     per_peer_nvl = num_nvl_bytes // max(1, num_ranks)
     per_peer_rdma = num_rdma_bytes // max(1, num_ranks)
     if bench_hidden * x.element_size() > min(per_peer_nvl, per_peer_rdma):
@@ -327,7 +329,7 @@ def main():
             print(
                 f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
                 f">= min(per-peer NVL {per_peer_nvl}, RDMA {per_peer_rdma}). "
-                f"Rerun with a larger Buffer or smaller hidden.",
+                f"Rerun with a larger runtime or smaller hidden.",
                 flush=True,
             )
         return

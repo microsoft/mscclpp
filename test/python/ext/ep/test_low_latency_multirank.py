@@ -3,7 +3,8 @@
 """Multi-rank low-latency functional test for mscclpp_ep.
 
 Launch with (intra-node, 8 GPUs):
-    torchrun --nproc_per_node=8 test/python/ext/ep/test_low_latency_multirank.py
+    torchrun --nproc_per_node=8 test/python/ext/ep/test_low_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
 
 Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
     # node 0:
@@ -33,9 +34,9 @@ we need for an LL port smoke test. BF16-only (no FP8 check).
 
 from __future__ import annotations
 
+import argparse
 import os
 import random
-import sys
 
 # Disable ProcessGroupNCCL's HeartbeatMonitor before importing torch.distributed.
 # It runs in a background thread polling the TCPStore; under mpirun, rank 0
@@ -45,6 +46,19 @@ os.environ.setdefault("TORCH_NCCL_ENABLE_MONITORING", "0")
 
 import torch
 import torch.distributed as dist
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="MSCCL++ EP low-latency multi-rank correctness/benchmark test")
+    parser.add_argument("--num-tokens", type=int, default=128)
+    parser.add_argument("--hidden", type=int, default=7168, help="LL kernels are compiled for a fixed hidden set")
+    parser.add_argument("--num-topk", type=int, default=8)
+    parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
+    parser.add_argument("--bench-warmup", type=int, default=5)
+    parser.add_argument("--bench-iters", type=int, default=20)
+    parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
+    return parser.parse_args()
 
 
 def init_dist():
@@ -62,6 +76,7 @@ def init_dist():
 
 
 def main():
+    args = parse_args()
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp.ext import ep
 
@@ -69,12 +84,10 @@ def main():
     rank_offset = 128
     assert num_ranks - rank_offset < 257, "too many ranks for bf16 precision anchor"
 
-    num_tokens = int(os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128"))
-    hidden = int(
-        os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "7168")
-    )  # LL kernels are compiled for a fixed set; see SWITCH_HIDDEN
-    num_topk = int(os.environ.get("MSCCLPP_EP_BENCH_TOPK", "8"))
-    num_experts = int(os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", "256"))
+    num_tokens = args.num_tokens
+    hidden = args.hidden
+    num_topk = args.num_topk
+    num_experts = args.num_experts
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
 
@@ -103,20 +116,18 @@ def main():
         mode="ll",
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
     )
-    buf = moe_comm.buffer
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk} "
-            f"num_rdma_bytes={buf.num_rdma_bytes}",
+            f"num_experts={num_experts} num_topk={num_topk}",
             flush=True,
         )
     print(
-        f"[rank {rank}] Buffer created is_available={buf.is_available()} "
-        f"is_internode={buf.is_internode_available()}",
+        f"[rank {rank}] MoECommunicator created is_available={moe_comm.is_available()} "
+        f"is_internode={moe_comm.is_internode_available()}",
         flush=True,
     )
-    assert buf.is_available()
+    assert moe_comm.is_available()
 
     dist.barrier(group=group)
     torch.cuda.synchronize()
@@ -188,15 +199,15 @@ def main():
         print("PASS", flush=True)
 
     # ------------------------------------------------------------------
-    # Optional benchmark (enable with MSCCLPP_EP_BENCH=1). Times dispatch
-    # and combine separately, reporting per-iter latency (max across ranks)
-    # and aggregate effective bandwidth (sum across ranks).
+    # Optional benchmark. Times dispatch and combine separately, reporting
+    # per-iter latency (max across ranks) and aggregate effective bandwidth
+    # (sum across ranks).
     # ------------------------------------------------------------------
-    if os.environ.get("MSCCLPP_EP_BENCH", "0") != "1":
+    if not args.bench:
         return
 
-    warmup = int(os.environ.get("MSCCLPP_EP_BENCH_WARMUP", "5"))
-    iters = int(os.environ.get("MSCCLPP_EP_BENCH_ITERS", "20"))
+    warmup = args.bench_warmup
+    iters = args.bench_iters
 
     def _dispatch():
         return moe_comm.dispatch(x, topk_idx, topk_weights)

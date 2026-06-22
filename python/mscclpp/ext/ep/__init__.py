@@ -2,31 +2,30 @@
 # Licensed under the MIT License.
 """MSCCL++ Expert-Parallel (MoE dispatch/combine) extension.
 
-See ``src/ext/ep/README.md`` in the repository for migration status. The
-``Buffer`` class mirrors :class:`deep_ep.Buffer` and supports intranode
-(NVLink-only) dispatch/combine as well as internode HT and low-latency
-paths.
+See ``src/ext/ep/README.md`` in the repository for migration status.
+``MoECommunicator`` is the high-level API, and ``ExpertParallelRuntime`` is
+the low-level runtime wrapper for advanced HT/intranode paths.
 """
 
-from .buffer import (  # noqa: F401
-    Buffer,
+from .communicator import (  # noqa: F401
     CommOverlapConfig,
     Config,
     DispatchHandle,
     DispatchOutput,
     EventHandle,
+    ExpertParallelRuntime,
     MoECommunicator,
     MoECommunicatorConfig,
     QuantScales,
 )
 
 __all__ = [
-    "Buffer",
     "CommOverlapConfig",
     "Config",
     "DispatchHandle",
     "DispatchOutput",
     "EventHandle",
+    "ExpertParallelRuntime",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "QuantScales",

@@ -5,9 +5,10 @@
 # branch ``chhwang/dev-atomic-add-cleanup``. Licensed under the MIT License.
 """Python frontend for the MSCCL++ Expert-Parallel extension.
 
-This is a thin wrapper around the pybind11 extension ``mscclpp_ep_cpp``.
-The shape of :class:`Buffer` mirrors :class:`deep_ep.Buffer` so existing
-DeepEP users can port with minimal changes.
+This is a thin wrapper around the nanobind extension ``mscclpp_ep_cpp``.
+``MoECommunicator`` is the high-level API. ``ExpertParallelRuntime`` is a
+lower-level runtime wrapper used by legacy HT/intranode tests and advanced
+callers.
 
 Current status (see ``src/ext/ep/README.md``):
 
@@ -61,8 +62,6 @@ class MoECommunicatorConfig:
     output_layout: Optional[str] = None
     input_dtype: Optional[torch.dtype] = None
     quant_format: Optional[str] = None
-    num_nvl_bytes: Optional[int] = None
-    num_rdma_bytes: Optional[int] = None
     num_rdma_qps_per_rank: int = 12
     num_sms: int = 20
     comm_stream: Optional[torch.cuda.Stream] = None
@@ -116,8 +115,8 @@ class CommOverlapConfig:
     block_ready_value: Optional[int] = None
 
 
-class Buffer:
-    """Core expert-parallel (EP) communication buffer.
+class ExpertParallelRuntime:
+    """Low-level expert-parallel runtime wrapper.
 
     Parameters
     ----------
@@ -132,7 +131,7 @@ class Buffer:
     low_latency_mode:
         Enable low-latency buffer setup for :class:`MoECommunicator`. New
         callers should use :class:`MoECommunicator` instead of direct LL
-        methods on ``Buffer``.
+        methods on this low-level runtime.
     num_qps_per_rank:
         Ignored for intranode mode.
     """
@@ -156,61 +155,64 @@ class Buffer:
         self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self._runtime = _cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
+        self._cpp_buffer = _cpp.ExpertParallelRuntime(
+            self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode
+        )
 
         # Exchange device IDs + IPC handles + (for RDMA) the MSCCL++ unique id.
         device_ids: List[Optional[int]] = [None] * self.group_size
-        local_device_id = self._runtime.get_local_device_id()
+        local_device_id = self._cpp_buffer.get_local_device_id()
         dist.all_gather_object(device_ids, local_device_id, group)
 
         ipc_handles: List[Optional[bytes]] = [None] * self.group_size
-        local_ipc_handle = self._runtime.get_local_ipc_handle()
+        local_ipc_handle = self._cpp_buffer.get_local_ipc_handle()
         dist.all_gather_object(ipc_handles, local_ipc_handle, group)
 
         root_unique_id: Optional[bytes] = None
         # MSCCL++ requires a bootstrapped Communicator even for pure-NVLink
-        # setups because `Buffer::sync()` uses `communicator->connect(ipc)`
+        # setups because the C++ runtime sync uses `communicator->connect(ipc)`
         # to build MemoryChannels. We always exchange a unique id.
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
 
         if self.rank == 0:
-            root_unique_id = self._runtime.create_unique_id()
+            root_unique_id = self._cpp_buffer.create_unique_id()
         broadcast_list = [root_unique_id]
         dist.broadcast_object_list(broadcast_list, src=0, group=group)
         root_unique_id = broadcast_list[0]
         assert root_unique_id is not None
-        self._runtime.connect(root_unique_id)
+        self._cpp_buffer.connect(root_unique_id)
 
         # sync() expects Sequence[bytearray | None] / bytearray | None.
         ipc_handles_ba = [bytearray(h) if h is not None else None for h in ipc_handles]
-        self._runtime.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
+        self._cpp_buffer.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
 
     # ------------------------------------------------------------------
     # Sanity helpers
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        return self._runtime.is_available()
+        return self._cpp_buffer.is_available()
 
     def is_internode_available(self) -> bool:
-        return self._runtime.is_internode_available()
+        return self._cpp_buffer.is_internode_available()
 
     def get_local_device_id(self) -> int:
-        return self._runtime.get_local_device_id()
+        return self._cpp_buffer.get_local_device_id()
 
     def get_num_rdma_ranks(self) -> int:
-        return self._runtime.get_num_rdma_ranks()
+        return self._cpp_buffer.get_num_rdma_ranks()
 
     def get_rdma_rank(self) -> int:
-        return self._runtime.get_rdma_rank()
+        return self._cpp_buffer.get_rdma_rank()
 
     def get_root_rdma_rank(self, global_: bool) -> int:
-        return self._runtime.get_root_rdma_rank(global_)
+        return self._cpp_buffer.get_root_rdma_rank(global_)
 
     # ------------------------------------------------------------------
     # Layout / dispatch / combine (thin pass-through wrappers).
-    # Signatures mirror deep_ep.Buffer so existing test harnesses can reuse.
+    # These are low-level runtime APIs for compatibility tests and advanced
+    # callers. New MoE code should prefer MoECommunicator.
     # ------------------------------------------------------------------
 
     def get_dispatch_layout(
@@ -221,33 +223,32 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
     ):
-        return self._runtime.get_dispatch_layout(
+        return self._cpp_buffer.get_dispatch_layout(
             topk_idx, num_experts, previous_event, async_finish, allocate_on_comm_stream
         )
 
     def intranode_dispatch(self, *args, **kwargs):
-        return self._runtime.intranode_dispatch(*args, **kwargs)
+        return self._cpp_buffer.intranode_dispatch(*args, **kwargs)
 
     def intranode_combine(self, *args, **kwargs):
-        return self._runtime.intranode_combine(*args, **kwargs)
+        return self._cpp_buffer.intranode_combine(*args, **kwargs)
 
     def internode_dispatch(self, *args, **kwargs):
-        return self._runtime.internode_dispatch(*args, **kwargs)
+        return self._cpp_buffer.internode_dispatch(*args, **kwargs)
 
     def internode_combine(self, *args, **kwargs):
-        return self._runtime.internode_combine(*args, **kwargs)
+        return self._cpp_buffer.internode_combine(*args, **kwargs)
 
     def get_local_buffer_tensor(
         self, dtype: torch.dtype, offset: int = 0, use_rdma_buffer: bool = False
     ) -> torch.Tensor:
-        return self._runtime.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
+        return self._cpp_buffer.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
 
 
 class MoECommunicator:
     """High-level MoE communicator API for dispatch/combine.
 
-    The first implementation supports the low-latency backend and keeps the
-    existing :class:`Buffer` API available for advanced or compatibility use.
+    The first implementation supports the low-latency backend.
     """
 
     def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
@@ -310,16 +311,14 @@ class MoECommunicator:
         if self.quant_format not in (None, "fp8_e4m3"):
             raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
 
-        num_nvl_bytes = config.num_nvl_bytes or 0
-        num_rdma_bytes = config.num_rdma_bytes
-        if num_rdma_bytes is None:
-            num_rdma_bytes = _get_low_latency_rdma_size_hint(
-                self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
-            )
+        num_nvl_bytes = 0
+        num_rdma_bytes = _get_low_latency_rdma_size_hint(
+            self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
+        )
 
         self.comm_stream = config.comm_stream
         if self.comm_stream is not None:
-            raise NotImplementedError("custom comm_stream is not wired into the low-latency Buffer yet")
+            raise NotImplementedError("custom comm_stream is not wired into the low-latency runtime yet")
         self.enable_overlap = config.enable_overlap
         self.num_sms = config.num_sms
         self._dispatch_tokens: Optional[torch.Tensor] = None
@@ -328,13 +327,19 @@ class MoECommunicator:
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
 
-        self.buffer = Buffer(
+        self._runtime = ExpertParallelRuntime(
             group,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
             low_latency_mode=True,
             num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
+
+    def is_available(self) -> bool:
+        return self._runtime.is_available()
+
+    def is_internode_available(self) -> bool:
+        return self._runtime.is_internode_available()
 
     def dispatch(
         self,
@@ -349,7 +354,7 @@ class MoECommunicator:
 
         output_tensors = self._get_dispatch_output_tensors(input.device)
         packed_tokens, packed_scales, num_tokens_per_expert, src_info, layout_range, _event, _hook = (
-            self.buffer._runtime.low_latency_dispatch(
+            self._runtime._cpp_buffer.low_latency_dispatch(
                 input,
                 topk_ids,
                 self.max_tokens_per_rank,
@@ -457,7 +462,7 @@ class MoECommunicator:
                 raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
             x_scales = handle.output_scales.local
 
-        combined, _event, _hook = self.buffer._runtime.low_latency_combine(
+        combined, _event, _hook = self._runtime._cpp_buffer.low_latency_combine(
             expert_output,
             x_scales,
             handle.topk_ids,

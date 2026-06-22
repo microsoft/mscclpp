@@ -1,10 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Builds `mscclpp_ep_cpp`, a pybind11 + PyTorch C++ extension that exposes the
-# EP (Mixture-of-Experts dispatch/combine) Buffer to Python. This module is
-# separate from the nanobind-based `_mscclpp` because EP carries `torch::Tensor`
-# through its ABI (ported verbatim from DeepEP).
+# Builds `mscclpp_ep_cpp`, a nanobind + PyTorch C++ extension that exposes the
+# EP (Mixture-of-Experts dispatch/combine) runtime to Python.
 #
 # Requires: PyTorch with its CMake integration available on CMAKE_PREFIX_PATH.
 # Easiest invocation:
@@ -13,6 +11,12 @@
 #           -DCMAKE_PREFIX_PATH="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
+include(FetchContent)
+if(NOT TARGET nanobind-static AND NOT TARGET nanobind)
+    FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.9.2)
+    FetchContent_MakeAvailable(nanobind)
+endif()
+
 find_package(Torch QUIET)
 if(NOT Torch_FOUND)
     message(WARNING
@@ -20,23 +24,6 @@ if(NOT Torch_FOUND)
         "Set CMAKE_PREFIX_PATH to `$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')` "
         "or disable MSCCLPP_BUILD_EXT_EP. Skipping the EP extension.")
     return()
-endif()
-
-find_package(pybind11 QUIET CONFIG)
-if(NOT pybind11_FOUND)
-    # PyTorch ships a bundled pybind11 we can fall back on.
-    get_target_property(_torch_include_dirs torch INTERFACE_INCLUDE_DIRECTORIES)
-    foreach(d ${_torch_include_dirs})
-        if(EXISTS "${d}/pybind11/pybind11.h")
-            set(PYBIND11_INCLUDE_DIR "${d}")
-            break()
-        endif()
-    endforeach()
-    if(NOT PYBIND11_INCLUDE_DIR)
-        message(FATAL_ERROR
-            "pybind11 not found and not bundled with Torch. Install it (pip install pybind11) "
-            "or provide -Dpybind11_DIR=...")
-    endif()
 endif()
 
 file(GLOB_RECURSE EP_SOURCES CONFIGURE_DEPENDS
@@ -55,7 +42,7 @@ endif()
 # Build as a Python extension module (shared object with Python ABI suffix).
 # The name `mscclpp_ep_cpp` matches the `TORCH_EXTENSION_NAME` hard-coded in
 # `bindings.cpp` / `buffer.hpp`.
-Python_add_library(mscclpp_ep_cpp MODULE ${EP_SOURCES})
+nanobind_add_module(mscclpp_ep_cpp ${EP_SOURCES})
 
 target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
 target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_AVOID_BFLOAT16_ALIAS)
@@ -66,18 +53,12 @@ target_include_directories(mscclpp_ep_cpp PRIVATE
     ${PROJECT_SOURCE_DIR}/src/ext/include
     ${GPU_INCLUDE_DIRS}
 )
-if(pybind11_FOUND)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE pybind11::module)
-else()
-    target_include_directories(mscclpp_ep_cpp SYSTEM PRIVATE ${PYBIND11_INCLUDE_DIR})
-endif()
-
 target_link_libraries(mscclpp_ep_cpp PRIVATE ${TORCH_LIBRARIES})
 # Torch's CUDA interop library (ATen CUDAStream helpers used in buffer.cc).
 if(TARGET torch::torch)
     target_link_libraries(mscclpp_ep_cpp PRIVATE torch::torch)
 endif()
-# libtorch_python contains pybind11 bindings for torch::Tensor / torch::dtype
+# libtorch_python contains Python bindings for torch::Tensor / torch::dtype
 # (symbols like THPDtypeType). It is not listed in TORCH_LIBRARIES.
 find_library(TORCH_PYTHON_LIBRARY torch_python
     HINTS "${TORCH_INSTALL_PREFIX}/lib")

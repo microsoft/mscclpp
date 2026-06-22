@@ -3,8 +3,6 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDADataType.h>
 #include <cuda_runtime.h>
-#include <pybind11/functional.h>
-#include <torch/python.h>
 
 #include <atomic>
 #include <chrono>
@@ -308,11 +306,9 @@ int Buffer::get_root_rdma_rank(bool global) const { return global ? nvl_rank : 0
 
 int Buffer::get_local_device_id() const { return device_id; }
 
-pybind11::bytearray Buffer::get_local_ipc_handle() const {
-  return {ipc_handles[nvl_rank].reserved, CUDA_IPC_HANDLE_SIZE};
-}
+std::string Buffer::get_local_ipc_handle() const { return {ipc_handles[nvl_rank].reserved, CUDA_IPC_HANDLE_SIZE}; }
 
-pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
+std::string Buffer::get_local_nvshmem_unique_id() const {
   // The MSCCL++ EP port replaces NVSHMEM with PortChannel/MemoryChannel,
   // so there is no NVSHMEM unique id to expose. Kept for ABI parity with
   // DeepEP's Python frontend; callers should use the MSCCL++ bootstrap.
@@ -320,14 +316,11 @@ pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
       "mscclpp::ep::Buffer::get_local_nvshmem_unique_id: not applicable (NVSHMEM is not used in mscclpp_ep)");
 }
 
-torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset,
-                                              bool use_rdma_buffer) const {
-  torch::ScalarType casted_dtype = torch::python::detail::py_object_to_dtype(dtype);
-  auto element_bytes = static_cast<int64_t>(elementSize(casted_dtype));
+torch::Tensor Buffer::get_local_buffer_tensor(torch::ScalarType dtype, int64_t offset, bool use_rdma_buffer) const {
+  auto element_bytes = static_cast<int64_t>(elementSize(dtype));
   auto base_ptr = reinterpret_cast<uint8_t*>(use_rdma_buffer ? rdma_buffer_ptr : buffer_ptrs[nvl_rank]) + offset;
   auto num_bytes = use_rdma_buffer ? num_rdma_bytes : num_nvl_bytes;
-  return torch::from_blob(base_ptr, num_bytes / element_bytes,
-                          torch::TensorOptions().dtype(casted_dtype).device(at::kCUDA));
+  return torch::from_blob(base_ptr, num_bytes / element_bytes, torch::TensorOptions().dtype(dtype).device(at::kCUDA));
 }
 
 mscclpp::UniqueId Buffer::create_unique_id() const { return bootstrap->createUniqueId(); }
@@ -338,8 +331,8 @@ void Buffer::connect(mscclpp::UniqueId root_id) {
 }
 
 void Buffer::sync(const std::vector<int>& device_ids,
-                  const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles,
-                  const std::optional<pybind11::bytearray>& root_unique_id_opt) {
+                  const std::vector<std::optional<std::string>>& all_gathered_handles,
+                  const std::optional<std::string>& root_unique_id_opt) {
   EP_HOST_ASSERT(not is_available());
 
   const std::vector<mscclpp::Transport> ib_transports = {
@@ -355,7 +348,7 @@ void Buffer::sync(const std::vector<int>& device_ids,
     EP_HOST_ASSERT(device_ids.size() == all_gathered_handles.size());
     for (int i = 0, offset = rdma_rank * num_nvl_ranks; i < num_nvl_ranks; ++i) {
       EP_HOST_ASSERT(all_gathered_handles[offset + i].has_value());
-      auto handle_str = std::string(all_gathered_handles[offset + i].value());
+      const auto& handle_str = all_gathered_handles[offset + i].value();
       EP_HOST_ASSERT(handle_str.size() == CUDA_IPC_HANDLE_SIZE);
       if (offset + i != rank) {
         std::memcpy(ipc_handles[i].reserved, handle_str.c_str(), CUDA_IPC_HANDLE_SIZE);
@@ -1323,7 +1316,6 @@ Buffer::internode_dispatch(
     const std::optional<torch::Tensor>& cached_recv_gbl_rank_prefix_sum, int expert_alignment, const Config& config,
     std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
   // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from other ranks, which can be quite long.
-  pybind11::gil_scoped_release release;
 
   const int num_channels = config.num_sms / 2;
   EP_HOST_ASSERT(config.num_sms % 2 == 0);

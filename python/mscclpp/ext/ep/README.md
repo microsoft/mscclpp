@@ -70,9 +70,7 @@ class MoECommunicatorConfig:
     input_dtype: Optional[torch.dtype] = None
     quant_format: Optional[str] = None
 
-    # Scratch / transport resources
-    num_nvl_bytes: Optional[int] = None
-    num_rdma_bytes: Optional[int] = None
+    # Transport resources
     num_rdma_qps_per_rank: int = 12  # RDMA QPs per peer rank; advanced tuning
     num_sms: int = 20
 
@@ -107,7 +105,7 @@ The class should cache:
 | `comm` | MSCCL++ communicator or `CommGroup` |
 | `rank`, `world_size` | global EP rank information |
 | `local_rank`, `device` | CUDA device binding |
-| `buffer` / `runtime` | pybind/C++ EP buffer implementation |
+| internal runtime | nanobind/C++ EP runtime implementation |
 | `comm_stream` | optional stream for async dispatch/combine |
 
 ### Expert placement fields
@@ -145,7 +143,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 | `output_layout` | MLP input layout returned by dispatch |
 | `max_tokens_per_rank` | dispatch capacity |
 | `max_recv_tokens_per_rank` | recv buffer capacity |
-| `num_nvl_bytes`, `num_rdma_bytes` | scratch buffer sizing |
+| scratch buffers | internally sized from mode, capacity, topology, and shape |
 | `num_rdma_qps_per_rank`, `num_sms` | backend launch/resource tuning |
 | `dispatch_config`, `combine_config` | backend-specific tuning configs |
 | `overlap_capability` | whether selected MLP/backend supports notify |
