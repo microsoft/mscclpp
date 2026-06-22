@@ -26,11 +26,13 @@ Current status (see ``src/ext/ep/README.md``):
 from __future__ import annotations
 
 import os
+import pickle
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
+import numpy as np
 import torch
-import torch.distributed as dist
+from mscclpp._core import CommGroup
 
 try:
     import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
@@ -45,11 +47,59 @@ Config = _cpp.Config
 EventHandle = _cpp.EventHandle
 
 
+def _send_bytes(comm: CommGroup, data: bytes, peer: int, tag: int) -> None:
+    size = np.array([len(data)], dtype=np.int64)
+    comm.send(size, peer, tag)
+    if data:
+        payload = np.frombuffer(data, dtype=np.uint8).copy()
+        comm.send(payload, peer, tag + 1)
+
+
+def _recv_bytes(comm: CommGroup, peer: int, tag: int) -> bytes:
+    size = np.empty(1, dtype=np.int64)
+    comm.recv(size, peer, tag)
+    payload_size = int(size[0])
+    if payload_size == 0:
+        return b""
+    payload = np.empty(payload_size, dtype=np.uint8)
+    comm.recv(payload, peer, tag + 1)
+    return payload.tobytes()
+
+
+def _all_gather_object(comm: CommGroup, obj, tag: int):
+    rank = comm.my_rank
+    world_size = comm.nranks
+    if rank == 0:
+        values = [obj]
+        for peer in range(1, world_size):
+            values.append(pickle.loads(_recv_bytes(comm, peer, tag)))
+        payload = pickle.dumps(values)
+        for peer in range(1, world_size):
+            _send_bytes(comm, payload, peer, tag + 2)
+        return values
+
+    _send_bytes(comm, pickle.dumps(obj), 0, tag)
+    return pickle.loads(_recv_bytes(comm, 0, tag + 2))
+
+
+def _broadcast_object(comm: CommGroup, obj, src: int, tag: int):
+    rank = comm.my_rank
+    world_size = comm.nranks
+    if rank == src:
+        payload = pickle.dumps(obj)
+        for peer in range(world_size):
+            if peer != src:
+                _send_bytes(comm, payload, peer, tag)
+        return obj
+
+    return pickle.loads(_recv_bytes(comm, src, tag))
+
+
 @dataclass
 class MoECommunicatorConfig:
     """Configuration for the high-level MoE dispatch/combine API."""
 
-    comm: Optional[dist.ProcessGroup] = None
+    comm: Optional[CommGroup] = None
     device: Optional[torch.device | int] = None
     num_experts: int = 0
     num_local_experts: Optional[int] = None
@@ -120,8 +170,8 @@ class ExpertParallelRuntime:
 
     Parameters
     ----------
-    group:
-        The ``torch.distributed`` process group. Used only for out-of-band
+    comm:
+    The :class:`mscclpp.CommGroup`. Used only for out-of-band
         exchange of IPC handles and the MSCCL++ unique id.
     num_nvl_bytes:
         Size of the NVLink-accessible scratch buffer (shared via CUDA IPC).
@@ -141,15 +191,15 @@ class ExpertParallelRuntime:
 
     def __init__(
         self,
-        group: dist.ProcessGroup,
+        comm: CommGroup,
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
         low_latency_mode: bool = False,
         num_qps_per_rank: int = 12,
     ) -> None:
-        self.rank: int = group.rank()
-        self.group_size: int = group.size()
-        self.group = group
+        self.rank: int = comm.my_rank
+        self.group_size: int = comm.nranks
+        self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
         self.low_latency_mode = low_latency_mode
@@ -160,13 +210,11 @@ class ExpertParallelRuntime:
         )
 
         # Exchange device IDs + IPC handles + (for RDMA) the MSCCL++ unique id.
-        device_ids: List[Optional[int]] = [None] * self.group_size
         local_device_id = self._cpp_buffer.get_local_device_id()
-        dist.all_gather_object(device_ids, local_device_id, group)
+        device_ids = _all_gather_object(comm, local_device_id, tag=1000)
 
-        ipc_handles: List[Optional[bytes]] = [None] * self.group_size
         local_ipc_handle = self._cpp_buffer.get_local_ipc_handle()
-        dist.all_gather_object(ipc_handles, local_ipc_handle, group)
+        ipc_handles = _all_gather_object(comm, local_ipc_handle, tag=1010)
 
         root_unique_id: Optional[bytes] = None
         # MSCCL++ requires a bootstrapped Communicator even for pure-NVLink
@@ -177,9 +225,7 @@ class ExpertParallelRuntime:
 
         if self.rank == 0:
             root_unique_id = self._cpp_buffer.create_unique_id()
-        broadcast_list = [root_unique_id]
-        dist.broadcast_object_list(broadcast_list, src=0, group=group)
-        root_unique_id = broadcast_list[0]
+        root_unique_id = _broadcast_object(comm, root_unique_id, src=0, tag=1020)
         assert root_unique_id is not None
         self._cpp_buffer.connect(root_unique_id)
 
@@ -262,15 +308,13 @@ class MoECommunicator:
         if config.device is not None:
             torch.cuda.set_device(config.device)
 
-        group = config.comm
-        if group is None:
-            if not dist.is_initialized():
-                raise ValueError("MoECommunicator requires a process group or an initialized torch.distributed group")
-            group = dist.group.WORLD
+        comm = config.comm
+        if comm is None:
+            raise ValueError("MoECommunicator requires an mscclpp.CommGroup")
 
-        self.group = group
-        self.rank: int = group.rank()
-        self.world_size: int = group.size()
+        self.comm = comm
+        self.rank: int = comm.my_rank
+        self.world_size: int = comm.nranks
         self.local_rank: int = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
 
@@ -328,7 +372,7 @@ class MoECommunicator:
         self._dispatch_count: Optional[torch.Tensor] = None
 
         self._runtime = ExpertParallelRuntime(
-            group,
+            comm,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
             low_latency_mode=True,

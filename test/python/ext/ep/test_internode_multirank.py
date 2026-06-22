@@ -85,7 +85,10 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 
 def main():
     rank, num_ranks, local_rank, group = init_dist()
+    from mscclpp import CommGroup
     from mscclpp.ext import ep
+
+    ep_group = CommGroup(torch_group=group)
 
     NUM_MAX_NVL_PEERS = _detect_local_world_size()
     assert (
@@ -162,7 +165,7 @@ def main():
 
     print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
     buf = ep.ExpertParallelRuntime(
-        group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
+        ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
     )
     print(
         f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()} "

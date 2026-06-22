@@ -78,7 +78,10 @@ def init_dist():
 def main():
     args = parse_args()
     rank, num_ranks, local_rank, group = init_dist()
+    from mscclpp import CommGroup
     from mscclpp.ext import ep
+
+    ep_group = CommGroup(torch_group=group)
 
     # Shrink the "bf16 precision" anchor to keep values small.
     rank_offset = 128
@@ -107,7 +110,7 @@ def main():
         topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
 
     moe_comm = ep.MoECommunicator(
-        comm=group,
+        comm=ep_group,
         num_experts=num_experts,
         num_local_experts=num_local_experts,
         hidden_size=hidden,
