@@ -119,7 +119,11 @@ static inline cudaError_t cudaIpcOpenMemHandleWrapper(std::shared_ptr<void>& bas
     return err;
   }
 
-  basePtr = std::shared_ptr<void>(rawBasePtr, [](void* ptr) {
+  basePtr = std::shared_ptr<void>(rawBasePtr, [ipcHandle](void* ptr) {
+    {
+      std::lock_guard<std::mutex> lock(openCudaIpcMemHandleMapMutex);
+      openCudaIpcMemHandleMap.erase(ipcHandle);
+    }
     cudaError_t err = cudaIpcCloseMemHandle(ptr);
     if (err != cudaSuccess) {
       WARN(GPU, "Failed to close CUDA IPC handle at pointer ", ptr, ": ", cudaGetErrorString(err));
