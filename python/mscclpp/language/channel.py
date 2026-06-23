@@ -960,20 +960,11 @@ class SwitchChannel:
         get_program().add_operation(self.src_rank, tb, op)
 
     def broadcast_packets(self, rank, src_chunk: Chunk, buffer_offset, size, tb):
-        """Broadcast packet-formatted data from source chunk to all ranks in the switch channel.
+        """Broadcast data in packet format from the source chunk to all ranks' scratch buffers in the switch channel.
 
-        Packet variant of :meth:`broadcast`. Emits a ``gstorepkt`` (MULTI_STORE_PKT)
-        operation that multicasts LL-protocol packets (data + flag) from the source
-        chunk to the specified buffer region across all ranks in the rank group, with
-        no explicit barrier required (the packet flag provides synchronization).
-
-        Note: this implementation reads each source packet (waiting on its flag) to
-        ensure the data is ready before re-broadcasting it as a new packet. This read
-        is what guarantees readiness here; other implementations where the source data
-        is known to be ready may skip the read and store the payload directly.
-
-        Both the source chunk and the destination buffer must be scratch buffers,
-        because the data is broadcast in LL (Low Latency) packet format (data + flag).
+        Performs a specialized broadcast operation that reads data in packet format
+        from the source rank's scratch buffer and broadcasts it to each destination rank's
+        scratch buffer. Both source and destination chunks must be scratch buffers.
 
         Args:
             rank (int): The rank that will execute this broadcast operation.
