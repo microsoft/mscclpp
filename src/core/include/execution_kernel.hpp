@@ -640,10 +640,12 @@ MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input,
   PacketType* multiPkt =
       (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
 
+  static_assert(sizeof(PacketType) == 16 || sizeof(PacketType) == 8, "Unsupported packet size for MULTI_STORE_PKT");
+  using StoreVec = std::conditional_t<sizeof(PacketType) == 16, mscclpp::f32x4, mscclpp::f32x2>;
   for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
     PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
     PacketType pkt(data, flag_);
-    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(mscclpp::f32x4*)(&pkt), multiPkt + idx);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
   }
 }
 #endif
