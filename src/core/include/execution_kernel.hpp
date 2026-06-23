@@ -579,49 +579,35 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
 template <bool ReuseScratch>
 MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, void* output, void* scratch,
                                             uint32_t offset, uint32_t unitSize) {
-  // MULTI_STORE is a pure data-movement op: it broadcasts bytes from a local (unicast) source buffer
-  // to the NVLS multicast destination with no reduction. `multimem.st` writes raw register bits without
-  // any type conversion, so the data type is irrelevant here -- we move raw bytes using the widest
-  // available multimem store unit (16 -> 8 -> 4 bytes). This keeps the op fully type agnostic (works for
-  // any dtype, including uint8_t and FP8, on any arch that supports MULTI_STORE).
   const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
   if (size == 0) {
     return;
   }
+
   const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
   const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
-  // `multimem.st` has a 4-byte minimum granularity, so the moved region must be 4-byte aligned and sized.
-  // This is guaranteed by the DSL/plan: all offsets and sizes are multiples of the (>= 4-byte) buffer alignment.
-
-  // Local (unicast) source load, multicast store to the NVLS switch destination.
   char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
   char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
 
-  // Bulk fast path: move data in 16-byte units. The 16-byte vector store requires both buffers to be
-  // 16-byte aligned. `buffer_alignment` is configurable in the plan (and LoopIterationContext.unit can
-  // shift offsets), so 16-byte alignment is not guaranteed -- check it at runtime and only take the
-  // f32x4 path when it holds. Otherwise we skip straight to the 4-byte fallback loop below.
-  size_t dataMoved = 0;
-  const bool aligned16 =
-      (reinterpret_cast<uintptr_t>(srcBase) % 16 == 0) && (reinterpret_cast<uintptr_t>(dstBase) % 16 == 0);
-  if (aligned16) {
-    const size_t numberOfMoves = size / 16;
+  size_t processed = 0;
+  const bool alignedf32x4 = (reinterpret_cast<uintptr_t>(srcBase) % sizeof(f32x4) == 0) &&
+                            (reinterpret_cast<uintptr_t>(dstBase) % sizeof(f32x4) == 0);
+  if (alignedf32x4) {
+    const size_t nf32x4 = size / sizeof(f32x4);
     f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
     f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
-    for (size_t idx = threadIdx.x; idx < numberOfMoves; idx += blockDim.x) {
+    for (size_t idx = threadIdx.x; idx < nf32x4; idx += blockDim.x) {
       SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
     }
-    dataMoved = numberOfMoves << 4;  // numberOfMoves * 16
+    processed = nf32x4 * sizeof(f32x4);
   }
 
-  // 4-byte loop: handles whatever the 16-byte path left behind. When the fast path ran this is just the
-  // 0/4/8/12-byte tail; when it was skipped (sub-16-byte alignment) this moves the entire region. The
-  // 4-byte minimum granularity and alignment are guaranteed by the asserts above, so this path is always
-  // safe. Threads stride over the 4-byte units so the work is issued in parallel.
-  const size_t numberOfRest = (size - dataMoved) / 4;
-  u32x1* src4 = reinterpret_cast<u32x1*>(srcBase + dataMoved);
-  u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase + dataMoved);
-  for (size_t idx = threadIdx.x; idx < numberOfRest; idx += blockDim.x) {
+  // Handle remaining data
+  const size_t startIdx = processed / sizeof(u32x1);
+  const size_t endIdx = size / sizeof(u32x1);
+  u32x1* src4 = reinterpret_cast<u32x1*>(srcBase);
+  u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
     SwitchChannelDeviceHandle::multimemStore(src4[idx], dst4 + idx);
   }
 }
