@@ -124,6 +124,7 @@ class IbQp {
   int numPostedSignaledSend_;
   int numStagedSignaledSend_;
 
+  const int maxSendCqSize_;
   const int maxSendCqPollNum_;
   const int maxSendWr_;
   const int maxWrPerSend_;
