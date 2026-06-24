@@ -224,29 +224,42 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     constexpr int kNumElemsPerRead = sizeof(int4) / sizeof(SourceType);
     EP_DEVICE_ASSERT(hidden % kNumElemsPerRead == 0);
     EP_STATIC_ASSERT(kNumPerChannels % kNumElemsPerRead == 0, "Invalid vectorization");
+    const auto sendWarps = (numWarps - 1) / numTopk * numTopk;
+    const auto tokensPerRound = sendWarps / numTopk;
     const auto numThreads = (numWarps - 1) * 32;
     const size_t hiddenSourceInt4 = hidden / kNumElemsPerRead;
 
-    for (int tokenIdx = smId; tokenIdx < numTokens; tokenIdx += numSms) {
-      const auto xInt4 = reinterpret_cast<const int4*>(x) + tokenIdx * hiddenSourceInt4;
-      const auto rdmaXSrcIdx = reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(rdmaX) + tokenIdx * numBytesPerMsg);
-      const auto rdmaXVec = reinterpret_cast<VecType*>(reinterpret_cast<uint8_t*>(rdmaXSrcIdx) + sizeof(int4));
-      const auto rdmaXScales = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(rdmaXVec) + hiddenBytes);
+    for (int tokenBase = smId; tokenBase < numTokens; tokenBase += numSms * tokensPerRound) {
+      for (int tokenGroupId = 0; tokenGroupId < tokensPerRound; ++tokenGroupId) {
+        const auto tokenIdx = tokenBase + tokenGroupId * numSms;
+        if (tokenIdx >= numTokens) continue;
+        const auto xInt4 = reinterpret_cast<const int4*>(x) + tokenIdx * hiddenSourceInt4;
+        const auto rdmaXSrcIdx = reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(rdmaX) + tokenIdx * numBytesPerMsg);
+        const auto rdmaXVec = reinterpret_cast<VecType*>(reinterpret_cast<uint8_t*>(rdmaXSrcIdx) + sizeof(int4));
+        const auto rdmaXScales = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(rdmaXVec) + hiddenBytes);
 
-      auto dstExpertIdx = warpId < numTopk ? static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + warpId)) : -1;
-      threadId == 0 ? (*rdmaXSrcIdx = tokenIdx) : 0;
+        threadId == 0 ? (*rdmaXSrcIdx = tokenIdx) : 0;
 
-      // Data conversion (BF16 or FP8)
-      for (int i = threadId; i < hiddenSourceInt4; i += numThreads) {
-        auto int4Value = __ldg(xInt4 + i);
+        // Data conversion (BF16 or FP8). Keep the original full-payload-warp
+        // pack path; only the following send stage is remapped.
+        for (int i = threadId; i < hiddenSourceInt4; i += numThreads) {
+          auto int4Value = __ldg(xInt4 + i);
 
-        rdmaXVec[i] = dispatchConvert<kInputDType, kOutputDType, kNumPerChannels>(
-            int4Value, &rdmaXScales[i * kNumElemsPerRead / kNumPerChannels], laneId);
+          rdmaXVec[i] = dispatchConvert<kInputDType, kOutputDType, kNumPerChannels>(
+              int4Value, &rdmaXScales[i * kNumElemsPerRead / kNumPerChannels], laneId);
+        }
       }
       asm volatile("bar.sync 1, %0;" ::"r"(numThreads));
 
       // Issue sends
-      if (dstExpertIdx >= 0) {
+      if (warpId < sendWarps) {
+        const auto topkId = warpId % numTopk;
+        const auto tokenGroupId = warpId / numTopk;
+        const auto tokenIdx = tokenBase + tokenGroupId * numSms;
+        const auto dstExpertIdx =
+            tokenIdx < numTokens ? static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + topkId)) : -1;
+        if (dstExpertIdx < 0) continue;
+        const auto rdmaXSrcIdx = reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(rdmaX) + tokenIdx * numBytesPerMsg);
         int slotIdx = laneId == 0 ? atomicAdd(atomicCounterPerExpert + dstExpertIdx, 1) : 0;
         slotIdx = __shfl_sync(0xffffffff, slotIdx, 0);
         const auto dstRank = dstExpertIdx / numLocalExperts;
@@ -479,6 +492,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
 
   const auto numWarps = kDispatchNumWarpGroups * kDispatchNumWarpsPerGroup;
   const auto numSms = cell_div(numExperts, kDispatchNumWarpGroups);
+  EP_HOST_ASSERT(numTopk > 0);
   EP_HOST_ASSERT(numTopk <= kDispatchNumMaxTopK);
 
   auto atomicCounterPerExpert = reinterpret_cast<int*>(workspace);
