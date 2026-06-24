@@ -30,8 +30,6 @@ class AllreduceFullmesh : public mscclpp::AlgorithmBuilder {
   std::vector<std::shared_ptr<MemoryDevice2DeviceSemaphore>> inputScratchSemaphores_;
   std::vector<RegisteredMemory> remoteScratchMemories_;
   RegisteredMemory localScratchMemory_;
-  std::unordered_map<const void*, std::pair<std::vector<MemoryChannel>, std::shared_ptr<DeviceHandle<MemoryChannel>>>>
-      memoryChannelsMap_;
   bool symmetricMemory_ = false;
 };
 }  // namespace collective
