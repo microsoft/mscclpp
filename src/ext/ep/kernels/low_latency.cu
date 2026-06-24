@@ -1,30 +1,25 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 //
-// Low-latency dispatch/combine kernels ported from DeepEP
-// `csrc/kernels/internode_ll.cu` (branch `chhwang/dev-atomic-add-cleanup`).
+// Low-latency dispatch/combine kernels adapted from DeepEP
+// `csrc/kernels/internode_ll.cu`.
 //
-// NVSHMEM/IBGDA device calls are replaced with MSCCL++ PortChannel device
-// operations:
-//
-//   nvshmemx_barrier_all_block()              -> port-channel signal/wait ring
-//   nvshmemi_ibgda_put_nbi_warp(...)          -> port_channel.put(...) (lane 0)
-//   nvshmemi_ibgda_amo_nonfetch_add(...)      -> port_channel.atomicAdd(...)
+// Transport mapping in this MSCCL++ implementation:
+//   - Local rank: direct global-memory copy/store.
+//   - CUDA-IPC peer: direct store through the imported peer RDMA-buffer VA.
+//   - Non-IPC peer: MSCCL++ PortChannel PUT from the locally registered RDMA
+//     staging buffer; lane 0 issues the proxy request.
+//   - Count/flag signals: direct release store for local/IPC peers, otherwise
+//     PortChannel 64-bit atomicAdd.
 //
 // Addressing convention:
-//   - `rdmaBufferPtr` is the base of the locally-registered RDMA buffer.
-//   - Remote counter/buffer pointers written by the kernel are virtual
-//     addresses that alias the corresponding offset inside each peer's
-//     symmetric RDMA buffer. MSCCL++ needs those as offsets; we derive them
-//     via `ptr - rdmaBufferPtr`.
-//   - Port-channel layout built by `Buffer::sync()` in low-latency mode is
-//     `handles[qp * num_peers + peer_idx]` where `peer_idx` is the dst rank's
-//     position in the connected-peer map. In the recommended 1-GPU-per-node
-//     LL topology, `peer_idx == dstRank`; see src/ext/ep/README.md.
-//
-// Validated on 2 nodes x 8 H100 GPUs via
-// `test/python/ext/ep/test_low_latency_multirank.py`. Performance does NOT
-// match IBGDA (host-proxy adds latency); see README for measurements.
+//   - `rdmaBufferPtr` is the base of this rank's registered RDMA buffer.
+//   - Pointers into a peer's symmetric RDMA buffer use the same offset as the
+//     local pointer. PortChannel needs offsets, so the kernels derive them as
+//     `ptr - rdmaBufferPtr`; CUDA-IPC paths add the same offset to
+//     `peerRdmaBases[peerRank]`.
+//   - `portChannelHandles[localExpertIdx * numRanks + peerRank]` is the
+//     PortChannel used for that local expert / peer-rank transfer.
 
 #include <cooperative_groups.h>
 
@@ -56,7 +51,7 @@ __launch_bounds__(kNumThreads, 1) __global__
                                mscclpp::PortChannelDeviceHandle* portChannelHandles,
                                mscclpp::BaseMemoryChannelDeviceHandle* memoryChannelHandles, int rank, int numRanks,
                                int ranksPerIpcDomain) {
-  // Barrier before cleaning (in case of unfinished chunked EP)
+  // Barrier before cleaning in case the previous low-latency epoch is still draining.
   channelBarrierBlock(portChannelHandles, memoryChannelHandles, rank, numRanks, ranksPerIpcDomain);
 
   // Clean
@@ -64,7 +59,7 @@ __launch_bounds__(kNumThreads, 1) __global__
   for (int i = threadId; i < numCleanInt0; i += kNumThreads) clean0[i] = 0;
   for (int i = threadId; i < numCleanInt1; i += kNumThreads) clean1[i] = 0;
 
-  // Barrier after cleaning (make sure low-latency mode work fine)
+  // Barrier after cleaning so every rank observes zeroed signaling slots.
   channelBarrierBlock(portChannelHandles, memoryChannelHandles, rank, numRanks, ranksPerIpcDomain);
 }
 
@@ -224,13 +219,17 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     constexpr int kNumElemsPerRead = sizeof(int4) / sizeof(SourceType);
     EP_DEVICE_ASSERT(hidden % kNumElemsPerRead == 0);
     EP_STATIC_ASSERT(kNumPerChannels % kNumElemsPerRead == 0, "Invalid vectorization");
-    const auto sendWarps = (numWarps - 1) / numTopk * numTopk;
-    const auto tokensPerRound = sendWarps / numTopk;
-    const auto numThreads = (numWarps - 1) * 32;
+    const auto numPayloadWarps = numWarps - 1;
+    const auto numSendWarps = numPayloadWarps / numTopk * numTopk;
+    const auto numTokensPerSendRound = numSendWarps / numTopk;
+    const auto numPayloadThreads = numPayloadWarps * 32;
     const size_t hiddenSourceInt4 = hidden / kNumElemsPerRead;
 
-    for (int tokenBase = smId; tokenBase < numTokens; tokenBase += numSms * tokensPerRound) {
-      for (int tokenGroupId = 0; tokenGroupId < tokensPerRound; ++tokenGroupId) {
+    // Keep the pack/cast path unchanged: all payload warps cooperatively stage
+    // a small tile of tokens into rdmaX. Only the send stage below is remapped
+    // so each token in the tile gets exactly numTopk sender warps.
+    for (int tokenBase = smId; tokenBase < numTokens; tokenBase += numSms * numTokensPerSendRound) {
+      for (int tokenGroupId = 0; tokenGroupId < numTokensPerSendRound; ++tokenGroupId) {
         const auto tokenIdx = tokenBase + tokenGroupId * numSms;
         if (tokenIdx >= numTokens) continue;
         const auto xInt4 = reinterpret_cast<const int4*>(x) + tokenIdx * hiddenSourceInt4;
@@ -240,19 +239,20 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
 
         threadId == 0 ? (*rdmaXSrcIdx = tokenIdx) : 0;
 
-        // Data conversion (BF16 or FP8). Keep the original full-payload-warp
-        // pack path; only the following send stage is remapped.
-        for (int i = threadId; i < hiddenSourceInt4; i += numThreads) {
+        for (int i = threadId; i < hiddenSourceInt4; i += numPayloadThreads) {
           auto int4Value = __ldg(xInt4 + i);
 
           rdmaXVec[i] = dispatchConvert<kInputDType, kOutputDType, kNumPerChannels>(
               int4Value, &rdmaXScales[i * kNumElemsPerRead / kNumPerChannels], laneId);
         }
       }
-      asm volatile("bar.sync 1, %0;" ::"r"(numThreads));
+      asm volatile("bar.sync 1, %0;" ::"r"(numPayloadThreads));
 
-      // Issue sends
-      if (warpId < sendWarps) {
+      // Send with a warp layout that is a multiple of top-k:
+      //   warp 0..numTopk-1       -> token group 0, top-k 0..numTopk-1
+      //   warp numTopk..2*numTopk -> token group 1, top-k 0..numTopk-1
+      // Any leftover payload warps still participate in staging, but skip send.
+      if (warpId < numSendWarps) {
         const auto topkId = warpId % numTopk;
         const auto tokenGroupId = warpId / numTopk;
         const auto tokenIdx = tokenBase + tokenGroupId * numSms;
@@ -385,6 +385,8 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
 
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
 
+  // The recv phase consumes per-rank count signals and rdmaRecvX payloads
+  // produced by the send phase in the same cooperative launch.
   if (phases & LOW_LATENCY_SEND_PHASE) cg::this_grid().sync();
 
   dispatchRecv<kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
@@ -492,6 +494,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
 
   const auto numWarps = kDispatchNumWarpGroups * kDispatchNumWarpsPerGroup;
   const auto numSms = cell_div(numExperts, kDispatchNumWarpGroups);
+  // dispatchSend divides payload warps into groups of numTopk sender warps.
   EP_HOST_ASSERT(numTopk > 0);
   EP_HOST_ASSERT(numTopk <= kDispatchNumMaxTopK);
 
@@ -685,6 +688,8 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
     EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
     if (subWarpId == 0 and laneId == 0) waitSignalNonZero(rdmaRecvFlag + responsibleExpertIdx);
   }
+  // All expert-result writes must be visible before owner ranks start the
+  // weighted gather below.
   cg::this_grid().sync();
 
   EP_DEVICE_ASSERT(numTopk <= 32 and hiddenBf16Int4 <= numThreads);
