@@ -189,10 +189,10 @@ endif()
 message(STATUS "GPU architectures: ${MSCCLPP_GPU_ARCHS}")
 
 # Declare project
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 if(MSCCLPP_USE_CUDA)
-    set(CMAKE_CUDA_STANDARD 17)
+    set(CMAKE_CUDA_STANDARD 20)
     set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -Xcompiler -Wall,-Wextra")
     enable_language(CUDA)
 
