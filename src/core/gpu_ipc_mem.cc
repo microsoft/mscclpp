@@ -127,7 +127,6 @@ static inline cudaError_t cudaIpcOpenMemHandleWrapper(std::shared_ptr<void>& bas
     cudaError_t err = cudaIpcCloseMemHandle(ptr);
     if (err != cudaSuccess) {
       WARN(GPU, "Failed to close CUDA IPC handle at pointer ", ptr, ": ", cudaGetErrorString(err));
-      (void)cudaGetLastError();
     }
   });
   openCudaIpcMemHandleMap[ipcHandle] = basePtr;
