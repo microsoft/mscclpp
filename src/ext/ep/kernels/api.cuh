@@ -41,7 +41,7 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
               const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
               int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
               int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens,
-              void** recv_pool_ptrs = nullptr, int64_t recv_pool_header_bytes = 0);
+              void** recv_pool_ptrs = nullptr, int64_t recv_pool_header_bytes = 0, int* ep_combine_recv_idx = nullptr);
 
 void cached_notify_combine(void** buffer_ptrs, int* send_head, int num_channels, int num_recv_tokens,
                            int num_memset_int, int** task_fifo_ptrs, int head, int rank, int num_ranks,
@@ -51,6 +51,31 @@ void combine(cudaDataType_t type, void* recv_x, float* recv_topk_weights, const 
              const int* src_idx, const int* rank_prefix_matrix, const int* channel_prefix_matrix, int* send_head,
              int num_tokens, int num_recv_tokens, int hidden, int num_topk, void** buffer_ptrs, int rank, int num_ranks,
              cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens);
+
+// Intranode TMA-staged direct-gather combine (MSCCLPP_EP_COMBINE_TMA). Gathers each
+// token's contributions straight from peer recv pools through a cp.async.bulk SMEM
+// pipeline; token-parallel grid so combine_sms is independent of dispatch channels.
+// Returns false (launches nothing) when recv_pool_ptrs/ep_combine_recv_idx are null,
+// so the caller falls back to the 2-hop ring combine.
+bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_weights, int* send_head, int num_tokens,
+                 int hidden, int num_topk, int num_ranks, void** recv_pool_ptrs, const int* ep_combine_recv_idx,
+                 int64_t recv_pool_header_bytes, int combine_sms, cudaStream_t stream);
+
+// All-sender intranode dispatch (MSCCLPP_EP_INTRA_ALLSENDER, INTRA_DIRECT only): every
+// block sends hidden directly to the dest pool (num_sms == num_channels, no receiver
+// blocks). Metadata lands in the dest pool META region; unpack it with intranode_meta_drain.
+void dispatch_allsender(int* send_head, const void* x, const int64_t* topk_idx, const float* topk_weights,
+                        const float* x_scales, const bool* is_token_in_rank, const int* channel_prefix_matrix,
+                        int num_tokens, int hidden_int4, int num_topk, int num_experts, int num_scales,
+                        void** buffer_ptrs, int rank, int num_ranks, cudaStream_t stream, int num_sms,
+                        void** recv_pool_ptrs, int64_t recv_pool_header_bytes, int64_t recv_pool_meta_base,
+                        int64_t meta_slot_bytes, int* ep_combine_recv_idx);
+
+// Unpack the local recv-pool META region (filled by dispatch_allsender) into the recv_*
+// output tensors. recv_topk_idx/recv_x_scales may be null (skipped). One thread per token.
+void intranode_meta_drain(void* pool_base, int64_t meta_base, int num_recv_tokens, int* recv_src_idx,
+                          int64_t* recv_topk_idx, float* recv_topk_weights, float* recv_x_scales, int num_topk,
+                          int num_scales, int64_t meta_slot_bytes, cudaStream_t stream);
 
 }  // namespace intranode
 

@@ -434,6 +434,14 @@ void Buffer::sync(const std::vector<int>& device_ids,
       CUDA_CHECK(cudaMalloc(&recv_pool_ptrs_gpu, sizeof(void*) * NUM_MAX_NVL_PEERS));
       CUDA_CHECK(cudaMemcpy(recv_pool_ptrs_gpu, recv_pool_ptrs_.data(), sizeof(void*) * NUM_MAX_NVL_PEERS,
                             cudaMemcpyHostToDevice));
+      // Intranode combine-direct: allocate the per-(token, dst rank) gather map so the
+      // INTRA_DIRECT dispatch sender can record each token's recv-pool slot and the TMA
+      // direct-gather combine can read it back. Idempotent with the internode (inc5)
+      // allocation below (guarded by == nullptr); sized for the worst-case source tokens.
+      if (ep_combine_recv_idx_gpu == nullptr)
+        CUDA_CHECK(cudaMalloc(&ep_combine_recv_idx_gpu,
+                              sizeof(int) * static_cast<size_t>(Config::kEpRecvPoolMaxTokens) * num_ranks));
+
       if (rank == 0) {
         printf("[mscclpp_ep] inc4 VMM recv-pool peer bases (rank 0):");
         for (int i = 0; i < NUM_MAX_NVL_PEERS; ++i) printf(" [%d]=%p", i, recv_pool_ptrs_[i]);
@@ -948,7 +956,38 @@ Buffer::intranode_dispatch(
 
   // One channel use two blocks, even-numbered blocks for sending, odd-numbered blocks for receiving.
   EP_HOST_ASSERT(config.num_sms % 2 == 0);
-  int num_channels = config.num_sms / 2;
+  // MSCCLPP_EP_DISPATCH_NSM (intranode): set the dispatch block count independently of the
+  // combine grid. The dispatch is channel-partitioned (notify + senders share num_channels),
+  // so DISPATCH_NSM drives this whole dispatch+layout pipeline consistently. Constrained to
+  // [2, config.num_sms] (the NVL buffers are sized for config.num_sms/2 channels), even.
+  int dispatch_num_sms = config.num_sms;
+  {
+    const char* e_dnsm = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
+    if (e_dnsm != nullptr) {
+      int n = std::atoi(e_dnsm);
+      n &= ~1;  // round down to even (two blocks per channel)
+      if (n >= 2) dispatch_num_sms = std::min(n, config.num_sms);
+    }
+  }
+  // MSCCLPP_EP_INTRA_ALLSENDER (INTRA_DIRECT only): make EVERY block a sender (one channel
+  // per block) instead of the 50/50 sender/receiver split, so all dispatch_num_sms blocks
+  // move hidden directly to the dest pools (matching NCCL-EP's all-sender block count).
+  // Metadata goes to the pool META region + a drain pass. The all-sender layout is only
+  // consumable by the TMA combine (the ring fallback expects num_sms/2 channels), so this
+  // defaults ON under INTRA_DIRECT + TMA combine and auto-disables if the ring combine is
+  // forced (MSCCLPP_EP_COMBINE_TMA=0). Explicit MSCCLPP_EP_INTRA_ALLSENDER=0/1 overrides.
+  static const bool ep_intra_allsender_env = [] {
+    const char* d = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
+    if (not(d != nullptr and std::atoi(d) != 0)) return false;  // requires INTRA_DIRECT
+    const char* ct = std::getenv("MSCCLPP_EP_COMBINE_TMA");
+    if (ct != nullptr and std::atoi(ct) == 0) return false;  // ring combine can't consume all-sender layout
+    const char* e = std::getenv("MSCCLPP_EP_INTRA_ALLSENDER");
+    return e == nullptr or std::atoi(e) != 0;  // default ON, disable only with explicit =0
+  }();
+  const bool all_sender = ep_intra_allsender_env and recv_pool_local_ptr_ != nullptr and
+                          recv_pool_ptrs_gpu != nullptr and x.scalar_type() == torch::kBFloat16;
+  // All-sender: one channel per block (num_channels = grid). Otherwise: two blocks per channel.
+  int num_channels = all_sender ? dispatch_num_sms : dispatch_num_sms / 2;
   if (cached_mode) {
     EP_HOST_ASSERT(cached_rank_prefix_matrix.has_value());
     EP_HOST_ASSERT(cached_channel_prefix_matrix.has_value());
@@ -1137,29 +1176,51 @@ Buffer::intranode_dispatch(
   }
 
   // Dispatch
-  EP_HOST_ASSERT(num_ranks * num_ranks * sizeof(int) +             // Size prefix matrix
-                     num_channels * num_ranks * sizeof(int) +      // Channel start offset
-                     num_channels * num_ranks * sizeof(int) +      // Channel end offset
-                     num_channels * num_ranks * sizeof(int) * 2 +  // Queue head and tail
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * hidden *
-                         recv_x.element_size() +  // Data buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens *
-                         sizeof(int) +  // Source index buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
-                         sizeof(int64_t) +  // Top-k index buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
-                         sizeof(float) +  // Top-k weight buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * sizeof(float) *
-                         num_scales  // FP8 scale buffer
-                 <= num_nvl_bytes);
-  intranode::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_src_idx.data_ptr<int>(), recv_topk_idx_ptr,
-                      recv_topk_weights_ptr, recv_channel_prefix_matrix.data_ptr<int>(), send_head.data_ptr<int>(),
-                      x.data_ptr(), x_scales_ptr, topk_idx_ptr, topk_weights_ptr, is_token_in_rank.data_ptr<bool>(),
-                      channel_prefix_matrix.data_ptr<int>(), num_tokens,
-                      static_cast<int>(hidden * recv_x.element_size() / sizeof(int4)), num_topk, num_experts,
-                      num_scales, buffer_ptrs_gpu, rank, num_ranks, comm_stream, config.num_sms,
-                      config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
-                      ep_intra_recv_pool_ptrs, static_cast<int64_t>(ep_intra_pool_header_bytes));
+  const int dispatch_hidden_int4 = static_cast<int>(hidden * recv_x.element_size() / sizeof(int4));
+  if (all_sender) {
+    // All-sender direct path: every block sends hidden straight to the dest pools; the
+    // hidden ring + receiver are unused. Requires the direct pool (assert it resolved).
+    EP_HOST_ASSERT(ep_intra_direct and ep_intra_recv_pool_ptrs != nullptr);
+    // The TMA combine is token-parallel and ignores channel_prefix_matrix; zero the recv
+    // copy so any (non-TMA) consumer sees a defined tensor.
+    recv_channel_prefix_matrix.zero_();
+    const int64_t meta_base = static_cast<int64_t>(Config::get_recv_pool_meta_base(num_ranks));
+    const int64_t meta_slot_bytes = Config::kEpRecvPoolMetaBytes;
+    intranode::dispatch_allsender(send_head.data_ptr<int>(), x.data_ptr(), topk_idx_ptr, topk_weights_ptr,
+                                  x_scales_ptr, is_token_in_rank.data_ptr<bool>(),
+                                  channel_prefix_matrix.data_ptr<int>(), num_tokens, dispatch_hidden_int4, num_topk,
+                                  num_experts, num_scales, buffer_ptrs_gpu, rank, num_ranks, comm_stream,
+                                  num_channels, recv_pool_ptrs_gpu, static_cast<int64_t>(ep_intra_pool_header_bytes),
+                                  meta_base, meta_slot_bytes, ep_combine_recv_idx_gpu);
+    // Unpack the per-token metadata the senders packed into our pool META region.
+    intranode::intranode_meta_drain(recv_pool_local_ptr_, meta_base, num_recv_tokens, recv_src_idx.data_ptr<int>(),
+                                    recv_topk_idx_ptr, recv_topk_weights_ptr, recv_x_scales_ptr, num_topk, num_scales,
+                                    meta_slot_bytes, comm_stream);
+  } else {
+    EP_HOST_ASSERT(num_ranks * num_ranks * sizeof(int) +             // Size prefix matrix
+                       num_channels * num_ranks * sizeof(int) +      // Channel start offset
+                       num_channels * num_ranks * sizeof(int) +      // Channel end offset
+                       num_channels * num_ranks * sizeof(int) * 2 +  // Queue head and tail
+                       num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * hidden *
+                           recv_x.element_size() +  // Data buffer
+                       num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens *
+                           sizeof(int) +  // Source index buffer
+                       num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
+                           sizeof(int64_t) +  // Top-k index buffer
+                       num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
+                           sizeof(float) +  // Top-k weight buffer
+                       num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * sizeof(float) *
+                           num_scales  // FP8 scale buffer
+                   <= num_nvl_bytes);
+    intranode::dispatch(recv_x.data_ptr(), recv_x_scales_ptr, recv_src_idx.data_ptr<int>(), recv_topk_idx_ptr,
+                        recv_topk_weights_ptr, recv_channel_prefix_matrix.data_ptr<int>(), send_head.data_ptr<int>(),
+                        x.data_ptr(), x_scales_ptr, topk_idx_ptr, topk_weights_ptr, is_token_in_rank.data_ptr<bool>(),
+                        channel_prefix_matrix.data_ptr<int>(), num_tokens, dispatch_hidden_int4, num_topk, num_experts,
+                        num_scales, buffer_ptrs_gpu, rank, num_ranks, comm_stream, dispatch_num_sms,
+                        config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens,
+                        ep_intra_recv_pool_ptrs, static_cast<int64_t>(ep_intra_pool_header_bytes),
+                        ep_intra_direct ? ep_combine_recv_idx_gpu : nullptr);
+  }
 
   // Wait streams
   std::optional<EventHandle> event;
@@ -1218,7 +1279,12 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
   EP_HOST_ASSERT(src_idx.size(0) == num_tokens);
   EP_HOST_ASSERT(send_head.size(1) == num_ranks);
   EP_HOST_ASSERT(rank_prefix_matrix.size(0) == num_ranks and rank_prefix_matrix.size(1) == num_ranks);
-  EP_HOST_ASSERT(channel_prefix_matrix.size(0) == num_ranks and channel_prefix_matrix.size(1) == num_channels);
+  // The 2-hop ring fallback consumes channel_prefix_matrix; the TMA direct-gather combine
+  // ignores it. The all-sender dispatch produces a wider matrix (one column per block), and
+  // DISPATCH_NSM may produce fewer, so the column count is validated only inside the ring
+  // fallback (where it must fit the ring buffers); the TMA path tolerates any column count.
+  EP_HOST_ASSERT(channel_prefix_matrix.size(0) == num_ranks);
+  const int ring_num_channels = static_cast<int>(channel_prefix_matrix.size(1));
   EP_HOST_ASSERT((hidden * x.element_size()) % sizeof(int4) == 0);
 
   // Allocate all tensors on comm stream if set
@@ -1250,30 +1316,61 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
     recv_topk_weights_ptr = recv_topk_weights->data_ptr<float>();
   }
 
-  // Launch barrier and reset queue head and tail
-  EP_HOST_ASSERT(num_channels * num_ranks * sizeof(int) * 2 <= num_nvl_bytes);
-  intranode::cached_notify_combine(buffer_ptrs_gpu, send_head.data_ptr<int>(), num_channels, num_recv_tokens,
-                                   num_channels * num_ranks * 2, task_fifo_ptrs_gpu, head, rank, num_ranks,
-                                   comm_stream);
-
-  // NOTES: this function uses two FIFO slots (barrier before and after)
-  move_fifo_slots(2);
-
-  // Combine data
+  // Combine output. Default: TMA-staged direct-gather (MSCCLPP_EP_COMBINE_TMA != 0) reads
+  // each token's contributions straight from the peer recv pools through a cp.async.bulk SMEM
+  // pipeline. The grid is token-parallel, so MSCCLPP_EP_COMBINE_NSM sets the block count
+  // independently of the dispatch channel count. Falls back to the 2-hop ring combine when the
+  // direct-gather inputs are unavailable (no INTRA_DIRECT recv pools) or the escape hatch is set.
   auto recv_x = torch::empty({num_recv_tokens, hidden}, x.options());
-  EP_HOST_ASSERT(num_channels * num_ranks * sizeof(int) * 2 +  // Queue head and tail
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * hidden *
-                         x.element_size() +  // Data buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens *
-                         sizeof(int) +  // Source index buffer
-                     num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
-                         sizeof(float)  // Top-k weight buffer
-                 <= num_nvl_bytes);
-  intranode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), recv_x.data_ptr(), recv_topk_weights_ptr,
-                     x.data_ptr(), topk_weights_ptr, src_idx.data_ptr<int>(), rank_prefix_matrix.data_ptr<int>(),
-                     channel_prefix_matrix.data_ptr<int>(), send_head.data_ptr<int>(), num_tokens, num_recv_tokens,
-                     hidden, num_topk, buffer_ptrs_gpu, rank, num_ranks, comm_stream, config.num_sms,
-                     config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens);
+  bool used_tma_combine = false;
+  {
+    static const bool ep_combine_tma_disabled = [] {
+      const char* e = std::getenv("MSCCLPP_EP_COMBINE_TMA");
+      return e != nullptr and std::atoi(e) == 0;
+    }();
+    const bool tma_inputs_ready = recv_pool_ptrs_gpu != nullptr and ep_combine_recv_idx_gpu != nullptr and
+                                  x.scalar_type() == torch::kBFloat16;
+    if (not ep_combine_tma_disabled and tma_inputs_ready) {
+      int combine_sms = config.num_sms;
+      const char* e_cnsm = std::getenv("MSCCLPP_EP_COMBINE_NSM");
+      if (e_cnsm != nullptr and std::atoi(e_cnsm) >= 1) combine_sms = std::atoi(e_cnsm);
+      const int64_t intra_pool_header_bytes = static_cast<int64_t>(config.get_recv_pool_header_bytes(num_ranks));
+      used_tma_combine = intranode::combine_tma(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), recv_x.data_ptr(),
+                                                recv_topk_weights_ptr, send_head.data_ptr<int>(), num_recv_tokens,
+                                                hidden, num_topk, num_ranks, recv_pool_ptrs_gpu, ep_combine_recv_idx_gpu,
+                                                intra_pool_header_bytes, combine_sms, comm_stream);
+    }
+  }
+
+  if (not used_tma_combine) {
+    // 2-hop ring fallback. Uses the channel count dispatch actually produced (ring_num_channels).
+    // The ring buffers are sized for config.num_sms/2 channels, so the all-sender dispatch
+    // (which produces more columns and writes hidden directly, not into the ring) is
+    // incompatible with this fallback -- it requires the TMA combine.
+    EP_HOST_ASSERT(ring_num_channels <= num_channels);
+    const int ring_num_sms = ring_num_channels * 2;
+    EP_HOST_ASSERT(ring_num_channels * num_ranks * sizeof(int) * 2 <= num_nvl_bytes);
+    intranode::cached_notify_combine(buffer_ptrs_gpu, send_head.data_ptr<int>(), ring_num_channels, num_recv_tokens,
+                                     ring_num_channels * num_ranks * 2, task_fifo_ptrs_gpu, head, rank, num_ranks,
+                                     comm_stream);
+
+    // NOTES: this function uses two FIFO slots (barrier before and after)
+    move_fifo_slots(2);
+
+    EP_HOST_ASSERT(ring_num_channels * num_ranks * sizeof(int) * 2 +  // Queue head and tail
+                       ring_num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * hidden *
+                           x.element_size() +  // Data buffer
+                       ring_num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens *
+                           sizeof(int) +  // Source index buffer
+                       ring_num_channels * num_ranks * config.num_max_nvl_chunked_recv_tokens * num_topk *
+                           sizeof(float)  // Top-k weight buffer
+                   <= num_nvl_bytes);
+    intranode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), recv_x.data_ptr(), recv_topk_weights_ptr,
+                       x.data_ptr(), topk_weights_ptr, src_idx.data_ptr<int>(), rank_prefix_matrix.data_ptr<int>(),
+                       channel_prefix_matrix.data_ptr<int>(), send_head.data_ptr<int>(), num_tokens, num_recv_tokens,
+                       hidden, num_topk, buffer_ptrs_gpu, rank, num_ranks, comm_stream, ring_num_sms,
+                       config.num_max_nvl_chunked_send_tokens, config.num_max_nvl_chunked_recv_tokens);
+  }
 
   // Wait streams
   std::optional<EventHandle> event;
