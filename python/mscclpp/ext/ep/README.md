@@ -63,8 +63,8 @@ class MoECommunicatorConfig:
     max_recv_tokens_per_rank: Optional[int] = None
 
     # Runtime mode and output layout
-    mode: str = "ht"            # "ht" or "ll"
-    output_layout: Optional[str] = None  # default is derived from mode
+    mode: str = "ll"            # "ht" or "ll"
+    output_layout: Optional[DispatchLayout] = None  # default is derived from mode
 
     # Quantization defaults
     input_dtype: Optional[torch.dtype] = None
@@ -153,11 +153,10 @@ specialized advanced path.
 
 ### Mode selection
 
-The first version should require the upper layer to select the communication
-mode explicitly:
+The first implementation supports `mode="ll"` only. The upper layer should still
+own mode selection when more modes are added:
 
 ```python
-moe_comm = MoECommunicator(..., mode="ht")  # normal/high-throughput
 moe_comm = MoECommunicator(..., mode="ll")  # low-latency
 ```
 
@@ -169,11 +168,18 @@ The selected mode determines the default dispatch output layout:
 
 | Mode | Default layout |
 |---|---|
-| `ht` | `flat_expert_major` |
-| `ll` | `padded_expert_major` |
+| `ht` | `DispatchLayout.FLAT` |
+| `ll` | `DispatchLayout.EXPERT_MAJOR` |
 
 `output_layout` may still be kept as an advanced override if a backend supports
 multiple layouts within the same mode.
+
+Use `DispatchLayout` instead of string literals for this field:
+
+| Layout enum | Tensor shape |
+|---|---|
+| `DispatchLayout.FLAT` | `[total_recv_tokens, hidden]` |
+| `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 
 ## MoECommunicator methods
 
@@ -185,6 +191,8 @@ class MoECommunicator:
         topk_ids: torch.Tensor,
         weights: Optional[torch.Tensor] = None,
         scales: Optional[QuantScales] = None,
+        *,
+        output_buffer: torch.Tensor,
     ) -> tuple[DispatchOutput, DispatchHandle]:
         ...
 
@@ -225,6 +233,7 @@ dispatch_out, handle = moe_comm.dispatch(
     topk_ids,
     weights=None,
     scales=None,
+    output_buffer=output_buffer,
 )
 
 expert_output = mlp(
@@ -250,13 +259,18 @@ class QuantScales:
     block_size: Optional[int] = None
 
 
+class DispatchLayout(str, Enum):
+    FLAT = "flat"
+    EXPERT_MAJOR = "expert_major"
+
+
 @dataclass
 class DispatchOutput:
     tokens: torch.Tensor
     scales: Optional[QuantScales]
     num_tokens_per_expert: torch.Tensor | list[int]
     expert_offsets: Optional[torch.Tensor] = None
-    layout: str = "flat_expert_major"
+    layout: DispatchLayout = DispatchLayout.FLAT
 
 
 class DispatchHandle:
@@ -389,14 +403,36 @@ Examples:
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
 
+### `output_buffer`
+
+Low-latency dispatch requires the caller to provide the receive token buffer:
+
+```python
+output_buffer: torch.Tensor
+```
+
+For padded expert-major LL layout:
+
+```text
+output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
+```
+
+The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
+For FP8 dispatch it is FP8 and the returned `DispatchOutput.scales` carries the
+matching scale tensor.
+
+`output_buffer` is required for LL because the MLP runner often owns or reuses
+workspace memory. `MoECommunicator` writes dispatch output into the provided
+buffer instead of allocating it internally.
+
 ## Dispatch output layout for MLP
 
 `dispatch` should return MLP-ready tokens. The MLP should not run another
 token-major to expert-major permutation unless it uses a custom adapter.
 
-### Normal / high-throughput mode
+### Normal / high-throughput flat layout
 
-Prefer a flat expert-major layout:
+HT uses `DispatchLayout.FLAT`, a flat expert-major layout:
 
 ```python
 dispatch_out.tokens  # [total_recv_tokens, H]
@@ -427,9 +463,9 @@ tokens[expert_offsets[i] : expert_offsets[i + 1]]
 This layout is efficient for Triton or grouped GEMM kernels because it avoids
 padding.
 
-### Low-latency expert-major mode
+### Low-latency expert-major layout
 
-Some backends may return a padded expert-major tensor:
+LL uses `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 
 ```python
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
@@ -526,7 +562,13 @@ use the weights captured by `dispatch`.
 The default API should be blocking and simple:
 
 ```python
-dispatch_out, handle = moe_comm.dispatch(input, topk_ids, weights, scales)
+dispatch_out, handle = moe_comm.dispatch(
+    input,
+    topk_ids,
+    weights,
+    scales,
+    output_buffer=output_buffer,
+)
 expert_output = mlp(dispatch_out.tokens, dispatch_out.num_tokens_per_expert)
 output = moe_comm.combine(expert_output, handle)
 ```
@@ -551,6 +593,7 @@ dispatch_req = moe_comm.dispatch_async(
     topk_ids,
     weights,
     scales,
+    output_buffer=output_buffer,
     overlap_config=dispatch_overlap_config,
 )
 
@@ -666,6 +709,7 @@ recv, handle = moe_comm.dispatch(
     topk_ids=topk_ids,            # [T, K]
     weights=topk_weights,         # [T, K]
     scales=None,                  # BF16 path
+    output_buffer=recv_buffer,
 )
 
 expert_output = triton_grouped_mlp(
@@ -688,6 +732,7 @@ recv, handle = moe_comm.dispatch(
         format="fp8_e4m3",
         block_size=128,
     ),
+    output_buffer=recv_buffer,
 )
 
 expert_output = fp8_grouped_mlp(

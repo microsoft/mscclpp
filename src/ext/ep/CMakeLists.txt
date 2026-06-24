@@ -1,14 +1,8 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Builds `mscclpp_ep_cpp`, a nanobind + PyTorch C++ extension that exposes the
-# EP (Mixture-of-Experts dispatch/combine) runtime to Python.
-#
-# Requires: PyTorch with its CMake integration available on CMAKE_PREFIX_PATH.
-# Easiest invocation:
-#     cmake -S . -B build \
-#           -DMSCCLPP_BUILD_EXT_EP=ON \
-#           -DCMAKE_PREFIX_PATH="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
+# Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
+# (Mixture-of-Experts dispatch/combine) runtime to Python.
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
@@ -17,19 +11,29 @@ if(NOT TARGET nanobind-static AND NOT TARGET nanobind)
     FetchContent_MakeAvailable(nanobind)
 endif()
 
-find_package(Torch QUIET)
-if(NOT Torch_FOUND)
-    message(WARNING
-        "MSCCLPP_BUILD_EXT_EP=ON but PyTorch CMake package was not found. "
-        "Set CMAKE_PREFIX_PATH to `$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')` "
-        "or disable MSCCLPP_BUILD_EXT_EP. Skipping the EP extension.")
-    return()
+set(_mscclpp_ep_gpu_archs "")
+if(MSCCLPP_USE_CUDA)
+    foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
+        if(_arch STREQUAL "native")
+            list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+        else()
+            string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
+            if(_arch_num AND _arch_num GREATER_EQUAL 90)
+                list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+            endif()
+        endif()
+    endforeach()
+    if(NOT _mscclpp_ep_gpu_archs)
+        message(FATAL_ERROR
+            "MSCCLPP_BUILD_EXT_EP=ON requires CUDA architecture 90 or newer. "
+            "Set MSCCLPP_GPU_ARCHS to include 90+ (for example, -DMSCCLPP_GPU_ARCHS=90).")
+    endif()
 endif()
 
-file(GLOB_RECURSE EP_SOURCES CONFIGURE_DEPENDS
-    buffer.cc
+set(EP_SOURCES
+    moe_runtime.cc
     bindings.cpp
-    kernels/*.cu
+    kernels/low_latency.cu
 )
 
 if(MSCCLPP_USE_ROCM)
@@ -40,12 +44,11 @@ if(MSCCLPP_USE_ROCM)
 endif()
 
 # Build as a Python extension module (shared object with Python ABI suffix).
-# The name `mscclpp_ep_cpp` matches the `TORCH_EXTENSION_NAME` hard-coded in
-# `bindings.cpp` / `buffer.hpp`.
 nanobind_add_module(mscclpp_ep_cpp ${EP_SOURCES})
+if(MSCCLPP_USE_CUDA)
+    set_target_properties(mscclpp_ep_cpp PROPERTIES CUDA_ARCHITECTURES "${_mscclpp_ep_gpu_archs}")
+endif()
 
-target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
-target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_AVOID_BFLOAT16_ALIAS)
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
@@ -53,20 +56,6 @@ target_include_directories(mscclpp_ep_cpp PRIVATE
     ${PROJECT_SOURCE_DIR}/src/ext/include
     ${GPU_INCLUDE_DIRS}
 )
-target_link_libraries(mscclpp_ep_cpp PRIVATE ${TORCH_LIBRARIES})
-# Torch's CUDA interop library (ATen CUDAStream helpers used in buffer.cc).
-if(TARGET torch::torch)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE torch::torch)
-endif()
-# libtorch_python contains Python bindings for torch::Tensor / torch::dtype
-# (symbols like THPDtypeType). It is not listed in TORCH_LIBRARIES.
-find_library(TORCH_PYTHON_LIBRARY torch_python
-    HINTS "${TORCH_INSTALL_PREFIX}/lib")
-if(TORCH_PYTHON_LIBRARY)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE ${TORCH_PYTHON_LIBRARY})
-else()
-    message(WARNING "libtorch_python not found; `import mscclpp_ep_cpp` may fail at runtime.")
-endif()
 target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
 
 # Number of intra-node NVLink peers compiled into the EP kernels.

@@ -798,14 +798,15 @@ void Buffer::sync(const std::vector<int>& device_ids,
         fflush(stdout);
       }
 
-      // Increment 5 (inc5 flat-domain dispatch): when MSCCLPP_EP_DIRECT is set,
-      // exchange the cuMem-fabric recv-output pool base to ALL ranks (indexed by
-      // global rank), mirroring the peer_rdma_bases exchange. Lets the RDMA sender
-      // write each token directly into the destination GPU's recv pool over
-      // fabric-VA, removing the rail-aligned rdma_channel bounce + forwarder
-      // transpose. Same cuMem FABRIC handle as inc4a's pool. Env-gated so the
-      // inc4a baseline (MSCCLPP_EP_DIRECT unset) is byte-for-byte unchanged.
+#ifdef EP_DISPATCH_NCCLEP
       {
+        // Increment 5 (inc5 flat-domain dispatch): when MSCCLPP_EP_DIRECT is set,
+        // exchange the cuMem-fabric recv-output pool base to ALL ranks (indexed by
+        // global rank), mirroring the peer_rdma_bases exchange. Lets the RDMA sender
+        // write each token directly into the destination GPU's recv pool over
+        // fabric-VA, removing the rail-aligned rdma_channel bounce + forwarder
+        // transpose. Same cuMem FABRIC handle as inc4a's pool. Env-gated so the
+        // inc4a baseline (MSCCLPP_EP_DIRECT unset) is byte-for-byte unchanged.
         const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
         const bool ep_direct = (e_direct != nullptr && std::atoi(e_direct) != 0);
         if (ep_direct && recv_pool_local_ptr_ != nullptr) {
@@ -846,6 +847,7 @@ void Buffer::sync(const std::vector<int>& device_ids,
                                   sizeof(int) * static_cast<size_t>(Config::kEpRecvPoolMaxTokens) * num_ranks));
         }
       }
+#endif
 
       if (low_latency_mode) {
         // LL barrier ring needs MemoryChannels.
@@ -1091,6 +1093,7 @@ Buffer::intranode_dispatch(
   // peer-mapped recv pool so the sender writes hidden straight to its final slot,
   // eliminating the 2-hop ring + receiver hidden drain. Falls back to torch::empty.
   void** ep_intra_recv_pool_ptrs = nullptr;
+#ifdef EP_DISPATCH_NCCLEP
   const size_t ep_intra_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
   const char* e_intra_direct = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
   const bool ep_intra_direct =
@@ -1099,6 +1102,10 @@ Buffer::intranode_dispatch(
       static_cast<int64_t>(num_recv_tokens) * hidden * static_cast<int64_t>(x.element_size()) <=
           static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks)) -
               static_cast<int64_t>(ep_intra_pool_header_bytes);
+#else
+  const size_t ep_intra_pool_header_bytes = 0;
+  const bool ep_intra_direct = false;
+#endif
 
   // Allocate new tensors
   torch::Tensor recv_x;

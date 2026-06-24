@@ -24,7 +24,7 @@ targeting:
 | GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
 | Multi-`ProxyService` sharding      | ✅ env-tunable, arch-aware default                 |
 | `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp                      |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                             |
+| Python frontend `mscclpp.ext.ep`   | ✅ wraps the new LL MoECommunicator path                 |
 | nanobind module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
 
 Internode HT was validated end-to-end on two H100×8 nodes connected over
@@ -104,29 +104,34 @@ dst_rank)`.
 
 ## Build
 
-The extension is **off by default** and requires PyTorch's CMake package:
+For Python installs, use the `ep` extra:
 
 ```bash
-TORCH_CMAKE=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')
+python -m pip install ".[cuda12,ep]"
+```
+
+The EP extension targets CUDA architectures **90 or newer**. Plain CMake builds
+can enable it explicitly:
+
+```bash
 cmake -S . -B build \
-      -DMSCCLPP_BUILD_EXT_EP=ON \
-      -DCMAKE_PREFIX_PATH="${TORCH_CMAKE}"
+      -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j
 ```
 
-This produces `mscclpp_ep_cpp.so` — a nanobind PyTorch extension module.
+This produces `mscclpp_ep_cpp.so` — a nanobind extension module.
 The Python frontend picks it up automatically:
 
 ```python
 from mscclpp.ext import ep
-runtime = ep.ExpertParallelRuntime(group, num_nvl_bytes=..., num_rdma_bytes=...)
+moe_comm = ep.MoECommunicator(...)
 ```
 
 ### Build-time CMake options
 
 | Variable                              | Default | Meaning                                                       |
 |---------------------------------------|---------|---------------------------------------------------------------|
-| `MSCCLPP_BUILD_EXT_EP`                | `OFF`   | Build the EP extension at all                                 |
+| `MSCCLPP_BUILD_EXT_EP`                | `ON` in Python wheels | Build the EP extension at all                |
 | `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | Compile-time `NUM_MAX_NVL_PEERS` — set to `4` for GB200 NVL72 |
 | `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT`     | `OFF`   | Use a short ~10s kernel spin timeout (default is ~100s)       |
 
@@ -142,14 +147,11 @@ build-time settings are required:
 # Option 1: plain CMake.
 cmake -S . -B build \
       -DMSCCLPP_BUILD_EXT_EP=ON \
-      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
-      -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4
 cmake --build build -j
 
-# Option 2: wheel-based install (pyproject.toml already sets
-# MSCCLPP_BUILD_EXT_EP=ON).
-CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
-python3 -m pip install --no-build-isolation \
+# Option 2: wheel-based install.
+python3 -m pip install ".[cuda12,ep]" \
     --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
     .
 ```
@@ -268,16 +270,17 @@ topk=8, experts=256):
 > `127.0.0.1` rendezvous (not `torchrun --standalone`, whose hostname
 > rendezvous is not DNS-resolvable on these nodes) and set
 > `NCCL_NET_PLUGIN=none` + `NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3` so NCCL's
-> built-in IB probe does not crash `ep.ExpertParallelRuntime` construction.
+> built-in IB probe does not crash `ep.MoECommunicator` construction.
 
 ## Layout
 
 ```
 src/ext/ep/
-├── CMakeLists.txt              — builds mscclpp_ep_cpp (Torch + nanobind)
+├── CMakeLists.txt              — builds mscclpp_ep_cpp (nanobind)
 ├── README.md                   — this file
-├── buffer.hpp / buffer.cc      — host-side Buffer, sync(), dispatch/combine
-├── config.hpp / event.hpp      — Config, EventHandle
+├── moe_runtime.hpp / .cc       — LL MoE runtime state and raw-pointer dispatch/combine
+├── buffer.hpp / buffer.cc      — legacy host-side HT/DeepEP-compatible runtime
+├── config.hpp / event.hpp      — legacy Config/EventHandle plus LL layout helpers
 ├── bindings.cpp                — nanobind module definition
 └── kernels/
     ├── api.cuh                 — host-callable kernel prototypes
@@ -293,8 +296,8 @@ src/ext/ep/
     └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
 
 python/mscclpp/ext/ep/
-├── __init__.py                 — reexports MoECommunicator / ExpertParallelRuntime
-└── communicator.py             — torch.distributed-aware frontend
+├── __init__.py                 — reexports MoECommunicator / MoERuntime
+└── communicator.py             — torch.Tensor frontend over raw-pointer runtime calls
 
 test/python/ext/ep/
 ├── test_intranode_multirank.py        — intranode HT dispatch+combine

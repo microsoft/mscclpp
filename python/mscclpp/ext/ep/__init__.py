@@ -3,17 +3,16 @@
 """MSCCL++ Expert-Parallel (MoE dispatch/combine) extension.
 
 See ``src/ext/ep/README.md`` in the repository for migration status.
-``MoECommunicator`` is the high-level API, and ``ExpertParallelRuntime`` is
-the low-level runtime wrapper for advanced HT/intranode paths.
+``MoECommunicator`` is the high-level API, and ``MoERuntime`` is the
+low-level runtime wrapper.
 """
 
 from .communicator import (  # noqa: F401
     CommOverlapConfig,
-    Config,
     DispatchHandle,
     DispatchOutput,
-    EventHandle,
-    ExpertParallelRuntime,
+    DispatchLayout,
+    MoERuntime,
     MoECommunicator,
     MoECommunicatorConfig,
     QuantScales,
@@ -21,11 +20,10 @@ from .communicator import (  # noqa: F401
 
 __all__ = [
     "CommOverlapConfig",
-    "Config",
     "DispatchHandle",
     "DispatchOutput",
-    "EventHandle",
-    "ExpertParallelRuntime",
+    "DispatchLayout",
+    "MoERuntime",
     "MoECommunicator",
     "MoECommunicatorConfig",
     "QuantScales",

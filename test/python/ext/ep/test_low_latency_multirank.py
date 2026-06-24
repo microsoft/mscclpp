@@ -137,7 +137,17 @@ def main():
     print(f"[rank {rank}] pre-dispatch", flush=True)
 
     # --- Dispatch ---
-    dispatch_out, handle = moe_comm.dispatch(x, topk_idx, topk_weights)
+    dispatch_output_buffer = torch.empty(
+        (num_local_experts, num_ranks * num_tokens, hidden),
+        dtype=torch.bfloat16,
+        device="cuda",
+    )
+    dispatch_out, handle = moe_comm.dispatch(
+        x,
+        topk_idx,
+        topk_weights,
+        output_buffer=dispatch_output_buffer,
+    )
     packed_recv_x = dispatch_out.tokens
     packed_recv_count = dispatch_out.num_tokens_per_expert
     packed_recv_layout_range = handle.layout_range
@@ -211,9 +221,15 @@ def main():
 
     warmup = args.bench_warmup
     iters = args.bench_iters
+    bench_dispatch_output_buffer = torch.empty_like(dispatch_output_buffer)
 
     def _dispatch():
-        return moe_comm.dispatch(x, topk_idx, topk_weights)
+        return moe_comm.dispatch(
+            x,
+            topk_idx,
+            topk_weights,
+            output_buffer=bench_dispatch_output_buffer,
+        )
 
     # Hoist combine's output-tensor allocation out of the timed loop so the
     # measurement reflects the kernel cost. (The original test also cloned the

@@ -6,9 +6,8 @@
 """Python frontend for the MSCCL++ Expert-Parallel extension.
 
 This is a thin wrapper around the nanobind extension ``mscclpp_ep_cpp``.
-``MoECommunicator`` is the high-level API. ``ExpertParallelRuntime`` is a
-lower-level runtime wrapper used by legacy HT/intranode tests and advanced
-callers.
+``MoECommunicator`` is the high-level API. ``MoERuntime`` is a lower-level
+low-latency runtime wrapper used by the high-level API.
 
 Current status (see ``src/ext/ep/README.md``):
 
@@ -26,11 +25,10 @@ Current status (see ``src/ext/ep/README.md``):
 from __future__ import annotations
 
 import os
-import pickle
 from dataclasses import dataclass
+from enum import Enum
 from typing import Optional
 
-import numpy as np
 import torch
 from mscclpp._core import CommGroup
 
@@ -38,61 +36,14 @@ try:
     import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
 except ImportError as exc:  # pragma: no cover
     raise ImportError(
-        "mscclpp_ep_cpp is not available. Build mscclpp with "
-        "-DMSCCLPP_BUILD_EXT_EP=ON (and ensure PyTorch's CMake prefix is on "
-        "CMAKE_PREFIX_PATH) or install via `pip install` after the build."
+        "mscclpp_ep_cpp is not available. Build mscclpp with -DMSCCLPP_BUILD_EXT_EP=ON "
+        "or install with `pip install .[ep]`."
     ) from exc
 
-Config = _cpp.Config
-EventHandle = _cpp.EventHandle
 
-
-def _send_bytes(comm: CommGroup, data: bytes, peer: int, tag: int) -> None:
-    size = np.array([len(data)], dtype=np.int64)
-    comm.send(size, peer, tag)
-    if data:
-        payload = np.frombuffer(data, dtype=np.uint8).copy()
-        comm.send(payload, peer, tag + 1)
-
-
-def _recv_bytes(comm: CommGroup, peer: int, tag: int) -> bytes:
-    size = np.empty(1, dtype=np.int64)
-    comm.recv(size, peer, tag)
-    payload_size = int(size[0])
-    if payload_size == 0:
-        return b""
-    payload = np.empty(payload_size, dtype=np.uint8)
-    comm.recv(payload, peer, tag + 1)
-    return payload.tobytes()
-
-
-def _all_gather_object(comm: CommGroup, obj, tag: int):
-    rank = comm.my_rank
-    world_size = comm.nranks
-    if rank == 0:
-        values = [obj]
-        for peer in range(1, world_size):
-            values.append(pickle.loads(_recv_bytes(comm, peer, tag)))
-        payload = pickle.dumps(values)
-        for peer in range(1, world_size):
-            _send_bytes(comm, payload, peer, tag + 2)
-        return values
-
-    _send_bytes(comm, pickle.dumps(obj), 0, tag)
-    return pickle.loads(_recv_bytes(comm, 0, tag + 2))
-
-
-def _broadcast_object(comm: CommGroup, obj, src: int, tag: int):
-    rank = comm.my_rank
-    world_size = comm.nranks
-    if rank == src:
-        payload = pickle.dumps(obj)
-        for peer in range(world_size):
-            if peer != src:
-                _send_bytes(comm, payload, peer, tag)
-        return obj
-
-    return pickle.loads(_recv_bytes(comm, src, tag))
+class DispatchLayout(str, Enum):
+    FLAT = "flat"
+    EXPERT_MAJOR = "expert_major"
 
 
 @dataclass
@@ -109,7 +60,7 @@ class MoECommunicatorConfig:
     max_tokens_per_rank: int = 0
     max_recv_tokens_per_rank: Optional[int] = None
     mode: str = "ll"
-    output_layout: Optional[str] = None
+    output_layout: Optional[DispatchLayout | str] = None
     input_dtype: Optional[torch.dtype] = None
     quant_format: Optional[str] = None
     num_rdma_qps_per_rank: int = 12
@@ -132,7 +83,7 @@ class DispatchOutput:
     scales: Optional[QuantScales]
     num_tokens_per_expert: torch.Tensor | list[int]
     expert_offsets: Optional[torch.Tensor] = None
-    layout: str = "flat_expert_major"
+    layout: DispatchLayout = DispatchLayout.FLAT
 
 
 @dataclass
@@ -149,7 +100,7 @@ class DispatchHandle:
     hidden_size: int
     num_local_experts: int
     local_expert_start: int
-    layout: str
+    layout: DispatchLayout
     output_scales: Optional[QuantScales] = None
 
 
@@ -165,8 +116,8 @@ class CommOverlapConfig:
     block_ready_value: Optional[int] = None
 
 
-class ExpertParallelRuntime:
-    """Low-level expert-parallel runtime wrapper.
+class MoERuntime:
+    """Low-level MoE communication runtime wrapper.
 
     Parameters
     ----------
@@ -205,90 +156,33 @@ class ExpertParallelRuntime:
         self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self._cpp_buffer = _cpp.ExpertParallelRuntime(
-            self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode
-        )
+        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
 
-        # Exchange device IDs + IPC handles + (for RDMA) the MSCCL++ unique id.
-        local_device_id = self._cpp_buffer.get_local_device_id()
-        device_ids = _all_gather_object(comm, local_device_id, tag=1000)
-
-        local_ipc_handle = self._cpp_buffer.get_local_ipc_handle()
-        ipc_handles = _all_gather_object(comm, local_ipc_handle, tag=1010)
-
-        root_unique_id: Optional[bytes] = None
-        # MSCCL++ requires a bootstrapped Communicator even for pure-NVLink
-        # setups because the C++ runtime sync uses `communicator->connect(ipc)`
-        # to build MemoryChannels. We always exchange a unique id.
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
-
-        if self.rank == 0:
-            root_unique_id = self._cpp_buffer.create_unique_id()
-        root_unique_id = _broadcast_object(comm, root_unique_id, src=0, tag=1020)
-        assert root_unique_id is not None
-        self._cpp_buffer.connect(root_unique_id)
-
-        # sync() expects Sequence[bytearray | None] / bytearray | None.
-        ipc_handles_ba = [bytearray(h) if h is not None else None for h in ipc_handles]
-        self._cpp_buffer.sync(device_ids, ipc_handles_ba, bytearray(root_unique_id))
+        self._cpp_runtime.sync()
 
     # ------------------------------------------------------------------
     # Sanity helpers
     # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
-        return self._cpp_buffer.is_available()
+        return self._cpp_runtime.is_available()
 
     def is_internode_available(self) -> bool:
-        return self._cpp_buffer.is_internode_available()
+        return self._cpp_runtime.is_internode_available()
 
     def get_local_device_id(self) -> int:
-        return self._cpp_buffer.get_local_device_id()
+        return self._cpp_runtime.get_local_device_id()
 
     def get_num_rdma_ranks(self) -> int:
-        return self._cpp_buffer.get_num_rdma_ranks()
+        return self._cpp_runtime.get_num_rdma_ranks()
 
     def get_rdma_rank(self) -> int:
-        return self._cpp_buffer.get_rdma_rank()
+        return self._cpp_runtime.get_rdma_rank()
 
     def get_root_rdma_rank(self, global_: bool) -> int:
-        return self._cpp_buffer.get_root_rdma_rank(global_)
-
-    # ------------------------------------------------------------------
-    # Layout / dispatch / combine (thin pass-through wrappers).
-    # These are low-level runtime APIs for compatibility tests and advanced
-    # callers. New MoE code should prefer MoECommunicator.
-    # ------------------------------------------------------------------
-
-    def get_dispatch_layout(
-        self,
-        topk_idx: torch.Tensor,
-        num_experts: int,
-        previous_event: Optional[EventHandle] = None,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
-    ):
-        return self._cpp_buffer.get_dispatch_layout(
-            topk_idx, num_experts, previous_event, async_finish, allocate_on_comm_stream
-        )
-
-    def intranode_dispatch(self, *args, **kwargs):
-        return self._cpp_buffer.intranode_dispatch(*args, **kwargs)
-
-    def intranode_combine(self, *args, **kwargs):
-        return self._cpp_buffer.intranode_combine(*args, **kwargs)
-
-    def internode_dispatch(self, *args, **kwargs):
-        return self._cpp_buffer.internode_dispatch(*args, **kwargs)
-
-    def internode_combine(self, *args, **kwargs):
-        return self._cpp_buffer.internode_combine(*args, **kwargs)
-
-    def get_local_buffer_tensor(
-        self, dtype: torch.dtype, offset: int = 0, use_rdma_buffer: bool = False
-    ) -> torch.Tensor:
-        return self._cpp_buffer.get_local_buffer_tensor(dtype, offset, use_rdma_buffer)
+        return self._cpp_runtime.get_root_rdma_rank(global_)
 
 
 class MoECommunicator:
@@ -322,9 +216,9 @@ class MoECommunicator:
         if self.mode != "ll":
             raise NotImplementedError("MoECommunicator currently supports only mode='ll'")
 
-        self.output_layout = config.output_layout or "padded_expert_major"
-        if self.output_layout != "padded_expert_major":
-            raise NotImplementedError("low-latency mode currently supports only padded_expert_major output")
+        self.output_layout = _normalize_output_layout(config.output_layout, self.mode)
+        if self.output_layout != DispatchLayout.EXPERT_MAJOR:
+            raise NotImplementedError("low-latency mode currently supports only expert-major 3D output")
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
@@ -365,13 +259,12 @@ class MoECommunicator:
             raise NotImplementedError("custom comm_stream is not wired into the low-latency runtime yet")
         self.enable_overlap = config.enable_overlap
         self.num_sms = config.num_sms
-        self._dispatch_tokens: Optional[torch.Tensor] = None
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
 
-        self._runtime = ExpertParallelRuntime(
+        self._runtime = MoERuntime(
             comm,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
@@ -391,30 +284,37 @@ class MoECommunicator:
         topk_ids: torch.Tensor,
         weights: Optional[torch.Tensor] = None,
         scales: Optional[QuantScales] = None,
+        *,
+        output_buffer: torch.Tensor,
     ) -> tuple[DispatchOutput, DispatchHandle]:
-        self._validate_dispatch_inputs(input, topk_ids, weights, scales)
+        self._validate_dispatch_inputs(input, topk_ids, weights, scales, output_buffer)
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
-        output_tensors = self._get_dispatch_output_tensors(input.device)
-        packed_tokens, packed_scales, num_tokens_per_expert, src_info, layout_range, _event, _hook = (
-            self._runtime._cpp_buffer.low_latency_dispatch(
-                input,
-                topk_ids,
-                self.max_tokens_per_rank,
-                self.num_experts,
-                self.dispatch_use_fp8,
-                False,
-                False,
-                *output_tensors,
-            )
+        output_tensors = self._get_dispatch_output_tensors(output_buffer)
+        output_buffer, packed_scales, src_info, layout_range, num_tokens_per_expert = output_tensors
+        self._runtime._cpp_runtime.dispatch(
+            input.data_ptr(),
+            topk_ids.data_ptr(),
+            output_buffer.data_ptr(),
+            0 if packed_scales is None else packed_scales.data_ptr(),
+            src_info.data_ptr(),
+            layout_range.data_ptr(),
+            num_tokens_per_expert.data_ptr(),
+            input.size(0),
+            self.hidden_size,
+            self.topk,
+            self.max_tokens_per_rank,
+            self.num_experts,
+            self.dispatch_use_fp8,
+            torch.cuda.current_stream().cuda_stream,
         )
         output_scales = None
         if packed_scales is not None:
             output_scales = QuantScales(local=packed_scales, format="fp8_e4m3", block_size=128)
 
         dispatch_out = DispatchOutput(
-            tokens=packed_tokens,
+            tokens=output_buffer,
             scales=output_scales,
             num_tokens_per_expert=num_tokens_per_expert,
             expert_offsets=None,
@@ -436,25 +336,16 @@ class MoECommunicator:
         )
         return dispatch_out, handle
 
-    def _get_dispatch_output_tensors(self, device: torch.device) -> tuple[
+    def _get_dispatch_output_tensors(self, output_buffer: torch.Tensor) -> tuple[
         torch.Tensor,
         Optional[torch.Tensor],
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
     ]:
+        device = output_buffer.device
         slots_per_expert = self.world_size * self.max_tokens_per_rank
-        token_dtype = torch.float8_e4m3fn if self.dispatch_use_fp8 else torch.bfloat16
-        if (
-            self._dispatch_tokens is None
-            or self._dispatch_tokens.device != device
-            or self._dispatch_tokens.dtype != token_dtype
-        ):
-            self._dispatch_tokens = torch.empty(
-                (self.num_local_experts, slots_per_expert, self.hidden_size),
-                dtype=token_dtype,
-                device=device,
-            )
+        if self._dispatch_src_info is None or self._dispatch_src_info.device != device:
             self._dispatch_src_info = torch.empty(
                 (self.num_local_experts, slots_per_expert),
                 dtype=torch.int32,
@@ -480,12 +371,11 @@ class MoECommunicator:
                 )
                 self._dispatch_scales = scales_storage.transpose(1, 2)
 
-        assert self._dispatch_tokens is not None
         assert self._dispatch_src_info is not None
         assert self._dispatch_layout_range is not None
         assert self._dispatch_count is not None
         return (
-            self._dispatch_tokens,
+            output_buffer,
             self._dispatch_scales,
             self._dispatch_src_info,
             self._dispatch_layout_range,
@@ -506,21 +396,25 @@ class MoECommunicator:
                 raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
             x_scales = handle.output_scales.local
 
-        combined, _event, _hook = self._runtime._cpp_buffer.low_latency_combine(
-            expert_output,
-            x_scales,
-            handle.topk_ids,
-            handle.weights,
-            handle.src_info,
-            handle.layout_range,
+        if out is None:
+            out = torch.empty((handle.num_tokens, self.hidden_size), dtype=torch.bfloat16, device=expert_output.device)
+        self._runtime._cpp_runtime.combine(
+            expert_output.data_ptr(),
+            0 if x_scales is None else x_scales.data_ptr(),
+            handle.topk_ids.data_ptr(),
+            handle.weights.data_ptr(),
+            handle.src_info.data_ptr(),
+            handle.layout_range.data_ptr(),
+            out.data_ptr(),
+            handle.num_tokens,
+            self.hidden_size,
+            handle.weights.size(1),
             handle.num_max_dispatch_tokens_per_rank,
             handle.num_experts,
-            False,
-            False,
-            False,
-            out,
+            _is_fp8_e4m3_tensor(expert_output),
+            torch.cuda.current_stream().cuda_stream,
         )
-        return combined
+        return out
 
     def dispatch_async(self, *args, **kwargs):
         raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
@@ -549,7 +443,10 @@ class MoECommunicator:
         topk_ids: torch.Tensor,
         weights: Optional[torch.Tensor],
         scales: Optional[QuantScales],
+        output_buffer: torch.Tensor,
     ) -> None:
+        if output_buffer is None:
+            raise ValueError("output_buffer is required for low-latency dispatch")
         if scales is not None and (scales.local is not None or scales.global_scale is not None):
             raise NotImplementedError("low-latency dispatch does not support quantized input scales yet")
         if input.dim() != 2 or not input.is_contiguous():
@@ -573,6 +470,14 @@ class MoECommunicator:
                 raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
+        expected_dtype = torch.float8_e4m3fn if self.dispatch_use_fp8 else torch.bfloat16
+        expected_shape = (self.num_local_experts, self.world_size * self.max_tokens_per_rank, self.hidden_size)
+        if output_buffer.dim() != 3 or not output_buffer.is_contiguous():
+            raise ValueError("output_buffer must be a contiguous padded expert-major tensor")
+        if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
+            raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
+        if tuple(output_buffer.shape) != expected_shape:
+            raise ValueError(f"output_buffer shape must be {expected_shape}")
 
     def _validate_combine_inputs(
         self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
@@ -590,6 +495,20 @@ class MoECommunicator:
             expected_out_shape = (handle.num_tokens, self.hidden_size)
             if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
                 raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
+
+
+def _normalize_output_layout(layout: Optional[DispatchLayout | str], mode: str) -> DispatchLayout:
+    if layout is None:
+        return DispatchLayout.EXPERT_MAJOR if mode == "ll" else DispatchLayout.FLAT
+    if isinstance(layout, DispatchLayout):
+        return layout
+
+    normalized = layout.lower().replace("-", "_")
+    if normalized in ("flat", "flat_2d", "flat_expert_major"):
+        return DispatchLayout.FLAT
+    if normalized in ("expert_major", "expert_major_3d", "padded_expert_major"):
+        return DispatchLayout.EXPERT_MAJOR
+    raise ValueError(f"unsupported dispatch output layout: {layout}")
 
 
 def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
