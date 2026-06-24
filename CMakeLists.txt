@@ -208,13 +208,21 @@ if(MSCCLPP_USE_CUDA)
         set(GPU_LIBRARIES CUDA::cudart CUDA::cuda_driver)
     endif()
 else()
-    set(CMAKE_HIP_STANDARD 17)
+    set(CMAKE_HIP_STANDARD 20)
     set(CMAKE_HIP_FLAGS "${CMAKE_HIP_FLAGS} -Wall -Wextra")
 
     set(CMAKE_HIP_ARCHITECTURES ${MSCCLPP_GPU_ARCHS})
 
     set(GPU_LIBRARIES hip::device)
     set(GPU_INCLUDE_DIRS ${hip_INCLUDE_DIRS})
+endif()
+
+message(STATUS "C++ standard: C++${CMAKE_CXX_STANDARD}")
+if(MSCCLPP_USE_CUDA)
+    message(STATUS "CUDA toolkit version: ${CUDAToolkit_VERSION}")
+    message(STATUS "CUDA language standard: C++${CMAKE_CUDA_STANDARD}")
+else()
+    message(STATUS "HIP language standard: C++${CMAKE_HIP_STANDARD}")
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
