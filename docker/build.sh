@@ -4,7 +4,6 @@ set -e
 
 declare -A baseImageTable
 baseImageTable=(
-    ["cuda11.8"]="nvidia/cuda:11.8.0-devel-ubuntu22.04"
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
@@ -19,7 +18,6 @@ extraLdPathTable=(
 
 declare -A ofedVersionTable
 ofedVersionTable=(
-    ["cuda11.8"]="23.07-0.5.1.2"
     ["cuda12.4"]="23.07-0.5.1.2"
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
@@ -31,7 +29,7 @@ TARGET=${1}
 OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
+    echo "Usage: $0 [cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
