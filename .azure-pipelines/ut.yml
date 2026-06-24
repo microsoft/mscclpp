@@ -36,6 +36,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -55,6 +57,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -74,6 +78,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -93,6 +99,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -114,6 +122,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
@@ -155,6 +165,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   container:
     image: $(containerImage)
