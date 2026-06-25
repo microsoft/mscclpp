@@ -31,6 +31,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
   pool:
     name: mscclpp-multi-node
   container:
