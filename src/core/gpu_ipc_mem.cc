@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <mscclpp/gpu_utils.hpp>
+#include <mscclpp/utils.hpp>
 
 #include "logger.hpp"
 #include "unix_socket.hpp"
@@ -35,7 +36,7 @@ std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typ
   return os;
 }
 
-[[maybe_unused]] static bool isFabricMemHandleAvailable() {
+bool isFabricMemHandleAvailable() {
 #if (CUDA_NVLS_API_AVAILABLE)
   static int resultCache = -1;  // -1: uninitialized, 0: not available, 1: available
   if (resultCache != -1) {
@@ -80,8 +81,6 @@ std::ostream& operator<<(std::ostream& os, const GpuIpcMemHandle::TypeFlags& typ
 #endif  // !(CUDA_NVLS_API_AVAILABLE)
 }
 
-#if defined(MSCCLPP_DEVICE_HIP)
-
 // Custom hash and equality for cudaIpcMemHandle_t
 struct CudaIpcMemHandleHash {
   size_t operator()(const cudaIpcMemHandle_t& handle) const {
@@ -96,43 +95,59 @@ struct CudaIpcMemHandleEqual {
   }
 };
 
-static std::unordered_map<cudaIpcMemHandle_t, void*, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>
+static std::unordered_map<cudaIpcMemHandle_t, std::weak_ptr<void>, CudaIpcMemHandleHash, CudaIpcMemHandleEqual>
     openCudaIpcMemHandleMap;
 
 static std::mutex openCudaIpcMemHandleMapMutex;
 
-// Cache open ipc handles to avoid opening multiple times (ROCm may exceed system limit on vm.max_map_count).
-static inline cudaError_t cudaIpcOpenMemHandleWrapper(void** addr, cudaIpcMemHandle_t ipcHandle) {
+static inline cudaError_t cudaIpcOpenMemHandleWrapper(std::shared_ptr<void>& basePtr, cudaIpcMemHandle_t ipcHandle) {
+#if defined(MSCCLPP_DEVICE_HIP)
+  // Cache open ipc handles to avoid opening multiple times (ROCm may exceed system limit on vm.max_map_count).
   std::lock_guard<std::mutex> lock(openCudaIpcMemHandleMapMutex);
   auto it = openCudaIpcMemHandleMap.find(ipcHandle);
   if (it != openCudaIpcMemHandleMap.end()) {
-    *addr = it->second;
-    return cudaSuccess;
+    basePtr = it->second.lock();
+    if (basePtr) {
+      return cudaSuccess;
+    }
+    openCudaIpcMemHandleMap.erase(it);
   }
-  cudaError_t err = cudaIpcOpenMemHandle(addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess);
-  if (err == cudaSuccess) {
-    openCudaIpcMemHandleMap[ipcHandle] = *addr;
+
+  void* rawBasePtr = nullptr;
+  cudaError_t err = cudaIpcOpenMemHandle(&rawBasePtr, ipcHandle, cudaIpcMemLazyEnablePeerAccess);
+  if (err != cudaSuccess) {
+    return err;
   }
-  return err;
-}
 
-static inline cudaError_t cudaIpcCloseMemHandleWrapper(void* addr, cudaIpcMemHandle_t ipcHandle) {
-  std::lock_guard<std::mutex> lock(openCudaIpcMemHandleMapMutex);
-  openCudaIpcMemHandleMap.erase(ipcHandle);
-  return cudaIpcCloseMemHandle(addr);
-}
+  basePtr = std::shared_ptr<void>(rawBasePtr, [ipcHandle](void* ptr) {
+    {
+      std::lock_guard<std::mutex> lock(openCudaIpcMemHandleMapMutex);
+      openCudaIpcMemHandleMap.erase(ipcHandle);
+    }
+    cudaError_t err = cudaIpcCloseMemHandle(ptr);
+    if (err != cudaSuccess) {
+      WARN(GPU, "Failed to close CUDA IPC handle at pointer ", ptr, ": ", cudaGetErrorString(err));
+    }
+  });
+  openCudaIpcMemHandleMap[ipcHandle] = basePtr;
+  return cudaSuccess;
+#else   // !defined(MSCCLPP_DEVICE_HIP)
+  void* rawBasePtr = nullptr;
+  cudaError_t err = cudaIpcOpenMemHandle(&rawBasePtr, ipcHandle, cudaIpcMemLazyEnablePeerAccess);
+  if (err != cudaSuccess) {
+    return err;
+  }
 
-#else  // !defined(MSCCLPP_DEVICE_HIP)
-
-static inline cudaError_t cudaIpcOpenMemHandleWrapper(void** addr, cudaIpcMemHandle_t ipcHandle) {
-  return cudaIpcOpenMemHandle(addr, ipcHandle, cudaIpcMemLazyEnablePeerAccess);
-}
-
-static inline cudaError_t cudaIpcCloseMemHandleWrapper(void* addr, [[maybe_unused]] cudaIpcMemHandle_t ipcHandle) {
-  return cudaIpcCloseMemHandle(addr);
-}
-
+  basePtr = std::shared_ptr<void>(rawBasePtr, [](void* ptr) {
+    cudaError_t err = cudaIpcCloseMemHandle(ptr);
+    if (err != cudaSuccess) {
+      WARN(GPU, "Failed to close CUDA IPC handle at pointer ", ptr, ": ", cudaGetErrorString(err));
+      (void)cudaGetLastError();
+    }
+  });
+  return cudaSuccess;
 #endif  // !defined(MSCCLPP_DEVICE_HIP)
+}
 
 void GpuIpcMemHandle::deleter(GpuIpcMemHandle* handle) {
   if (handle) {
@@ -171,7 +186,8 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   if (err == cudaSuccess) {
     handle->typeFlags |= GpuIpcMemHandle::Type::RuntimeIpc;
   } else {
-    (void)cudaGetLastError();
+    WARN(GPU, "Failed to create runtime CUDA IPC handle for pointer ", (void*)basePtr,
+         ": error=", static_cast<int>(err), " (", std::string(cudaGetErrorString(err)), ")");
   }
 
 #if !defined(MSCCLPP_DEVICE_HIP)  // Remove when HIP fully supports virtual memory management APIs
@@ -283,11 +299,19 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     THROW(GPU, Error, ErrorCode::InvalidUsage, "GpuIpcMemHandle type is None, cannot create GpuIpcMem");
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::Fabric)) {
-    if (cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC) ==
-        CUDA_SUCCESS) {
+    CUresult res =
+        cuMemImportFromShareableHandle(&allocHandle_, (void*)handle_.fabric.handle, CU_MEM_HANDLE_TYPE_FABRIC);
+    if (res == CUDA_SUCCESS) {
       // Ignore allocHandle in the handle struct since it is process-local and not transferable across processes.
       handle_.fabric.allocHandle = {};
       type_ = GpuIpcMemHandle::Type::Fabric;
+    } else {
+      const char* errStr = nullptr;
+      (void)cuGetErrorString(res, &errStr);
+      const std::string errMsg = errStr ? std::string(errStr) : std::string("unknown CUDA error");
+      WARN(GPU, "Fabric IPC handle import failed (", errMsg,
+           "); cross-node CudaIpc requires NVIDIA MNNVL hardware and a running IMEX service. ",
+           "Falling back to other handle types if available.");
     }
   }
   if ((type_ == GpuIpcMemHandle::Type::None) && (handle_.typeFlags & GpuIpcMemHandle::Type::PosixFd)) {
@@ -303,7 +327,17 @@ GpuIpcMem::GpuIpcMem(const GpuIpcMemHandle& handle)
     type_ = GpuIpcMemHandle::Type::RuntimeIpc;
   }
   if (type_ == GpuIpcMemHandle::Type::None) {
-    THROW(GPU, Error, ErrorCode::Aborted, "Failed to open GpuIpcMemHandle (type: ", handle_.typeFlags, ")");
+    const bool fabricOnly = (handle_.typeFlags == GpuIpcMemHandle::Type::Fabric);
+    const std::string hint = fabricOnly
+                                 ? std::string(
+                                       "The remote rank sent only a Fabric (MNNVL) handle, but this rank could not "
+                                       "import it. Check that the IMEX daemon is running on both nodes and that the "
+                                       "GPUs share an NVLink fabric.")
+                                 : std::string(
+                                       "All handle types failed to import; check IMEX service and POSIX FD socket "
+                                       "availability.");
+    THROW(GPU, Error, ErrorCode::Aborted, "Failed to open GpuIpcMemHandle (offered types: ", handle_.typeFlags, "). ",
+          hint);
   }
 }
 
@@ -326,17 +360,10 @@ std::shared_ptr<void> GpuIpcMem::map() {
 
   if (type_ == GpuIpcMemHandle::Type::RuntimeIpc) {
     // RuntimeIpc: Open handle and return shared_ptr with cleanup in deleter
-    void* basePtr = nullptr;
-    MSCCLPP_CUDATHROW(cudaIpcOpenMemHandleWrapper(&basePtr, handle_.runtimeIpc.handle));
-    void* dataPtr = static_cast<void*>(static_cast<char*>(basePtr) + handle_.offsetFromBase);
-    cudaIpcMemHandle_t ipcHandle = handle_.runtimeIpc.handle;
-    return std::shared_ptr<void>(dataPtr, [self = shared_from_this(), basePtr, ipcHandle](void*) {
-      cudaError_t err = cudaIpcCloseMemHandleWrapper(basePtr, ipcHandle);
-      if (err != cudaSuccess) {
-        WARN(GPU, "Failed to close CUDA IPC handle at pointer ", basePtr, ": ", cudaGetErrorString(err));
-        (void)cudaGetLastError();
-      }
-    });
+    std::shared_ptr<void> basePtr;
+    MSCCLPP_CUDATHROW(cudaIpcOpenMemHandleWrapper(basePtr, handle_.runtimeIpc.handle));
+    void* rawDataPtr = static_cast<void*>(static_cast<char*>(basePtr.get()) + handle_.offsetFromBase);
+    return std::shared_ptr<void>(basePtr, rawDataPtr);
   }
 
   size_t pageSize = getpagesize();

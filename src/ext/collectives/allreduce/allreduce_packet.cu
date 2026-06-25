@@ -200,7 +200,8 @@ inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int 
   {
     bool isFp8 = dtype == DataType::FLOAT8_E4M3B15;
 #if defined(__FP8_TYPES_EXIST__)
-    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3 || dtype == DataType::FLOAT8_E5M2;
+    isFp8 = isFp8 || dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ ||
+            dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E5M2FNUZ;
 #endif
     if (isFp8) {
       if (inputSize < (64 << 10)) {
@@ -233,6 +234,18 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   std::pair<int, int> blockAndThreadNum = {nBlocks, nThreadsPerBlock};
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode, dtype);
+  }
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
+  }
+  const int nPeers = ctx->nRanksPerNode - 1;
+  if (blockAndThreadNum.first < nPeers) {
+    WARN(ALGO,
+         "AllreducePacket requires block number to be at least peer count, but got nBlocks=", blockAndThreadNum.first,
+         " and nPeers=", nPeers, ".");
+    return CommResult::CommInvalidArgument;
   }
 
   size_t sendBytes;

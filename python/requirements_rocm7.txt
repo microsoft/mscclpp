@@ -1,0 +1,11 @@
+mpi4py
+cupy
+prettytable
+netifaces
+pytest
+numpy
+matplotlib
+sortedcontainers
+blake3
+pybind11
+hip-python>=7,<8

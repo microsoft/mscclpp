@@ -165,6 +165,7 @@ void gpuFreePhysical(void* ptr);
 void gpuMemcpyAsync(void* dst, const void* src, size_t bytes, cudaStream_t stream,
                     cudaMemcpyKind kind = cudaMemcpyDefault);
 void gpuMemcpy(void* dst, const void* src, size_t bytes, cudaMemcpyKind kind = cudaMemcpyDefault);
+void gpuMemset(void* ptr, int value, size_t bytes);
 
 /// A template function that allocates memory while ensuring that the memory will be freed when the returned object is
 /// destroyed.
@@ -300,6 +301,12 @@ void gpuMemcpy(T* dst, const T* src, size_t nelems, cudaMemcpyKind kind = cudaMe
   detail::gpuMemcpy(dst, src, nelems * sizeof(T), kind);
 }
 
+/// Sets `bytes` of memory at `ptr` to `value` synchronously.
+/// @param ptr Destination address.
+/// @param value Value to set (interpreted as unsigned char per CUDA semantics).
+/// @param bytes Number of bytes to set.
+inline void gpuMemset(void* ptr, int value, size_t bytes) { detail::gpuMemset(ptr, value, bytes); }
+
 /// Check if NVLink SHARP (NVLS) is supported.
 ///
 /// @return True if NVLink SHARP (NVLS) is supported, false otherwise.
@@ -309,6 +316,16 @@ bool isNvlsSupported();
 /// @param ptr The pointer to check.
 /// @return True if the pointer is allocated by cuMemMap, false otherwise.
 bool isCuMemMapAllocated(void* ptr);
+
+/// Granularity used to size a `GpuBuffer` allocation so that it is compatible with the multicast (NVLS) API.
+enum class GpuBufferGranularity {
+  /// Minimum multicast granularity. Rounds the allocation up to the minimum granularity required for multicast
+  /// compatibility, minimizing memory footprint. This is the default.
+  MultiCastMinimum,
+  /// Recommended multicast granularity. Rounds the allocation up to the granularity recommended by the driver,
+  /// which may be larger than the minimum but can yield better performance.
+  MultiCastRecommended,
+};
 
 /// Allocates a GPU memory space specialized for communication. The memory is zeroed out. Get the device pointer by
 /// `GpuBuffer::data()`.
@@ -327,7 +344,11 @@ class GpuBuffer {
  public:
   /// Constructs a GpuBuffer with the specified number of elements.
   /// @param nelems Number of elements to allocate. If it is zero, `data()` will return a null pointer.
-  GpuBuffer(size_t nelems) : nelems_(nelems) {
+  /// @param granularity Granularity used to size the allocation for multicast (NVLS) compatibility. Defaults to
+  /// `GpuBufferGranularity::MultiCastMinimum`, which minimizes memory usage. This is ignored when the buffer is not
+  /// allocated through the multicast-compatible path.
+  GpuBuffer(size_t nelems, [[maybe_unused]] GpuBufferGranularity granularity = GpuBufferGranularity::MultiCastMinimum)
+      : nelems_(nelems) {
     if (nelems == 0) {
       bytes_ = 0;
       return;
@@ -335,7 +356,10 @@ class GpuBuffer {
     MSCCLPP_CUDATHROW(cudaGetDevice(&deviceId_));
 #if (CUDA_NVLS_API_AVAILABLE)
     if (isNvlsSupported()) {
-      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), CU_MULTICAST_GRANULARITY_RECOMMENDED);
+      CUmulticastGranularity_flags granFlag = (granularity == GpuBufferGranularity::MultiCastRecommended)
+                                                  ? CU_MULTICAST_GRANULARITY_RECOMMENDED
+                                                  : CU_MULTICAST_GRANULARITY_MINIMUM;
+      size_t gran = detail::getMulticastGranularity(nelems * sizeof(T), granFlag);
       bytes_ = (nelems * sizeof(T) + gran - 1) / gran * gran / sizeof(T) * sizeof(T);
       memory_ = detail::gpuCallocPhysicalShared<T>(nelems, gran);
       return;
