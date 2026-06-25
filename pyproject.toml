@@ -33,6 +33,10 @@ rocm6 = [
     "cupy",
     "hip-python>=6,<7",
 ]
+rocm7 = [
+    "cupy",
+    "hip-python>=7,<8",
+]
 benchmark = [
     "mpi4py",
     "prettytable",

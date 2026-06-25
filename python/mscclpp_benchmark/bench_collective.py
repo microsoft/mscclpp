@@ -18,7 +18,7 @@ from mscclpp_benchmark.correctness import (
     check_correctness as _check_correctness,
     fill_case_for_benchmark as _fill_case_for_benchmark,
 )
-from mscclpp_benchmark.gpu import capture_graph, init_runtime
+from mscclpp_benchmark.gpu import capture_graph, init_runtime, runtime_name, version
 from mscclpp_benchmark.tuner import OfflineTuner
 from mscclpp_benchmark.tuning_config import HardwareProfile, TunedConfig, TunedConfigStore, normalize_sku
 
@@ -376,7 +376,6 @@ def _measure_case(
     n_ops_per_graph: int,
 ) -> float:
     _fill_case_for_benchmark(case, comm.rank)
-    comm.comm_group.barrier()
     if comm.run(case, config) != 0:
         raise RuntimeError("algorithm returned non-zero status")
     cp.cuda.runtime.deviceSynchronize()
@@ -607,6 +606,10 @@ def main(argv: list[str] | None = None) -> None:
             )
             if comm.rank == 0:
                 print(".", end="", flush=True)
+            if runtime_name() == "hip" and version()[:2] == (7, 2):
+                # TODO: remove this after ROCm 7.2 HIP IPC export issue is fixed.
+                del case
+                comm.comm_group.barrier()
 
         if args.write_config and comm.rank == 0:
             config_store.write_path(args.write_config)

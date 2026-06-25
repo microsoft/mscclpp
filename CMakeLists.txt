@@ -59,6 +59,7 @@ option(MSCCLPP_BYPASS_GPU_CHECK "Bypass GPU check." OFF)
 option(MSCCLPP_NPKIT_FLAGS "Set NPKIT flags" OFF)
 option(MSCCLPP_ENABLE_COVERAGE "Enable code coverage" OFF)
 option(MSCCLPP_DISABLE_NB_LEAK_WARNINGS "Disable Nanobind leak warnings" ON)
+option(MSCCLPP_ROCM_USE_FNUZ_FP8 "Use ROCm FNUZ native FP8 types." ON)
 set(MSCCLPP_GPU_ARCHS "" CACHE STRING "Specify GPU architectures with delimiters (comma, space, or semicolon).")
 
 if(MSCCLPP_BYPASS_GPU_CHECK)
@@ -183,10 +184,19 @@ elseif(MSCCLPP_USE_CUDA)
 	    endif()
     endif()
 elseif(MSCCLPP_USE_ROCM)
-    set(MSCCLPP_GPU_ARCHS gfx90a gfx941 gfx942)
+    set(MSCCLPP_GPU_ARCHS gfx90a gfx942)
 endif()
 
 message(STATUS "GPU architectures: ${MSCCLPP_GPU_ARCHS}")
+
+if(MSCCLPP_USE_ROCM)
+    if(MSCCLPP_ROCM_USE_FNUZ_FP8)
+        add_compile_definitions(MSCCLPP_ROCM_FP8_FNUZ)
+        message(STATUS "ROCm native FP8 aliases: FNUZ (MSCCLPP_ROCM_USE_FNUZ_FP8=ON)")
+    else()
+        message(STATUS "ROCm native FP8 aliases: OCP (MSCCLPP_ROCM_USE_FNUZ_FP8=OFF)")
+    endif()
+endif()
 
 # Declare project
 set(CMAKE_CXX_STANDARD 20)
