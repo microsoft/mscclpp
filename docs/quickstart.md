@@ -14,10 +14,15 @@
             * [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)
             * [ND_H100_v5](https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series)
         * Non-Azure Systems
-            * NVIDIA A100 GPUs + CUDA >= 11.8
+            * NVIDIA A100 GPUs + CUDA >= 12.0
             * NVIDIA H100 GPUs + CUDA >= 12.0
             * AMD MI250X GPUs + ROCm >= 5.7
             * AMD MI300X GPUs + ROCm >= 6.0
+* Toolchain
+    * MSCCL++ is built as **C++20** (both host and device code), so a C++20-capable toolchain is required.
+    * [CMake](https://cmake.org/) >= 3.25
+    * A C++20-capable host compiler, e.g., GCC >= 11 or Clang >= 14
+    * On NVIDIA platforms, **CUDA Toolkit >= 12.0** is required. `nvcc` first added `-std=c++20` support in CUDA 12.0, so earlier toolkits (11.x and below) cannot build the project.
 * OS
     * Tested on Ubuntu 20.04 and later
 * Libraries
@@ -109,12 +114,12 @@ $ python -m pip install ".[cuda12]"
 $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm7]"
 ```
 
-> **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, `rocm6`, or `rocm7`) is required to install CuPy.
+> **Note:** A platform extra (`cuda12`, `cuda13`, `rocm6`, or `rocm7`) is required to install CuPy.
 > The CUDA extras install pre-built CuPy wheels and CUDA Python bindings. The ROCm extras install CuPy from source
 > and HIP Python for the matching ROCm major version, which require ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
 
 Optional extras can be installed by specifying them in brackets. Available extras:
-- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package and CUDA Python bindings for your CUDA version.
+- **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package and CUDA Python bindings for your CUDA version.
 - **`rocm6`**, **`rocm7`**: Install CuPy from source and HIP Python for AMD ROCm platforms.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
@@ -215,7 +220,7 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 
 ```bash
 # Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
-# Replace `cuda12` with your platform: cuda11, cuda12, cuda13, rocm6, or rocm7.
+# Replace `cuda12` with your platform: cuda12, cuda13, rocm6, or rocm7.
 $ python3 -m pip install ".[cuda12,benchmark,test]"
 
 ```
