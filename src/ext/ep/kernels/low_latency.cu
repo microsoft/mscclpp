@@ -161,7 +161,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* 
   const auto stagedMsgBase = reinterpret_cast<uint8_t*>(stagedRecv) +
                              localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
                              sourceRank * numMaxDispatchTokensPerRank * numBytesPerMsg;
-  const auto packedX =
+  const auto outputPayload =
       reinterpret_cast<int4*>(output) + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * hiddenInt4;
   const auto packedSrcInfo = outputSrcInfo + localExpertIdx * numRanks * numMaxDispatchTokensPerRank;
   const auto outputLayout = outputLayoutRange + localExpertIdx * numRanks;
@@ -191,8 +191,8 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* 
     __syncwarp();
 
     const auto stagedPayload = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(stagedMsg) + sizeof(int4));
-    const auto packedXRow = packedX + (recvTokenBeginIdx + i) * hiddenInt4;
-    UNROLLED_WARP_COPY(7, laneId, hiddenInt4, packedXRow, stagedPayload, ld_nc_global, st_na_global);
+    const auto outputPayloadRow = outputPayload + (recvTokenBeginIdx + i) * hiddenInt4;
+    UNROLLED_WARP_COPY(7, laneId, hiddenInt4, outputPayloadRow, stagedPayload, ld_nc_global, st_na_global);
 
     copyScales<kInputDType, kOutputDType>(outputScales, stagedPayload, localExpertIdx, recvTokenBeginIdx + i, numRanks,
                                           numMaxDispatchTokensPerRank, hiddenBytes, numScales, laneId);
