@@ -47,7 +47,7 @@ namespace low_latency {
 
 template <int kNumThreads>
 __launch_bounds__(kNumThreads, 1) __global__
-    void cleanLowLatencyBuffer(int64_t* clean0, int numCleanInt0, int64_t* clean1, int numCleanInt1,
+    void cleanLowLatencyBuffer(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1,
                                mscclpp::PortChannelDeviceHandle* portChannelHandles,
                                mscclpp::BaseMemoryChannelDeviceHandle* memoryChannelHandles, int rank, int numRanks,
                                int ranksPerIpcDomain) {
@@ -56,31 +56,25 @@ __launch_bounds__(kNumThreads, 1) __global__
 
   // Clean
   auto threadId = static_cast<int>(threadIdx.x);
-  for (int i = threadId; i < numCleanInt0; i += kNumThreads) clean0[i] = 0;
-  for (int i = threadId; i < numCleanInt1; i += kNumThreads) clean1[i] = 0;
+  for (int i = threadId; i < numInt0; i += kNumThreads) buffer0[i] = 0;
+  for (int i = threadId; i < numInt1; i += kNumThreads) buffer1[i] = 0;
 
   // Barrier after cleaning so every rank observes zeroed signaling slots.
   channelBarrierBlock(portChannelHandles, memoryChannelHandles, rank, numRanks, ranksPerIpcDomain);
 }
 
-void cleanBuffers(int64_t* cleanup0, int cleanupSize0, int64_t* cleanup1, int cleanupSize1,
-                  const TransportContext& transport, cudaStream_t stream) {
+void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, const TransportContext& transport,
+                  cudaStream_t stream) {
   constexpr int kThreadsPerBlock = 256;  // max EP shards
   const int kNumBlocks = 1;
 
-  auto clean0 = cleanup0;
-  auto numCleanInt0 = cleanupSize0;
-  auto clean1 = cleanup1;
-  auto numCleanInt1 = cleanupSize1;
   auto rank = transport.rank_;
   auto numRanks = transport.numRanks_;
   auto ranksPerIpcDomain = transport.ranksPerIpcDomain_;
   auto portChannelHandles = transport.portChannels_;
   auto memoryChannelHandles = transport.memoryChannels_;
-
   cleanLowLatencyBuffer<kThreadsPerBlock><<<dim3(kNumBlocks), dim3(kThreadsPerBlock), 0, stream>>>(
-      clean0, numCleanInt0, clean1, numCleanInt1, portChannelHandles, memoryChannelHandles, rank, numRanks,
-      ranksPerIpcDomain);
+      buffer0, numInt0, buffer1, numInt1, portChannelHandles, memoryChannelHandles, rank, numRanks, ranksPerIpcDomain);
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +94,8 @@ struct DispatchDTypeTraits<DType::F8E4M3> {
   using Type = __nv_fp8_storage_t;
 };
 
+// Keep input and output dtype separate. Current launch path only instantiates
+// BF16 input, but this keeps room for pre-quantized input with explicit scales.
 template <DType kInputDType, DType kOutputDType>
 struct DispatchOutputVec {
   using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
@@ -119,84 +115,86 @@ MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Typ
   if constexpr (kInputDType == kOutputDType) {
     return inputValue;
   } else {
-    EP_STATIC_ASSERT(kInputDType == DType::BF16 && kOutputDType == DType::F8E4M3,
-                     "Unsupported low-latency dispatch dtype conversion");
+    static_assert(kInputDType == DType::BF16 && kOutputDType == DType::F8E4M3,
+                  "Unsupported low-latency dispatch dtype conversion");
     return static_cast<OutputVec>(quantizeToFp8<SourceType, kNumPerChannels, __NV_E4M3>(inputValue, scaleOut, laneId));
   }
 }
 
 template <DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
-MSCCLPP_DEVICE_INLINE void dispatchRecv(void* packedRecvX, float* packedRecvXScales, int* packedRecvSrcInfo,
-                                        int64_t* packedRecvLayoutRange, int* packedRecvCount, void* rdmaRecvX,
-                                        int64_t* rdmaRecvCount, int numMaxDispatchTokensPerRank, int numExperts,
+MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* outputSrcInfo,
+                                        int64_t* outputLayoutRange, int* outputCount, void* stagedRecv,
+                                        int64_t* stagedRecvCountBuffer, int numMaxDispatchTokensPerRank, int numExperts,
                                         int numRanks, int numLocalExperts, int rank, size_t numBytesPerMsg,
-                                        size_t hiddenInt4, size_t hiddenBytes, int numScales, int warpGroupId,
-                                        int subWarpId, int laneId, int responsibleExpertIdx) {
+                                        size_t hiddenInt4, size_t hiddenBytes, int numScales,
+                                        DispatchLayout dispatchLayout, int warpGroupId, int subWarpId, int laneId,
+                                        int responsibleExpertIdx) {
   if (responsibleExpertIdx >= numExperts) return;
 
-  const auto srcRank = responsibleExpertIdx / numLocalExperts;
+  const auto sourceRank = responsibleExpertIdx / numLocalExperts;
   const auto localExpertIdx = responsibleExpertIdx % numLocalExperts;
-  const auto rdmaRecvXUint8 = reinterpret_cast<uint8_t*>(rdmaRecvX) +
-                              localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
-                              srcRank * numMaxDispatchTokensPerRank * numBytesPerMsg;
-  const auto recvXInt4 =
-      reinterpret_cast<int4*>(packedRecvX) + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * hiddenInt4;
-  const auto recvSrcInfo = packedRecvSrcInfo + localExpertIdx * numRanks * numMaxDispatchTokensPerRank;
-  const auto recvRange = packedRecvLayoutRange + localExpertIdx * numRanks;
+  (void)dispatchLayout;  // EXPERT_MAJOR and FLAT share the same physical order.
+  const auto stagedMsgBase = reinterpret_cast<uint8_t*>(stagedRecv) +
+                             localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
+                             sourceRank * numMaxDispatchTokensPerRank * numBytesPerMsg;
+  const auto packedX =
+      reinterpret_cast<int4*>(output) + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * hiddenInt4;
+  const auto packedSrcInfo = outputSrcInfo + localExpertIdx * numRanks * numMaxDispatchTokensPerRank;
+  const auto outputLayout = outputLayoutRange + localExpertIdx * numRanks;
 
   __shared__ int sharedNumRecvTokens[kNumWarpGroups];
   __shared__ int sharedRecvTokenBeginIdx[kNumWarpGroups];
 
   int numRecvTokens;
   int recvTokenBeginIdx;
-  EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
+  static_assert(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
   if (subWarpId == 1 and laneId == 0) {
-    const auto raw = waitSignalNonZero(rdmaRecvCount + localExpertIdx * numRanks + srcRank);
+    const auto raw = waitSignalNonZero(stagedRecvCountBuffer + localExpertIdx * numRanks + sourceRank);
     numRecvTokens = static_cast<int>(-raw - 1);
-    recvTokenBeginIdx = atomicAdd(packedRecvCount + localExpertIdx, numRecvTokens);
+    recvTokenBeginIdx = atomicAdd(outputCount + localExpertIdx, numRecvTokens);
     sharedNumRecvTokens[warpGroupId] = numRecvTokens;
     sharedRecvTokenBeginIdx[warpGroupId] = recvTokenBeginIdx;
-    recvRange[srcRank] = pack2<int, int64_t>(numRecvTokens, recvTokenBeginIdx);
+    outputLayout[sourceRank] = pack2<int, int64_t>(numRecvTokens, recvTokenBeginIdx);
   }
-  asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 2), "r"(kNumWarpsPerGroup * 32));
+  asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 2), "r"(kNumWarpsPerGroup * WARP_SIZE));
   numRecvTokens = sharedNumRecvTokens[warpGroupId];
   recvTokenBeginIdx = sharedRecvTokenBeginIdx[warpGroupId];
 
   EP_DEVICE_ASSERT(numScales <= 64);
   for (int i = subWarpId; i < numRecvTokens; i += kNumWarpsPerGroup) {
-    const auto srcSrcIdx = reinterpret_cast<int*>(rdmaRecvXUint8 + i * numBytesPerMsg);
-    if (laneId == 0) recvSrcInfo[recvTokenBeginIdx + i] = ld_nc_global(srcSrcIdx);
+    const auto stagedMsg = reinterpret_cast<int*>(stagedMsgBase + i * numBytesPerMsg);
+    if (laneId == 0) packedSrcInfo[recvTokenBeginIdx + i] = ld_nc_global(stagedMsg);
     __syncwarp();
 
-    const auto srcData = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(srcSrcIdx) + sizeof(int4));
-    const auto dstData = recvXInt4 + (recvTokenBeginIdx + i) * hiddenInt4;
-    UNROLLED_WARP_COPY(7, laneId, hiddenInt4, dstData, srcData, ld_nc_global, st_na_global);
+    const auto stagedPayload = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(stagedMsg) + sizeof(int4));
+    const auto packedXRow = packedX + (recvTokenBeginIdx + i) * hiddenInt4;
+    UNROLLED_WARP_COPY(7, laneId, hiddenInt4, packedXRow, stagedPayload, ld_nc_global, st_na_global);
 
     if constexpr (kDispatchNeedsScales<DType::BF16, kOutputDType>) {
-      const auto srcScales = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(srcData) + hiddenBytes);
-      const auto recvXScales = packedRecvXScales + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numScales;
-      const auto dstScales = reinterpret_cast<float*>(recvXScales + recvTokenBeginIdx + i);
+      const auto stagedScales = reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(stagedPayload) + hiddenBytes);
+      const auto packedScales = outputScales + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numScales;
+      const auto packedScaleRow = reinterpret_cast<float*>(packedScales + recvTokenBeginIdx + i);
       const auto scaleStride = numRanks * numMaxDispatchTokensPerRank;
-      auto scale0 = laneId < numScales ? ld_nc_global(srcScales + laneId) : 0;
-      auto scale1 = (laneId + 32) < numScales ? ld_nc_global(srcScales + laneId + 32) : 0;
-      laneId < numScales ? dstScales[laneId * scaleStride] = scale0 : 0.0f;
-      (laneId + 32) < numScales ? dstScales[(laneId + 32) * scaleStride] = scale1 : 0.0f;
+      auto scale0 = laneId < numScales ? ld_nc_global(stagedScales + laneId) : 0;
+      auto scale1 = (laneId + WARP_SIZE) < numScales ? ld_nc_global(stagedScales + laneId + WARP_SIZE) : 0;
+      laneId < numScales ? packedScaleRow[laneId * scaleStride] = scale0 : 0.0f;
+      (laneId + WARP_SIZE) < numScales ? packedScaleRow[(laneId + WARP_SIZE) * scaleStride] = scale1 : 0.0f;
     }
   }
 }
 
 template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
-MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* packedRecvCount, void* rdmaRecvX,
-                                        int64_t* rdmaRecvCount, void* rdmaX, const void* x, const int64_t* topkIdx,
-                                        int* atomicCounterPerExpert, int* atomicFinishCounterPerExpert,
-                                        int64_t* nextClean, int numNextCleanInt, int numTokens,
-                                        int numMaxDispatchTokensPerRank, int numTopk, int hidden, int numExperts,
-                                        int rank, int numRanks, void* rdmaBufferPtr,
+MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* outputCount, void* stagedRecv,
+                                        int64_t* stagedRecvCountBuffer, void* rdmaX, const void* x,
+                                        const int64_t* topkIdx, int* atomicCounterPerExpert,
+                                        int* atomicFinishCounterPerExpert, int64_t* nextClean, int numNextCleanInt,
+                                        int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden,
+                                        int numExperts, int rank, int numRanks, void* rdmaBufferPtr,
                                         mscclpp::PortChannelDeviceHandle* portChannelHandles,
                                         void* const* peerRdmaBases, int ranksPerIpcDomain) {
   const auto smId = static_cast<int>(blockIdx.x);
   const auto threadId = static_cast<int>(threadIdx.x);
-  const auto warpId = threadId / 32;
+  const auto warpId = threadId / WARP_SIZE;
   const auto laneId = get_lane_id();
   const auto numSms = static_cast<int>(gridDim.x);
   const auto numWarps = kNumWarpGroups * kNumWarpsPerGroup;
@@ -218,11 +216,11 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
   if (warpId < numWarps - 1) {
     constexpr int kNumElemsPerRead = sizeof(int4) / sizeof(SourceType);
     EP_DEVICE_ASSERT(hidden % kNumElemsPerRead == 0);
-    EP_STATIC_ASSERT(kNumPerChannels % kNumElemsPerRead == 0, "Invalid vectorization");
+    static_assert(kNumPerChannels % kNumElemsPerRead == 0, "Invalid vectorization");
     const auto numPayloadWarps = numWarps - 1;
     const auto numSendWarps = numPayloadWarps / numTopk * numTopk;
     const auto numTokensPerSendRound = numSendWarps / numTopk;
-    const auto numPayloadThreads = numPayloadWarps * 32;
+    const auto numPayloadThreads = numPayloadWarps * WARP_SIZE;
     const size_t hiddenSourceInt4 = hidden / kNumElemsPerRead;
 
     // Keep the pack/cast path unchanged: all payload warps cooperatively stage
@@ -265,7 +263,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
         const auto dstRank = dstExpertIdx / numLocalExperts;
         const auto dstExpertLocalIdx = dstExpertIdx % numLocalExperts;
         const auto srcPtr = reinterpret_cast<uint64_t>(rdmaXSrcIdx);
-        const auto dstPtr = reinterpret_cast<uint64_t>(rdmaRecvX) +
+        const auto dstPtr = reinterpret_cast<uint64_t>(stagedRecv) +
                             dstExpertLocalIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
                             rank * numMaxDispatchTokensPerRank * numBytesPerMsg + slotIdx * numBytesPerMsg;
         if (dstRank != rank) {
@@ -300,10 +298,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     // signaling slots.
     EP_DEVICE_ASSERT(numSms > 1);
     if (smId == 0) {
-      for (int i = laneId; i < numNextCleanInt; i += 32) nextClean[i] = 0;
+      for (int i = laneId; i < numNextCleanInt; i += WARP_SIZE) nextClean[i] = 0;
 
       __syncwarp();
-      for (int i = laneId; i < numExperts; i += 32)
+      for (int i = laneId; i < numExperts; i += WARP_SIZE)
         atomicAddReleaseDevice(atomicFinishCounterPerExpert + i, FINISHED_SUM_TAG);
     }
 
@@ -311,7 +309,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     const auto expertBeginIdx = smId * kNumWarpGroups;
     const auto expertEndIdx = min(expertBeginIdx + kNumWarpGroups, numExperts);
 
-    for (int i = laneId; i < numTokens * numTopk; i += 32) {
+    for (int i = laneId; i < numTokens * numTopk; i += WARP_SIZE) {
       auto idx = static_cast<int>(__ldg(topkIdx + i));
       if (idx >= expertBeginIdx and idx < expertEndIdx) expertCount[idx - expertBeginIdx]++;
     }
@@ -334,7 +332,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     const auto numTokensSent = sharedNumTokensSentPerExpert[responsibleExpertIdx - smId * kNumWarpGroups];
 
     while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
-    auto* counterPtr = rdmaRecvCount + dstExpertLocalIdx * numRanks + rank;
+    auto* counterPtr = stagedRecvCountBuffer + dstExpertLocalIdx * numRanks + rank;
     auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + dstExpertLocalIdx * numRanks + dstRank;
     publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
                               portChannelHandle, peerRdmaBases, ranksPerIpcDomain);
@@ -342,22 +340,22 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     atomicCounterPerExpert[responsibleExpertIdx] = 0;
     atomicFinishCounterPerExpert[responsibleExpertIdx] = 0;
 
-    if (dstRank == 0) packedRecvCount[dstExpertLocalIdx] = 0;
+    if (dstRank == 0) outputCount[dstExpertLocalIdx] = 0;
   }
   __syncwarp();
 }
 
 template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
-__global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dispatch(
-    void* packedRecvX, float* packedRecvXScales, int* packedRecvSrcInfo, int64_t* packedRecvLayoutRange,
-    int* packedRecvCount, void* rdmaRecvX, int64_t* rdmaRecvCount, void* rdmaX, const void* x, const int64_t* topkIdx,
+__global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) void dispatch(
+    void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayoutRange, int* outputCount,
+    void* stagedRecv, int64_t* stagedRecvCountBuffer, void* rdmaX, const void* x, const int64_t* topkIdx,
     int* atomicCounterPerExpert, int* atomicFinishCounterPerExpert, int64_t* nextClean, int numNextCleanInt,
     int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden, int numExperts, int rank, int numRanks,
     int phases, void* rdmaBufferPtr, mscclpp::PortChannelDeviceHandle* portChannelHandles, void* const* peerRdmaBases,
-    int ranksPerIpcDomain) {
+    int ranksPerIpcDomain, DispatchLayout dispatchLayout) {
   const auto smId = static_cast<int>(blockIdx.x);
   const auto threadId = static_cast<int>(threadIdx.x);
-  const auto warpId = threadId / 32, laneId = get_lane_id();
+  const auto warpId = threadId / WARP_SIZE, laneId = get_lane_id();
   const auto numLocalExperts = numExperts / numRanks;
   const auto warpGroupId = warpId / kNumWarpsPerGroup;
   const auto subWarpId = warpId % kNumWarpsPerGroup;
@@ -377,7 +375,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
   if (phases & LOW_LATENCY_SEND_PHASE) {
     __shared__ int sharedNumTokensSentPerExpert[kNumWarpGroups];
     dispatchSend<kInputDType, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
-        sharedNumTokensSentPerExpert, packedRecvCount, rdmaRecvX, rdmaRecvCount, rdmaX, x, topkIdx,
+        sharedNumTokensSentPerExpert, outputCount, stagedRecv, stagedRecvCountBuffer, rdmaX, x, topkIdx,
         atomicCounterPerExpert, atomicFinishCounterPerExpert, nextClean, numNextCleanInt, numTokens,
         numMaxDispatchTokensPerRank, numTopk, hidden, numExperts, rank, numRanks, rdmaBufferPtr, portChannelHandles,
         peerRdmaBases, ranksPerIpcDomain);
@@ -385,14 +383,14 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void dis
 
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
 
-  // The recv phase consumes per-rank count signals and rdmaRecvX payloads
+  // The recv phase consumes per-rank count signals and stagedRecv payloads
   // produced by the send phase in the same cooperative launch.
   if (phases & LOW_LATENCY_SEND_PHASE) cg::this_grid().sync();
 
   dispatchRecv<kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
-      packedRecvX, packedRecvXScales, packedRecvSrcInfo, packedRecvLayoutRange, packedRecvCount, rdmaRecvX,
-      rdmaRecvCount, numMaxDispatchTokensPerRank, numExperts, numRanks, numLocalExperts, rank, numBytesPerMsg,
-      hiddenInt4, hiddenBytes, numScales, warpGroupId, subWarpId, laneId, responsibleExpertIdx);
+      output, outputScales, outputSrcInfo, outputLayoutRange, outputCount, stagedRecv, stagedRecvCountBuffer,
+      numMaxDispatchTokensPerRank, numExperts, numRanks, numLocalExperts, rank, numBytesPerMsg, hiddenInt4, hiddenBytes,
+      numScales, dispatchLayout, warpGroupId, subWarpId, laneId, responsibleExpertIdx);
 }
 
 constexpr int kDispatchNumMaxTopK = 9;
@@ -401,13 +399,13 @@ constexpr int kDispatchNumWarpsPerGroup = 10;
 
 struct DispatchLaunchArgs {
   cudaLaunchConfig_t* launchConfig;
-  void* packedRecvX;
-  float* packedRecvXScales;
-  int* packedRecvSrcInfo;
-  int64_t* packedRecvLayoutRange;
-  int* packedRecvCount;
-  void* rdmaRecvX;
-  int64_t* rdmaRecvCount;
+  void* output;
+  float* outputScales;
+  int* outputSrcInfo;
+  int64_t* outputLayoutRange;
+  int* outputCount;
+  void* stagedRecv;
+  int64_t* stagedRecvCountBuffer;
   void* rdmaX;
   const void* x;
   const int64_t* topkIdx;
@@ -427,18 +425,19 @@ struct DispatchLaunchArgs {
   mscclpp::PortChannelDeviceHandle* portChannelHandles;
   void* const* peerRdmaBases;
   int ranksPerIpcDomain;
+  DispatchLayout dispatchLayout;
 };
 
 template <DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
 void launchDispatchKernel(const DispatchLaunchArgs& args) {
   auto dispatchFunc = dispatch<DType::BF16, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>;
-  CUDA_CHECK(cudaLaunchKernelEx(args.launchConfig, dispatchFunc, args.packedRecvX, args.packedRecvXScales,
-                                args.packedRecvSrcInfo, args.packedRecvLayoutRange, args.packedRecvCount,
-                                args.rdmaRecvX, args.rdmaRecvCount, args.rdmaX, args.x, args.topkIdx,
-                                args.atomicCounterPerExpert, args.atomicFinishCounterPerExpert, args.nextClean,
-                                args.numNextCleanInt, args.numTokens, args.numMaxDispatchTokensPerRank, args.numTopk,
-                                args.hidden, args.numExperts, args.rank, args.numRanks, args.phases, args.rdmaBufferPtr,
-                                args.portChannelHandles, args.peerRdmaBases, args.ranksPerIpcDomain));
+  CUDA_CHECK(cudaLaunchKernelEx(args.launchConfig, dispatchFunc, args.output, args.outputScales, args.outputSrcInfo,
+                                args.outputLayoutRange, args.outputCount, args.stagedRecv, args.stagedRecvCountBuffer,
+                                args.rdmaX, args.x, args.topkIdx, args.atomicCounterPerExpert,
+                                args.atomicFinishCounterPerExpert, args.nextClean, args.numNextCleanInt, args.numTokens,
+                                args.numMaxDispatchTokensPerRank, args.numTopk, args.hidden, args.numExperts, args.rank,
+                                args.numRanks, args.phases, args.rdmaBufferPtr, args.portChannelHandles,
+                                args.peerRdmaBases, args.ranksPerIpcDomain, args.dispatchLayout));
 }
 
 template <DType kOutputDType>
@@ -464,13 +463,8 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
               const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
               Phase phase) {
   // Unpack configuration
-  auto packedRecvX = output;
-  auto packedRecvXScales = outputScales;
-  auto packedRecvSrcInfo = outputSrcInfo;
-  auto packedRecvLayoutRange = outputLayout;
-  auto packedRecvCount = outputCount;
-  auto rdmaRecvX = currentBuffer.recvDataBuffer_;
-  auto rdmaRecvCount = currentBuffer.recvCountBuffer_;
+  auto stagedRecv = currentBuffer.recvDataBuffer_;
+  auto stagedRecvCountBuffer = currentBuffer.recvCountBuffer_;
   auto rdmaX = currentBuffer.sendDataBuffer_;
   auto x = input;
   auto nextClean = nextBuffer.cleanupRegion_;
@@ -484,19 +478,21 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
   auto numRanks = transport.numRanks_;
   auto inputDType = config.inputDType_;
   auto outputDType = config.outputDType_;
+  auto dispatchLayout = config.outputLayout_;
   auto phases = static_cast<int>(phase);
   auto rdmaBufferPtr = transport.rdmaBufferBase_;
   auto portChannelHandles = transport.portChannels_;
   auto peerRdmaBases = transport.peerBases_;
   auto ranksPerIpcDomain = transport.ranksPerIpcDomain_;
-  EP_STATIC_ASSERT(kDispatchNumMaxTopK + 1 <= kDispatchNumWarpGroups * kDispatchNumWarpsPerGroup,
-                   "Too many top-k selections");
+  static_assert(kDispatchNumMaxTopK + 1 <= kDispatchNumWarpGroups * kDispatchNumWarpsPerGroup,
+                "Too many top-k selections");
 
   const auto numWarps = kDispatchNumWarpGroups * kDispatchNumWarpsPerGroup;
   const auto numSms = cell_div(numExperts, kDispatchNumWarpGroups);
   // dispatchSend divides payload warps into groups of numTopk sender warps.
   EP_HOST_ASSERT(numTopk > 0);
   EP_HOST_ASSERT(numTopk <= kDispatchNumMaxTopK);
+  EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
 
   auto atomicCounterPerExpert = reinterpret_cast<int*>(workspace);
   auto atomicFinishCounterPerExpert = atomicCounterPerExpert + numExperts;
@@ -504,7 +500,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
   EP_HOST_ASSERT(inputDType == DType::BF16);
   EP_HOST_ASSERT(hidden % 128 == 0);
 
-  cudaLaunchConfig_t cfg = {dim3(numSms), dim3(numWarps * 32), 0, stream, nullptr, 0};
+  cudaLaunchConfig_t cfg = {dim3(numSms), dim3(numWarps * WARP_SIZE), 0, stream, nullptr, 0};
   cudaLaunchAttribute attr[1];
   attr[0].id = cudaLaunchAttributeCooperative;
   attr[0].val.cooperative = 1;
@@ -512,13 +508,13 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
   cfg.numAttrs = 1;
 
   DispatchLaunchArgs args{.launchConfig = &cfg,
-                          .packedRecvX = packedRecvX,
-                          .packedRecvXScales = packedRecvXScales,
-                          .packedRecvSrcInfo = packedRecvSrcInfo,
-                          .packedRecvLayoutRange = packedRecvLayoutRange,
-                          .packedRecvCount = packedRecvCount,
-                          .rdmaRecvX = rdmaRecvX,
-                          .rdmaRecvCount = rdmaRecvCount,
+                          .output = output,
+                          .outputScales = outputScales,
+                          .outputSrcInfo = outputSrcInfo,
+                          .outputLayoutRange = outputLayout,
+                          .outputCount = outputCount,
+                          .stagedRecv = stagedRecv,
+                          .stagedRecvCountBuffer = stagedRecvCountBuffer,
                           .rdmaX = rdmaX,
                           .x = x,
                           .topkIdx = topkIdx,
@@ -537,7 +533,8 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
                           .rdmaBufferPtr = rdmaBufferPtr,
                           .portChannelHandles = portChannelHandles,
                           .peerRdmaBases = peerRdmaBases,
-                          .ranksPerIpcDomain = ranksPerIpcDomain};
+                          .ranksPerIpcDomain = ranksPerIpcDomain,
+                          .dispatchLayout = dispatchLayout};
 
   launchDispatchForOutputDType(args, outputDType);
 }
@@ -556,11 +553,11 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
     const auto srcInt4 = reinterpret_cast<const int4*>(src);
     UNROLLED_WARP_COPY(7, laneId, kHiddenBf16Int4, dst, srcInt4, ld_nc_global, st_na_global);
   } else {
-    EP_STATIC_ASSERT(kInputDType == DType::F8E4M3, "Unsupported low-latency combine input dtype");
+    static_assert(kInputDType == DType::F8E4M3, "Unsupported low-latency combine input dtype");
     const auto srcFp8 = reinterpret_cast<const __nv_fp8_storage_t*>(src);
     EP_DEVICE_ASSERT(scales != nullptr);
 
-    for (int i = laneId; i < kHiddenBf16Int4; i += 32) {
+    for (int i = laneId; i < kHiddenBf16Int4; i += WARP_SIZE) {
       int4 bf16Pack;
       auto bf16Values = reinterpret_cast<nv_bfloat16*>(&bf16Pack);
 #pragma unroll
@@ -577,24 +574,24 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
 
 template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kHidden,
           int kNumMaxTopk>
-__global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void combine(
-    void* combinedX, void* rdmaRecvX, int64_t* rdmaRecvFlag, void* rdmaSendX, const void* x, const float* xScales,
-    const int64_t* topkIdx, const float* topkWeights, const int* srcInfo, const int64_t* layoutRange,
-    int64_t* nextClean, int numNextCleanInt, int* atomicCleanFlag, int numCombinedTokens, int hidden, int numTopk,
-    int numMaxDispatchTokensPerRank, int numExperts, int rank, int numRanks, int phases, bool zeroCopy,
-    void* rdmaBufferPtr, mscclpp::PortChannelDeviceHandle* portChannelHandles, void* const* peerRdmaBases,
-    int ranksPerIpcDomain) {
+__global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) void combine(
+    void* combinedX, void* stagedRecv, int64_t* stagedRecvFlagBuffer, void* rdmaSendX, const void* x,
+    const float* xScales, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+    const int64_t* layoutRange, int64_t* nextClean, int numNextCleanInt, int* atomicCleanFlag, int numCombinedTokens,
+    int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int rank, int numRanks, int phases,
+    bool zeroCopy, void* rdmaBufferPtr, mscclpp::PortChannelDeviceHandle* portChannelHandles,
+    void* const* peerRdmaBases, int ranksPerIpcDomain) {
   const auto smId = static_cast<int>(blockIdx.x);
   const auto numSms = static_cast<int>(gridDim.x);
   const auto threadId = static_cast<int>(threadIdx.x);
   const auto numThreads = static_cast<int>(blockDim.x);
-  const auto warpId = threadId / 32, laneId = get_lane_id();
+  const auto warpId = threadId / WARP_SIZE, laneId = get_lane_id();
   const auto numLocalExperts = numExperts / numRanks;
   const auto warpGroupId = warpId / kNumWarpsPerGroup;
   const auto subWarpId = warpId % kNumWarpsPerGroup;
   const auto responsibleExpertIdx = smId * kNumWarpGroups + warpGroupId;
 
-  EP_STATIC_ASSERT(kOutputDType == DType::BF16, "Only BF16 low-latency combine output is supported");
+  static_assert(kOutputDType == DType::BF16, "Only BF16 low-latency combine output is supported");
   using InputType = typename DispatchDTypeTraits<kInputDType>::Type;
   using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
 
@@ -603,11 +600,11 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
 
   constexpr size_t numInputBytes = kHidden * sizeof(InputType);
   constexpr size_t numBytesPerSlot = kHidden * sizeof(OutputType);
-  EP_STATIC_ASSERT(numBytesPerSlot % sizeof(int4) == 0, "Invalid vectorization");
+  static_assert(numBytesPerSlot % sizeof(int4) == 0, "Invalid vectorization");
 
   if (phases & LOW_LATENCY_SEND_PHASE) {
     if (smId == 0 and warpGroupId == 0 and subWarpId == 0) {
-      for (int i = laneId; i < numNextCleanInt; i += 32) nextClean[i] = 0;
+      for (int i = laneId; i < numNextCleanInt; i += WARP_SIZE) nextClean[i] = 0;
 
       __syncwarp();
       if (laneId == 0) atomicAddReleaseDevice(atomicCleanFlag, numExperts);
@@ -637,7 +634,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
 
         auto srcIdx = __ldg(localSrcInfo + tokenIdx);
         const auto bufPtr = reinterpret_cast<int64_t>(rdmaSendXVecRow);
-        const auto dstPtr = reinterpret_cast<uint64_t>(rdmaRecvX) +
+        const auto dstPtr = reinterpret_cast<uint64_t>(stagedRecv) +
                             (globalExpertIdx * numMaxDispatchTokensPerRank + srcIdx) * numBytesPerSlot;
         if (dstRank == rank) {
           const auto dstInt4Ptr = reinterpret_cast<int4*>(dstPtr);
@@ -668,11 +665,11 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
         }
       }
 
-      EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
-      asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 1), "r"(kNumWarpsPerGroup * 32));
+      static_assert(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
+      asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 1), "r"(kNumWarpsPerGroup * WARP_SIZE));
       if (subWarpId == 1 and laneId == 0) {
         while (ld_acquire_global(atomicCleanFlag) == 0);
-        auto* flagPtr = rdmaRecvFlag + globalExpertIdx;
+        auto* flagPtr = stagedRecvFlagBuffer + globalExpertIdx;
         auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + localExpertIdx * numRanks + dstRank;
         publishSingleWriterSignal(flagPtr, static_cast<int64_t>(1), rank, dstRank, rdmaBufferPtr, portChannelHandle,
                                   peerRdmaBases, ranksPerIpcDomain);
@@ -685,15 +682,15 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
 
   if (responsibleExpertIdx < numExperts) {
-    EP_STATIC_ASSERT(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
-    if (subWarpId == 0 and laneId == 0) waitSignalNonZero(rdmaRecvFlag + responsibleExpertIdx);
+    static_assert(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
+    if (subWarpId == 0 and laneId == 0) waitSignalNonZero(stagedRecvFlagBuffer + responsibleExpertIdx);
   }
   // All expert-result writes must be visible before owner ranks start the
   // weighted gather below.
   cg::this_grid().sync();
 
-  EP_DEVICE_ASSERT(numTopk <= 32 and hiddenBf16Int4 <= numThreads);
-  EP_STATIC_ASSERT(kHidden % (32 * kNumBf16PerInt4) == 0, "Invalid vectorization");
+  EP_DEVICE_ASSERT(numTopk <= WARP_SIZE and hiddenBf16Int4 <= numThreads);
+  static_assert(kHidden % (WARP_SIZE * kNumBf16PerInt4) == 0, "Invalid vectorization");
   if (threadId < hiddenBf16Int4) {
     for (int tokenIdx = smId; tokenIdx < numCombinedTokens; tokenIdx += numSms) {
       int regTopkIdx[kNumMaxTopk];
@@ -707,7 +704,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup * 32, 1) void com
       for (int i = 0; i < numTopk; ++i)
         if (regTopkIdx[i] >= 0) {
           auto rdmaBufferType =
-              reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(rdmaRecvX) +
+              reinterpret_cast<const int*>(reinterpret_cast<uint8_t*>(stagedRecv) +
                                            (regTopkIdx[i] * numMaxDispatchTokensPerRank + tokenIdx) * numBytesPerSlot);
           auto rdmaBufferRow = reinterpret_cast<const uint8_t*>(rdmaBufferType);
 
@@ -733,8 +730,8 @@ void combine(void* output, const void* input, const float* inputScales, const in
              void* workspace, cudaStream_t stream, Phase phase) {
   // Unpack configuration
   auto combinedX = output;
-  auto rdmaRecvX = currentBuffer.recvDataBuffer_;
-  auto rdmaRecvFlag = currentBuffer.recvCountBuffer_;
+  auto stagedRecv = currentBuffer.recvDataBuffer_;
+  auto stagedRecvFlagBuffer = currentBuffer.recvCountBuffer_;
   auto rdmaSendX = currentBuffer.sendDataBuffer_;
   auto x = input;
   auto xScales = inputScales;
@@ -771,10 +768,10 @@ void combine(void* output, const void* input, const float* inputScales, const in
 #define COMBINE_LAUNCH(input_dtype, hidden_case)                                                                       \
   {                                                                                                                    \
     auto combineFunc = combine<input_dtype, DType::BF16, kNumWarpGroups, kNumWarpsPerGroup, hidden_case, kNumMaxTopk>; \
-    LAUNCH_KERNEL(&cfg, combineFunc, combinedX, rdmaRecvX, rdmaRecvFlag, rdmaSendX, x, xScales, topkIdx, topkWeights,  \
-                  srcInfo, layoutRange, nextClean, numNextCleanInt, atomicCleanFlag, numCombinedTokens, hidden,        \
-                  numTopk, numMaxDispatchTokensPerRank, numExperts, rank, numRanks, phases, zeroCopy, rdmaBufferPtr,   \
-                  portChannelHandles, peerRdmaBases, ranksPerIpcDomain);                                               \
+    LAUNCH_KERNEL(&cfg, combineFunc, combinedX, stagedRecv, stagedRecvFlagBuffer, rdmaSendX, x, xScales, topkIdx,      \
+                  topkWeights, srcInfo, layoutRange, nextClean, numNextCleanInt, atomicCleanFlag, numCombinedTokens,   \
+                  hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, rank, numRanks, phases, zeroCopy,          \
+                  rdmaBufferPtr, portChannelHandles, peerRdmaBases, ranksPerIpcDomain);                                \
   }
 
 #define COMBINE_LAUNCH_CASE(hidden_case)           \
@@ -788,7 +785,7 @@ void combine(void* output, const void* input, const float* inputScales, const in
   }                                                \
   break
 
-  SETUP_LAUNCH_CONFIG(numSms, numWarps * 32, stream);
+  SETUP_LAUNCH_CONFIG(numSms, numWarps * WARP_SIZE, stream);
   SWITCH_HIDDEN(COMBINE_LAUNCH_CASE);
 #undef COMBINE_LAUNCH_CASE
 #undef COMBINE_LAUNCH

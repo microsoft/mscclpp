@@ -54,17 +54,18 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t outputPtr,
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputLayoutRangePtr,
              uintptr_t outputCountPtr, int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank,
-             int numExperts, bool useFp8, uintptr_t streamPtr) {
-            self.dispatch(
-                ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
-                reinterpret_cast<int*>(ptr(outputSrcInfoPtr)), reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
-                reinterpret_cast<int*>(ptr(outputCountPtr)), ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
-                numTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, useFp8, stream(streamPtr));
+             int numExperts, bool useFp8, int outputLayout, uintptr_t streamPtr) {
+            self.dispatch(ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
+                          reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
+                          reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
+                          reinterpret_cast<int*>(ptr(outputCountPtr)), ptr(inputPtr),
+                          reinterpret_cast<int64_t*>(ptr(topkIdxPtr)), numTokens, hidden, numTopk,
+                          numMaxDispatchTokensPerRank, numExperts, useFp8, outputLayout, stream(streamPtr));
           },
           nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("output_ptr"), nb::arg("output_scales_ptr"),
           nb::arg("output_src_info_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
           nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_max_dispatch_tokens_per_rank"),
-          nb::arg("num_experts"), nb::arg("use_fp8"), nb::arg("stream_ptr"))
+          nb::arg("num_experts"), nb::arg("use_fp8"), nb::arg("output_layout"), nb::arg("stream_ptr"))
       .def(
           "combine",
           [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t expertScalesPtr, uintptr_t topkIdxPtr,

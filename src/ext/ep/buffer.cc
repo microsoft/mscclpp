@@ -1894,7 +1894,8 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
                                      .numExperts_ = num_experts,
                                      .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
                                      .inputDType_ = low_latency::DType::BF16,
-                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16};
+                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
+                                     .outputLayout_ = low_latency::DispatchLayout::EXPERT_MAJOR};
   low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.dispatch_rdma_send_buffer,
                                      .sendCountBuffer_ = nullptr,
                                      .recvDataBuffer_ = buffer.dispatch_rdma_recv_data_buffer,

@@ -275,11 +275,14 @@ void MoERuntime::sync(const std::vector<int>& device_ids,
 void MoERuntime::dispatch(void* output, float* output_scales, int* output_src_info, int64_t* output_layout,
                           int* output_count, const void* input, const int64_t* topk_idx, int num_tokens, int hidden,
                           int num_topk, int num_max_dispatch_tokens_per_rank, int num_experts, bool use_fp8,
-                          cudaStream_t stream) {
+                          int output_layout_kind, cudaStream_t stream) {
   EP_HOST_ASSERT(low_latency_mode_);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(num_tokens <= num_max_dispatch_tokens_per_rank);
   EP_HOST_ASSERT(num_experts % num_ranks_ == 0);
+  EP_HOST_ASSERT(output_layout_kind == static_cast<int>(low_latency::DispatchLayout::EXPERT_MAJOR) ||
+                 output_layout_kind == static_cast<int>(low_latency::DispatchLayout::FLAT));
+  auto output_layout_kind_t = static_cast<low_latency::DispatchLayout>(output_layout_kind);
 
   LowLatencyLayout layout(rdma_buffer_ptr_, num_max_dispatch_tokens_per_rank, hidden, num_ranks_, num_experts);
   EP_HOST_ASSERT(layout.total_bytes <= static_cast<size_t>(num_rdma_bytes_));
@@ -293,7 +296,8 @@ void MoERuntime::dispatch(void* output, float* output_scales, int* output_src_in
                                      .numExperts_ = num_experts,
                                      .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
                                      .inputDType_ = low_latency::DType::BF16,
-                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16};
+                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
+                                     .outputLayout_ = output_layout_kind_t};
   low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.dispatch_rdma_send_buffer,
                                      .sendCountBuffer_ = nullptr,
                                      .recvDataBuffer_ = buffer.dispatch_rdma_recv_data_buffer,

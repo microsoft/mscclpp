@@ -145,6 +145,15 @@ enum class DType {
   F8E4M3
 };
 
+/// Logical dispatch output layout. Low-latency mode uses the same contiguous
+/// local-expert-major physical order for both layouts; FLAT is a 2D view.
+enum class DispatchLayout {
+  /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+  EXPERT_MAJOR,
+  /// [num_local_experts * num_ranks * max_tokens_per_rank, hidden].
+  FLAT
+};
+
 /// Transport context that encapsulates all transport-related state.
 struct TransportContext {
   /// Base address of the locally-registered RDMA buffer.
@@ -197,6 +206,8 @@ struct DispatchConfig {
   DType inputDType_;
   /// Output dtype for packed receive buffer.
   DType outputDType_;
+  /// Logical output layout.
+  DispatchLayout outputLayout_ = DispatchLayout::EXPERT_MAJOR;
 };
 
 /// Configuration for combine operation.
@@ -230,17 +241,19 @@ enum Phase {
 };
 
 /// Clean low-latency buffers (both ping-pong buffers).
-/// @param cleanup0 First cleanup region pointer.
-/// @param cleanupSize0 Size of first cleanup region in int64_t elements.
-/// @param cleanup1 Second cleanup region pointer.
-/// @param cleanupSize1 Size of second cleanup region in int64_t elements.
+/// @param buffer0 First cleanup region pointer.
+/// @param numInt0 Size of first cleanup region in int64_t elements.
+/// @param buffer1 Second cleanup region pointer.
+/// @param numInt1 Size of second cleanup region in int64_t elements.
 /// @param transport Transport context with channel handles and topology info.
 /// @param stream CUDA stream to launch the kernel on.
-void cleanBuffers(int64_t* cleanup0, int cleanupSize0, int64_t* cleanup1, int cleanupSize1,
-                  const TransportContext& transport, cudaStream_t stream);
+void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, const TransportContext& transport,
+                  cudaStream_t stream);
 
 /// Low-latency dispatch kernel that distributes tokens to experts across ranks.
-/// @param output Output packed data buffer [num_local_experts, num_ranks*max_tokens, hidden].
+/// @param output Output packed data buffer. EXPERT_MAJOR shape is
+/// [num_local_experts, num_ranks*max_tokens, hidden]; FLAT is the same
+/// local-expert-major storage viewed as [num_local_experts*num_ranks*max_tokens, hidden].
 /// @param outputScales FP8 scales (nullable if not using FP8).
 /// @param outputSrcInfo Source rank info per token.
 /// @param outputLayout Layout range [expert, rank] -> (offset, count).

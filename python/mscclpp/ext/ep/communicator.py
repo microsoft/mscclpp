@@ -217,8 +217,6 @@ class MoECommunicator:
             raise NotImplementedError("MoECommunicator currently supports only mode='ll'")
 
         self.output_layout = _normalize_output_layout(config.output_layout, self.mode)
-        if self.output_layout != DispatchLayout.EXPERT_MAJOR:
-            raise NotImplementedError("low-latency mode currently supports only expert-major 3D output")
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
@@ -307,6 +305,7 @@ class MoECommunicator:
             self.max_tokens_per_rank,
             self.num_experts,
             self.dispatch_use_fp8,
+            _cpp_dispatch_layout(self.output_layout),
             torch.cuda.current_stream().cuda_stream,
         )
         output_scales = None
@@ -471,9 +470,13 @@ class MoECommunicator:
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
         expected_dtype = torch.float8_e4m3fn if self.dispatch_use_fp8 else torch.bfloat16
-        expected_shape = (self.num_local_experts, self.world_size * self.max_tokens_per_rank, self.hidden_size)
-        if output_buffer.dim() != 3 or not output_buffer.is_contiguous():
-            raise ValueError("output_buffer must be a contiguous padded expert-major tensor")
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        if self.output_layout == DispatchLayout.EXPERT_MAJOR:
+            expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
+        else:
+            expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
+        if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
+            raise ValueError(f"output_buffer must be a contiguous {self.output_layout.value} tensor")
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
@@ -484,9 +487,13 @@ class MoECommunicator:
     ) -> None:
         if handle.num_experts != self.num_experts or handle.hidden_size != self.hidden_size:
             raise ValueError("DispatchHandle does not belong to this MoECommunicator configuration")
-        if expert_output.dim() != 3 or not expert_output.is_contiguous():
-            raise ValueError("expert_output must keep dispatch output's contiguous padded expert-major layout")
-        expected_shape = (self.num_local_experts, self.world_size * self.max_tokens_per_rank, self.hidden_size)
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        if handle.layout == DispatchLayout.EXPERT_MAJOR:
+            expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
+        else:
+            expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
+        if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():
+            raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
         if expert_output.dtype not in (torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
@@ -508,6 +515,14 @@ def _normalize_output_layout(layout: Optional[DispatchLayout | str], mode: str) 
         return DispatchLayout.FLAT
     if normalized in ("expert_major", "expert_major_3d", "padded_expert_major"):
         return DispatchLayout.EXPERT_MAJOR
+    raise ValueError(f"unsupported dispatch output layout: {layout}")
+
+
+def _cpp_dispatch_layout(layout: DispatchLayout) -> int:
+    if layout == DispatchLayout.EXPERT_MAJOR:
+        return 0
+    if layout == DispatchLayout.FLAT:
+        return 1
     raise ValueError(f"unsupported dispatch output layout: {layout}")
 
 

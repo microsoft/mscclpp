@@ -178,7 +178,7 @@ Use `DispatchLayout` instead of string literals for this field:
 
 | Layout enum | Tensor shape |
 |---|---|
-| `DispatchLayout.FLAT` | `[total_recv_tokens, hidden]` |
+| `DispatchLayout.FLAT` | HT: `[total_recv_tokens, hidden]`; LL: `[num_local_experts * max_slots_per_expert, hidden]` |
 | `DispatchLayout.EXPERT_MAJOR` | `[num_local_experts, max_slots_per_expert, hidden]` |
 
 ## MoECommunicator methods
@@ -463,18 +463,26 @@ tokens[expert_offsets[i] : expert_offsets[i + 1]]
 This layout is efficient for Triton or grouped GEMM kernels because it avoids
 padding.
 
-### Low-latency expert-major layout
+### Low-latency output layouts
 
-LL uses `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
+LL defaults to `DispatchLayout.EXPERT_MAJOR`, a padded expert-major tensor:
 
 ```python
 dispatch_out.tokens  # [num_local_experts, max_slots_per_expert, H]
 ```
 
+LL can also return `DispatchLayout.FLAT`, which is the same contiguous
+local-expert-major storage viewed as 2D:
+
+```python
+dispatch_out.tokens  # [num_local_experts * max_slots_per_expert, H]
+```
+
 For expert `i`, only the first `num_tokens_per_expert[i]` slots are valid:
 
 ```python
-tokens[i, :num_tokens_per_expert[i], :]
+expert_major_tokens = dispatch_out.tokens.view(num_local_experts, max_slots_per_expert, H)
+expert_major_tokens[i, :num_tokens_per_expert[i], :]
 ```
 
 The remaining slots are padding or scratch space. The MLP output must keep the
@@ -489,8 +497,8 @@ dimension replaced by the scale dimension.
 Examples:
 
 ```text
-flat tokens:          [total_recv_tokens, H]
-flat FP8 scales:      [total_recv_tokens, H / 128]
+flat tokens:          HT [total_recv_tokens, H]; LL [num_local_experts * max_slots, H]
+flat FP8 scales:      HT [total_recv_tokens, H / 128]; LL [num_local_experts, max_slots, H / 128]
 
 expert-major tokens:  [num_local_experts, max_slots, H]
 expert-major scales:  [num_local_experts, max_slots, H / 128]
