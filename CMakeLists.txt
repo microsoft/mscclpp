@@ -112,11 +112,20 @@ if(MSCCLPP_ENABLE_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         message(STATUS "Code coverage enabled")
         
-        # Add coverage flags to C++ targets only (not CUDA)
-        add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--coverage>)
+        # Add coverage flags to C++ targets only (not CUDA). For ROCm, keep
+        # coverage on the host compilation so HIP device linking does not look
+        # for gcov runtime symbols.
+        if(MSCCLPP_USE_ROCM)
+            add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-Xarch_host>)
+            add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--coverage>)
+            add_link_options($<$<LINK_LANGUAGE:CXX>:-Xarch_host>)
+            add_link_options($<$<LINK_LANGUAGE:CXX>:--coverage>)
+        else()
+            add_compile_options($<$<COMPILE_LANGUAGE:CXX>:--coverage>)
+            add_link_options($<$<LINK_LANGUAGE:CXX>:--coverage>)
+        endif()
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-O0>)
         add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-g>)
-        add_link_options($<$<LINK_LANGUAGE:CXX>:--coverage>)
         
         # Find lcov
         find_program(LCOV_PATH lcov)
