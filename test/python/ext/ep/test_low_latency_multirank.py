@@ -193,11 +193,14 @@ def main():
     combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
 
     # Analytical expected: each token i, weighted sum over topk entries that
-    # are not -1. Every expert returns the original x[i] (since simulated
-    # gemm is identity), so the combine output should be
-    # x[i] * sum(topk_weights[i, j] for j where topk_idx[i,j] != -1).
-    weight_sum = topk_weights.masked_fill(topk_idx == -1, 0.0).sum(dim=1).view(-1, 1)
-    expected = (x.float() * weight_sum).to(torch.bfloat16)
+    # are not -1. Accumulate in the same top-k order as the kernel; multiplying
+    # by the pre-summed weights can differ by one BF16 ULP for large token IDs.
+    expected_f = torch.zeros_like(x, dtype=torch.float32)
+    x_f = x.float()
+    for j in range(num_topk):
+        weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0).view(-1, 1)
+        expected_f += x_f * weight_j
+    expected = expected_f.to(torch.bfloat16)
     diff = (combined_x.float() - expected.float()).abs().max().item()
     max_exp = expected.float().abs().max().item()
     print(
