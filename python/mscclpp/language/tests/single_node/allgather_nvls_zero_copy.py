@@ -10,7 +10,7 @@ from mscclpp.language.collectives import *
 
 
 def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, max_message_size, instances):
-    # Defaults instances=8, num_threads_per_block=256 are tuned for 16-GPU (4x GB200) MNNVL NVLS:
+    # Defaults instances=8, num_threads_per_block=256 are tuned for 64-GPU (4x GB200) MNNVL NVLS:
     # they give the best busbw across 1MB-1GB (instances saturate at 8; tpb=256 beats 512/1024).
     chunksperloop = 1
     collective = AllGather(gpu_size, chunksperloop, True)
@@ -25,8 +25,7 @@ def allgather_example(name, gpu_size, num_threads_per_block, min_message_size, m
         min_message_size=min_message_size,
         max_message_size=max_message_size,
     ):
-        # NVLS multicast channel over the output buffer. Unlike AllReduce, AllGather
-        # only needs the multimem store (broadcast) half of the NVLS primitive: each
+        # NVLS multicast channel over the output buffer. For Allgather each
         # rank stores its own chunk to all ranks' output buffers via the switch.
         nvls_chan = SwitchChannel(rank_list=[gpu for gpu in range(gpu_size)], buffer_type=BufferType.output)
         channels = {}
