@@ -280,73 +280,38 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    def _dispatch():
-        return buf.runtime.intranode_dispatch(
-            x_b,
-            None,
-            topk_idx_b,
-            topk_weights_b,
-            num_tokens_per_rank_b,
-            is_token_in_rank_b,
-            num_tokens_per_expert_b,
-            0,
-            None,
-            None,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+    # ------------------------------------------------------------------
+    # Drive the benchmark through the high-level MoECommunicator (mode="ht").
+    # The communicator owns its own Buffer sized for the bench shape and runs
+    # get_dispatch_layout + intranode dispatch/combine internally. The first
+    # (uncached) dispatch records the routing layout in the returned handle so
+    # subsequent dispatches run cached -- reusing the layout and skipping
+    # notify_dispatch's host-side counter wait. This isolates the on-GPU
+    # dispatch-kernel cost (NCCL-EP ep_bench convention), matching the previous
+    # raw-Buffer benchmark while exercising the public API.
+    # ------------------------------------------------------------------
+    moe = ep.MoECommunicator(
+        group=group,
+        num_experts=bench_num_experts,
+        hidden_size=bench_hidden,
+        topk=bench_num_topk,
+        max_tokens_per_rank=bench_tokens,
+        mode="ht",
+        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+    )
+    assert moe.is_available()
 
-    # Run one uncached dispatch to capture the layout (rank/channel prefix
-    # matrices + num_recv_tokens). Subsequent dispatch iters reuse these in
-    # cached mode, which skips `notify_dispatch` and its host-side busy-wait on
-    # mapped pinned counters (`moe_recv_counter`, `moe_recv_expert_counter`).
-    # This matches NCCL-EP's `ep_bench` convention and isolates the on-GPU
-    # dispatch kernel cost from one-time setup overhead.
-    _layout = _dispatch()
-    _cached_rpm = _layout[5]  # rank_prefix_matrix
-    _cached_cpm = _layout[6]  # channel_prefix_matrix
-    _cached_n = int(_layout[0].size(0))  # num_recv_tokens on this rank
+    # One uncached dispatch to build the cached routing layout on the handle.
+    _handle0 = moe.dispatch(x_b, topk_idx_b, topk_weights_b)[1]
 
     def _dispatch_cached():
-        # In cached mode `num_experts` is taken as 0, so we must not pass
-        # topk_idx/topk_weights (those require num_experts > 0). We still get
-        # send_head/rank_prefix_matrix/channel_prefix_matrix/recv_src_idx out
-        # of dispatch -- enough to drive combine.
-        return buf.runtime.intranode_dispatch(
-            x_b,
-            None,
-            None,
-            None,
-            None,
-            is_token_in_rank_b,
-            None,
-            _cached_n,
-            _cached_rpm,
-            _cached_cpm,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        return moe.dispatch(x_b, topk_idx_b, topk_weights_b, previous_handle=_handle0)
 
     def _combine(dout):
-        rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev = dout
-        buf.runtime.intranode_combine(
-            rx,
-            rtw,
-            rsi,
-            rpm,
-            rcpm,
-            sh,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        dispatch_out_, handle_ = dout
+        moe.combine(dispatch_out_.tokens, handle_)
 
     # Warmup (full round-trip) using cached dispatch.
     for _ in range(warmup):

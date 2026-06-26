@@ -370,46 +370,41 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
+    # ------------------------------------------------------------------
+    # Drive the benchmark through the high-level MoECommunicator (mode="ht").
+    # The communicator owns its own Buffer sized for the bench shape and
+    # auto-selects the internode transport (world_size > NUM_MAX_NVL_PEERS).
+    # The first (uncached) dispatch records the routing layout on the returned
+    # handle; the timed dispatches reuse it via previous_handle, which skips
+    # get_dispatch_layout -- matching the previous raw-Buffer benchmark that
+    # passed a precomputed layout, so dispatch timing stays comparable.
+    # ------------------------------------------------------------------
+    moe = ep.MoECommunicator(
+        group=group,
+        num_experts=bench_num_experts,
+        hidden_size=bench_hidden,
+        topk=bench_num_topk,
+        max_tokens_per_rank=bench_tokens,
+        mode="ht",
+        num_sms=int(os.environ.get("MSCCLPP_EP_NSM", "152")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+        rdma_chunked_send=int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
+        rdma_chunked_recv=int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
+    )
+    assert moe.is_available() and moe.is_internode_available()
+
+    # One uncached dispatch builds the cached routing layout on the handle.
+    _handle0 = moe.dispatch(x_b, topk_idx_b, topk_weights_b)[1]
+    torch.cuda.synchronize()
+    dist.barrier(group=group)
+
     def _dispatch():
-        return buf.runtime.internode_dispatch(
-            x_b,
-            None,
-            topk_idx_b,
-            topk_weights_b,
-            num_tokens_per_rank_b,
-            num_tokens_per_rdma_rank_b,
-            is_token_in_rank_b,
-            num_tokens_per_expert_b,
-            0,
-            0,
-            None,
-            None,
-            None,
-            None,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        return moe.dispatch(x_b, topk_idx_b, topk_weights_b, previous_handle=_handle0)
 
     def _combine(dout):
-        rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
-        buf.runtime.internode_combine(
-            rx,
-            rtw,
-            rsm,
-            is_token_in_rank_b,
-            rrcpm,
-            rrps,
-            rgpm,
-            sh_rdma,
-            sh_nvl,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        dispatch_out_, handle_ = dout
+        moe.combine(dispatch_out_.tokens, handle_)
 
     # Warmup (full round-trip with the sync/barrier guard between phases,
     # matching the correctness-path invariant).

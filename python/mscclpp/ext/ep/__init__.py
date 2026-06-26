@@ -7,9 +7,10 @@ See ``src/ext/ep/README.md`` for migration status and
 
 * :class:`Buffer` is the low-level DeepEP-style runtime (intranode NVLink,
   internode HT, and low-latency paths).
-* :class:`MoECommunicator` is the high-level MoE API; the first implementation
-  covers ``mode="ht"`` (high-throughput, ``DispatchLayout.FLAT``) on top of
-  :class:`Buffer`.
+* :class:`MoECommunicator` is the high-level MoE API. ``mode="ht"``
+  (high-throughput, ``DispatchLayout.FLAT``) runs on top of :class:`Buffer`;
+  ``mode="ll"`` (low-latency, ``DispatchLayout.EXPERT_MAJOR``) runs on top of
+  :class:`MoERuntime`.
 """
 
 from .buffer import Buffer, Config, EventHandle  # noqa: F401
@@ -20,6 +21,7 @@ from .communicator import (  # noqa: F401
     DispatchOutput,
     MoECommunicator,
     MoECommunicatorConfig,
+    MoERuntime,
     QuantScales,
 )
 
@@ -33,5 +35,6 @@ __all__ = [
     "DispatchOutput",
     "MoECommunicator",
     "MoECommunicatorConfig",
+    "MoERuntime",
     "QuantScales",
 ]
