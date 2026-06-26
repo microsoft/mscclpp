@@ -410,19 +410,20 @@ void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv
   // (kNumWarpGroups, kNumWarpsPerGroup) is path-dependent. Intra-node IPC
   // benefits from 1 expert per SM with 32 warps cooperating on the recv-side
   // body (matches NCCL-EP's structure for num_experts <= num_sms). The
-  // PortChannel path is IB-bound and a wider grid only adds host-proxy FIFO
-  // contention and a costlier cg::this_grid().sync(), so we keep (3, 10).
+  // PortChannel/wide path uses a 1024-thread layout so hidden=8192 has one
+  // thread per bf16 int4 chunk, while two warp groups keep the cooperative
+  // grid at ceil(num_experts / 2) blocks.
   constexpr int kNumWarpsPerGroupIpc = 32;
   constexpr int kNumWarpGroupsIpc = 1;
-  constexpr int kNumWarpsPerGroupRdma = 10;
-  constexpr int kNumWarpGroupsRdma = 3;
+  constexpr int kNumWarpsPerGroupRdma = 16;
+  constexpr int kNumWarpGroupsRdma = 2;
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsIpc * kNumWarpsPerGroupIpc, "Too many top-k selections");
   EP_STATIC_ASSERT(kNumMaxTopK + 1 <= kNumWarpGroupsRdma * kNumWarpsPerGroupRdma, "Too many top-k selections");
 
   // The narrow IPC layout (kNumWG=1, kNumWPG=32) launches one block per
   // expert. For large `num_experts` (e.g. >~152 on GB200) this exceeds the
-  // cooperative-launch grid limit. Escalate to the wider (kNumWG=3,
-  // kNumWPG=10) layout in that case so each block owns 3 experts.
+  // cooperative-launch grid limit. Escalate to the wider (kNumWG=2,
+  // kNumWPG=16) layout in that case so each block owns 2 experts.
   bool ipc_wide = false;
   if (use_ipc_path) {
     int cur_dev = 0;
@@ -666,15 +667,16 @@ void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void*
              mscclpp::PortChannelDeviceHandle* port_channel_handles, void* const* peer_rdma_bases,
              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path) {
   // See the comment in `dispatch()`: (kNumWarpGroups, kNumWarpsPerGroup)
-  // is path-dependent. IPC uses (1, 32) to mirror NCCL-EP; PortChannel keeps
-  // (3, 10) to avoid host-proxy FIFO contention on the IB path.
+  // is path-dependent. IPC uses (1, 32) to mirror NCCL-EP; the
+  // PortChannel/wide path uses (2, 16), a 1024-thread layout that supports
+  // hidden=8192 while keeping the cooperative grid bounded.
   constexpr int kNumWarpsPerGroupIpc = 32;
   constexpr int kNumWarpGroupsIpc = 1;
-  constexpr int kNumWarpsPerGroupRdma = 10;
-  constexpr int kNumWarpGroupsRdma = 3;
+  constexpr int kNumWarpsPerGroupRdma = 16;
+  constexpr int kNumWarpGroupsRdma = 2;
   constexpr int kNumMaxTopk = 9;
 
-  // See `dispatch()` for the rationale: escalate to the wide (3, 10) IPC
+  // See `dispatch()` for the rationale: escalate to the wide (2, 16) IPC
   // layout when the narrow (1, 32) layout exceeds the cooperative-launch
   // grid limit.
   bool ipc_wide = false;
