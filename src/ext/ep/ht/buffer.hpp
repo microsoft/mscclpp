@@ -14,10 +14,10 @@
 #include <tuple>
 #include <vector>
 
+#include "../kernels/configs.cuh"
+#include "../kernels/exception.cuh"
 #include "config.hpp"
 #include "event.hpp"
-#include "kernels/configs.cuh"
-#include "kernels/exception.cuh"
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME mscclpp_ep_cpp

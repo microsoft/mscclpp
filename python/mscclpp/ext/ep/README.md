@@ -63,7 +63,7 @@ class MoECommunicatorConfig:
     max_recv_tokens_per_rank: Optional[int] = None
 
     # Runtime mode and output layout
-    mode: str = "ll"            # "ht" or "ll"
+    mode: MoEMode = MoEMode.LOW_LATENCY
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
 
     # Quantization defaults
@@ -74,8 +74,7 @@ class MoECommunicatorConfig:
     num_rdma_qps_per_rank: int = 12  # RDMA QPs per peer rank; advanced tuning
     num_sms: int = 20
 
-    # Streams and overlap
-    comm_stream: Optional[torch.cuda.Stream] = None
+    # Overlap
     enable_overlap: bool = False
 ```
 
@@ -89,7 +88,7 @@ moe_comm = MoECommunicator(
     hidden_size=hidden_size,
     topk=topk,
     max_tokens_per_rank=max_tokens,
-    mode="ht",
+    mode=MoEMode.HIGH_THROUGHPUT,
 )
 ```
 
@@ -106,7 +105,6 @@ The class should cache:
 | `rank`, `world_size` | global EP rank information |
 | `local_rank`, `device` | CUDA device binding |
 | internal runtime | nanobind/C++ EP runtime implementation |
-| `comm_stream` | optional stream for async dispatch/combine |
 
 ### Expert placement fields
 
@@ -139,7 +137,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 
 | Field | Purpose |
 |---|---|
-| `mode` | HT/normal or LL backend selection |
+| `mode` | Backend selection (`"ll"` active; `"ht"` archived/not compiled) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `max_tokens_per_rank` | dispatch capacity |
 | `max_recv_tokens_per_rank` | recv buffer capacity |
@@ -153,16 +151,18 @@ specialized advanced path.
 
 ### Mode selection
 
-The first implementation supports `mode="ll"` only. The upper layer should still
-own mode selection when more modes are added:
+The active implementation supports `mode=MoEMode.LOW_LATENCY`. `mode` must be a
+`MoEMode` enum value, not a string. `MoEMode.HIGH_THROUGHPUT` raises
+`NotImplementedError` because the HT implementation is archived under
+`src/ext/ep/ht/` and is not compiled into `mscclpp_ep_cpp`.
 
 ```python
-moe_comm = MoECommunicator(..., mode="ll")  # low-latency
+moe_comm = MoECommunicator(..., mode=MoEMode.LOW_LATENCY)
 ```
 
 This keeps `MoECommunicator` policy-free. Serving frameworks such as SGLang can
-choose HT for prefill and LL for decode based on their own scheduling policy,
-batch shape, runner backend, and benchmarking data.
+choose a mode based on their own scheduling policy, batch shape, runner backend,
+and benchmarking data once multiple active backends are available.
 
 The selected mode determines the default dispatch output layout:
 
@@ -193,6 +193,7 @@ class MoECommunicator:
         scales: Optional[QuantScales] = None,
         *,
         output_buffer: torch.Tensor,
+        stream: Optional[torch.cuda.Stream] = None,
     ) -> tuple[DispatchOutput, DispatchHandle]:
         ...
 
@@ -202,6 +203,7 @@ class MoECommunicator:
         handle: DispatchHandle,
         *,
         out: Optional[torch.Tensor] = None,
+        stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
         ...
 
@@ -224,6 +226,7 @@ class MoECommunicator:
 The blocking `dispatch` and `combine` methods should be the default path. The
 `*_async` methods and `create_overlap_config` are optional advanced APIs for
 communication/computation overlap.
+If `stream` is not provided, both methods launch on `torch.cuda.current_stream()`.
 
 ## High-level API
 

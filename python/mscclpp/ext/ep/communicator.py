@@ -6,8 +6,8 @@
 """Python frontend for the MSCCL++ Expert-Parallel extension.
 
 This is a thin wrapper around the nanobind extension ``mscclpp_ep_cpp``.
-``MoECommunicator`` is the high-level API. ``MoERuntime`` is a lower-level
-low-latency runtime wrapper used by the high-level API.
+``MoECommunicator`` is the high-level API. ``_MoERuntime`` is a private
+low-latency runtime wrapper used internally by the high-level API.
 
 Current status (see ``src/ext/ep/README.md``):
 
@@ -24,7 +24,6 @@ Current status (see ``src/ext/ep/README.md``):
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -41,9 +40,12 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-class DispatchLayout(str, Enum):
-    FLAT = "flat"
-    EXPERT_MAJOR = "expert_major"
+DispatchLayout = _cpp.DispatchLayout
+
+
+class MoEMode(str, Enum):
+    LOW_LATENCY = "ll"
+    HIGH_THROUGHPUT = "ht"
 
 
 @dataclass
@@ -59,13 +61,12 @@ class MoECommunicatorConfig:
     topk: int = 0
     max_tokens_per_rank: int = 0
     max_recv_tokens_per_rank: Optional[int] = None
-    mode: str = "ll"
-    output_layout: Optional[DispatchLayout | str] = None
+    mode: MoEMode = MoEMode.LOW_LATENCY
+    output_layout: Optional[DispatchLayout] = None
     input_dtype: Optional[torch.dtype] = None
     quant_format: Optional[str] = None
     num_rdma_qps_per_rank: int = 12
     num_sms: int = 20
-    comm_stream: Optional[torch.cuda.Stream] = None
     enable_overlap: bool = False
 
 
@@ -116,8 +117,8 @@ class CommOverlapConfig:
     block_ready_value: Optional[int] = None
 
 
-class MoERuntime:
-    """Low-level MoE communication runtime wrapper.
+class _MoERuntime:
+    """Private low-level MoE communication runtime wrapper.
 
     Parameters
     ----------
@@ -125,16 +126,14 @@ class MoERuntime:
     The :class:`mscclpp.CommGroup`. Used only for out-of-band
         exchange of IPC handles and the MSCCL++ unique id.
     num_nvl_bytes:
-        Size of the NVLink-accessible scratch buffer (shared via CUDA IPC).
+        Size of the NVLink-accessible scratch buffer. Reserved for archived HT mode.
     num_rdma_bytes:
-        Size of the RDMA scratch buffer. Required (>0) for internode HT and
-        low-latency modes.
-    low_latency_mode:
-        Enable low-latency buffer setup for :class:`MoECommunicator`. New
-        callers should use :class:`MoECommunicator` instead of direct LL
-        methods on this low-level runtime.
+        Size of the LL RDMA scratch buffer.
+    mode:
+        Runtime mode selector. ``MoEMode.LOW_LATENCY`` is active;
+        ``MoEMode.HIGH_THROUGHPUT`` is archived and not compiled.
     num_qps_per_rank:
-        Ignored for intranode mode.
+        RDMA QPs per peer rank.
     """
 
     #: Default number of SMs reserved for comms kernels. Matches DeepEP.
@@ -145,22 +144,26 @@ class MoERuntime:
         comm: CommGroup,
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
-        low_latency_mode: bool = False,
+        mode: MoEMode = MoEMode.LOW_LATENCY,
         num_qps_per_rank: int = 12,
     ) -> None:
+        if not isinstance(mode, MoEMode):
+            raise TypeError("mode must be a MoEMode")
+        self.mode = mode
+        if self.mode != MoEMode.LOW_LATENCY:
+            raise NotImplementedError("mode='ht' is archived under src/ext/ep/ht and is not compiled")
+
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
-        self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
+        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, True)
 
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
-        self._cpp_runtime.sync()
 
     # ------------------------------------------------------------------
     # Sanity helpers
@@ -212,11 +215,13 @@ class MoECommunicator:
         self.local_rank: int = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
 
-        self.mode = config.mode.lower()
-        if self.mode != "ll":
-            raise NotImplementedError("MoECommunicator currently supports only mode='ll'")
+        if not isinstance(config.mode, MoEMode):
+            raise TypeError("MoECommunicatorConfig.mode must be a MoEMode")
+        self.mode = config.mode
+        if self.mode != MoEMode.LOW_LATENCY:
+            raise NotImplementedError("mode='ht' is archived under src/ext/ep/ht and is not compiled")
 
-        self.output_layout = _normalize_output_layout(config.output_layout, self.mode)
+        self.output_layout = _resolve_output_layout(config.output_layout, self.mode)
 
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
@@ -243,18 +248,15 @@ class MoECommunicator:
             raise NotImplementedError("low-latency dispatch currently supports BF16 input only")
 
         self.quant_format = _normalize_quant_format(config.quant_format)
-        self.dispatch_use_fp8 = self.quant_format == "fp8_e4m3"
         if self.quant_format not in (None, "fp8_e4m3"):
             raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
+        self.dispatch_requires_quantization = self.quant_format is not None
 
         num_nvl_bytes = 0
         num_rdma_bytes = _get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
         )
 
-        self.comm_stream = config.comm_stream
-        if self.comm_stream is not None:
-            raise NotImplementedError("custom comm_stream is not wired into the low-latency runtime yet")
         self.enable_overlap = config.enable_overlap
         self.num_sms = config.num_sms
         self._dispatch_scales: Optional[torch.Tensor] = None
@@ -262,11 +264,11 @@ class MoECommunicator:
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
 
-        self._runtime = MoERuntime(
+        self._runtime = _MoERuntime(
             comm,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
-            low_latency_mode=True,
+            mode=self.mode,
             num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
 
@@ -284,6 +286,7 @@ class MoECommunicator:
         scales: Optional[QuantScales] = None,
         *,
         output_buffer: torch.Tensor,
+        stream: Optional[torch.cuda.Stream] = None,
     ) -> tuple[DispatchOutput, DispatchHandle]:
         self._validate_dispatch_inputs(input, topk_ids, weights, scales, output_buffer)
         if weights is None:
@@ -304,9 +307,9 @@ class MoECommunicator:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
-            self.dispatch_use_fp8,
-            _cpp_dispatch_layout(self.output_layout),
-            torch.cuda.current_stream().cuda_stream,
+            self.dispatch_requires_quantization,
+            self.output_layout,
+            _cuda_stream_ptr(stream),
         )
         output_scales = None
         if packed_scales is not None:
@@ -361,7 +364,7 @@ class MoECommunicator:
                 device=device,
             )
             self._dispatch_scales = None
-            if self.dispatch_use_fp8:
+            if self.dispatch_requires_quantization:
                 num_scales = self.hidden_size // 128
                 scales_storage = torch.empty(
                     (self.num_local_experts, num_scales, slots_per_expert),
@@ -387,10 +390,12 @@ class MoECommunicator:
         handle: DispatchHandle,
         *,
         out: Optional[torch.Tensor] = None,
+        stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
         self._validate_combine_inputs(expert_output, handle, out)
+        combine_requires_dequantization = _requires_dequantization(expert_output)
         x_scales = None
-        if _is_fp8_e4m3_tensor(expert_output):
+        if combine_requires_dequantization:
             if handle.output_scales is None or handle.output_scales.local is None:
                 raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
             x_scales = handle.output_scales.local
@@ -410,8 +415,8 @@ class MoECommunicator:
             handle.weights.size(1),
             handle.num_max_dispatch_tokens_per_rank,
             handle.num_experts,
-            _is_fp8_e4m3_tensor(expert_output),
-            torch.cuda.current_stream().cuda_stream,
+            combine_requires_dequantization,
+            _cuda_stream_ptr(stream),
         )
         return out
 
@@ -434,7 +439,7 @@ class MoECommunicator:
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
-        return CommOverlapConfig(op=op, level=level, stream=self.comm_stream)
+        return CommOverlapConfig(op=op, level=level)
 
     def _validate_dispatch_inputs(
         self,
@@ -469,14 +474,14 @@ class MoECommunicator:
                 raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
-        expected_dtype = torch.float8_e4m3fn if self.dispatch_use_fp8 else torch.bfloat16
+        expected_dtype = torch.float8_e4m3fn if self.dispatch_requires_quantization else torch.bfloat16
         slots_per_expert = self.world_size * self.max_tokens_per_rank
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
         else:
             expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
-            raise ValueError(f"output_buffer must be a contiguous {self.output_layout.value} tensor")
+            raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
         if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
             raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
@@ -504,26 +509,16 @@ class MoECommunicator:
                 raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
 
 
-def _normalize_output_layout(layout: Optional[DispatchLayout | str], mode: str) -> DispatchLayout:
+def _resolve_output_layout(layout: Optional[DispatchLayout], mode: MoEMode) -> DispatchLayout:
     if layout is None:
-        return DispatchLayout.EXPERT_MAJOR if mode == "ll" else DispatchLayout.FLAT
-    if isinstance(layout, DispatchLayout):
-        return layout
-
-    normalized = layout.lower().replace("-", "_")
-    if normalized in ("flat", "flat_2d", "flat_expert_major"):
-        return DispatchLayout.FLAT
-    if normalized in ("expert_major", "expert_major_3d", "padded_expert_major"):
-        return DispatchLayout.EXPERT_MAJOR
-    raise ValueError(f"unsupported dispatch output layout: {layout}")
+        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LOW_LATENCY else DispatchLayout.FLAT
+    if not isinstance(layout, DispatchLayout):
+        raise TypeError("MoECommunicatorConfig.output_layout must be a DispatchLayout")
+    return layout
 
 
-def _cpp_dispatch_layout(layout: DispatchLayout) -> int:
-    if layout == DispatchLayout.EXPERT_MAJOR:
-        return 0
-    if layout == DispatchLayout.FLAT:
-        return 1
-    raise ValueError(f"unsupported dispatch output layout: {layout}")
+def _cuda_stream_ptr(stream: Optional[torch.cuda.Stream]) -> int:
+    return (stream if stream is not None else torch.cuda.current_stream()).cuda_stream
 
 
 def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
@@ -535,7 +530,7 @@ def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
     return normalized
 
 
-def _is_fp8_e4m3_tensor(tensor: torch.Tensor) -> bool:
+def _requires_dequantization(tensor: torch.Tensor) -> bool:
     fp8_dtype = getattr(torch, "float8_e4m3fn", None)
     return fp8_dtype is not None and tensor.dtype == fp8_dtype
 

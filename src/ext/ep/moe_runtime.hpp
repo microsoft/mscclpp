@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "config.hpp"
+#include "kernels/api.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -32,17 +33,15 @@ class MoERuntime {
   int get_root_rdma_rank(bool global) const;
   int get_local_device_id() const;
   std::string get_local_ipc_handle() const;
-  void sync(const std::vector<int>& device_ids, const std::vector<std::optional<std::string>>& all_gathered_handles,
-            const std::optional<std::string>& root_unique_id_opt);
 
   void dispatch(void* output, float* output_scales, int* output_src_info, int64_t* output_layout, int* output_count,
                 const void* input, const int64_t* topk_idx, int num_tokens, int hidden, int num_topk,
-                int num_max_dispatch_tokens_per_rank, int num_experts, bool use_fp8, int output_layout_kind,
-                cudaStream_t stream);
+                int num_max_dispatch_tokens_per_rank, int num_experts, bool use_fp8,
+                low_latency::DispatchLayout dispatch_layout, cudaStream_t stream);
 
   void combine(void* output, const void* input, const float* input_scales, const int64_t* topk_idx,
                const float* topk_weights, const int* src_info, const int64_t* layout_range, int num_tokens, int hidden,
-               int num_topk, int num_max_dispatch_tokens_per_rank, int num_experts, bool input_is_fp8,
+               int num_topk, int num_max_dispatch_tokens_per_rank, int num_experts, bool requires_dequantization,
                cudaStream_t stream);
 
  private:
@@ -78,6 +77,7 @@ class MoERuntime {
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr_;
 
   void move_fifo_slots(int num_slots = 1);
+  void setup();
 };
 
 }  // namespace ep

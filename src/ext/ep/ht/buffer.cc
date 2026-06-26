@@ -10,8 +10,8 @@
 #include <memory>
 #include <mscclpp/gpu_utils.hpp>
 
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
+#include "../kernels/api.cuh"
+#include "../kernels/configs.cuh"
 
 namespace mscclpp {
 namespace ep {

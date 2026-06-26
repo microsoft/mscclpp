@@ -2,7 +2,11 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include "kernels/api.cuh"
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+
+#include "kernels/configs.cuh"
 #include "kernels/exception.cuh"
 
 namespace mscclpp {
@@ -17,115 +21,6 @@ template <typename dtype_t>
 dtype_t align(dtype_t a, dtype_t b) {
   return cell_div<dtype_t>(a, b) * b;
 }
-
-struct Config {
-  int num_sms;
-  int num_max_nvl_chunked_send_tokens;
-  int num_max_nvl_chunked_recv_tokens;
-  int num_max_rdma_chunked_send_tokens;
-  int num_max_rdma_chunked_recv_tokens;
-
-  Config(int num_sms, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens,
-         int num_max_rdma_chunked_send_tokens, int num_max_rdma_chunked_recv_tokens)
-      : num_sms(num_sms),
-        num_max_nvl_chunked_send_tokens(num_max_nvl_chunked_send_tokens),
-        num_max_nvl_chunked_recv_tokens(num_max_nvl_chunked_recv_tokens),
-        num_max_rdma_chunked_send_tokens(num_max_rdma_chunked_send_tokens),
-        num_max_rdma_chunked_recv_tokens(num_max_rdma_chunked_recv_tokens) {
-    EP_HOST_ASSERT(num_sms >= 0);
-    EP_HOST_ASSERT(num_max_nvl_chunked_send_tokens > 0 and num_max_nvl_chunked_recv_tokens > 0);
-    EP_HOST_ASSERT(num_max_nvl_chunked_send_tokens < num_max_nvl_chunked_recv_tokens);
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens > 0 and num_max_rdma_chunked_recv_tokens > 0);
-
-    // Ceil up RDMA buffer size
-    this->num_max_rdma_chunked_recv_tokens =
-        align<int>(num_max_rdma_chunked_recv_tokens, num_max_rdma_chunked_send_tokens);
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens < num_max_rdma_chunked_recv_tokens);
-    // NOTES: this assertion is related to RDMA lazy head update, we must ensure senders always have space to push
-    EP_HOST_ASSERT(num_max_rdma_chunked_send_tokens <= num_max_rdma_chunked_recv_tokens / 2);
-  }
-
-  size_t get_nvl_base_bytes(size_t hidden_bytes, int num_ranks) const {
-    // Below are some assumptions
-    // TODO: add assertions
-    constexpr int kNumMaxTopK = 128;
-    constexpr int kNumMaxScales = 128;
-    EP_HOST_ASSERT(num_ranks < NUM_MAX_NVL_PEERS or num_ranks % NUM_MAX_NVL_PEERS == 0);
-    EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS or num_sms % 2 == 0);
-    const auto num_rdma_ranks = std::max(num_ranks / NUM_MAX_NVL_PEERS, 1);
-    const auto num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
-    const int num_channels = num_sms / 2;
-
-    size_t num_bytes = 0;
-    num_bytes += num_channels * num_nvl_ranks * (2 * num_rdma_ranks + 3) * sizeof(int);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * hidden_bytes;
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * internode::get_source_meta_bytes();
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxTopK * sizeof(int64_t);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxTopK * sizeof(float);
-    num_bytes += num_channels * num_nvl_ranks * num_max_nvl_chunked_recv_tokens * kNumMaxScales * sizeof(float);
-    num_bytes = ((num_bytes + 127) / 128) * 128;
-    return num_bytes;
-  }
-
-#ifdef EP_DISPATCH_NCCLEP
-  // Increment 3 (cross-GPU peer-map): a fixed-capacity recv-output pool appended
-  // to the NVL cudaMalloc (AFTER the fifo/task regions, NOT added to
-  // num_nvl_bytes, so it does not count against the INT_MAX-limited registered
-  // size). Peers reach it through the same IPC handle as buffer_ptrs. Holds a
-  // small header (the local recv_gbl_rank_prefix_sum, made peer-readable so a
-  // cross-GPU forwarder can compute the destination's final recv_x index)
-  // followed by the recv_x hidden region. recv_x becomes a zero-copy view of
-  // that region; the cross-GPU forwarder writes hidden straight to the
-  // destination peer's pool, removing the receiver's hidden drain. Falls back to
-  // torch::empty + receiver when num_recv_tokens exceeds the capacity.
-  static constexpr int kEpRecvPoolMaxTokens = 65536;
-  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
-  size_t get_recv_pool_header_bytes(int num_ranks) const {
-    return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-  }
-  // Total bytes of the recv-output pool. Sized for the worst-case hidden so the
-  // Buffer ctor can allocate it without knowing the runtime hidden dim.
-  static size_t recv_pool_bytes_static(int num_ranks) {
-    size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-    size_t b = header + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
-    return ((b + 127) / 128) * 128;
-  }
-#endif
-
-  size_t get_nvl_buffer_size_hint(size_t hidden_bytes, int num_ranks) const {
-    return get_nvl_base_bytes(hidden_bytes, num_ranks);
-  }
-
-  size_t get_rdma_buffer_size_hint(int64_t hidden_bytes, int num_ranks) const {
-    // Legacy mode
-    if (num_ranks <= NUM_MAX_NVL_PEERS) return 0;
-
-    // Below are some assumptions
-    // TODO: add assertions
-    constexpr int kNumMaxTopK = 128;
-    constexpr int kNumMaxScales = 128;
-    EP_HOST_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0);
-    EP_HOST_ASSERT(num_sms % 2 == 0);
-    const int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
-    const int num_channels = num_sms / 2;
-
-    size_t num_bytes = 0;
-    num_bytes += num_channels * num_rdma_ranks * (NUM_MAX_NVL_PEERS * 2 + 2) * 2 * sizeof(int);
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * hidden_bytes * 2;
-    num_bytes +=
-        num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * internode::get_source_meta_bytes() * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxTopK * sizeof(int64_t) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxTopK * sizeof(float) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * kNumMaxScales * sizeof(float) * 2;
-    num_bytes += num_channels * num_rdma_ranks * num_max_rdma_chunked_recv_tokens * sizeof(int4) * 2;
-    // Two extra uint64_t scratch slots per (channel, rdma_rank) used by the
-    // dispatch/combine kernels as the RDMA WRITE source for absolute-value
-    // tail/head updates (replaces broken HW atomicAdd on Azure CX-7 RoCE).
-    num_bytes += num_channels * num_rdma_ranks * sizeof(uint64_t) * 2;
-    num_bytes = ((num_bytes + 127) / 128) * 128;
-    return num_bytes;
-  }
-};
 
 struct LowLatencyBuffer {
   int num_clean_int = 0;
@@ -162,6 +57,7 @@ struct LowLatencyLayout {
 
   LowLatencyLayout(void* rdma_buffer, int num_max_dispatch_tokens_per_rank, int hidden, int num_ranks,
                    int num_experts) {
+    (void)num_ranks;
     const int num_scales = hidden / 128;
 
     // Dispatch and combine layout:
@@ -171,7 +67,7 @@ struct LowLatencyLayout {
 
     // Message sizes
     // NOTES: you should add a control `int4` for combine messages if you want to do data transformation
-    EP_HOST_ASSERT(num_scales * sizeof(float) <= hidden);
+    EP_HOST_ASSERT(num_scales * static_cast<int>(sizeof(float)) <= hidden);
     size_t num_bytes_per_dispatch_msg =
         sizeof(int4) + std::max(hidden * sizeof(nv_bfloat16), hidden + num_scales * sizeof(float));
     size_t num_bytes_per_combine_msg = hidden * sizeof(nv_bfloat16);

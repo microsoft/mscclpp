@@ -21,7 +21,9 @@ namespace mscclpp {
 namespace ep {
 
 // ===========================================================================
-// Intranode (NVLink) runtime barrier.
+// Archived HT intranode (NVLink) runtime barrier.
+// Implementations live under `src/ext/ep/ht/` and are not compiled into the active
+// `mscclpp_ep_cpp` target.
 // ===========================================================================
 namespace intranode {
 
@@ -55,10 +57,10 @@ void combine(cudaDataType_t type, void* recv_x, float* recv_topk_weights, const 
 }  // namespace intranode
 
 // ===========================================================================
-// Internode (NVLink + RDMA) high-throughput kernels. Ported from DeepEP
-// `csrc/kernels/internode.cu` on branch `chhwang/dev-atomic-add-cleanup`.
-// NVSHMEM dependencies in the kernel were replaced with MSCCL++ port-channel
-// atomic adds (see src/ext/ep/README.md for the translation table).
+// Archived internode (NVLink + RDMA) high-throughput kernels. Ported from DeepEP
+// `csrc/kernels/internode.cu` on branch `chhwang/dev-atomic-add-cleanup`. The
+// implementations live under `src/ext/ep/ht/` and are not compiled into the
+// active `mscclpp_ep_cpp` target.
 // ===========================================================================
 namespace internode {
 

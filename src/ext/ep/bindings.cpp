@@ -16,6 +16,7 @@
 #include <string>
 
 #include "config.hpp"
+#include "kernels/api.cuh"
 #include "moe_runtime.hpp"
 
 namespace nb = nanobind;
@@ -37,6 +38,10 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::module_::import_("mscclpp._mscclpp");
 
+  nb::enum_<mscclpp::ep::low_latency::DispatchLayout>(m, "DispatchLayout")
+      .value("EXPERT_MAJOR", mscclpp::ep::low_latency::DispatchLayout::EXPERT_MAJOR)
+      .value("FLAT", mscclpp::ep::low_latency::DispatchLayout::FLAT);
+
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
       .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, bool>(), nb::arg("comm"), nb::arg("num_nvl_bytes"),
            nb::arg("num_rdma_bytes"), nb::arg("low_latency_mode"))
@@ -48,13 +53,12 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def("get_local_device_id", &mscclpp::ep::MoERuntime::get_local_device_id)
       .def("get_local_ipc_handle",
            [](const mscclpp::ep::MoERuntime& self) { return stringToBytes(self.get_local_ipc_handle()); })
-      .def("sync", [](mscclpp::ep::MoERuntime& self) { self.sync({}, {}, std::nullopt); })
       .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t outputPtr,
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputLayoutRangePtr,
              uintptr_t outputCountPtr, int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank,
-             int numExperts, bool useFp8, int outputLayout, uintptr_t streamPtr) {
+             int numExperts, bool useFp8, mscclpp::ep::low_latency::DispatchLayout outputLayout, uintptr_t streamPtr) {
             self.dispatch(ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
                           reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
                           reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
@@ -70,16 +74,16 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           "combine",
           [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t expertScalesPtr, uintptr_t topkIdxPtr,
              uintptr_t topkWeightsPtr, uintptr_t srcInfoPtr, uintptr_t layoutRangePtr, uintptr_t outputPtr,
-             int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool inputIsFp8,
-             uintptr_t streamPtr) {
+             int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
+             bool requiresDequantization, uintptr_t streamPtr) {
             self.combine(ptr(outputPtr), ptr(expertOutputPtr), reinterpret_cast<float*>(ptr(expertScalesPtr)),
                          reinterpret_cast<int64_t*>(ptr(topkIdxPtr)), reinterpret_cast<float*>(ptr(topkWeightsPtr)),
                          reinterpret_cast<int*>(ptr(srcInfoPtr)), reinterpret_cast<int64_t*>(ptr(layoutRangePtr)),
-                         numTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, inputIsFp8,
+                         numTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, requiresDequantization,
                          stream(streamPtr));
           },
           nb::arg("expert_output_ptr"), nb::arg("expert_scales_ptr"), nb::arg("topk_idx_ptr"),
           nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"), nb::arg("layout_range_ptr"), nb::arg("output_ptr"),
           nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_max_dispatch_tokens_per_rank"),
-          nb::arg("num_experts"), nb::arg("input_is_fp8"), nb::arg("stream_ptr"));
+          nb::arg("num_experts"), nb::arg("requires_dequantization"), nb::arg("stream_ptr"));
 }

@@ -1,24 +1,16 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A port of DeepEP's MoE `dispatch` / `combine` primitives into MSCCL++,
-targeting:
-
-- **High-Throughput (HT) mode** from [DeepEP](https://github.com/deepseek-ai/DeepEP),
-  branch `chhwang/dev-atomic-add-cleanup` — which already swaps NVSHMEM for
-  `mscclpp::PortChannel` / `mscclpp::MemoryChannel`.
-- **Low-Latency (LL) mode** from [`nccl/contrib/nccl_ep`](https://github.com/NVIDIA/nccl/tree/master/contrib/nccl_ep),
-  which implements pure-RDMA dispatch/combine on top of the NCCL Device API.
+A port of low-latency MoE `dispatch` / `combine` primitives into MSCCL++.
+The active build exposes the LL `MoECommunicator` path. The older
+High-Throughput (HT) prototype has been moved under `src/ext/ep/ht/` for
+reference and is not compiled into `mscclpp_ep_cpp`.
 
 ## Status
 
 | Feature                            | Status                                      |
 |------------------------------------|---------------------------------------------|
-| Runtime construction + IPC + sync  | ✅ ported (NVLink + RDMA)                          |
-| `get_dispatch_layout`              | ✅ ported                                          |
-| `intranode_dispatch` (NVLink)      | ✅ validated (8 ranks H100; 4 ranks GB200)         |
-| `intranode_combine` (NVLink)       | ✅ validated (8 ranks H100; 4 ranks GB200)         |
-| `internode_dispatch` (NVLink+RDMA) | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
-| `internode_combine` (NVLink+RDMA)  | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
+| Runtime construction + IPC + sync  | ✅ ported for LL                                  |
+| HT prototype                       | Archived under `src/ext/ep/ht/`; not compiled     |
 | `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
@@ -27,19 +19,10 @@ targeting:
 | Python frontend `mscclpp.ext.ep`   | ✅ wraps the new LL MoECommunicator path                 |
 | nanobind module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
 
-Internode HT was validated end-to-end on two H100×8 nodes connected over
-Infiniband using [`test/python/ext/ep/test_internode_multirank.py`](../../../test/python/ext/ep/test_internode_multirank.py).
-All 16 ranks complete dispatch followed by combine with exact (zero-diff)
-recovery of the per-rank token payloads.
-
-On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), HT and LL were
-validated at 16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168,
-tokens=4096, experts=256, top-k=8:
-
-- HT internode: dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg
-  (`NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32`).
-- LL internode: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
-  combine ~**21 148 GB/s** agg (defaults).
+On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), LL was validated at
+16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168, tokens=4096,
+experts=256, top-k=8: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
+combine ~**21 148 GB/s** agg (defaults).
 
 The GB200 path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
 routing peer pointers through cuMem fabric IPC over the NVL72 fabric
@@ -94,13 +77,8 @@ dst_rank)`.
 - Unlike DeepEP, this port drives LL through `PortChannel` /
   `MemoryChannel` rather than NVSHMEM, so runtime sync connects
   every peer even in `low_latency_mode=True`.
-- The internode HT functional test inserts an explicit
-  `torch.cuda.synchronize()` + `dist.barrier()` between dispatch and
-  combine. Without it, fast ranks can launch combine while peers still
-  have in-flight dispatch proxy traffic, deadlocking the combine NVL
-  forwarder. Folding this barrier into
-  internode dispatch/combine (or
-  `cached_notify`) is tracked in the test's `XXX` comment.
+- HT code is archived for reference only and is not part of the active
+  extension build.
 
 ## Build
 
@@ -279,24 +257,28 @@ src/ext/ep/
 ├── CMakeLists.txt              — builds mscclpp_ep_cpp (nanobind)
 ├── README.md                   — this file
 ├── moe_runtime.hpp / .cc       — LL MoE runtime state and raw-pointer dispatch/combine
-├── buffer.hpp / buffer.cc      — legacy host-side HT/DeepEP-compatible runtime
-├── config.hpp / event.hpp      — legacy Config/EventHandle plus LL layout helpers
+├── config.hpp                  — LL layout helpers and size hints
 ├── bindings.cpp                — nanobind module definition
+├── ht/                         — archived HT prototype; not compiled
+│   ├── buffer.hpp / buffer.cc
+│   ├── config.hpp
+│   ├── event.hpp
+│   └── kernels/
+│       ├── buffer.cuh
+│       ├── runtime.cu
+│       ├── intranode_kernel.cu
+│       ├── internode.cu
+│       └── internode_ncclep.cuh
 └── kernels/
     ├── api.cuh                 — host-callable kernel prototypes
     ├── configs.cuh             — compile-time constants (GPU-only)
-    ├── buffer.cuh              — Buffer/AsymBuffer/SymBuffer helpers
     ├── exception.cuh           — EP_HOST/DEVICE_ASSERT + CUDA_CHECK
     ├── launch.cuh              — SETUP_LAUNCH_CONFIG / SWITCH_* macros
     ├── utils.cuh               — device inline helpers
-    ├── runtime.cu              — intranode::barrier launcher
-    ├── intranode_kernel.cu     — intranode dispatch/combine kernels
-    ├── internode.cu            — internode HT dispatch/combine + layout
-    │                            (incl. NVLS multimem fast path for GB200)
     └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
 
 python/mscclpp/ext/ep/
-├── __init__.py                 — reexports MoECommunicator / MoERuntime
+├── __init__.py                 — reexports the public MoECommunicator API
 └── communicator.py             — torch.Tensor frontend over raw-pointer runtime calls
 
 test/python/ext/ep/
@@ -451,6 +433,10 @@ Env knobs:
 | `MSCCLPP_EP_NUM_PROXIES`      | Number of runtime `ProxyService`s      | 8 (Hopper) / 1 (Blackwell) |
 
 ## Migration plan
+
+This section is historical. The HT prototype from the earlier migration phases
+is archived under `src/ext/ep/ht/` and is not part of the active extension
+target; the current `mscclpp_ep_cpp` build compiles the LL runtime only.
 
 ### Phase 1 — DONE
 

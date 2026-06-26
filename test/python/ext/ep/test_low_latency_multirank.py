@@ -116,7 +116,7 @@ def main():
         hidden_size=hidden,
         topk=num_topk,
         max_tokens_per_rank=num_tokens,
-        mode="ll",
+        mode=ep.MoEMode.LOW_LATENCY,
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
     )
     if rank == 0:

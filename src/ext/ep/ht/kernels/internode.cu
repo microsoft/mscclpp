@@ -5,11 +5,11 @@
 #include <mscclpp/port_channel_device.hpp>
 #include <type_traits>
 
+#include "../../kernels/configs.cuh"
+#include "../../kernels/exception.cuh"
+#include "../../kernels/launch.cuh"
+#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
-#include "configs.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
-#include "utils.cuh"
 
 namespace mscclpp {
 namespace ep {
