@@ -562,21 +562,20 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
 // combine
 // ---------------------------------------------------------------------------
 
-template <DType kInputDType, int kHidden>
+template <DType kInputDType>
 MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src, const float* scales, int scaleStride,
-                                                  int laneId) {
+                                                  int hiddenBf16Int4, int laneId) {
   constexpr int kNumBf16PerInt4 = sizeof(int4) / sizeof(nv_bfloat16);
-  constexpr int kHiddenBf16Int4 = kHidden / kNumBf16PerInt4;
 
   if constexpr (kInputDType == DType::BF16) {
     const auto srcInt4 = reinterpret_cast<const int4*>(src);
-    UNROLLED_WARP_COPY(7, laneId, kHiddenBf16Int4, dst, srcInt4, ld_nc_global, st_na_global);
+    UNROLLED_WARP_COPY(7, laneId, hiddenBf16Int4, dst, srcInt4, ld_nc_global, st_na_global);
   } else {
     static_assert(kInputDType == DType::F8E4M3, "Unsupported low-latency combine input dtype");
     const auto srcFp8 = reinterpret_cast<const __nv_fp8_storage_t*>(src);
     EP_DEVICE_ASSERT(scales != nullptr);
 
-    for (int i = laneId; i < kHiddenBf16Int4; i += WARP_SIZE) {
+    for (int i = laneId; i < hiddenBf16Int4; i += WARP_SIZE) {
       int4 bf16Pack;
       auto bf16Values = reinterpret_cast<nv_bfloat16*>(&bf16Pack);
 #pragma unroll
@@ -591,21 +590,23 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
   }
 }
 
-template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kHidden>
+template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
 MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlagBuffer, void* stagedSend,
                                        const void* input, const float* inputScales, const int* srcInfo,
                                        const int64_t* layoutRange, int64_t* nextClean, int numNextCleanInt,
-                                       int* atomicCleanFlag, int numMaxDispatchTokensPerRank, int numExperts, int rank,
-                                       int numRanks, bool zeroCopy, void* rdmaBufferPtr,
+                                       int* atomicCleanFlag, int hidden, int numMaxDispatchTokensPerRank,
+                                       int numExperts, int rank, int numRanks, bool zeroCopy, void* rdmaBufferPtr,
                                        mscclpp::PortChannelDeviceHandle* portChannelHandles, void* const* peerRdmaBases,
                                        int ranksPerIpcDomain, int smId, int warpGroupId, int subWarpId, int laneId,
                                        int responsibleExpertIdx) {
   using InputType = typename DispatchDTypeTraits<kInputDType>::Type;
   using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
+  constexpr int kNumBf16PerInt4 = sizeof(int4) / sizeof(nv_bfloat16);
 
-  constexpr size_t numInputBytes = kHidden * sizeof(InputType);
-  constexpr size_t numBytesPerSlot = kHidden * sizeof(OutputType);
-  static_assert(numBytesPerSlot % sizeof(int4) == 0, "Invalid vectorization");
+  const int hiddenBf16Int4 = hidden / kNumBf16PerInt4;
+  const size_t numInputBytes = hidden * sizeof(InputType);
+  const size_t numBytesPerSlot = hidden * sizeof(OutputType);
+  EP_DEVICE_ASSERT(hidden % (WARP_SIZE * kNumBf16PerInt4) == 0 and numBytesPerSlot % sizeof(int4) == 0);
 
   if (smId == 0 and warpGroupId == 0 and subWarpId == 0) {
     for (int i = laneId; i < numNextCleanInt; i += WARP_SIZE) nextClean[i] = 0;
@@ -621,7 +622,7 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
     const auto globalExpertIdx = rank * numLocalExperts + localExpertIdx;
     const auto layout = __ldg(layoutRange + localExpertIdx * numRanks + dstRank);
     const int scaleStride = numRanks * numMaxDispatchTokensPerRank;
-    const int numScales = kHidden / 128;
+    const int numScales = hidden / 128;
     const auto localInput = reinterpret_cast<const uint8_t*>(input) + localExpertIdx * scaleStride * numInputBytes;
     const auto localInputScales =
         inputScales == nullptr ? nullptr : inputScales + localExpertIdx * numScales * scaleStride;
@@ -644,28 +645,30 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
                           (globalExpertIdx * numMaxDispatchTokensPerRank + srcIdx) * numBytesPerSlot;
       if (dstRank == rank) {
         const auto dstInt4Ptr = reinterpret_cast<int4*>(dstPtr);
-        copyCombineInputToBf16<kInputDType, kHidden>(dstInt4Ptr, inputRow, inputScaleRow, scaleStride, laneId);
+        copyCombineInputToBf16<kInputDType>(dstInt4Ptr, inputRow, inputScaleRow, scaleStride, hiddenBf16Int4, laneId);
       } else {
         if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
           // Peer-mapped warp copy over NVLink. `zeroCopy` is irrelevant
           // on this path because we skip the rdma_send staging buffer.
           const auto peerDst = peerMappedPtrOf(dstPtr, peerRdmaBases, rdmaBufferPtr, dstRank);
           const auto peerDstInt4 = reinterpret_cast<int4*>(peerDst);
-          copyCombineInputToBf16<kInputDType, kHidden>(peerDstInt4, inputRow, inputScaleRow, scaleStride, laneId);
+          copyCombineInputToBf16<kInputDType>(peerDstInt4, inputRow, inputScaleRow, scaleStride, hiddenBf16Int4,
+                                              laneId);
         } else {
           const auto stagedSendInt4 = reinterpret_cast<int4*>(stagedSendPtr);
           if constexpr (kInputDType == DType::BF16) {
             if (not zeroCopy)
-              copyCombineInputToBf16<kInputDType, kHidden>(stagedSendInt4, inputRow, inputScaleRow, scaleStride,
-                                                           laneId);
+              copyCombineInputToBf16<kInputDType>(stagedSendInt4, inputRow, inputScaleRow, scaleStride, hiddenBf16Int4,
+                                                  laneId);
           } else {
-            copyCombineInputToBf16<kInputDType, kHidden>(stagedSendInt4, inputRow, inputScaleRow, scaleStride, laneId);
+            copyCombineInputToBf16<kInputDType>(stagedSendInt4, inputRow, inputScaleRow, scaleStride, hiddenBf16Int4,
+                                                laneId);
           }
           // MSCCL++ port-channel PUT.
           if (laneId == 0) {
             const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
             const auto srcOff = portChannelOffsetOf(static_cast<uint64_t>(stagedSendPtr), rdmaBufferPtr);
-            portChannelHandles[localExpertIdx * numRanks + dstRank].put(dstOff, srcOff, kHidden * sizeof(OutputType));
+            portChannelHandles[localExpertIdx * numRanks + dstRank].put(dstOff, srcOff, hidden * sizeof(OutputType));
           }
           __syncwarp();
         }
@@ -686,18 +689,18 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
   }
 }
 
-template <DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kHidden, int kNumMaxTopk>
+template <DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kNumMaxTopk>
 MSCCLPP_DEVICE_INLINE void combineRecv(void* output, void* stagedRecv, int64_t* stagedRecvFlagBuffer,
                                        const int64_t* topkIdx, const float* topkWeights, int numCombinedTokens,
-                                       int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int smId,
-                                       int numSms, int threadId, int numThreads, int warpGroupId, int subWarpId,
-                                       int laneId, int responsibleExpertIdx) {
+                                       int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
+                                       int smId, int numSms, int threadId, int numThreads, int warpGroupId,
+                                       int subWarpId, int laneId, int responsibleExpertIdx) {
   static_assert(kOutputDType == DType::BF16, "Only BF16 low-latency combine output is supported");
   using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
 
   constexpr int kNumBf16PerInt4 = sizeof(int4) / sizeof(nv_bfloat16);
-  constexpr size_t hiddenBf16Int4 = kHidden / kNumBf16PerInt4;
-  constexpr size_t numBytesPerSlot = kHidden * sizeof(OutputType);
+  const int hiddenBf16Int4 = hidden / kNumBf16PerInt4;
+  const size_t numBytesPerSlot = hidden * sizeof(OutputType);
 
   if (responsibleExpertIdx < numExperts) {
     static_assert(kNumWarpsPerGroup > 1, "Invalid number of warps per group");
@@ -708,8 +711,8 @@ MSCCLPP_DEVICE_INLINE void combineRecv(void* output, void* stagedRecv, int64_t* 
   cg::this_grid().sync();
 
   EP_DEVICE_ASSERT(numTopk <= WARP_SIZE);
-  static_assert(kHidden % (WARP_SIZE * kNumBf16PerInt4) == 0, "Invalid vectorization");
-  for (size_t hiddenIdx = threadId; hiddenIdx < hiddenBf16Int4; hiddenIdx += numThreads) {
+  EP_DEVICE_ASSERT(hidden % (WARP_SIZE * kNumBf16PerInt4) == 0);
+  for (int hiddenIdx = threadId; hiddenIdx < hiddenBf16Int4; hiddenIdx += numThreads) {
     for (int tokenIdx = smId; tokenIdx < numCombinedTokens; tokenIdx += numSms) {
       int regTopkIdx[kNumMaxTopk];
       float regTopkWeights[kNumMaxTopk];
@@ -742,8 +745,7 @@ MSCCLPP_DEVICE_INLINE void combineRecv(void* output, void* stagedRecv, int64_t* 
   }
 }
 
-template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kHidden,
-          int kNumMaxTopk>
+template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup, int kNumMaxTopk>
 __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) void combine(
     void* output, void* stagedRecv, int64_t* stagedRecvFlagBuffer, void* stagedSend, const void* input,
     const float* inputScales, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
@@ -761,17 +763,17 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) vo
   const auto responsibleExpertIdx = smId * kNumWarpGroups + warpGroupId;
 
   if (phases & LOW_LATENCY_SEND_PHASE) {
-    combineSend<kInputDType, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup, kHidden>(
+    combineSend<kInputDType, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
         stagedRecv, stagedRecvFlagBuffer, stagedSend, input, inputScales, srcInfo, layoutRange, nextClean,
-        numNextCleanInt, atomicCleanFlag, numMaxDispatchTokensPerRank, numExperts, rank, numRanks, zeroCopy,
+        numNextCleanInt, atomicCleanFlag, hidden, numMaxDispatchTokensPerRank, numExperts, rank, numRanks, zeroCopy,
         rdmaBufferPtr, portChannelHandles, peerRdmaBases, ranksPerIpcDomain, smId, warpGroupId, subWarpId, laneId,
         responsibleExpertIdx);
   }
 
   if ((phases & LOW_LATENCY_RECV_PHASE) == 0) return;
 
-  combineRecv<kOutputDType, kNumWarpGroups, kNumWarpsPerGroup, kHidden, kNumMaxTopk>(
-      output, stagedRecv, stagedRecvFlagBuffer, topkIdx, topkWeights, numCombinedTokens, numTopk,
+  combineRecv<kOutputDType, kNumWarpGroups, kNumWarpsPerGroup, kNumMaxTopk>(
+      output, stagedRecv, stagedRecvFlagBuffer, topkIdx, topkWeights, numCombinedTokens, hidden, numTopk,
       numMaxDispatchTokensPerRank, numExperts, smId, numSms, threadId, numThreads, warpGroupId, subWarpId, laneId,
       responsibleExpertIdx);
 }
@@ -814,29 +816,22 @@ void combine(void* output, const void* input, const float* inputScales, const in
   EP_HOST_ASSERT(numTopk <= kNumMaxTopk);
   EP_HOST_ASSERT(outputDType == DType::BF16);
 
-#define COMBINE_LAUNCH(input_dtype, hidden_case)                                                                       \
+#define COMBINE_LAUNCH(input_dtype)                                                                                    \
   {                                                                                                                    \
-    auto combineFunc = combine<input_dtype, DType::BF16, kNumWarpGroups, kNumWarpsPerGroup, hidden_case, kNumMaxTopk>; \
+    auto combineFunc = combine<input_dtype, DType::BF16, kNumWarpGroups, kNumWarpsPerGroup, kNumMaxTopk>;              \
     LAUNCH_KERNEL(&cfg, combineFunc, output, stagedRecv, stagedRecvFlagBuffer, stagedSend, input, inputScales,         \
                   topkIdx, topkWeights, srcInfo, layoutRange, nextClean, numNextCleanInt, atomicCleanFlag,             \
                   numCombinedTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, rank, numRanks, phases, \
                   zeroCopy, rdmaBufferPtr, portChannelHandles, peerRdmaBases, ranksPerIpcDomain);                      \
   }
 
-#define COMBINE_LAUNCH_CASE(hidden_case)           \
-  {                                                \
-    if (inputDType == DType::BF16) {               \
-      COMBINE_LAUNCH(DType::BF16, hidden_case);    \
-    } else {                                       \
-      EP_HOST_ASSERT(inputDType == DType::F8E4M3); \
-      COMBINE_LAUNCH(DType::F8E4M3, hidden_case);  \
-    }                                              \
-  }                                                \
-  break
-
   SETUP_LAUNCH_CONFIG(numSms, numWarps * WARP_SIZE, stream);
-  SWITCH_HIDDEN(COMBINE_LAUNCH_CASE);
-#undef COMBINE_LAUNCH_CASE
+  if (inputDType == DType::BF16) {
+    COMBINE_LAUNCH(DType::BF16);
+  } else {
+    EP_HOST_ASSERT(inputDType == DType::F8E4M3);
+    COMBINE_LAUNCH(DType::F8E4M3);
+  }
 #undef COMBINE_LAUNCH
 }
 
