@@ -23,60 +23,58 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int64_t num_nvl_bytes, int64_t num_rdma_bytes, bool low_latency_mode);
+  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, bool lowLatencyMode);
   ~MoERuntime() noexcept(false);
 
-  bool is_available() const;
-  bool is_internode_available() const;
-  int get_num_rdma_ranks() const;
-  int get_rdma_rank() const;
-  int get_root_rdma_rank(bool global) const;
-  int get_local_device_id() const;
-  std::string get_local_ipc_handle() const;
+  bool isAvailable() const;
+  bool isInternodeAvailable() const;
+  int getNumRdmaRanks() const;
+  int getRdmaRank() const;
+  int getRootRdmaRank(bool global) const;
+  int getLocalDeviceId() const;
+  std::string getLocalIpcHandle() const;
 
-  void dispatch(void* output, float* output_scales, int* output_src_info, int64_t* output_layout, int* output_count,
-                const void* input, const int64_t* topk_idx, int num_tokens, int hidden, int num_topk,
-                int num_max_dispatch_tokens_per_rank, int num_experts, bool use_fp8,
-                low_latency::DispatchLayout dispatch_layout, cudaStream_t stream);
+  void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
+                const void* input, const int64_t* topkIdx, int numTokens, int hidden, int numTopk,
+                int numMaxDispatchTokensPerRank, int numExperts, bool useFp8,
+                low_latency::DispatchLayout dispatchLayout, cudaStream_t stream);
 
-  void combine(void* output, const void* input, const float* input_scales, const int64_t* topk_idx,
-               const float* topk_weights, const int* src_info, const int64_t* layout_range, int num_tokens, int hidden,
-               int num_topk, int num_max_dispatch_tokens_per_rank, int num_experts, bool requires_dequantization,
+  void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
+               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
+               int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresDequantization,
                cudaStream_t stream);
 
  private:
-  int low_latency_buffer_idx_ = 0;
+  int lowLatencyBufferIdx_ = 0;
   int rank_;
-  int rdma_rank_;
-  int nvl_rank_;
-  int num_ranks_;
-  int num_rdma_ranks_;
-  int num_nvl_ranks_;
-  int device_id_;
-  int64_t num_nvl_bytes_;
-  int64_t num_rdma_bytes_;
-  bool low_latency_mode_;
+  int rdmaRank_;
+  int nvlRank_;
+  int numRanks_;
+  int numRdmaRanks_;
+  int numNvlRanks_;
+  int deviceId_;
+  int64_t numNvlBytes_;
+  int64_t numRdmaBytes_;
+  bool lowLatencyMode_;
   bool available_ = false;
-  int num_proxy_services_ = 1;
-  int ll_ranks_per_ipc_domain_ = 0;
-  bool ll_ipc_ready_ = false;
+  int numProxyServices_ = 1;
+  int llRanksPerIpcDomain_ = 0;
+  bool llIpcReady_ = false;
 
-  void* rdma_buffer_ptr_ = nullptr;
+  void* rdmaBufferPtr_ = nullptr;
   void* workspace_ = nullptr;
-  cudaStream_t comm_stream_ = nullptr;
+  cudaStream_t commStream_ = nullptr;
 
   mscclpp::Communicator* communicator_ = nullptr;
-  std::vector<std::shared_ptr<mscclpp::ProxyService>> proxy_services_;
-  std::vector<mscclpp::PortChannel> port_channels_;
-  std::vector<mscclpp::MemoryChannel> memory_channels_;
-  std::shared_ptr<mscclpp::PortChannelDeviceHandle> port_channel_handles_device_ptr_;
+  std::vector<std::shared_ptr<mscclpp::ProxyService>> proxyServices_;
+  std::vector<mscclpp::PortChannel> portChannels_;
+  std::shared_ptr<mscclpp::PortChannelDeviceHandle> portChannelHandlesDevicePtr_;
 
-  std::vector<void*> peer_rdma_bases_;
-  void** peer_rdma_bases_gpu_ = nullptr;
-  std::vector<mscclpp::MemoryChannel> ll_memory_channels_;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr_;
+  std::vector<void*> peerRdmaBases_;
+  void** peerRdmaBasesGpu_ = nullptr;
+  std::vector<mscclpp::MemoryChannel> llMemoryChannels_;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> llMemoryChannelHandlesDevicePtr_;
 
-  void move_fifo_slots(int num_slots = 1);
   void setup();
 };
 

@@ -34,7 +34,7 @@ cudaStream_t stream(uintptr_t address) { return reinterpret_cast<cudaStream_t>(a
 NB_MODULE(mscclpp_ep_cpp, m) {
   m.doc() = "MSCCL++ Expert-Parallel (MoE dispatch/combine) extension";
 
-  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::get_low_latency_rdma_size_hint);
+  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::getLowLatencyRdmaSizeHint);
 
   nb::module_::import_("mscclpp._mscclpp");
 
@@ -45,14 +45,14 @@ NB_MODULE(mscclpp_ep_cpp, m) {
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
       .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, bool>(), nb::arg("comm"), nb::arg("num_nvl_bytes"),
            nb::arg("num_rdma_bytes"), nb::arg("low_latency_mode"))
-      .def("is_available", &mscclpp::ep::MoERuntime::is_available)
-      .def("is_internode_available", &mscclpp::ep::MoERuntime::is_internode_available)
-      .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::get_num_rdma_ranks)
-      .def("get_rdma_rank", &mscclpp::ep::MoERuntime::get_rdma_rank)
-      .def("get_root_rdma_rank", &mscclpp::ep::MoERuntime::get_root_rdma_rank)
-      .def("get_local_device_id", &mscclpp::ep::MoERuntime::get_local_device_id)
+      .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
+      .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
+      .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::getNumRdmaRanks)
+      .def("get_rdma_rank", &mscclpp::ep::MoERuntime::getRdmaRank)
+      .def("get_root_rdma_rank", &mscclpp::ep::MoERuntime::getRootRdmaRank)
+      .def("get_local_device_id", &mscclpp::ep::MoERuntime::getLocalDeviceId)
       .def("get_local_ipc_handle",
-           [](const mscclpp::ep::MoERuntime& self) { return stringToBytes(self.get_local_ipc_handle()); })
+           [](const mscclpp::ep::MoERuntime& self) { return stringToBytes(self.getLocalIpcHandle()); })
       .def(
           "dispatch",
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t outputPtr,
