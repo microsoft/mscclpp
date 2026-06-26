@@ -25,7 +25,6 @@ Current status (see ``src/ext/ep/README.md``):
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Optional
 
 import torch
@@ -41,11 +40,7 @@ except ImportError as exc:  # pragma: no cover
 
 
 DispatchLayout = _cpp.DispatchLayout
-
-
-class MoEMode(str, Enum):
-    LOW_LATENCY = "ll"
-    HIGH_THROUGHPUT = "ht"
+MoEMode = _cpp.MoEMode
 
 
 @dataclass
@@ -160,7 +155,7 @@ class _MoERuntime:
         self.num_rdma_bytes = num_rdma_bytes
         self.num_qps_per_rank = num_qps_per_rank
 
-        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, True)
+        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode)
 
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")

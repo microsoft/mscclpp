@@ -70,15 +70,14 @@ bool resolveFabricIpcSupported() {
 
 }  // namespace
 
-MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes,
-                       bool lowLatencyMode)
+MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode)
     : rank_(communicator.bootstrap()->getRank()),
       numRanks_(communicator.bootstrap()->getNranks()),
       numNvlBytes_(numNvlBytes),
       numRdmaBytes_(numRdmaBytes),
-      lowLatencyMode_(lowLatencyMode),
+      mode_(mode),
       communicator_(&communicator) {
-  EP_HOST_ASSERT(lowLatencyMode_);
+  EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(communicator_ != nullptr);
   EP_HOST_ASSERT(numNvlBytes_ == 0);
   EP_HOST_ASSERT(numRdmaBytes_ % NUM_BUFFER_ALIGNMENT_BYTES == 0);
@@ -215,7 +214,7 @@ void MoERuntime::setup() {
   auto isIpcPeer = [&](int peer) {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
   };
-  const bool wantPeerIpc = useFabricIpcAlloc || (lowLatencyMode_ && ipcDomainSize > 1);
+  const bool wantPeerIpc = useFabricIpcAlloc || (mode_ == MoEMode::LOW_LATENCY && ipcDomainSize > 1);
   if (wantPeerIpc) {
     constexpr int kLlIpcTag = 2;
     auto rdmaMemIpc = communicator_->registerMemory(rdmaBufferPtr_, numRdmaBytes_, ipcTransport);
@@ -269,13 +268,12 @@ void MoERuntime::setup() {
 void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
                           int* outputCount, const void* input, const int64_t* topkIdx, int numTokens, int hidden,
                           int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool useFp8,
-                          low_latency::DispatchLayout dispatchLayout, cudaStream_t stream) {
-  EP_HOST_ASSERT(lowLatencyMode_);
+                          DispatchLayout dispatchLayout, cudaStream_t stream) {
+  EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
-  EP_HOST_ASSERT(dispatchLayout == low_latency::DispatchLayout::EXPERT_MAJOR ||
-                 dispatchLayout == low_latency::DispatchLayout::FLAT);
+  EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
@@ -320,7 +318,7 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
                          const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens,
                          int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
                          bool requiresDequantization, cudaStream_t stream) {
-  EP_HOST_ASSERT(lowLatencyMode_);
+  EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
 

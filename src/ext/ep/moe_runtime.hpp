@@ -23,7 +23,7 @@ namespace ep {
 
 class MoERuntime {
  public:
-  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, bool lowLatencyMode);
+  MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode);
   ~MoERuntime() noexcept(false);
 
   bool isAvailable() const;
@@ -36,8 +36,8 @@ class MoERuntime {
 
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
                 const void* input, const int64_t* topkIdx, int numTokens, int hidden, int numTopk,
-                int numMaxDispatchTokensPerRank, int numExperts, bool useFp8,
-                low_latency::DispatchLayout dispatchLayout, cudaStream_t stream);
+                int numMaxDispatchTokensPerRank, int numExperts, bool useFp8, DispatchLayout dispatchLayout,
+                cudaStream_t stream);
 
   void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
                const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
@@ -55,7 +55,7 @@ class MoERuntime {
   int deviceId_;
   int64_t numNvlBytes_;
   int64_t numRdmaBytes_;
-  bool lowLatencyMode_;
+  MoEMode mode_;
   bool available_ = false;
   int numProxyServices_ = 1;
   int llRanksPerIpcDomain_ = 0;

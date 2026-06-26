@@ -20,6 +20,22 @@
 namespace mscclpp {
 namespace ep {
 
+/// Expert-parallel backend mode.
+enum class MoEMode {
+  /// Low-latency dispatch/combine backend.
+  LOW_LATENCY,
+  /// Archived high-throughput backend.
+  HIGH_THROUGHPUT
+};
+
+/// Logical dispatch output layout.
+enum class DispatchLayout {
+  /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+  EXPERT_MAJOR,
+  /// [num_local_experts * num_ranks * max_tokens_per_rank, hidden].
+  FLAT
+};
+
 // ===========================================================================
 // Archived HT intranode (NVLink) runtime barrier.
 // Implementations live under `src/ext/ep/ht/` and are not compiled into the active
@@ -145,15 +161,6 @@ enum class DType {
   BF16,
   /// NVIDIA FP8 E4M3.
   F8E4M3
-};
-
-/// Logical dispatch output layout. Low-latency mode uses the same contiguous
-/// local-expert-major physical order for both layouts; FLAT is a 2D view.
-enum class DispatchLayout {
-  /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
-  EXPERT_MAJOR,
-  /// [num_local_experts * num_ranks * max_tokens_per_rank, hidden].
-  FLAT
 };
 
 /// Transport context that encapsulates all transport-related state.

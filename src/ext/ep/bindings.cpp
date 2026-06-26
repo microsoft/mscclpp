@@ -38,13 +38,17 @@ NB_MODULE(mscclpp_ep_cpp, m) {
 
   nb::module_::import_("mscclpp._mscclpp");
 
-  nb::enum_<mscclpp::ep::low_latency::DispatchLayout>(m, "DispatchLayout")
-      .value("EXPERT_MAJOR", mscclpp::ep::low_latency::DispatchLayout::EXPERT_MAJOR)
-      .value("FLAT", mscclpp::ep::low_latency::DispatchLayout::FLAT);
+  nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
+      .value("LOW_LATENCY", mscclpp::ep::MoEMode::LOW_LATENCY)
+      .value("HIGH_THROUGHPUT", mscclpp::ep::MoEMode::HIGH_THROUGHPUT);
+
+  nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
+      .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
+      .value("FLAT", mscclpp::ep::DispatchLayout::FLAT);
 
   nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
-      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, bool>(), nb::arg("comm"), nb::arg("num_nvl_bytes"),
-           nb::arg("num_rdma_bytes"), nb::arg("low_latency_mode"))
+      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, mscclpp::ep::MoEMode>(), nb::arg("comm"),
+           nb::arg("num_nvl_bytes"), nb::arg("num_rdma_bytes"), nb::arg("mode"))
       .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
       .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
       .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::getNumRdmaRanks)
@@ -58,7 +62,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t outputPtr,
              uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputLayoutRangePtr,
              uintptr_t outputCountPtr, int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank,
-             int numExperts, bool useFp8, mscclpp::ep::low_latency::DispatchLayout outputLayout, uintptr_t streamPtr) {
+             int numExperts, bool useFp8, mscclpp::ep::DispatchLayout outputLayout, uintptr_t streamPtr) {
             self.dispatch(ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
                           reinterpret_cast<int*>(ptr(outputSrcInfoPtr)),
                           reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
