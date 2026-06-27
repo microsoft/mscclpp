@@ -74,7 +74,7 @@ parser.add_argument("--instances", type=int, default=1, help="number of instance
 
 args = parser.parse_args()
 
-min_message_size = 1024 * args.instances;
+min_message_size = 1024 * args.instances
 
 if min_message_size > args.min_message_size:
     raise RuntimeError(
