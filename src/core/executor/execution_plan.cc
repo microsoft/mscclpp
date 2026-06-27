@@ -236,7 +236,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
                                             size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  if (this->name != obj["name"]) {
+  if (this->name != obj["name"].get<std::string>()) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   this->collective = obj["collective"];
@@ -272,7 +272,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
                                                  size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  if (this->name != obj["name"]) {
+  if (this->name != obj["name"].get<std::string>()) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   std::string protocol = obj["protocol"];

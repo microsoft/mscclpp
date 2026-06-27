@@ -18,6 +18,7 @@ _API_NAMES = {
     "graph_destroy": ("hipGraphDestroy", "cudaGraphDestroy"),
     "graph_exec_destroy": ("hipGraphExecDestroy", "cudaGraphExecDestroy"),
     "get_error_string": ("hipGetErrorString", "cudaGetErrorString"),
+    "runtime_get_version": ("hipRuntimeGetVersion", "cudaRuntimeGetVersion"),
 }
 
 
@@ -116,6 +117,21 @@ class Graph:
 
 def init_runtime() -> None:
     return None
+
+
+def runtime_name() -> str:
+    return _RUNTIME.name
+
+
+def _runtime_version_raw() -> int:
+    return int(_api("runtime_get_version")()[0])
+
+
+def version() -> tuple[int, int, int]:
+    version_value = _runtime_version_raw()
+    if _RUNTIME.name == "hip":
+        return version_value // 10_000_000, (version_value // 100_000) % 100, version_value % 100_000
+    return version_value // 1000, (version_value % 1000) // 10, version_value % 10
 
 
 def capture_graph(stream: Any, capture_fn: Callable[[], None]) -> Graph:
