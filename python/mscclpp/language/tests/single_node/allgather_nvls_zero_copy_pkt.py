@@ -77,7 +77,9 @@ args = parser.parse_args()
 min_message_size = 1024 * args.instances;
 
 if min_message_size > args.min_message_size:
-    raise RuntimeError(f"Minimum message size {args.min_message_size} is too small for the number of instances {args.instances}. The minimum message size must be at least {min_message_size}.")
+    raise RuntimeError(
+        f"Minimum message size {args.min_message_size} is too small for the number of instances {args.instances}. The minimum message size must be at least {min_message_size}."
+    )
 
 allgather_example(
     args.name,
