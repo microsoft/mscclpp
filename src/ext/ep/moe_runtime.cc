@@ -267,7 +267,7 @@ void MoERuntime::setup() {
 
 void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
                           int* outputCount, const void* input, const int64_t* topkIdx, int numTokens, int hidden,
-                          int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool useFp8,
+                          int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresQuantization,
                           DispatchLayout dispatchLayout, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
@@ -281,14 +281,15 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
   auto nextBuffer = layout.buffers[lowLatencyBufferIdx_ ^= 1];
   auto nextCleanMeta = nextBuffer.cleanMeta();
 
-  low_latency::DispatchConfig config{.numTokens_ = numTokens,
-                                     .hidden_ = hidden,
-                                     .numTopk_ = numTopk,
-                                     .numExperts_ = numExperts,
-                                     .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
-                                     .inputDType_ = low_latency::DType::BF16,
-                                     .outputDType_ = useFp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
-                                     .outputLayout_ = dispatchLayout};
+  low_latency::DispatchConfig config{
+      .numTokens_ = numTokens,
+      .hidden_ = hidden,
+      .numTopk_ = numTopk,
+      .numExperts_ = numExperts,
+      .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
+      .inputDType_ = low_latency::DType::BF16,
+      .outputDType_ = requiresQuantization ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
+      .outputLayout_ = dispatchLayout};
   low_latency::BufferSet currentBuffer{.sendDataBuffer_ = buffer.dispatchRdmaSendBuffer,
                                        .sendCountBuffer_ = nullptr,
                                        .recvDataBuffer_ = buffer.dispatchRdmaRecvDataBuffer,

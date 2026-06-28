@@ -36,8 +36,8 @@ class MoERuntime {
 
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
                 const void* input, const int64_t* topkIdx, int numTokens, int hidden, int numTopk,
-                int numMaxDispatchTokensPerRank, int numExperts, bool useFp8, DispatchLayout dispatchLayout,
-                cudaStream_t stream);
+                int numMaxDispatchTokensPerRank, int numExperts, bool requiresQuantization,
+                DispatchLayout dispatchLayout, cudaStream_t stream);
 
   void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
                const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
