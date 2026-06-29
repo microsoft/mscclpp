@@ -5,7 +5,7 @@
 Launch with:
     torchrun --nproc_per_node=<N> test/python/ext/ep/test_intranode_multirank.py
 
-Tests that Buffer::sync() succeeds across N GPUs on a single node and that
+Tests that ExpertParallelRuntime sync succeeds across N GPUs on a single node and that
 a round-trip dispatch + combine preserves data (sum of top-k weighted copies).
 
 Set ``MSCCLPP_EP_BENCH=1`` to also run a post-correctness benchmark pass
@@ -65,7 +65,10 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 
 def main():
     rank, num_ranks, local_rank, group = init_dist()
+    from mscclpp import CommGroup
     from mscclpp.ext import ep
+
+    ep_group = CommGroup(torch_group=group)
 
     # Small settings for functional check
     num_tokens = 128
@@ -104,7 +107,7 @@ def main():
     # Token payload = rank id (cast to bf16) so we can check correctness
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Allocate Buffer (intranode only: num_rdma_bytes=0). Size the NVL buffer
+    # Allocate runtime (intranode only: num_rdma_bytes=0). Size the NVL buffer
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
         int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
@@ -121,13 +124,13 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating Buffer", flush=True)
-    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
-    print(f"[rank {rank}] Buffer created is_available={buf.is_available()}", flush=True)
+    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
+    buf = ep.ExpertParallelRuntime(ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
+    print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
     assert buf.is_available()
 
     # get_dispatch_layout sanity
-    ref_rank, _, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(topk_idx, num_experts, None, False, False)
+    ref_rank, _, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(topk_idx, num_experts, None, False, False)
     assert torch.allclose(ref_rank, num_tokens_per_rank)
     assert torch.allclose(ref_exp, num_tokens_per_expert)
     assert torch.allclose(ref_in_rank, is_token_in_rank)
@@ -147,7 +150,7 @@ def main():
         recv_src_idx,
         send_head,
         _event,
-    ) = buf.runtime.intranode_dispatch(
+    ) = buf.intranode_dispatch(
         x,
         None,
         topk_idx,
@@ -188,7 +191,7 @@ def main():
     handle_rank_prefix_matrix = rank_prefix_matrix
     handle_channel_prefix_matrix = recv_channel_prefix_matrix
 
-    combined_x, combined_topk_weights, _ = buf.runtime.intranode_combine(
+    combined_x, combined_topk_weights, _ = buf.intranode_combine(
         recv_x,
         recv_topk_weights,
         handle_recv_src_idx,
@@ -246,14 +249,14 @@ def main():
         return
 
     # Rebuild inputs at bench size. Keep same layout recipe as above but at
-    # larger (num_tokens, hidden); Buffer is sized off the original cfg+hidden,
+    # larger (num_tokens, hidden); runtime is sized off the original cfg+hidden,
     # so bench must fit within num_nvl_bytes. If it doesn't, we skip.
     if bench_hidden * x.element_size() > (num_nvl_bytes // max(1, num_ranks)):
         if rank == 0:
             print(
                 f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
                 f"> per-peer budget {num_nvl_bytes // num_ranks}. "
-                f"Rerun with a larger Buffer or smaller hidden.",
+                f"Rerun with a larger runtime or smaller hidden.",
                 flush=True,
             )
         return
@@ -281,7 +284,7 @@ def main():
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
     def _dispatch():
-        return buf.runtime.intranode_dispatch(
+        return buf.intranode_dispatch(
             x_b,
             None,
             topk_idx_b,
@@ -315,7 +318,7 @@ def main():
         # topk_idx/topk_weights (those require num_experts > 0). We still get
         # send_head/rank_prefix_matrix/channel_prefix_matrix/recv_src_idx out
         # of dispatch -- enough to drive combine.
-        return buf.runtime.intranode_dispatch(
+        return buf.intranode_dispatch(
             x_b,
             None,
             None,
@@ -335,7 +338,7 @@ def main():
 
     def _combine(dout):
         rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev = dout
-        buf.runtime.intranode_combine(
+        buf.intranode_combine(
             rx,
             rtw,
             rsi,

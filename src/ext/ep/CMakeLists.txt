@@ -1,48 +1,39 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT License.
 #
-# Builds `mscclpp_ep_cpp`, a pybind11 + PyTorch C++ extension that exposes the
-# EP (Mixture-of-Experts dispatch/combine) Buffer to Python. This module is
-# separate from the nanobind-based `_mscclpp` because EP carries `torch::Tensor`
-# through its ABI (ported verbatim from DeepEP).
-#
-# Requires: PyTorch with its CMake integration available on CMAKE_PREFIX_PATH.
-# Easiest invocation:
-#     cmake -S . -B build \
-#           -DMSCCLPP_BUILD_EXT_EP=ON \
-#           -DCMAKE_PREFIX_PATH="$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')"
+# Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
+# (Mixture-of-Experts dispatch/combine) runtime to Python.
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
-find_package(Torch QUIET)
-if(NOT Torch_FOUND)
-    message(WARNING
-        "MSCCLPP_BUILD_EXT_EP=ON but PyTorch CMake package was not found. "
-        "Set CMAKE_PREFIX_PATH to `$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')` "
-        "or disable MSCCLPP_BUILD_EXT_EP. Skipping the EP extension.")
-    return()
+include(FetchContent)
+if(NOT TARGET nanobind-static AND NOT TARGET nanobind)
+    FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.9.2)
+    FetchContent_MakeAvailable(nanobind)
 endif()
 
-find_package(pybind11 QUIET CONFIG)
-if(NOT pybind11_FOUND)
-    # PyTorch ships a bundled pybind11 we can fall back on.
-    get_target_property(_torch_include_dirs torch INTERFACE_INCLUDE_DIRECTORIES)
-    foreach(d ${_torch_include_dirs})
-        if(EXISTS "${d}/pybind11/pybind11.h")
-            set(PYBIND11_INCLUDE_DIR "${d}")
-            break()
+set(_mscclpp_ep_gpu_archs "")
+if(MSCCLPP_USE_CUDA)
+    foreach(_arch IN LISTS MSCCLPP_GPU_ARCHS)
+        if(_arch STREQUAL "native")
+            list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+        else()
+            string(REGEX MATCH "^[0-9]+" _arch_num "${_arch}")
+            if(_arch_num AND _arch_num GREATER_EQUAL 90)
+                list(APPEND _mscclpp_ep_gpu_archs "${_arch}")
+            endif()
         endif()
     endforeach()
-    if(NOT PYBIND11_INCLUDE_DIR)
+    if(NOT _mscclpp_ep_gpu_archs)
         message(FATAL_ERROR
-            "pybind11 not found and not bundled with Torch. Install it (pip install pybind11) "
-            "or provide -Dpybind11_DIR=...")
+            "MSCCLPP_BUILD_EXT_EP=ON requires CUDA architecture 90 or newer. "
+            "Set MSCCLPP_GPU_ARCHS to include 90+ (for example, -DMSCCLPP_GPU_ARCHS=90).")
     endif()
 endif()
 
-file(GLOB_RECURSE EP_SOURCES CONFIGURE_DEPENDS
-    buffer.cc
+set(EP_SOURCES
+    moe_runtime.cc
     bindings.cpp
-    kernels/*.cu
+    kernels/low_latency.cu
 )
 
 if(MSCCLPP_USE_ROCM)
@@ -53,11 +44,11 @@ if(MSCCLPP_USE_ROCM)
 endif()
 
 # Build as a Python extension module (shared object with Python ABI suffix).
-# The name `mscclpp_ep_cpp` matches the `TORCH_EXTENSION_NAME` hard-coded in
-# `bindings.cpp` / `buffer.hpp`.
-Python_add_library(mscclpp_ep_cpp MODULE ${EP_SOURCES})
+nanobind_add_module(mscclpp_ep_cpp ${EP_SOURCES})
+if(MSCCLPP_USE_CUDA)
+    set_target_properties(mscclpp_ep_cpp PROPERTIES CUDA_ARCHITECTURES "${_mscclpp_ep_gpu_archs}")
+endif()
 
-target_compile_definitions(mscclpp_ep_cpp PRIVATE TORCH_EXTENSION_NAME=mscclpp_ep_cpp)
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/include
@@ -65,26 +56,6 @@ target_include_directories(mscclpp_ep_cpp PRIVATE
     ${PROJECT_SOURCE_DIR}/src/ext/include
     ${GPU_INCLUDE_DIRS}
 )
-if(pybind11_FOUND)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE pybind11::module)
-else()
-    target_include_directories(mscclpp_ep_cpp SYSTEM PRIVATE ${PYBIND11_INCLUDE_DIR})
-endif()
-
-target_link_libraries(mscclpp_ep_cpp PRIVATE ${TORCH_LIBRARIES})
-# Torch's CUDA interop library (ATen CUDAStream helpers used in buffer.cc).
-if(TARGET torch::torch)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE torch::torch)
-endif()
-# libtorch_python contains pybind11 bindings for torch::Tensor / torch::dtype
-# (symbols like THPDtypeType). It is not listed in TORCH_LIBRARIES.
-find_library(TORCH_PYTHON_LIBRARY torch_python
-    HINTS "${TORCH_INSTALL_PREFIX}/lib")
-if(TORCH_PYTHON_LIBRARY)
-    target_link_libraries(mscclpp_ep_cpp PRIVATE ${TORCH_PYTHON_LIBRARY})
-else()
-    message(WARNING "libtorch_python not found; `import mscclpp_ep_cpp` may fail at runtime.")
-endif()
 target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
 
 # Number of intra-node NVLink peers compiled into the EP kernels.
@@ -101,19 +72,6 @@ option(MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT
        "Use a short ~10s kernel spin timeout (default is ~100s)" OFF)
 if(MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
     target_compile_definitions(mscclpp_ep_cpp PRIVATE MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT)
-endif()
-
-# Experimental: NCCL-EP-style warp-specialized HT dispatch path.
-#  When ON, the internode `dispatch` kernel selects an alternate code path
-#  (guarded by `EP_DISPATCH_NCCLEP`) that ports NVIDIA NCCL-EP's
-#  warp-specialized overlap pipeline (concurrent inter-node fabric-write +
-#  intra-node drain) onto mscclpp MemoryChannel put/signal primitives, to
-#  close the GB200 MNNVL dispatch gap vs NCCL-EP. Default OFF = production path.
-#   -DMSCCLPP_EP_DISPATCH_NCCLEP=ON
-option(MSCCLPP_EP_DISPATCH_NCCLEP
-       "Use the experimental NCCL-EP-ported warp-specialized HT dispatch kernel" OFF)
-if(MSCCLPP_EP_DISPATCH_NCCLEP)
-    target_compile_definitions(mscclpp_ep_cpp PRIVATE EP_DISPATCH_NCCLEP)
 endif()
 
 set_target_properties(mscclpp_ep_cpp PROPERTIES

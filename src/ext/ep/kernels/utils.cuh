@@ -7,19 +7,27 @@
 
 #include "exception.cuh"
 
+#ifndef WARP_SIZE
+#if defined(__HIP_PLATFORM_AMD__)
+#define WARP_SIZE 64
+#else
+#define WARP_SIZE 32
+#endif
+#endif
+
 #define UNROLLED_WARP_COPY(UNROLL_FACTOR, LANE_ID, N, DST, SRC, LD_FUNC, ST_FUNC)                        \
   {                                                                                                      \
-    constexpr int kLoopStride = 32 * (UNROLL_FACTOR);                                                    \
+    constexpr int kLoopStride = WARP_SIZE * (UNROLL_FACTOR);                                             \
     typename std::remove_reference<decltype(LD_FUNC((SRC) + 0))>::type unrolled_values[(UNROLL_FACTOR)]; \
     auto __src = (SRC);                                                                                  \
     auto __dst = (DST);                                                                                  \
     for (int __i = (LANE_ID); __i < ((N) / kLoopStride) * kLoopStride; __i += kLoopStride) {             \
       _Pragma("unroll") for (int __j = 0; __j < (UNROLL_FACTOR); ++__j) unrolled_values[__j] =           \
-          LD_FUNC(__src + __i + __j * 32);                                                               \
+          LD_FUNC(__src + __i + __j * WARP_SIZE);                                                        \
       _Pragma("unroll") for (int __j = 0; __j < (UNROLL_FACTOR); ++__j)                                  \
-          ST_FUNC(__dst + __i + __j * 32, unrolled_values[__j]);                                         \
+          ST_FUNC(__dst + __i + __j * WARP_SIZE, unrolled_values[__j]);                                  \
     }                                                                                                    \
-    for (int __i = ((N) / kLoopStride) * kLoopStride + (LANE_ID); __i < (N); __i += 32)                  \
+    for (int __i = ((N) / kLoopStride) * kLoopStride + (LANE_ID); __i < (N); __i += WARP_SIZE)           \
       ST_FUNC(__dst + __i, LD_FUNC(__src + __i));                                                        \
   }
 
@@ -367,7 +375,7 @@ __forceinline__ __device__ void move_fifo_slots(int &head) {
 template <int kNumRanks>
 __device__ __forceinline__ bool not_finished(int *task, int expected) {
   auto result = false;
-  auto lane_id = threadIdx.x % 32;
+  auto lane_id = threadIdx.x % WARP_SIZE;
   if (lane_id < kNumRanks) result = ld_volatile_global(task + lane_id) != expected;
   return __any_sync(0xffffffff, result);
 }
@@ -386,7 +394,7 @@ __forceinline__ __device__ void timeout_check(int **task_fifo_ptrs, int head, in
 template <int kNumRanks>
 __forceinline__ __device__ void barrier_device(int **task_fifo_ptrs, int head, int rank, int tag = 0) {
   auto thread_id = static_cast<int>(threadIdx.x);
-  EP_DEVICE_ASSERT(kNumRanks <= 32);
+  EP_DEVICE_ASSERT(kNumRanks <= WARP_SIZE);
 
   if (thread_id < kNumRanks) {
     atomicAdd_system(task_fifo_ptrs[rank] + head + thread_id, FINISHED_SUM_TAG);

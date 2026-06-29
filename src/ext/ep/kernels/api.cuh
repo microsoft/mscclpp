@@ -20,8 +20,26 @@
 namespace mscclpp {
 namespace ep {
 
+/// Expert-parallel backend mode.
+enum class MoEMode {
+  /// Low-latency dispatch/combine backend.
+  LOW_LATENCY,
+  /// Archived high-throughput backend.
+  HIGH_THROUGHPUT
+};
+
+/// Logical dispatch output layout.
+enum class DispatchLayout {
+  /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+  EXPERT_MAJOR,
+  /// [num_local_experts * num_ranks * max_tokens_per_rank, hidden].
+  FLAT
+};
+
 // ===========================================================================
-// Intranode (NVLink) runtime barrier.
+// Archived HT intranode (NVLink) runtime barrier.
+// Implementations live under `src/ext/ep/ht/` and are not compiled into the active
+// `mscclpp_ep_cpp` target.
 // ===========================================================================
 namespace intranode {
 
@@ -55,10 +73,10 @@ void combine(cudaDataType_t type, void* recv_x, float* recv_topk_weights, const 
 }  // namespace intranode
 
 // ===========================================================================
-// Internode (NVLink + RDMA) high-throughput kernels. Ported from DeepEP
-// `csrc/kernels/internode.cu` on branch `chhwang/dev-atomic-add-cleanup`.
-// NVSHMEM dependencies in the kernel were replaced with MSCCL++ port-channel
-// atomic adds (see src/ext/ep/README.md for the translation table).
+// Archived internode (NVLink + RDMA) high-throughput kernels. Ported from DeepEP
+// `csrc/kernels/internode.cu` on branch `chhwang/dev-atomic-add-cleanup`. The
+// implementations live under `src/ext/ep/ht/` and are not compiled into the
+// active `mscclpp_ep_cpp` target.
 // ===========================================================================
 namespace internode {
 
@@ -131,34 +149,159 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
 }  // namespace internode
 
 // ===========================================================================
-// Internode low-latency (pure RDMA) kernels. Ported from DeepEP
+// Low-latency kernels for RDMA and IPC paths. Ported from DeepEP
 // `csrc/kernels/internode_ll.cu` with NVSHMEM/IBGDA device ops replaced by
-// MSCCL++ port-channel primitives (`put`, `atomicAdd`, signal/wait barrier).
+// MSCCL++ channel primitives (`put`, `atomicAdd`, direct IPC stores, barriers).
 // ===========================================================================
-namespace internode_ll {
+namespace low_latency {
 
-void clean_low_latency_buffer(int64_t* clean_0, int num_clean_int_0, int64_t* clean_1, int num_clean_int_1, int rank,
-                              int num_ranks, mscclpp::PortChannelDeviceHandle* port_channel_handles,
-                              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path,
-                              cudaStream_t stream);
+/// Element type used by low-latency dispatch data path.
+enum class DType {
+  /// NVIDIA bfloat16.
+  BF16,
+  /// NVIDIA FP8 E4M3.
+  F8E4M3
+};
 
-void dispatch(void* packed_recv_x, float* packed_recv_x_scales, int* packed_recv_src_info,
-              int64_t* packed_recv_layout_range, int* packed_recv_count, void* rdma_recv_x, int64_t* rdma_recv_count,
-              void* rdma_x, const void* x, const int64_t* topk_idx, int64_t* next_clean, int num_next_clean_int,
-              int num_tokens, int hidden, int num_max_dispatch_tokens_per_rank, int num_topk, int num_experts, int rank,
-              int num_ranks, bool use_fp8, void* workspace, cudaStream_t stream, int phases, void* rdma_buffer_ptr,
-              mscclpp::PortChannelDeviceHandle* port_channel_handles, void* const* peer_rdma_bases,
-              mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path);
+/// Transport context that encapsulates all transport-related state.
+struct TransportContext {
+  /// Base address of the locally-registered RDMA buffer.
+  void* rdmaBufferBase_;
+  /// Port channel device handles for RDMA transport.
+  mscclpp::PortChannelDeviceHandle* portChannels_;
+  /// Base memory channel handles for IPC transport barrier (nullable).
+  mscclpp::BaseMemoryChannelDeviceHandle* memoryChannels_;
+  /// Peer-mapped base addresses for IPC path (nullable).
+  void* const* peerBases_;
+  /// True if IPC path is ready, false to use RDMA.
+  bool ipcReady_;
+  /// Current rank ID.
+  int rank_;
+  /// Total number of ranks.
+  int numRanks_;
+  /// Number of ranks in one IPC-reachable domain (0 when IPC is unavailable).
+  int ranksPerIpcDomain_;
+};
 
-void combine(void* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag, void* rdma_send_x, const void* x,
-             const int64_t* topk_idx, const float* topk_weights, const int* src_info, const int64_t* layout_range,
-             int64_t* next_clean, int num_next_clean_int, int num_combined_tokens, int hidden,
-             int num_max_dispatch_tokens_per_rank, int num_topk, int num_experts, int rank, int num_ranks,
-             void* workspace, cudaStream_t stream, int phases, bool zero_copy, void* rdma_buffer_ptr,
-             mscclpp::PortChannelDeviceHandle* port_channel_handles, void* const* peer_rdma_bases,
-             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles, bool use_ipc_path);
+/// Buffer set that encapsulates ping-pong buffer layout.
+struct BufferSet {
+  /// Send data buffer.
+  void* sendDataBuffer_;
+  /// Send count buffer.
+  int64_t* sendCountBuffer_;
+  /// Receive data buffer.
+  void* recvDataBuffer_;
+  /// Receive count buffer.
+  int64_t* recvCountBuffer_;
+  /// Cleanup region for next iteration.
+  int64_t* cleanupRegion_;
+  /// Size of cleanup region in int64_t elements.
+  int cleanupSize_;
+};
 
-}  // namespace internode_ll
+/// Configuration for dispatch operation.
+struct DispatchConfig {
+  /// Number of input tokens to dispatch.
+  int numTokens_;
+  /// Hidden dimension size.
+  int hidden_;
+  /// Number of top-k experts per token.
+  int numTopk_;
+  /// Total number of experts.
+  int numExperts_;
+  /// Maximum tokens per rank in packed layout.
+  int numMaxTokensPerRank_;
+  /// Input dtype for source tokens.
+  DType inputDType_;
+  /// Output dtype for packed receive buffer.
+  DType outputDType_;
+  /// Logical output layout.
+  DispatchLayout outputLayout_ = DispatchLayout::EXPERT_MAJOR;
+};
+
+/// Configuration for combine operation.
+struct CombineConfig {
+  /// Number of tokens to combine.
+  int numCombinedTokens_;
+  /// Hidden dimension size.
+  int hidden_;
+  /// Number of top-k experts per token.
+  int numTopk_;
+  /// Total number of experts.
+  int numExperts_;
+  /// Maximum tokens per rank in packed layout.
+  int numMaxTokensPerRank_;
+  /// Input dtype for expert outputs.
+  DType inputDType_;
+  /// Output dtype for combined tokens.
+  DType outputDType_;
+  /// True to use zero-copy optimization.
+  bool zeroCopy_;
+};
+
+/// Phase control for send/recv operations.
+enum Phase {
+  /// Execute send phase only.
+  SEND_ONLY = 0x1,
+  /// Execute recv phase only.
+  RECV_ONLY = 0x2,
+  /// Execute both send and recv phases.
+  SEND_AND_RECV = 0x3
+};
+
+/// Clean low-latency buffers (both ping-pong buffers).
+/// @param buffer0 First cleanup region pointer.
+/// @param numInt0 Size of first cleanup region in int64_t elements.
+/// @param buffer1 Second cleanup region pointer.
+/// @param numInt1 Size of second cleanup region in int64_t elements.
+/// @param transport Transport context with channel handles and topology info.
+/// @param stream CUDA stream to launch the kernel on.
+void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, const TransportContext& transport,
+                  cudaStream_t stream);
+
+/// Low-latency dispatch kernel that distributes tokens to experts across ranks.
+/// @param output Output packed data buffer. EXPERT_MAJOR shape is
+/// [num_local_experts, num_ranks*max_tokens, hidden]; FLAT is the same
+/// local-expert-major storage viewed as [num_local_experts*num_ranks*max_tokens, hidden].
+/// @param outputScales FP8 scales (nullable if not using FP8).
+/// @param outputSrcInfo Source rank info per token.
+/// @param outputLayout Layout range [expert, rank] -> (offset, count).
+/// @param outputCount Total count per expert.
+/// @param input Input tokens [num_tokens, hidden].
+/// @param topkIdx Expert indices [num_tokens, num_topk].
+/// @param config Dispatch configuration.
+/// @param currentBuffer Current iteration buffer set.
+/// @param nextBuffer Next iteration buffer set (for cleanup).
+/// @param transport Transport context.
+/// @param workspace Temporary workspace buffer.
+/// @param stream CUDA stream to launch the kernel on.
+/// @param phase Phase control (default: SEND_AND_RECV).
+void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
+              const void* input, const int64_t* topkIdx, const DispatchConfig& config, const BufferSet& currentBuffer,
+              const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
+              Phase phase = SEND_AND_RECV);
+
+/// Low-latency combine kernel that aggregates expert outputs back to tokens.
+/// @param output Combined output [num_combined_tokens, hidden].
+/// @param input Expert outputs [num_local_experts * num_ranks * max_tokens, hidden].
+/// @param inputScales Optional FP8 scales for expert outputs.
+/// @param topkIdx Expert indices [num_combined_tokens, num_topk].
+/// @param topkWeights Weights [num_combined_tokens, num_topk].
+/// @param srcInfo Source rank info.
+/// @param layoutRange Layout range.
+/// @param config Combine configuration.
+/// @param currentBuffer Current iteration buffer set.
+/// @param nextBuffer Next iteration buffer set (for cleanup).
+/// @param transport Transport context.
+/// @param workspace Temporary workspace buffer.
+/// @param stream CUDA stream to launch the kernel on.
+/// @param phase Phase control (default: SEND_AND_RECV).
+void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
+             const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, const CombineConfig& config,
+             const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
+             void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
+
+}  // namespace low_latency
 
 }  // namespace ep
 }  // namespace mscclpp

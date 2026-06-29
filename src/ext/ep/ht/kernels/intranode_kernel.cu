@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 #include <limits>
 
+#include "../../kernels/configs.cuh"
+#include "../../kernels/exception.cuh"
+#include "../../kernels/launch.cuh"
+#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
-#include "configs.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
-#include "utils.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -173,7 +173,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
              int* recv_channel_offset, int* send_head, const int4* x, const float* x_scales, const int64_t* topk_idx,
              const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
              int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-             int num_max_send_tokens, int num_recv_buffer_tokens, void** recv_pool_ptrs, int64_t recv_pool_header_bytes) {
+             int num_max_send_tokens, int num_recv_buffer_tokens, void** recv_pool_ptrs,
+             int64_t recv_pool_header_bytes) {
   const auto num_sms = static_cast<int>(gridDim.x), sm_id = static_cast<int>(blockIdx.x);
   const auto thread_id = static_cast<int>(threadIdx.x);
   const bool is_sender = sm_id % 2 == 0;
@@ -266,8 +267,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
                          ? channel_prefix_matrix[responsible_rank * num_channels + responsible_channel - 1]
                          : 0;
       direct_base = static_cast<int64_t>(rank_off + ch_start);
-      direct_dst_pool =
-          reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]) + recv_pool_header_bytes);
+      direct_dst_pool = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]) +
+                                                recv_pool_header_bytes);
     }
 
     // Get tasks

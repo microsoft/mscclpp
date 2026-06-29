@@ -5,11 +5,11 @@
 #include <mscclpp/port_channel_device.hpp>
 #include <type_traits>
 
+#include "../../kernels/configs.cuh"
+#include "../../kernels/exception.cuh"
+#include "../../kernels/launch.cuh"
+#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
-#include "configs.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
-#include "utils.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -638,9 +638,12 @@ void notify_dispatch(const int* num_tokens_per_rank, int* moe_recv_counter_mappe
   // Get clean meta. inc5: under MSCCLPP_EP_DIRECT the rdma ring slot excludes
   // hidden (kEpDirect), so the clean region must match the SMALL slot the kernel
   // uses, else the cleaned head/tail region != the one the kernel reads.
-  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
-  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
-                                             num_max_rdma_chunked_recv_tokens, num_channels);
+  const bool ep_direct = []() {
+    const char* e = std::getenv("MSCCLPP_EP_DIRECT");
+    return e && std::atoi(e) != 0;
+  }();
+  auto rdma_clean_meta = get_rdma_clean_meta(ep_direct ? 0 : hidden_int4, num_scales, num_topk, num_topk,
+                                             num_rdma_ranks, num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk, num_topk, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
   EP_HOST_ASSERT((rdma_clean_meta.first + rdma_clean_meta.second) * sizeof(int) <= num_rdma_bytes);
@@ -1557,23 +1560,24 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
   }
 #endif
 
-#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
-  {                                                                                                                    \
-    auto dispatch_func =                                                                                               \
-        low_latency_mode ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
-                                               : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
-                         : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
-                                               : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
-    LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                  \
-                  recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),   \
-                  x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,    \
-                  recv_gbl_channel_prefix_matrix, rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,               \
-                  gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum, num_tokens, hidden_int4, num_scales, num_topk,  \
-                  num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                    \
-                  num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                      \
-                  num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,      \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);                          \
-  }                                                                                                                    \
+#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                          \
+  {                                                                                                                   \
+    auto dispatch_func =                                                                                              \
+        low_latency_mode                                                                                              \
+            ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>       \
+                                  : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)     \
+            : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>      \
+                                  : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>);   \
+    LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                 \
+                  recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),  \
+                  x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,   \
+                  recv_gbl_channel_prefix_matrix, rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,              \
+                  gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum, num_tokens, hidden_int4, num_scales, num_topk, \
+                  num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                   \
+                  num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                     \
+                  num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,     \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);  \
+  }                                                                                                                   \
   break
 
   EP_HOST_ASSERT((topk_idx == nullptr) == (topk_weights == nullptr));
@@ -1759,10 +1763,13 @@ void cached_notify(int hidden_int4, int num_scales, int num_topk_idx, int num_to
   // carries hidden through the rdma channel, so its clean must stay full-slot.
   // is_cached_dispatch distinguishes the two callers (true=cached dispatch,
   // false=combine).
-  const bool ep_direct = []() { const char* e = std::getenv("MSCCLPP_EP_DIRECT"); return e && std::atoi(e) != 0; }();
+  const bool ep_direct = []() {
+    const char* e = std::getenv("MSCCLPP_EP_DIRECT");
+    return e && std::atoi(e) != 0;
+  }();
   const int clean_hidden_int4 = (ep_direct && is_cached_dispatch) ? 0 : hidden_int4;
-  auto rdma_clean_meta = get_rdma_clean_meta(clean_hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
-                                             num_max_rdma_chunked_recv_tokens, num_channels);
+  auto rdma_clean_meta = get_rdma_clean_meta(clean_hidden_int4, num_scales, num_topk_idx, num_topk_weights,
+                                             num_rdma_ranks, num_max_rdma_chunked_recv_tokens, num_channels);
   auto nvl_clean_meta = get_nvl_clean_meta(hidden_int4, num_scales, num_topk_idx, num_topk_weights, num_rdma_ranks,
                                            NUM_MAX_NVL_PEERS, num_max_nvl_chunked_recv_tokens, num_channels);
   EP_HOST_ASSERT((rdma_clean_meta.first + rdma_clean_meta.second) * sizeof(int) <= num_rdma_bytes);
@@ -1918,10 +1925,9 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
         const bool is_in =
             (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
         const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
-        combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
-                                               combined_x + static_cast<int64_t>(t) * hidden_int4,
-                                               combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
-                                               recv_fn, recv_tw_fn);
+        combine_token<kEpNumRanks, dtype_t, 8>(
+            is_in, recv_idx, lane_id, hidden_int4, num_topk, combined_x + static_cast<int64_t>(t) * hidden_int4,
+            combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30, recv_fn, recv_tw_fn);
       }
     } else {
       // >= 16 nodes (kEpNumRanks > 32): chunked-ballot discovery (lane-per-rank aliases
@@ -1934,8 +1940,7 @@ __global__ void __launch_bounds__((NUM_MAX_NVL_PEERS + 1 + kNumForwarders) * 32,
         int topk_ranks[kEpMaxContrib], slot_indices[kEpMaxContrib], num_topk_ranks = 0;
         for (int base = 0; base < kEpNumRanks; base += 32) {
           const int r = base + lane_id;
-          const bool is_in =
-              (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+          const bool is_in = (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
           const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
           unsigned ballot = __ballot_sync(0xffffffffu, is_in);
           while (ballot != 0u) {
