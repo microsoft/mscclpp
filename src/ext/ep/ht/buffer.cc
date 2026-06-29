@@ -1,5 +1,7 @@
 #include "buffer.hpp"
 
+#include <stdexcept>
+
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDADataType.h>
 #include <cuda_runtime.h>
@@ -1936,31 +1938,9 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
 }
 
 void Buffer::clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts) {
-  EP_HOST_ASSERT(low_latency_mode);
-
-  auto layout = LowLatencyLayout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
-  auto clean_meta_0 = layout.buffers[0].clean_meta();
-  auto clean_meta_1 = layout.buffers[1].clean_meta();
-
-  auto check_boundary = [=](void* ptr, size_t num_bytes) {
-    auto offset = reinterpret_cast<int64_t>(ptr) - reinterpret_cast<int64_t>(rdma_buffer_ptr);
-    EP_HOST_ASSERT(0 <= offset and offset + static_cast<int64_t>(num_bytes) <= num_rdma_bytes);
-  };
-  check_boundary(clean_meta_0.first, clean_meta_0.second * sizeof(int));
-  check_boundary(clean_meta_1.first, clean_meta_1.second * sizeof(int));
-
-  low_latency::TransportContext transport{
-      .rdmaBufferBase_ = rdma_buffer_ptr,
-      .portChannels_ = port_channel_handles_device_ptr.get(),
-      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
-      .peerBases_ = peer_rdma_bases_gpu,
-      .ipcReady_ = ll_ipc_ready,
-      .rank_ = rank,
-      .numRanks_ = num_ranks,
-      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
-
-  low_latency::cleanBuffers(clean_meta_0.first, clean_meta_0.second, clean_meta_1.first, clean_meta_1.second, transport,
-                            at::cuda::getCurrentCUDAStream());
+  throw std::runtime_error(
+      "mscclpp_ep HT Buffer: the low-latency dispatch/combine path is served by MoERuntime "
+      "(src/ext/ep/moe_runtime.cc); it is not available on the high-throughput Buffer.");
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor,
@@ -1972,156 +1952,9 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
                              const std::optional<torch::Tensor>& out_packed_recv_src_info,
                              const std::optional<torch::Tensor>& out_packed_recv_layout_range,
                              const std::optional<torch::Tensor>& out_packed_recv_count) {
-  EP_HOST_ASSERT(low_latency_mode);
-
-  EP_HOST_ASSERT(x.dim() == 2 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
-  EP_HOST_ASSERT(x.size(1) % sizeof(int4) == 0 and x.size(1) % 128 == 0);
-  EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
-  EP_HOST_ASSERT(x.size(0) == topk_idx.size(0) and x.size(0) <= num_max_dispatch_tokens_per_rank);
-  EP_HOST_ASSERT(topk_idx.scalar_type() == torch::kInt64);
-  EP_HOST_ASSERT(num_experts % num_ranks == 0);
-
-  auto num_tokens = static_cast<int>(x.size(0)), hidden = static_cast<int>(x.size(1));
-  auto num_scales = hidden / 128, num_topk = static_cast<int>(topk_idx.size(1));
-  int num_local_experts = num_experts / num_ranks;
-
-  LowLatencyLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
-  EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
-  auto buffer = layout.buffers[low_latency_buffer_idx];
-  auto next_buffer = layout.buffers[low_latency_buffer_idx ^= 1];
-
-  auto compute_stream = at::cuda::getCurrentCUDAStream();
-  auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
-  EP_HOST_ASSERT(not(async and return_recv_hook));
-  if (not return_recv_hook) stream_wait(launch_stream, compute_stream);
-
-  // Reusable output tensors. The largest (`packed_recv_x` ~58 MB at 7K hidden)
-  // is what motivates the reuse path: a fresh torch::empty per call adds
-  // measurable host overhead (~10us cumulative for the 4 allocations) which
-  // shows up against NCCL-EP's preallocated bench at small payloads.
-  const auto recv_x_dtype = use_fp8 ? torch::kFloat8_e4m3fn : torch::kBFloat16;
-  torch::Tensor packed_recv_x;
-  if (out_packed_recv_x.has_value()) {
-    EP_HOST_ASSERT(out_packed_recv_x->dim() == 3 and out_packed_recv_x->is_contiguous());
-    EP_HOST_ASSERT(out_packed_recv_x->size(0) == num_local_experts);
-    EP_HOST_ASSERT(out_packed_recv_x->size(1) == num_ranks * num_max_dispatch_tokens_per_rank);
-    EP_HOST_ASSERT(out_packed_recv_x->size(2) == hidden);
-    EP_HOST_ASSERT(out_packed_recv_x->scalar_type() == recv_x_dtype);
-    packed_recv_x = out_packed_recv_x.value();
-  } else {
-    packed_recv_x = torch::empty({num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden},
-                                 x.options().dtype(recv_x_dtype));
-  }
-  torch::Tensor packed_recv_src_info;
-  if (out_packed_recv_src_info.has_value()) {
-    EP_HOST_ASSERT(out_packed_recv_src_info->dim() == 2 and out_packed_recv_src_info->is_contiguous());
-    EP_HOST_ASSERT(out_packed_recv_src_info->size(0) == num_local_experts);
-    EP_HOST_ASSERT(out_packed_recv_src_info->size(1) == num_ranks * num_max_dispatch_tokens_per_rank);
-    EP_HOST_ASSERT(out_packed_recv_src_info->scalar_type() == torch::kInt32);
-    packed_recv_src_info = out_packed_recv_src_info.value();
-  } else {
-    packed_recv_src_info = torch::empty({num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank},
-                                        torch::dtype(torch::kInt32).device(torch::kCUDA));
-  }
-  torch::Tensor packed_recv_layout_range;
-  if (out_packed_recv_layout_range.has_value()) {
-    EP_HOST_ASSERT(out_packed_recv_layout_range->dim() == 2 and out_packed_recv_layout_range->is_contiguous());
-    EP_HOST_ASSERT(out_packed_recv_layout_range->size(0) == num_local_experts);
-    EP_HOST_ASSERT(out_packed_recv_layout_range->size(1) == num_ranks);
-    EP_HOST_ASSERT(out_packed_recv_layout_range->scalar_type() == torch::kInt64);
-    packed_recv_layout_range = out_packed_recv_layout_range.value();
-  } else {
-    packed_recv_layout_range =
-        torch::empty({num_local_experts, num_ranks}, torch::dtype(torch::kInt64).device(torch::kCUDA));
-  }
-  torch::Tensor packed_recv_count;
-  if (out_packed_recv_count.has_value()) {
-    EP_HOST_ASSERT(out_packed_recv_count->dim() == 1 and out_packed_recv_count->is_contiguous());
-    EP_HOST_ASSERT(out_packed_recv_count->size(0) == num_local_experts);
-    EP_HOST_ASSERT(out_packed_recv_count->scalar_type() == torch::kInt32);
-    packed_recv_count = out_packed_recv_count.value();
-  } else {
-    packed_recv_count = torch::empty({num_local_experts}, torch::dtype(torch::kInt32).device(torch::kCUDA));
-  }
-
-  auto packed_recv_x_scales = std::optional<torch::Tensor>();
-  float* packed_recv_x_scales_ptr = nullptr;
-  if (use_fp8) {
-    EP_HOST_ASSERT((num_ranks * num_max_dispatch_tokens_per_rank) % 4 == 0 and
-                   "TMA requires the number of tokens to be multiple of 4");
-    if (out_packed_recv_x_scales.has_value()) {
-      // Caller-provided scales tensor must already be in the kernel's
-      // expected (transposed) layout: shape [num_local_experts,
-      // num_ranks*max_tokens, num_scales], strides such that
-      // size(1)=num_ranks*max_tokens with the actual storage
-      // [num_local_experts, num_scales, num_ranks*max_tokens] (i.e.
-      // produced by `torch.empty(...).transpose(1, 2)`).
-      EP_HOST_ASSERT(out_packed_recv_x_scales->dim() == 3);
-      EP_HOST_ASSERT(out_packed_recv_x_scales->size(0) == num_local_experts);
-      EP_HOST_ASSERT(out_packed_recv_x_scales->size(1) == num_ranks * num_max_dispatch_tokens_per_rank);
-      EP_HOST_ASSERT(out_packed_recv_x_scales->size(2) == num_scales);
-      EP_HOST_ASSERT(out_packed_recv_x_scales->scalar_type() == torch::kFloat32);
-      packed_recv_x_scales = out_packed_recv_x_scales.value();
-    } else {
-      packed_recv_x_scales = torch::empty({num_local_experts, num_scales, num_ranks * num_max_dispatch_tokens_per_rank},
-                                          torch::dtype(torch::kFloat32).device(torch::kCUDA));
-      packed_recv_x_scales = torch::transpose(packed_recv_x_scales.value(), 1, 2);
-    }
-    packed_recv_x_scales_ptr = packed_recv_x_scales->data_ptr<float>();
-  }
-
-  auto next_clean_meta = next_buffer.clean_meta();
-
-  low_latency::DispatchConfig config{.numTokens_ = num_tokens,
-                                     .hidden_ = hidden,
-                                     .numTopk_ = num_topk,
-                                     .numExperts_ = num_experts,
-                                     .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
-                                     .inputDType_ = low_latency::DType::BF16,
-                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
-                                     .outputLayout_ = low_latency::DispatchLayout::EXPERT_MAJOR};
-  low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.dispatch_rdma_send_buffer,
-                                     .sendCountBuffer_ = nullptr,
-                                     .recvDataBuffer_ = buffer.dispatch_rdma_recv_data_buffer,
-                                     .recvCountBuffer_ = buffer.dispatch_rdma_recv_count_buffer,
-                                     .cleanupRegion_ = nullptr,
-                                     .cleanupSize_ = 0};
-  low_latency::BufferSet next_buf{.sendDataBuffer_ = nullptr,
-                                  .sendCountBuffer_ = nullptr,
-                                  .recvDataBuffer_ = nullptr,
-                                  .recvCountBuffer_ = nullptr,
-                                  .cleanupRegion_ = next_clean_meta.first,
-                                  .cleanupSize_ = next_clean_meta.second};
-  low_latency::TransportContext transport{
-      .rdmaBufferBase_ = rdma_buffer_ptr,
-      .portChannels_ = port_channel_handles_device_ptr.get(),
-      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
-      .peerBases_ = peer_rdma_bases_gpu,
-      .ipcReady_ = ll_ipc_ready,
-      .rank_ = rank,
-      .numRanks_ = num_ranks,
-      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
-
-  auto launcher = [=](low_latency::Phase phase) {
-    low_latency::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr, packed_recv_src_info.data_ptr<int>(),
-                          packed_recv_layout_range.data_ptr<int64_t>(), packed_recv_count.data_ptr<int>(), x.data_ptr(),
-                          topk_idx.data_ptr<int64_t>(), config, current_buf, next_buf, transport, workspace,
-                          launch_stream, phase);
-  };
-  launcher(return_recv_hook ? low_latency::SEND_ONLY : low_latency::SEND_AND_RECV);
-
-  std::optional<EventHandle> event;
-  if (async) {
-    event = EventHandle(launch_stream);
-  } else if (not return_recv_hook) {
-    stream_wait(compute_stream, launch_stream);
-  }
-
-  std::optional<std::function<void()>> recv_hook = std::nullopt;
-  if (return_recv_hook) recv_hook = [=]() { launcher(low_latency::RECV_ONLY); };
-
-  return {packed_recv_x, packed_recv_x_scales, packed_recv_count, packed_recv_src_info, packed_recv_layout_range, event,
-          recv_hook};
+  throw std::runtime_error(
+      "mscclpp_ep HT Buffer: the low-latency dispatch/combine path is served by MoERuntime "
+      "(src/ext/ep/moe_runtime.cc); it is not available on the high-throughput Buffer.");
 }
 
 std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>> Buffer::low_latency_combine(
@@ -2129,129 +1962,16 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
     const torch::Tensor& topk_weights, const torch::Tensor& src_info, const torch::Tensor& layout_range,
     int num_max_dispatch_tokens_per_rank, int num_experts, bool zero_copy, bool async, bool return_recv_hook,
     const std::optional<torch::Tensor>& out) {
-  EP_HOST_ASSERT(low_latency_mode);
-
-  const auto input_dtype = x.scalar_type();
-  EP_HOST_ASSERT(input_dtype == torch::kBFloat16 || input_dtype == torch::kFloat8_e4m3fn);
-  EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous());
-  EP_HOST_ASSERT(x.size(0) == num_experts / num_ranks);
-  EP_HOST_ASSERT(x.size(1) == num_ranks * num_max_dispatch_tokens_per_rank);
-  EP_HOST_ASSERT((x.size(2) * x.element_size()) % sizeof(int4) == 0 and x.size(2) % 128 == 0);
-  EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
-  EP_HOST_ASSERT(topk_idx.size(0) == topk_weights.size(0) and topk_idx.size(1) == topk_weights.size(1));
-  EP_HOST_ASSERT(topk_idx.scalar_type() == torch::kInt64);
-  EP_HOST_ASSERT(topk_weights.dim() == 2 and topk_weights.is_contiguous());
-  EP_HOST_ASSERT(topk_weights.size(0) <= num_max_dispatch_tokens_per_rank);
-  EP_HOST_ASSERT(topk_weights.scalar_type() == torch::kFloat32);
-  EP_HOST_ASSERT(src_info.dim() == 2 and src_info.is_contiguous());
-  EP_HOST_ASSERT(src_info.scalar_type() == torch::kInt32 and x.size(0) == src_info.size(0));
-  EP_HOST_ASSERT(layout_range.dim() == 2 and layout_range.is_contiguous());
-  EP_HOST_ASSERT(layout_range.scalar_type() == torch::kInt64);
-  EP_HOST_ASSERT(layout_range.size(0) == num_experts / num_ranks and layout_range.size(1) == num_ranks);
-  auto hidden = static_cast<int>(x.size(2));
-  auto num_scales = hidden / 128;
-  auto num_topk = static_cast<int>(topk_weights.size(1));
-  auto num_combined_tokens = static_cast<int>(topk_weights.size(0));
-  float* x_scales_ptr = nullptr;
-  if (input_dtype == torch::kFloat8_e4m3fn) {
-    EP_HOST_ASSERT(x_scales.has_value());
-    EP_HOST_ASSERT(x_scales->dim() == 3);
-    EP_HOST_ASSERT(x_scales->size(0) == x.size(0));
-    EP_HOST_ASSERT(x_scales->size(1) == x.size(1));
-    EP_HOST_ASSERT(x_scales->size(2) == num_scales);
-    EP_HOST_ASSERT(x_scales->scalar_type() == torch::kFloat32);
-    EP_HOST_ASSERT(x_scales->stride(1) == 1);
-    EP_HOST_ASSERT(x_scales->stride(2) == x.size(1));
-    x_scales_ptr = x_scales->data_ptr<float>();
-  } else {
-    EP_HOST_ASSERT(!x_scales.has_value());
-  }
-
-  LowLatencyLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
-  EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
-  auto buffer = layout.buffers[low_latency_buffer_idx];
-  auto next_buffer = layout.buffers[low_latency_buffer_idx ^= 1];
-
-  auto compute_stream = at::cuda::getCurrentCUDAStream();
-  auto launch_stream = return_recv_hook ? compute_stream : comm_stream;
-  EP_HOST_ASSERT(not(async and return_recv_hook));
-  if (not return_recv_hook) stream_wait(launch_stream, compute_stream);
-
-  torch::Tensor combined_x;
-  if (out.has_value()) {
-    EP_HOST_ASSERT(out->dim() == 2 and out->is_contiguous());
-    EP_HOST_ASSERT(out->size(0) == num_combined_tokens and out->size(1) == hidden);
-    EP_HOST_ASSERT(out->scalar_type() == torch::kBFloat16);
-    combined_x = out.value();
-  } else {
-    combined_x = torch::empty({num_combined_tokens, hidden}, x.options().dtype(torch::kBFloat16));
-  }
-
-  auto next_clean_meta = next_buffer.clean_meta();
-
-  low_latency::CombineConfig config{
-      .numCombinedTokens_ = num_combined_tokens,
-      .hidden_ = hidden,
-      .numTopk_ = num_topk,
-      .numExperts_ = num_experts,
-      .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
-      .inputDType_ = input_dtype == torch::kFloat8_e4m3fn ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
-      .outputDType_ = low_latency::DType::BF16,
-      .zeroCopy_ = zero_copy};
-  low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.combine_rdma_send_buffer,
-                                     .sendCountBuffer_ = nullptr,
-                                     .recvDataBuffer_ = buffer.combine_rdma_recv_data_buffer,
-                                     .recvCountBuffer_ = buffer.combine_rdma_recv_flag_buffer,
-                                     .cleanupRegion_ = nullptr,
-                                     .cleanupSize_ = 0};
-  low_latency::BufferSet next_buf{.sendDataBuffer_ = nullptr,
-                                  .sendCountBuffer_ = nullptr,
-                                  .recvDataBuffer_ = nullptr,
-                                  .recvCountBuffer_ = nullptr,
-                                  .cleanupRegion_ = next_clean_meta.first,
-                                  .cleanupSize_ = next_clean_meta.second};
-  low_latency::TransportContext transport{
-      .rdmaBufferBase_ = rdma_buffer_ptr,
-      .portChannels_ = port_channel_handles_device_ptr.get(),
-      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
-      .peerBases_ = peer_rdma_bases_gpu,
-      .ipcReady_ = ll_ipc_ready,
-      .rank_ = rank,
-      .numRanks_ = num_ranks,
-      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
-
-  auto launcher = [=](low_latency::Phase phase) {
-    low_latency::combine(combined_x.data_ptr(), x.data_ptr(), x_scales_ptr, topk_idx.data_ptr<int64_t>(),
-                         topk_weights.data_ptr<float>(), src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(),
-                         config, current_buf, next_buf, transport, workspace, launch_stream, phase);
-  };
-  launcher(return_recv_hook ? low_latency::SEND_ONLY : low_latency::SEND_AND_RECV);
-
-  std::optional<EventHandle> event;
-  if (async) {
-    event = EventHandle(launch_stream);
-  } else if (not return_recv_hook) {
-    stream_wait(compute_stream, launch_stream);
-  }
-
-  std::optional<std::function<void()>> recv_hook = std::nullopt;
-  if (return_recv_hook) recv_hook = [=]() { launcher(low_latency::RECV_ONLY); };
-
-  return {combined_x, event, recv_hook};
+  throw std::runtime_error(
+      "mscclpp_ep HT Buffer: the low-latency dispatch/combine path is served by MoERuntime "
+      "(src/ext/ep/moe_runtime.cc); it is not available on the high-throughput Buffer.");
 }
 
 torch::Tensor Buffer::get_next_low_latency_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
                                                           int num_experts) {
-  LowLatencyLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
-  auto buffer = layout.buffers[low_latency_buffer_idx];
-  auto dtype = torch::kBFloat16;
-  auto num_msg_elems = static_cast<int>(buffer.num_bytes_per_combine_msg / elementSize(torch::kBFloat16));
-
-  EP_HOST_ASSERT(buffer.num_bytes_per_combine_msg % elementSize(torch::kBFloat16) == 0);
-  return torch::from_blob(buffer.combine_rdma_send_buffer_data_start,
-                          {num_experts / num_ranks, num_ranks * num_max_dispatch_tokens_per_rank, hidden},
-                          {num_ranks * num_max_dispatch_tokens_per_rank * num_msg_elems, num_msg_elems, 1},
-                          torch::TensorOptions().dtype(dtype).device(torch::kCUDA));
+  throw std::runtime_error(
+      "mscclpp_ep HT Buffer: the low-latency dispatch/combine path is served by MoERuntime "
+      "(src/ext/ep/moe_runtime.cc); it is not available on the high-throughput Buffer.");
 }
 
 }  // namespace ep

@@ -84,13 +84,26 @@ struct Config {
 
 #ifdef EP_DISPATCH_NCCLEP
   static constexpr int kEpRecvPoolMaxTokens = 65536;
-  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;
+  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
+  // inc6 (flat all-sender dispatch): per-token meta region appended AFTER the
+  // worst-case hidden region. The flat sender writes SourceMeta + scales + topk
+  // straight into the dest pool meta region; a local consumer copies it into the
+  // recv_* tensors. 128B/token (allocated unconditionally; only touched under flat).
+  static constexpr int64_t kEpRecvPoolMetaBytes = 128;  // per-token meta slot (128B aligned)
   size_t get_recv_pool_header_bytes(int num_ranks) const {
     return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
   }
-  static size_t recv_pool_bytes_static(int num_ranks) {
+  // Byte offset (from pool base) where the inc6 meta region starts: after the
+  // header and the full worst-case hidden region, so it never overlaps runtime
+  // hidden tokens regardless of the runtime hidden dim.
+  static size_t get_recv_pool_meta_base(int num_ranks) {
     size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-    size_t b = header + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    size_t hidden = static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    return ((header + hidden + 127) / 128) * 128;
+  }
+  static size_t recv_pool_bytes_static(int num_ranks) {
+    size_t meta_base = get_recv_pool_meta_base(num_ranks);
+    size_t b = meta_base + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMetaBytes);
     return ((b + 127) / 128) * 128;
   }
 #endif

@@ -3,12 +3,29 @@
 #
 # Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
 # (Mixture-of-Experts dispatch/combine) runtime to Python.
+#
+# Two backends share one module:
+#  - Low-latency (LL): moe_runtime.cc + kernels/low_latency.cu, pointer-based
+#    nanobind API (no torch at the boundary).
+#  - High-throughput (HT): ht/buffer.cc + ht/kernels/*.cu, DeepEP-style runtime
+#    that carries `torch::Tensor`. Tensors cross the Python boundary as DLPack
+#    capsules (ATen `toDLPack`/`fromDLPack`), so the module links libtorch
+#    (ATen) but NOT libtorch_python (avoids a pybind11-in-libtorch clash with
+#    nanobind).
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
 if(NOT TARGET nanobind-static AND NOT TARGET nanobind)
     FetchContent_Declare(nanobind GIT_REPOSITORY https://github.com/wjakob/nanobind.git GIT_TAG v1.9.2)
     FetchContent_MakeAvailable(nanobind)
+endif()
+
+# Torch is required for the HT backend (ht/buffer.cc uses ATen + torch::Tensor).
+find_package(Torch QUIET)
+if(NOT Torch_FOUND)
+    message(FATAL_ERROR
+        "MSCCLPP_BUILD_EXT_EP=ON requires PyTorch's CMake package for the HT backend. "
+        "Set CMAKE_PREFIX_PATH to `$(python -c 'import torch;print(torch.utils.cmake_prefix_path)')`.")
 endif()
 
 set(_mscclpp_ep_gpu_archs "")
@@ -34,12 +51,17 @@ set(EP_SOURCES
     moe_runtime.cc
     bindings.cpp
     kernels/low_latency.cu
+    # High-throughput (DeepEP-style) backend.
+    ht/buffer.cc
+    ht/kernels/internode.cu
+    ht/kernels/intranode_kernel.cu
+    ht/kernels/runtime.cu
 )
 
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES kernels/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES kernels/*.cu ht/kernels/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -51,12 +73,27 @@ endif()
 
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/ht
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${PROJECT_SOURCE_DIR}/src/ext/include
     ${GPU_INCLUDE_DIRS}
+    ${TORCH_INCLUDE_DIRS}
 )
-target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
+target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads ${TORCH_LIBRARIES})
+if(TARGET torch::torch)
+    target_link_libraries(mscclpp_ep_cpp PRIVATE torch::torch)
+endif()
+
+# The HT NCCL-EP dispatch/combine (sender-direct + flat all-sender + TMA) path
+# is compiled in unconditionally for this branch (the validated GB200 fast path).
+target_compile_definitions(mscclpp_ep_cpp PRIVATE EP_DISPATCH_NCCLEP)
+
+# Torch headers require RTTI + exceptions; nanobind may otherwise strip RTTI.
+target_compile_options(mscclpp_ep_cpp PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:-frtti>
+    $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-frtti>
+)
 
 # Number of intra-node NVLink peers compiled into the EP kernels.
 #  - 8 (default) matches DeepEP upstream and H100/HGX 8-GPU nodes.
