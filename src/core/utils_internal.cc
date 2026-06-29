@@ -186,6 +186,11 @@ class NvmlState {
  public:
   NvmlState() : initialized_(nvmlInit_v2() == NVML_SUCCESS) {}
 
+  NvmlState(const NvmlState&) = delete;
+  NvmlState& operator=(const NvmlState&) = delete;
+  NvmlState(NvmlState&&) = delete;
+  NvmlState& operator=(NvmlState&&) = delete;
+
   ~NvmlState() {
     if (initialized_) {
       (void)nvmlShutdown();
