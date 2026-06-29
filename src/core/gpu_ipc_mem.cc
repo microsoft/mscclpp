@@ -186,6 +186,8 @@ UniqueGpuIpcMemHandle GpuIpcMemHandle::create(const CUdeviceptr ptr) {
   if (err == cudaSuccess) {
     handle->typeFlags |= GpuIpcMemHandle::Type::RuntimeIpc;
   } else {
+    // The VMM fallback below handles this failure, so do not leak it as CUDA's last error.
+    (void)cudaGetLastError();
     WARN(GPU, "Failed to create runtime CUDA IPC handle for pointer ", (void*)basePtr,
          ": error=", static_cast<int>(err), " (", std::string(cudaGetErrorString(err)), ")");
   }

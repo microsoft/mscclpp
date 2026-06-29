@@ -30,10 +30,10 @@ jobs:
   displayName: Integration test A100
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   pool:
     name: msccl-ci
@@ -53,6 +53,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   pool:
     name: msccl-ci-h100
