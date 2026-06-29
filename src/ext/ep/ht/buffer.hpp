@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 #pragma once
 
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
 #include <torch/types.h>
 
 #include <mscclpp/core.hpp>
@@ -11,13 +9,15 @@
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/port_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+#include <optional>
+#include <string>
 #include <tuple>
 #include <vector>
 
+#include "../kernels/configs.cuh"
+#include "../kernels/exception.cuh"
 #include "config.hpp"
 #include "event.hpp"
-#include "kernels/configs.cuh"
-#include "kernels/exception.cuh"
 
 #ifndef TORCH_EXTENSION_NAME
 #define TORCH_EXTENSION_NAME mscclpp_ep_cpp
@@ -127,9 +127,10 @@ struct Buffer {
   // Populated in ``sync()`` when ``low_latency_mode``; empty otherwise.
   std::vector<void*> peer_rdma_bases;
   void** peer_rdma_bases_gpu = nullptr;
-  // MemoryChannels over CUDA IPC used only for the LL barrier ring.
+  // Base MemoryChannels over CUDA IPC used only for the LL barrier ring.
   std::vector<mscclpp::MemoryChannel> ll_memory_channels;
-  std::shared_ptr<mscclpp::MemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
+  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> ll_memory_channel_handles_device_ptr;
+  int ll_ranks_per_ipc_domain = 0;
   bool ll_ipc_ready = false;
 
   // NVLS multicast for HT internode (Wide Proposal B2).
@@ -206,19 +207,18 @@ struct Buffer {
 
   int get_local_device_id() const;
 
-  pybind11::bytearray get_local_ipc_handle() const;
+  std::string get_local_ipc_handle() const;
 
-  pybind11::bytearray get_local_nvshmem_unique_id() const;
+  std::string get_local_nvshmem_unique_id() const;
 
-  torch::Tensor get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset, bool use_rdma_buffer) const;
+  torch::Tensor get_local_buffer_tensor(torch::ScalarType dtype, int64_t offset, bool use_rdma_buffer) const;
 
   mscclpp::UniqueId create_unique_id() const;
 
   void connect(mscclpp::UniqueId root_id);
 
-  void sync(const std::vector<int>& device_ids,
-            const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles,
-            const std::optional<pybind11::bytearray>& root_unique_id_opt);
+  void sync(const std::vector<int>& device_ids, const std::vector<std::optional<std::string>>& all_gathered_handles,
+            const std::optional<std::string>& root_unique_id_opt);
 
   std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, std::optional<EventHandle>>
   get_dispatch_layout(const torch::Tensor& topk_idx, int num_experts, std::optional<EventHandle>& previous_event,
@@ -279,9 +279,9 @@ struct Buffer {
                        const std::optional<torch::Tensor>& out_packed_recv_count = std::nullopt);
 
   std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>> low_latency_combine(
-      const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-      const torch::Tensor& src_info, const torch::Tensor& layout_range, int num_max_dispatch_tokens_per_rank,
-      int num_experts, bool zero_copy, bool async, bool return_recv_hook,
+      const torch::Tensor& x, const std::optional<torch::Tensor>& x_scales, const torch::Tensor& topk_idx,
+      const torch::Tensor& topk_weights, const torch::Tensor& src_info, const torch::Tensor& layout_range,
+      int num_max_dispatch_tokens_per_rank, int num_experts, bool zero_copy, bool async, bool return_recv_hook,
       const std::optional<torch::Tensor>& out = std::nullopt);
 
   torch::Tensor get_next_low_latency_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts);

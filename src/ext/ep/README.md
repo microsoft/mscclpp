@@ -1,45 +1,28 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A port of DeepEP's MoE `dispatch` / `combine` primitives into MSCCL++,
-targeting:
-
-- **High-Throughput (HT) mode** from [DeepEP](https://github.com/deepseek-ai/DeepEP),
-  branch `chhwang/dev-atomic-add-cleanup` — which already swaps NVSHMEM for
-  `mscclpp::PortChannel` / `mscclpp::MemoryChannel`.
-- **Low-Latency (LL) mode** from [`nccl/contrib/nccl_ep`](https://github.com/NVIDIA/nccl/tree/master/contrib/nccl_ep),
-  which implements pure-RDMA dispatch/combine on top of the NCCL Device API.
+A port of low-latency MoE `dispatch` / `combine` primitives into MSCCL++.
+The active build exposes the LL `MoECommunicator` path. The older
+High-Throughput (HT) prototype has been moved under `src/ext/ep/ht/` for
+reference and is not compiled into `mscclpp_ep_cpp`.
 
 ## Status
 
 | Feature                            | Status                                      |
 |------------------------------------|---------------------------------------------|
-| `Buffer` construction + IPC + sync | ✅ ported (NVLink + RDMA)                          |
-| `get_dispatch_layout`              | ✅ ported                                          |
-| `intranode_dispatch` (NVLink)      | ✅ validated (8 ranks H100; 4 ranks GB200)         |
-| `intranode_combine` (NVLink)       | ✅ validated (8 ranks H100; 4 ranks GB200)         |
-| `internode_dispatch` (NVLink+RDMA) | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
-| `internode_combine` (NVLink+RDMA)  | ✅ validated (16 ranks 2×H100×8; 64 ranks 16×GB200) |
+| Runtime construction + IPC + sync  | ✅ ported for LL                                  |
+| HT prototype                       | Archived under `src/ext/ep/ht/`; not compiled     |
 | `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
 | Multi-`ProxyService` sharding      | ✅ env-tunable, arch-aware default                 |
 | `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp                      |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps HT + LL paths                             |
-| pybind11 module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
+| Python frontend `mscclpp.ext.ep`   | ✅ wraps the new LL MoECommunicator path                 |
+| nanobind module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
 
-Internode HT was validated end-to-end on two H100×8 nodes connected over
-Infiniband using [`test/python/ext/ep/test_internode_multirank.py`](../../../test/python/ext/ep/test_internode_multirank.py).
-All 16 ranks complete dispatch followed by combine with exact (zero-diff)
-recovery of the per-rank token payloads.
-
-On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), HT and LL were
-validated at 16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168,
-tokens=4096, experts=256, top-k=8:
-
-- HT internode: dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg
-  (`NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32`).
-- LL internode: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
-  combine ~**21 148 GB/s** agg (defaults).
+On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), LL was validated at
+16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168, tokens=4096,
+experts=256, top-k=8: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
+combine ~**21 148 GB/s** agg (defaults).
 
 The GB200 path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
 routing peer pointers through cuMem fabric IPC over the NVL72 fabric
@@ -76,7 +59,7 @@ LL was validated on:
 
 A single `mscclpp::ProxyService` is one CPU host thread driving one
 FIFO. With 8 GPUs / node sharing one proxy, the host thread becomes the
-bottleneck for cross-node LL traffic. `Buffer` therefore allocates `N`
+bottleneck for cross-node LL traffic. The EP runtime therefore allocates `N`
 ProxyServices and shards `PortChannel`s across them by `(qp_idx,
 dst_rank)`.
 
@@ -92,41 +75,41 @@ dst_rank)`.
   peers go through a CPU proxy. The port is for functional parity, not
   latency. (Intra-node LL traffic uses CUDA IPC and is competitive.)
 - Unlike DeepEP, this port drives LL through `PortChannel` /
-  `MemoryChannel` rather than NVSHMEM, so `Buffer::sync()` connects
+  `MemoryChannel` rather than NVSHMEM, so runtime sync connects
   every peer even in `low_latency_mode=True`.
-- The internode HT functional test inserts an explicit
-  `torch.cuda.synchronize()` + `dist.barrier()` between dispatch and
-  combine. Without it, fast ranks can launch combine while peers still
-  have in-flight dispatch proxy traffic, deadlocking the combine NVL
-  forwarder. Folding this barrier into
-  `Buffer::internode_dispatch` / `Buffer::internode_combine` (or
-  `cached_notify`) is tracked in the test's `XXX` comment.
+- HT code is archived for reference only and is not part of the active
+  extension build.
 
 ## Build
 
-The extension is **off by default** and requires PyTorch's CMake package:
+For Python installs, use the `ep` extra:
 
 ```bash
-TORCH_CMAKE=$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')
+python -m pip install ".[cuda12,ep]"
+```
+
+The EP extension targets CUDA architectures **90 or newer**. Plain CMake builds
+can enable it explicitly:
+
+```bash
 cmake -S . -B build \
-      -DMSCCLPP_BUILD_EXT_EP=ON \
-      -DCMAKE_PREFIX_PATH="${TORCH_CMAKE}"
+      -DMSCCLPP_BUILD_EXT_EP=ON
 cmake --build build -j
 ```
 
-This produces `mscclpp_ep_cpp.so` — a pybind11 PyTorch extension module.
+This produces `mscclpp_ep_cpp.so` — a nanobind extension module.
 The Python frontend picks it up automatically:
 
 ```python
 from mscclpp.ext import ep
-buf = ep.Buffer(group, num_nvl_bytes=..., num_rdma_bytes=...)
+moe_comm = ep.MoECommunicator(...)
 ```
 
 ### Build-time CMake options
 
 | Variable                              | Default | Meaning                                                       |
 |---------------------------------------|---------|---------------------------------------------------------------|
-| `MSCCLPP_BUILD_EXT_EP`                | `OFF`   | Build the EP extension at all                                 |
+| `MSCCLPP_BUILD_EXT_EP`                | `ON` in Python wheels | Build the EP extension at all                |
 | `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | Compile-time `NUM_MAX_NVL_PEERS` — set to `4` for GB200 NVL72 |
 | `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT`     | `OFF`   | Use a short ~10s kernel spin timeout (default is ~100s)       |
 
@@ -142,14 +125,11 @@ build-time settings are required:
 # Option 1: plain CMake.
 cmake -S . -B build \
       -DMSCCLPP_BUILD_EXT_EP=ON \
-      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
-      -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')"
+      -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4
 cmake --build build -j
 
-# Option 2: wheel-based install (pyproject.toml already sets
-# MSCCLPP_BUILD_EXT_EP=ON).
-CMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
-python3 -m pip install --no-build-isolation \
+# Option 2: wheel-based install.
+python3 -m pip install ".[cuda12,ep]" \
     --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
     .
 ```
@@ -166,7 +146,7 @@ Runtime prerequisites on GB200:
   (`POSIX_FD | FABRIC`) can be exchanged across nodes.
 - NVLink-SHARP / multicast support enabled (`nvidia-smi mig … --imex`
   reachable). `mscclpp::isNvlsSupported()` must return `true` at
-  Buffer construction; otherwise the kernels fall back to the legacy
+  runtime construction; otherwise the kernels fall back to the legacy
   PortChannel + RDMA path (and on Azure CX-7 RoCE the broken IB
   atomics will hang).
 - `MSCCLPP_EP_LOCAL_WORLD_SIZE` partitions ranks into NUMA hosts; it
@@ -268,33 +248,38 @@ topk=8, experts=256):
 > `127.0.0.1` rendezvous (not `torchrun --standalone`, whose hostname
 > rendezvous is not DNS-resolvable on these nodes) and set
 > `NCCL_NET_PLUGIN=none` + `NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3` so NCCL's
-> built-in IB probe does not crash `ep.Buffer` construction.
+> built-in IB probe does not crash `ep.MoECommunicator` construction.
 
 ## Layout
 
 ```
 src/ext/ep/
-├── CMakeLists.txt              — builds mscclpp_ep_cpp (Torch + pybind11)
+├── CMakeLists.txt              — builds mscclpp_ep_cpp (nanobind)
 ├── README.md                   — this file
-├── buffer.hpp / buffer.cc      — host-side Buffer, sync(), dispatch/combine
-├── config.hpp / event.hpp      — Config, EventHandle
-├── bindings.cpp                — PYBIND11_MODULE definition
+├── moe_runtime.hpp / .cc       — LL MoE runtime state and raw-pointer dispatch/combine
+├── config.hpp                  — LL layout helpers and size hints
+├── bindings.cpp                — nanobind module definition
+├── ht/                         — archived HT prototype; not compiled
+│   ├── buffer.hpp / buffer.cc
+│   ├── config.hpp
+│   ├── event.hpp
+│   └── kernels/
+│       ├── buffer.cuh
+│       ├── runtime.cu
+│       ├── intranode_kernel.cu
+│       ├── internode.cu
+│       └── internode_ncclep.cuh
 └── kernels/
     ├── api.cuh                 — host-callable kernel prototypes
     ├── configs.cuh             — compile-time constants (GPU-only)
-    ├── buffer.cuh              — Buffer/AsymBuffer/SymBuffer helpers
     ├── exception.cuh           — EP_HOST/DEVICE_ASSERT + CUDA_CHECK
     ├── launch.cuh              — SETUP_LAUNCH_CONFIG / SWITCH_* macros
     ├── utils.cuh               — device inline helpers
-    ├── runtime.cu              — intranode::barrier launcher
-    ├── intranode_kernel.cu     — intranode dispatch/combine kernels
-    ├── internode.cu            — internode HT dispatch/combine + layout
-    │                            (incl. NVLS multimem fast path for GB200)
-    └── internode_ll.cu         — internode LL dispatch/combine
+    └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
 
 python/mscclpp/ext/ep/
-├── __init__.py                 — reexports Buffer / Config / EventHandle
-└── buffer.py                   — torch.distributed-aware frontend
+├── __init__.py                 — reexports the public MoECommunicator API
+└── communicator.py             — torch.Tensor frontend over raw-pointer runtime calls
 
 test/python/ext/ep/
 ├── test_intranode_multirank.py        — intranode HT dispatch+combine
@@ -321,7 +306,7 @@ conda create -n torch python=3.14 -y
 conda activate torch
 
 # Runtime libs used by the tests / launcher.
-conda install -c conda-forge -y cupy mpi4py pybind11 blake3 sortedcontainers
+conda install -c conda-forge -y cupy mpi4py nanobind blake3 sortedcontainers
 
 # PyTorch (pulls a matching cuda-toolkit + NCCL).
 pip3 install torch
@@ -445,25 +430,29 @@ Env knobs:
 | `MSCCLPP_EP_BENCH_HIDDEN`     | Hidden dim                             | `7168`  |
 | `MSCCLPP_EP_BENCH_EXPERTS`    | Total experts                          | test-specific |
 | `MSCCLPP_EP_BENCH_TOPK`       | top-k routing                          | `8`     |
-| `MSCCLPP_EP_NUM_PROXIES`      | Number of `ProxyService`s in `Buffer`  | 8 (Hopper) / 1 (Blackwell) |
+| `MSCCLPP_EP_NUM_PROXIES`      | Number of runtime `ProxyService`s      | 8 (Hopper) / 1 (Blackwell) |
 
 ## Migration plan
+
+This section is historical. The HT prototype from the earlier migration phases
+is archived under `src/ext/ep/ht/` and is not part of the active extension
+target; the current `mscclpp_ep_cpp` build compiles the LL runtime only.
 
 ### Phase 1 — DONE
 
 - [x] Copy DeepEP kernel headers (configs / buffer / utils / launch / exception).
 - [x] Port intranode kernels + runtime (NVLink only).
 - [x] Port `get_dispatch_layout` (host-safe subset of internode kernels).
-- [x] Port host Buffer: ctor, sync, get_dispatch_layout, intranode
+- [x] Port host runtime: ctor, sync, get_dispatch_layout, intranode
       dispatch/combine.
-- [x] pybind11 `mscclpp_ep_cpp` module + Python frontend.
+- [x] nanobind `mscclpp_ep_cpp` module + Python frontend.
 
 ### Phase 2 — internode HT (NVLink + RDMA) — DONE
 
 - [x] Port `notify_dispatch`, `dispatch`, `cached_notify`, `combine` kernels.
-- [x] Wire `Buffer::internode_dispatch` / `Buffer::internode_combine` host
+- [x] Wire internode dispatch/combine host
       orchestration.
-- [x] `Buffer::sync()` builds `port_channel_handles_device_ptr` and
+- [x] Runtime sync builds `port_channel_handles_device_ptr` and
       `memory_channel_handles_device_ptr`, with port channels ordered by
       peer rank (so kernel-side indexing by `peer_rank` is consistent).
 - [x] Validated on 2×H100×8 with `test_internode_multirank.py`.
@@ -472,7 +461,7 @@ Env knobs:
 
 ### Phase 3 — Low-Latency (RDMA + CUDA-IPC) — DONE
 
-Port `DeepEP/csrc/kernels/internode_ll.cu` and cross-reference
+Port `DeepEP/csrc/kernels/internode_ll.cu` as `kernels/low_latency.cu` and cross-reference
 `nccl/contrib/nccl_ep/device/low_latency.cu`. The nccl_ep reference is
 modular (see `device_primitives.cuh`, `hybrid_ep.cuh`) and uses NCCL
 Device API; the translation table is:
@@ -488,7 +477,7 @@ Device API; the translation table is:
 | NVSHMEM symmetric heap                  | `cudaMalloc` + `ProxyService::addMemory`        |
 | NVSHMEM barrier                         | `bootstrap->barrier()` or `intranode::barrier`  |
 
-`Buffer::low_latency_dispatch` / `low_latency_combine` are validated
+Low-latency dispatch/combine are validated
 intra-node (8 ranks, CUDA IPC fast path) and cross-node (16 ranks on
 2×H100×8, IPC + IB). Functional correctness is bit-exact against the
 reference dispatch/combine.
@@ -514,7 +503,7 @@ on top of the H100 baseline:
       version-guarded, `NUM_TIMEOUT_CYCLES` restored, CMake install
       destination dual-mode.
 - [x] **LL bypass for broken CX-7 IB atomics** (Proposal A):
-      `Buffer::rdma_buffer_ptr` allocated via
+      runtime RDMA buffer allocated via
       `mscclpp::detail::gpuCallocPhysical` (POSIX_FD | FABRIC handles);
       LL IPC fast-path gate lifted from `num_rdma_ranks==1` to
       `low_latency_mode`; peer bases resolved through

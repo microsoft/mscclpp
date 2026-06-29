@@ -79,19 +79,3 @@
         EP_HOST_ASSERT(false && "Unsupported type"); \
     }                                                \
   } while (false)
-
-#define SWITCH_HIDDEN(case_macro)                      \
-  do {                                                 \
-    switch (hidden) {                                  \
-      case 2560:                                       \
-        case_macro(2560);                              \
-      case 4096:                                       \
-        case_macro(4096);                              \
-      case 5120:                                       \
-        case_macro(5120);                              \
-      case 7168:                                       \
-        case_macro(7168);                              \
-      default:                                         \
-        EP_HOST_ASSERT(false && "Unsupported hidden"); \
-    }                                                  \
-  } while (false)

@@ -9,10 +9,10 @@
 // internode/NVSHMEM init helpers are deliberately omitted; the MSCCL++ port
 // uses `mscclpp::Bootstrap`/`ProxyService` instead of NVSHMEM.
 
-#include "configs.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
-#include "utils.cuh"
+#include "../../kernels/configs.cuh"
+#include "../../kernels/exception.cuh"
+#include "../../kernels/launch.cuh"
+#include "../../kernels/utils.cuh"
 
 namespace mscclpp {
 namespace ep {
