@@ -308,7 +308,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             *reinterpret_cast<const NvlPackT*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
 
       // Acquire sequential lock
-      while (lane_id == 0 and rdma_send_next_token_idx != token_idx);
+      while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+        ;
       __syncwarp();
 
       // Acquire next tail
@@ -452,7 +453,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Epilogue
     // Acquire sequential lock
-    while (lane_id == 0 and rdma_send_next_token_idx != token_idx);
+    while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+      ;
     __syncwarp();
 
     // Update last token tail (epilogue). See in-loop note on atomicMax.

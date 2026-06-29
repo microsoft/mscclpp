@@ -375,8 +375,10 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 
     // Receive channel offset
     int total_offset, num_tokens_to_recv;
-    while (recv_lane_id == 0 and (total_offset = ld_volatile_global(channel_start_offset.buffer())) == 0);
-    while (recv_lane_id == 0 and (num_tokens_to_recv = ld_volatile_global(channel_end_offset.buffer())) == 0);
+    while (recv_lane_id == 0 and (total_offset = ld_volatile_global(channel_start_offset.buffer())) == 0)
+      ;
+    while (recv_lane_id == 0 and (num_tokens_to_recv = ld_volatile_global(channel_end_offset.buffer())) == 0)
+      ;
     if (recv_lane_id == 0) {
       total_offset = -total_offset - 1, num_tokens_to_recv = -num_tokens_to_recv - 1;
       if (recv_warp_id_in_rank == 0)

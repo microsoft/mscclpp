@@ -56,7 +56,8 @@ MSCCLPP_DEVICE_INLINE void publishSignalDirect(T* slot, T value) {
 template <typename T>
 MSCCLPP_DEVICE_INLINE T waitSignalNonZero(T* slot) {
   T value;
-  while ((value = mscclpp::atomicLoad<T, mscclpp::scopeSystem>(slot, mscclpp::memoryOrderAcquire)) == T{0});
+  while ((value = mscclpp::atomicLoad<T, mscclpp::scopeSystem>(slot, mscclpp::memoryOrderAcquire)) == T{0})
+    ;
   return value;
 }
 
