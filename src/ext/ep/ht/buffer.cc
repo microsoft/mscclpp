@@ -3,8 +3,6 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDADataType.h>
 #include <cuda_runtime.h>
-#include <pybind11/functional.h>
-#include <torch/python.h>
 
 #include <atomic>
 #include <chrono>
@@ -12,8 +10,8 @@
 #include <memory>
 #include <mscclpp/gpu_utils.hpp>
 
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
+#include "../kernels/api.cuh"
+#include "../kernels/configs.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -308,11 +306,9 @@ int Buffer::get_root_rdma_rank(bool global) const { return global ? nvl_rank : 0
 
 int Buffer::get_local_device_id() const { return device_id; }
 
-pybind11::bytearray Buffer::get_local_ipc_handle() const {
-  return {ipc_handles[nvl_rank].reserved, CUDA_IPC_HANDLE_SIZE};
-}
+std::string Buffer::get_local_ipc_handle() const { return {ipc_handles[nvl_rank].reserved, CUDA_IPC_HANDLE_SIZE}; }
 
-pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
+std::string Buffer::get_local_nvshmem_unique_id() const {
   // The MSCCL++ EP port replaces NVSHMEM with PortChannel/MemoryChannel,
   // so there is no NVSHMEM unique id to expose. Kept for ABI parity with
   // DeepEP's Python frontend; callers should use the MSCCL++ bootstrap.
@@ -320,14 +316,11 @@ pybind11::bytearray Buffer::get_local_nvshmem_unique_id() const {
       "mscclpp::ep::Buffer::get_local_nvshmem_unique_id: not applicable (NVSHMEM is not used in mscclpp_ep)");
 }
 
-torch::Tensor Buffer::get_local_buffer_tensor(const pybind11::object& dtype, int64_t offset,
-                                              bool use_rdma_buffer) const {
-  torch::ScalarType casted_dtype = torch::python::detail::py_object_to_dtype(dtype);
-  auto element_bytes = static_cast<int64_t>(elementSize(casted_dtype));
+torch::Tensor Buffer::get_local_buffer_tensor(torch::ScalarType dtype, int64_t offset, bool use_rdma_buffer) const {
+  auto element_bytes = static_cast<int64_t>(elementSize(dtype));
   auto base_ptr = reinterpret_cast<uint8_t*>(use_rdma_buffer ? rdma_buffer_ptr : buffer_ptrs[nvl_rank]) + offset;
   auto num_bytes = use_rdma_buffer ? num_rdma_bytes : num_nvl_bytes;
-  return torch::from_blob(base_ptr, num_bytes / element_bytes,
-                          torch::TensorOptions().dtype(casted_dtype).device(at::kCUDA));
+  return torch::from_blob(base_ptr, num_bytes / element_bytes, torch::TensorOptions().dtype(dtype).device(at::kCUDA));
 }
 
 mscclpp::UniqueId Buffer::create_unique_id() const { return bootstrap->createUniqueId(); }
@@ -338,8 +331,8 @@ void Buffer::connect(mscclpp::UniqueId root_id) {
 }
 
 void Buffer::sync(const std::vector<int>& device_ids,
-                  const std::vector<std::optional<pybind11::bytearray>>& all_gathered_handles,
-                  const std::optional<pybind11::bytearray>& root_unique_id_opt) {
+                  const std::vector<std::optional<std::string>>& all_gathered_handles,
+                  const std::optional<std::string>& root_unique_id_opt) {
   EP_HOST_ASSERT(not is_available());
 
   const std::vector<mscclpp::Transport> ib_transports = {
@@ -355,7 +348,7 @@ void Buffer::sync(const std::vector<int>& device_ids,
     EP_HOST_ASSERT(device_ids.size() == all_gathered_handles.size());
     for (int i = 0, offset = rdma_rank * num_nvl_ranks; i < num_nvl_ranks; ++i) {
       EP_HOST_ASSERT(all_gathered_handles[offset + i].has_value());
-      auto handle_str = std::string(all_gathered_handles[offset + i].value());
+      const auto& handle_str = all_gathered_handles[offset + i].value();
       EP_HOST_ASSERT(handle_str.size() == CUDA_IPC_HANDLE_SIZE);
       if (offset + i != rank) {
         std::memcpy(ipc_handles[i].reserved, handle_str.c_str(), CUDA_IPC_HANDLE_SIZE);
@@ -752,15 +745,16 @@ void Buffer::sync(const std::vector<int>& device_ids,
     // `nodes_config.cfg` covering all node IPs.
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
-    // Phase 4: HT internode mode also benefits from fabric-IPC peer
-    // pointers. On Azure CX-7 the IB RDMA WRITE that PortChannel uses
-    // for the dispatch/combine token data payload hangs cross-node
-    // (same root cause as signal/wait), so we set up the same per-peer
-    // mapped pointers as LL and the kernels write tokens directly into
-    // the peer's `rdma_buffer_ptr` via the NVL72 fabric VA.
+    // Single-node LL uses regular CUDA IPC peer pointers. Cross-node LL/HT on
+    // GB200 uses fabric-IPC peer pointers, letting kernels write tokens directly
+    // into each peer's `rdma_buffer_ptr` via the NVL72 fabric VA.
     // ------------------------------------------------------------------
-    const bool want_fabric_ipc = use_fabric_ipc_alloc;
-    if (want_fabric_ipc) {
+    const int ipc_domain_size = use_fabric_ipc_alloc ? num_ranks : num_nvl_ranks;
+    auto is_ipc_peer = [&](int peer) {
+      return peer != rank && ipc_domain_size > 1 && rank / ipc_domain_size == peer / ipc_domain_size;
+    };
+    const bool want_peer_ipc = use_fabric_ipc_alloc || (low_latency_mode && ipc_domain_size > 1);
+    if (want_peer_ipc) {
       // Reuse the local RDMA registration's CudaIpc transport entry. The
       // existing `local_rdma_buffer_mem` was registered with `all_transport`
       // (= ipc | ib), so its CudaIpc TransportInfo is already populated
@@ -771,7 +765,7 @@ void Buffer::sync(const std::vector<int>& device_ids,
       auto rdma_mem_ipc = communicator->registerMemory(rdma_buffer_ptr, num_rdma_bytes, ipc_transport);
       std::vector<std::shared_future<mscclpp::RegisteredMemory>> remote_futures(num_ranks);
       for (int r = 0; r < num_ranks; ++r) {
-        if (r == rank) continue;
+        if (r == rank || !is_ipc_peer(r)) continue;
         communicator->sendMemory(rdma_mem_ipc, r, kLlIpcTag);
         remote_futures[r] = communicator->recvMemory(r, kLlIpcTag);
       }
@@ -780,24 +774,24 @@ void Buffer::sync(const std::vector<int>& device_ids,
         std::vector<std::shared_future<mscclpp::Connection>> conn_futures(num_ranks);
         mscclpp::EndpointConfig cfg(ipc_transport);
         for (int r = 0; r < num_ranks; ++r) {
-          if (r == rank) continue;
+          if (r == rank || !is_ipc_peer(r)) continue;
           conn_futures[r] = communicator->connect(cfg, r, kLlIpcTag);
         }
         for (int r = 0; r < num_ranks; ++r) {
-          if (r == rank) continue;
+          if (r == rank || !is_ipc_peer(r)) continue;
           ll_ipc_conns[r] = conn_futures[r].get();
         }
       }
 
       // Resolve peer base pointers from the (now mapped) remote
       // RegisteredMemory. `data()` returns the locally-mapped peer pointer;
-      // for fabric handles this address lives in the cuMem fabric VA range
-      // and is dereferenceable from the GPU.
+      // for fabric handles this address lives in the cuMem fabric VA range,
+      // while single-node LL gets a regular CUDA IPC mapping.
       peer_rdma_bases.assign(num_ranks, nullptr);
       peer_rdma_bases[rank] = rdma_buffer_ptr;
       std::vector<mscclpp::RegisteredMemory> remote_mems(num_ranks);
       for (int r = 0; r < num_ranks; ++r) {
-        if (r == rank) continue;
+        if (r == rank || !is_ipc_peer(r)) continue;
         remote_mems[r] = remote_futures[r].get();
         peer_rdma_bases[r] = remote_mems[r].data();
       }
@@ -812,14 +806,15 @@ void Buffer::sync(const std::vector<int>& device_ids,
         fflush(stdout);
       }
 
-      // Increment 5 (inc5 flat-domain dispatch): when MSCCLPP_EP_DIRECT is set,
-      // exchange the cuMem-fabric recv-output pool base to ALL ranks (indexed by
-      // global rank), mirroring the peer_rdma_bases exchange. Lets the RDMA sender
-      // write each token directly into the destination GPU's recv pool over
-      // fabric-VA, removing the rail-aligned rdma_channel bounce + forwarder
-      // transpose. Same cuMem FABRIC handle as inc4a's pool. Env-gated so the
-      // inc4a baseline (MSCCLPP_EP_DIRECT unset) is byte-for-byte unchanged.
+#ifdef EP_DISPATCH_NCCLEP
       {
+        // Increment 5 (inc5 flat-domain dispatch): when MSCCLPP_EP_DIRECT is set,
+        // exchange the cuMem-fabric recv-output pool base to ALL ranks (indexed by
+        // global rank), mirroring the peer_rdma_bases exchange. Lets the RDMA sender
+        // write each token directly into the destination GPU's recv pool over
+        // fabric-VA, removing the rail-aligned rdma_channel bounce + forwarder
+        // transpose. Same cuMem FABRIC handle as inc4a's pool. Env-gated so the
+        // inc4a baseline (MSCCLPP_EP_DIRECT unset) is byte-for-byte unchanged.
         const char* e_direct = std::getenv("MSCCLPP_EP_DIRECT");
         const bool ep_direct = (e_direct != nullptr && std::atoi(e_direct) != 0);
         if (ep_direct && recv_pool_local_ptr_ != nullptr) {
@@ -844,8 +839,8 @@ void Buffer::sync(const std::vector<int>& device_ids,
             recv_pool_global_ptrs_[r] = recv_pool_global_remote_mems_[r].data();
           }
           CUDA_CHECK(cudaMalloc(&recv_pool_global_ptrs_gpu, sizeof(void*) * num_ranks));
-          CUDA_CHECK(cudaMemcpy(recv_pool_global_ptrs_gpu, recv_pool_global_ptrs_.data(),
-                                sizeof(void*) * num_ranks, cudaMemcpyHostToDevice));
+          CUDA_CHECK(cudaMemcpy(recv_pool_global_ptrs_gpu, recv_pool_global_ptrs_.data(), sizeof(void*) * num_ranks,
+                                cudaMemcpyHostToDevice));
           if (rank == 0) {
             printf("[mscclpp_ep] inc5 domain-wide recv-pool bases (rank 0):");
             for (int r = 0; r < num_ranks; ++r) printf(" [%d]=%p", r, recv_pool_global_ptrs_[r]);
@@ -860,22 +855,24 @@ void Buffer::sync(const std::vector<int>& device_ids,
                                   sizeof(int) * static_cast<size_t>(Config::kEpRecvPoolMaxTokens) * num_ranks));
         }
       }
+#endif
 
       if (low_latency_mode) {
         // LL barrier ring needs MemoryChannels.
-        std::vector<mscclpp::MemoryChannelDeviceHandle> ll_handles(num_ranks);
+        std::vector<mscclpp::BaseMemoryChannelDeviceHandle> ll_handles(num_ranks);
         for (int r = 0; r < num_ranks; ++r) {
-          if (r == rank) continue;
+          if (r == rank || !is_ipc_peer(r)) continue;
           auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator, ll_ipc_conns[r]);
           ll_memory_channels.emplace_back(sema, remote_mems[r], rdma_mem_ipc);
           ll_handles[r] = ll_memory_channels.rbegin()->deviceHandle();
         }
         ll_memory_channel_handles_device_ptr =
-            mscclpp::detail::gpuCallocShared<mscclpp::MemoryChannelDeviceHandle>(num_ranks);
-        mscclpp::gpuMemcpy<mscclpp::MemoryChannelDeviceHandle>(ll_memory_channel_handles_device_ptr.get(),
-                                                               ll_handles.data(), num_ranks, cudaMemcpyHostToDevice);
+            mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(num_ranks);
+        mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(
+            ll_memory_channel_handles_device_ptr.get(), ll_handles.data(), num_ranks, cudaMemcpyHostToDevice);
 
-        ll_ipc_ready = true;
+        ll_ranks_per_ipc_domain = ipc_domain_size;
+        ll_ipc_ready = ipc_domain_size >= num_ranks;
       }
     }
   }
@@ -1135,6 +1132,7 @@ Buffer::intranode_dispatch(
   // peer-mapped recv pool so the sender writes hidden straight to its final slot,
   // eliminating the 2-hop ring + receiver hidden drain. Falls back to torch::empty.
   void** ep_intra_recv_pool_ptrs = nullptr;
+#ifdef EP_DISPATCH_NCCLEP
   const size_t ep_intra_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
   const char* e_intra_direct = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
   const bool ep_intra_direct =
@@ -1143,6 +1141,10 @@ Buffer::intranode_dispatch(
       static_cast<int64_t>(num_recv_tokens) * hidden * static_cast<int64_t>(x.element_size()) <=
           static_cast<int64_t>(Config::recv_pool_bytes_static(num_ranks)) -
               static_cast<int64_t>(ep_intra_pool_header_bytes);
+#else
+  const size_t ep_intra_pool_header_bytes = 0;
+  const bool ep_intra_direct = false;
+#endif
 
   // Allocate new tensors
   torch::Tensor recv_x;
@@ -1418,7 +1420,6 @@ Buffer::internode_dispatch(
     const std::optional<torch::Tensor>& cached_recv_gbl_rank_prefix_sum, int expert_alignment, const Config& config,
     std::optional<EventHandle>& previous_event, bool async, bool allocate_on_comm_stream) {
   // In dispatch, CPU will busy-wait until GPU receive tensor size metadata from other ranks, which can be quite long.
-  pybind11::gil_scoped_release release;
 
   int num_channels = config.num_sms / 2;
   EP_HOST_ASSERT(config.num_sms % 2 == 0);
@@ -1613,7 +1614,7 @@ Buffer::internode_dispatch(
   }
 
   // Allocate new tensors
-  void** ep_recv_pool_ptrs = nullptr;  // non-null selects the increment-4 VMM direct-write path
+  void** ep_recv_pool_ptrs = nullptr;         // non-null selects the increment-4 VMM direct-write path
   void** ep_recv_pool_global_ptrs = nullptr;  // inc5: domain-wide pool bases (sender direct-write)
 #ifdef EP_DISPATCH_NCCLEP
   // Increment 4 (VMM pool): when num_recv_tokens fits the fixed pool, back recv_x
@@ -1948,11 +1949,18 @@ void Buffer::clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank, int 
   check_boundary(clean_meta_0.first, clean_meta_0.second * sizeof(int));
   check_boundary(clean_meta_1.first, clean_meta_1.second * sizeof(int));
 
-  internode_ll::clean_low_latency_buffer(
-      clean_meta_0.first, clean_meta_0.second, clean_meta_1.first, clean_meta_1.second, rank, num_ranks,
-      port_channel_handles_device_ptr.get(),
-      ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr, ll_ipc_ready,
-      at::cuda::getCurrentCUDAStream());
+  low_latency::TransportContext transport{
+      .rdmaBufferBase_ = rdma_buffer_ptr,
+      .portChannels_ = port_channel_handles_device_ptr.get(),
+      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
+      .peerBases_ = peer_rdma_bases_gpu,
+      .ipcReady_ = ll_ipc_ready,
+      .rank_ = rank,
+      .numRanks_ = num_ranks,
+      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
+
+  low_latency::cleanBuffers(clean_meta_0.first, clean_meta_0.second, clean_meta_1.first, clean_meta_1.second, transport,
+                            at::cuda::getCurrentCUDAStream());
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, torch::Tensor,
@@ -2063,21 +2071,44 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
   }
 
   auto next_clean_meta = next_buffer.clean_meta();
-  auto port_handles = port_channel_handles_device_ptr.get();
-  auto mem_handles = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr;
-  auto peer_bases = peer_rdma_bases_gpu;
-  const bool use_ipc = ll_ipc_ready;
-  auto rdma_base = rdma_buffer_ptr;
-  auto launcher = [=](int phases) {
-    internode_ll::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr, packed_recv_src_info.data_ptr<int>(),
-                           packed_recv_layout_range.data_ptr<int64_t>(), packed_recv_count.data_ptr<int>(),
-                           buffer.dispatch_rdma_recv_data_buffer, buffer.dispatch_rdma_recv_count_buffer,
-                           buffer.dispatch_rdma_send_buffer, x.data_ptr(), topk_idx.data_ptr<int64_t>(),
-                           next_clean_meta.first, next_clean_meta.second, num_tokens, hidden,
-                           num_max_dispatch_tokens_per_rank, num_topk, num_experts, rank, num_ranks, use_fp8, workspace,
-                           launch_stream, phases, rdma_base, port_handles, peer_bases, mem_handles, use_ipc);
+
+  low_latency::DispatchConfig config{.numTokens_ = num_tokens,
+                                     .hidden_ = hidden,
+                                     .numTopk_ = num_topk,
+                                     .numExperts_ = num_experts,
+                                     .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
+                                     .inputDType_ = low_latency::DType::BF16,
+                                     .outputDType_ = use_fp8 ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
+                                     .outputLayout_ = low_latency::DispatchLayout::EXPERT_MAJOR};
+  low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.dispatch_rdma_send_buffer,
+                                     .sendCountBuffer_ = nullptr,
+                                     .recvDataBuffer_ = buffer.dispatch_rdma_recv_data_buffer,
+                                     .recvCountBuffer_ = buffer.dispatch_rdma_recv_count_buffer,
+                                     .cleanupRegion_ = nullptr,
+                                     .cleanupSize_ = 0};
+  low_latency::BufferSet next_buf{.sendDataBuffer_ = nullptr,
+                                  .sendCountBuffer_ = nullptr,
+                                  .recvDataBuffer_ = nullptr,
+                                  .recvCountBuffer_ = nullptr,
+                                  .cleanupRegion_ = next_clean_meta.first,
+                                  .cleanupSize_ = next_clean_meta.second};
+  low_latency::TransportContext transport{
+      .rdmaBufferBase_ = rdma_buffer_ptr,
+      .portChannels_ = port_channel_handles_device_ptr.get(),
+      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
+      .peerBases_ = peer_rdma_bases_gpu,
+      .ipcReady_ = ll_ipc_ready,
+      .rank_ = rank,
+      .numRanks_ = num_ranks,
+      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
+
+  auto launcher = [=](low_latency::Phase phase) {
+    low_latency::dispatch(packed_recv_x.data_ptr(), packed_recv_x_scales_ptr, packed_recv_src_info.data_ptr<int>(),
+                          packed_recv_layout_range.data_ptr<int64_t>(), packed_recv_count.data_ptr<int>(), x.data_ptr(),
+                          topk_idx.data_ptr<int64_t>(), config, current_buf, next_buf, transport, workspace,
+                          launch_stream, phase);
   };
-  launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
+  launcher(return_recv_hook ? low_latency::SEND_ONLY : low_latency::SEND_AND_RECV);
 
   std::optional<EventHandle> event;
   if (async) {
@@ -2087,22 +2118,25 @@ Buffer::low_latency_dispatch(const torch::Tensor& x, const torch::Tensor& topk_i
   }
 
   std::optional<std::function<void()>> recv_hook = std::nullopt;
-  if (return_recv_hook) recv_hook = [=]() { launcher(LOW_LATENCY_RECV_PHASE); };
+  if (return_recv_hook) recv_hook = [=]() { launcher(low_latency::RECV_ONLY); };
 
   return {packed_recv_x, packed_recv_x_scales, packed_recv_count, packed_recv_src_info, packed_recv_layout_range, event,
           recv_hook};
 }
 
 std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::function<void()>>> Buffer::low_latency_combine(
-    const torch::Tensor& x, const torch::Tensor& topk_idx, const torch::Tensor& topk_weights,
-    const torch::Tensor& src_info, const torch::Tensor& layout_range, int num_max_dispatch_tokens_per_rank,
-    int num_experts, bool zero_copy, bool async, bool return_recv_hook, const std::optional<torch::Tensor>& out) {
+    const torch::Tensor& x, const std::optional<torch::Tensor>& x_scales, const torch::Tensor& topk_idx,
+    const torch::Tensor& topk_weights, const torch::Tensor& src_info, const torch::Tensor& layout_range,
+    int num_max_dispatch_tokens_per_rank, int num_experts, bool zero_copy, bool async, bool return_recv_hook,
+    const std::optional<torch::Tensor>& out) {
   EP_HOST_ASSERT(low_latency_mode);
 
-  EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous() and x.scalar_type() == torch::kBFloat16);
+  const auto input_dtype = x.scalar_type();
+  EP_HOST_ASSERT(input_dtype == torch::kBFloat16 || input_dtype == torch::kFloat8_e4m3fn);
+  EP_HOST_ASSERT(x.dim() == 3 and x.is_contiguous());
   EP_HOST_ASSERT(x.size(0) == num_experts / num_ranks);
   EP_HOST_ASSERT(x.size(1) == num_ranks * num_max_dispatch_tokens_per_rank);
-  EP_HOST_ASSERT(x.size(2) % sizeof(int4) == 0 and x.size(2) % 128 == 0);
+  EP_HOST_ASSERT((x.size(2) * x.element_size()) % sizeof(int4) == 0 and x.size(2) % 128 == 0);
   EP_HOST_ASSERT(topk_idx.dim() == 2 and topk_idx.is_contiguous());
   EP_HOST_ASSERT(topk_idx.size(0) == topk_weights.size(0) and topk_idx.size(1) == topk_weights.size(1));
   EP_HOST_ASSERT(topk_idx.scalar_type() == torch::kInt64);
@@ -2115,8 +2149,23 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   EP_HOST_ASSERT(layout_range.scalar_type() == torch::kInt64);
   EP_HOST_ASSERT(layout_range.size(0) == num_experts / num_ranks and layout_range.size(1) == num_ranks);
   auto hidden = static_cast<int>(x.size(2));
+  auto num_scales = hidden / 128;
   auto num_topk = static_cast<int>(topk_weights.size(1));
   auto num_combined_tokens = static_cast<int>(topk_weights.size(0));
+  float* x_scales_ptr = nullptr;
+  if (input_dtype == torch::kFloat8_e4m3fn) {
+    EP_HOST_ASSERT(x_scales.has_value());
+    EP_HOST_ASSERT(x_scales->dim() == 3);
+    EP_HOST_ASSERT(x_scales->size(0) == x.size(0));
+    EP_HOST_ASSERT(x_scales->size(1) == x.size(1));
+    EP_HOST_ASSERT(x_scales->size(2) == num_scales);
+    EP_HOST_ASSERT(x_scales->scalar_type() == torch::kFloat32);
+    EP_HOST_ASSERT(x_scales->stride(1) == 1);
+    EP_HOST_ASSERT(x_scales->stride(2) == x.size(1));
+    x_scales_ptr = x_scales->data_ptr<float>();
+  } else {
+    EP_HOST_ASSERT(!x_scales.has_value());
+  }
 
   LowLatencyLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts);
   EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
@@ -2132,27 +2181,51 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   if (out.has_value()) {
     EP_HOST_ASSERT(out->dim() == 2 and out->is_contiguous());
     EP_HOST_ASSERT(out->size(0) == num_combined_tokens and out->size(1) == hidden);
-    EP_HOST_ASSERT(out->scalar_type() == x.scalar_type());
+    EP_HOST_ASSERT(out->scalar_type() == torch::kBFloat16);
     combined_x = out.value();
   } else {
-    combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
+    combined_x = torch::empty({num_combined_tokens, hidden}, x.options().dtype(torch::kBFloat16));
   }
 
   auto next_clean_meta = next_buffer.clean_meta();
-  auto port_handles = port_channel_handles_device_ptr.get();
-  auto mem_handles = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr;
-  auto peer_bases = peer_rdma_bases_gpu;
-  const bool use_ipc = ll_ipc_ready;
-  auto rdma_base = rdma_buffer_ptr;
-  auto launcher = [=](int phases) {
-    internode_ll::combine(
-        combined_x.data_ptr(), buffer.combine_rdma_recv_data_buffer, buffer.combine_rdma_recv_flag_buffer,
-        buffer.combine_rdma_send_buffer, x.data_ptr(), topk_idx.data_ptr<int64_t>(), topk_weights.data_ptr<float>(),
-        src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(), next_clean_meta.first, next_clean_meta.second,
-        num_combined_tokens, hidden, num_max_dispatch_tokens_per_rank, num_topk, num_experts, rank, num_ranks,
-        workspace, launch_stream, phases, zero_copy, rdma_base, port_handles, peer_bases, mem_handles, use_ipc);
+
+  low_latency::CombineConfig config{
+      .numCombinedTokens_ = num_combined_tokens,
+      .hidden_ = hidden,
+      .numTopk_ = num_topk,
+      .numExperts_ = num_experts,
+      .numMaxTokensPerRank_ = num_max_dispatch_tokens_per_rank,
+      .inputDType_ = input_dtype == torch::kFloat8_e4m3fn ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
+      .outputDType_ = low_latency::DType::BF16,
+      .zeroCopy_ = zero_copy};
+  low_latency::BufferSet current_buf{.sendDataBuffer_ = buffer.combine_rdma_send_buffer,
+                                     .sendCountBuffer_ = nullptr,
+                                     .recvDataBuffer_ = buffer.combine_rdma_recv_data_buffer,
+                                     .recvCountBuffer_ = buffer.combine_rdma_recv_flag_buffer,
+                                     .cleanupRegion_ = nullptr,
+                                     .cleanupSize_ = 0};
+  low_latency::BufferSet next_buf{.sendDataBuffer_ = nullptr,
+                                  .sendCountBuffer_ = nullptr,
+                                  .recvDataBuffer_ = nullptr,
+                                  .recvCountBuffer_ = nullptr,
+                                  .cleanupRegion_ = next_clean_meta.first,
+                                  .cleanupSize_ = next_clean_meta.second};
+  low_latency::TransportContext transport{
+      .rdmaBufferBase_ = rdma_buffer_ptr,
+      .portChannels_ = port_channel_handles_device_ptr.get(),
+      .memoryChannels_ = ll_memory_channel_handles_device_ptr ? ll_memory_channel_handles_device_ptr.get() : nullptr,
+      .peerBases_ = peer_rdma_bases_gpu,
+      .ipcReady_ = ll_ipc_ready,
+      .rank_ = rank,
+      .numRanks_ = num_ranks,
+      .ranksPerIpcDomain_ = ll_ranks_per_ipc_domain};
+
+  auto launcher = [=](low_latency::Phase phase) {
+    low_latency::combine(combined_x.data_ptr(), x.data_ptr(), x_scales_ptr, topk_idx.data_ptr<int64_t>(),
+                         topk_weights.data_ptr<float>(), src_info.data_ptr<int>(), layout_range.data_ptr<int64_t>(),
+                         config, current_buf, next_buf, transport, workspace, launch_stream, phase);
   };
-  launcher(return_recv_hook ? LOW_LATENCY_SEND_PHASE : (LOW_LATENCY_SEND_PHASE | LOW_LATENCY_RECV_PHASE));
+  launcher(return_recv_hook ? low_latency::SEND_ONLY : low_latency::SEND_AND_RECV);
 
   std::optional<EventHandle> event;
   if (async) {
@@ -2162,7 +2235,7 @@ std::tuple<torch::Tensor, std::optional<EventHandle>, std::optional<std::functio
   }
 
   std::optional<std::function<void()>> recv_hook = std::nullopt;
-  if (return_recv_hook) recv_hook = [=]() { launcher(LOW_LATENCY_RECV_PHASE); };
+  if (return_recv_hook) recv_hook = [=]() { launcher(low_latency::RECV_ONLY); };
 
   return {combined_x, event, recv_hook};
 }

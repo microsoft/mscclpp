@@ -64,32 +64,32 @@ template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDis
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
 __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NVL_PEERS) * 32), 1)
     dispatch_ncclep(int4* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float* recv_topk_weights,
-             SourceMeta* recv_src_meta, const int4* x, const float* x_scales, const int64_t* topk_idx,
-             const float* topk_weights, int* send_rdma_head, int* send_nvl_head, int* recv_rdma_channel_prefix_matrix,
-             int* recv_gbl_channel_prefix_matrix, const int* rdma_channel_prefix_matrix,
-             const int* recv_rdma_rank_prefix_sum, const int* gbl_channel_prefix_matrix,
-             const int* recv_gbl_rank_prefix_sum, int num_tokens, int hidden_int4, int num_scales, int num_topk,
-             int num_experts, const bool* is_token_in_rank, void* rdma_buffer_ptr, int num_max_rdma_chunked_send_tokens,
-             int num_max_rdma_chunked_recv_tokens, void** buffer_ptrs, int num_max_nvl_chunked_send_tokens,
-             int num_max_nvl_chunked_recv_tokens, int rank, int num_ranks,
-             mscclpp::PortChannelDeviceHandle* port_channel_handles,
-             mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
-             // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
-             void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
-             // Phase 4: per-peer fabric-IPC base pointers; when non-null, cross-node data
-             // PUTs go directly through NVL72 fabric VA instead of `handle.put` over IB.
-             void* const* peer_rdma_bases,
-             // Increment 4: per-peer base pointers of the VMM-allocated (cuMem FABRIC/POSIX-FD)
-             // recv-output pool. recv_pool_ptrs[peer] points at peer's pool header; non-null
-             // enables the cross-GPU forwarder direct-write of hidden into the destination's
-             // final recv_x (TMA-eligible peer VA); nullptr = legacy receiver-drain path.
-             void* const* recv_pool_ptrs,
-             // Increment 5 (inc5): domain-wide recv-pool bases indexed by GLOBAL rank
-             // (all num_ranks). Non-null + kEpDirect => sender writes hidden direct here.
-             void* const* recv_pool_global_ptrs,
-             // Increment 5 combine-direct (Stage 1): [num_tokens * num_ranks] gather map;
-             // sender writes recv_idx per (token, dst global rank) for combine to gather.
-             int* ep_combine_recv_idx) {
+                    SourceMeta* recv_src_meta, const int4* x, const float* x_scales, const int64_t* topk_idx,
+                    const float* topk_weights, int* send_rdma_head, int* send_nvl_head,
+                    int* recv_rdma_channel_prefix_matrix, int* recv_gbl_channel_prefix_matrix,
+                    const int* rdma_channel_prefix_matrix, const int* recv_rdma_rank_prefix_sum,
+                    const int* gbl_channel_prefix_matrix, const int* recv_gbl_rank_prefix_sum, int num_tokens,
+                    int hidden_int4, int num_scales, int num_topk, int num_experts, const bool* is_token_in_rank,
+                    void* rdma_buffer_ptr, int num_max_rdma_chunked_send_tokens, int num_max_rdma_chunked_recv_tokens,
+                    void** buffer_ptrs, int num_max_nvl_chunked_send_tokens, int num_max_nvl_chunked_recv_tokens,
+                    int rank, int num_ranks, mscclpp::PortChannelDeviceHandle* port_channel_handles,
+                    mscclpp::MemoryChannelDeviceHandle* memory_channel_handles,
+                    // Phase 3 NVLS counter pointers (nullptr → fall back to PortChannel/atomicAdd path).
+                    void* nvls_head_mc, void* nvls_head_dev, void* nvls_tail_mc, void* nvls_tail_dev,
+                    // Phase 4: per-peer fabric-IPC base pointers; when non-null, cross-node data
+                    // PUTs go directly through NVL72 fabric VA instead of `handle.put` over IB.
+                    void* const* peer_rdma_bases,
+                    // Increment 4: per-peer base pointers of the VMM-allocated (cuMem FABRIC/POSIX-FD)
+                    // recv-output pool. recv_pool_ptrs[peer] points at peer's pool header; non-null
+                    // enables the cross-GPU forwarder direct-write of hidden into the destination's
+                    // final recv_x (TMA-eligible peer VA); nullptr = legacy receiver-drain path.
+                    void* const* recv_pool_ptrs,
+                    // Increment 5 (inc5): domain-wide recv-pool bases indexed by GLOBAL rank
+                    // (all num_ranks). Non-null + kEpDirect => sender writes hidden direct here.
+                    void* const* recv_pool_global_ptrs,
+                    // Increment 5 combine-direct (Stage 1): [num_tokens * num_ranks] gather map;
+                    // sender writes recv_idx per (token, dst global rank) for combine to gather.
+                    int* ep_combine_recv_idx) {
   enum class WarpRole {
     kRDMASender,
     kRDMASenderCoordinator,
@@ -529,9 +529,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             if (not bvals_j[g]) continue;
             const int dg = node * NUM_MAX_NVL_PEERS + g;
             const int recv_idx = __shfl_sync(0xffffffff, ep_my_idx[g], node);
-            ep_dst_pools[ep_num_pools++] = reinterpret_cast<int4*>(
-                reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_pool_header_bytes +
-                static_cast<int64_t>(recv_idx) * hidden_bytes);
+            ep_dst_pools[ep_num_pools++] =
+                reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_pool_header_bytes +
+                                        static_cast<int64_t>(recv_idx) * hidden_bytes);
           }
         }
 #if EP_NCCLEP_TMA
@@ -1085,7 +1085,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       for (int i = src_rdma_head, num_tokens_sent = 0; i < src_rdma_tail; ++i) {
         auto rdma_slot_idx = i % num_max_rdma_chunked_recv_tokens;
         void* shifted = rdma_channel_data.recv_buffer(src_rdma_rank) + rdma_slot_idx * num_bytes_per_rdma_token;
-        auto src_meta = ld_nc_global(reinterpret_cast<SourceMeta*>(reinterpret_cast<int8_t*>(shifted) + ring_hidden_bytes));
+        auto src_meta =
+            ld_nc_global(reinterpret_cast<SourceMeta*>(reinterpret_cast<int8_t*>(shifted) + ring_hidden_bytes));
         lane_id == src_rdma_rank ? (num_tokens_to_recv_from_rdma -= 1) : 0;
         bool is_in_dst_nvl_rank = src_meta.is_token_in_nvl_rank(dst_nvl_rank);
         if (lane_id == src_rdma_rank) {
@@ -1445,7 +1446,6 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     (void)0;
   }
 }
-
 
 #endif  // EP_DISPATCH_NCCLEP
 #endif  // MSCCLPP_EP_INTERNODE_NCCLEP_CUH_

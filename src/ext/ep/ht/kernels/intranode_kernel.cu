@@ -2,11 +2,11 @@
 // Licensed under the MIT License.
 #include <limits>
 
+#include "../../kernels/configs.cuh"
+#include "../../kernels/exception.cuh"
+#include "../../kernels/launch.cuh"
+#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
-#include "configs.cuh"
-#include "exception.cuh"
-#include "launch.cuh"
-#include "utils.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -267,8 +267,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
                          ? channel_prefix_matrix[responsible_rank * num_channels + responsible_channel - 1]
                          : 0;
       direct_base = static_cast<int64_t>(rank_off + ch_start);
-      direct_dst_pool =
-          reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]) + recv_pool_header_bytes);
+      direct_dst_pool = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]) +
+                                                recv_pool_header_bytes);
     }
 
     // Get tasks

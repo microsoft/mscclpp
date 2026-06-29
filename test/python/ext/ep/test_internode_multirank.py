@@ -85,7 +85,10 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 
 def main():
     rank, num_ranks, local_rank, group = init_dist()
+    from mscclpp import CommGroup
     from mscclpp.ext import ep
+
+    ep_group = CommGroup(torch_group=group)
 
     NUM_MAX_NVL_PEERS = _detect_local_world_size()
     assert (
@@ -139,10 +142,10 @@ def main():
 
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Buffer config for internode HT: needs num_rdma_bytes > 0. Size buffers
+    # Runtime config for internode HT: needs num_rdma_bytes > 0. Size buffers
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
-        int(os.environ.get("MSCCLPP_EP_NSM", os.environ.get("MSCCLPP_EP_NUM_SMS", "152"))),
+        int(os.environ.get("MSCCLPP_EP_NSM", "152")),
         int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
         int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
         int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
@@ -160,16 +163,18 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating Buffer", flush=True)
-    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False)
+    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
+    buf = ep.ExpertParallelRuntime(
+        ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
+    )
     print(
-        f"[rank {rank}] Buffer created is_available={buf.is_available()} "
+        f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()} "
         f"is_internode={buf.is_internode_available()}",
         flush=True,
     )
     assert buf.is_available() and buf.is_internode_available()
 
-    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(
+    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(
         topk_idx, num_experts, None, False, False
     )
     assert torch.allclose(ref_rank, num_tokens_per_rank)
@@ -203,7 +208,7 @@ def main():
         send_rdma_head,
         send_nvl_head,
         _event,
-    ) = buf.runtime.internode_dispatch(
+    ) = buf.internode_dispatch(
         x,
         None,
         topk_idx,
@@ -226,8 +231,7 @@ def main():
     )
     dist.barrier(group=group)
 
-    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY","0") in ("1","true","True")
-    _disp_only = os.environ.get("MSCCLPP_EP_BENCH_DISPATCH_ONLY","0") in ("1","true","True")
+    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY", "0") in ("1", "true", "True")
     # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     start = 0
@@ -249,7 +253,7 @@ def main():
     # the various *_channel_prefix_matrix tensors can still be in flight on
     # the comm stream when combine launches, producing a deadlock inside the
     # combine forwarder (NVL check never advances). Investigate proper
-    # stream-dependency hand-off in Buffer::internode_dispatch.
+    # stream-dependency hand-off in ExpertParallelRuntime.internode_dispatch.
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
@@ -262,44 +266,36 @@ def main():
     # matrices passed here must be the RECEIVER-side ones returned by dispatch
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    if not _disp_only:
-        combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
-            recv_x,
-            recv_topk_weights,
-            recv_src_meta,
-            is_token_in_rank,
-            recv_rdma_channel_prefix_matrix,
-            recv_rdma_rank_prefix_sum,
-            recv_gbl_channel_prefix_matrix,
-            send_rdma_head,
-            send_nvl_head,
-            cfg,
-            None,
-            False,
-            False,
-        )
+    combined_x, combined_topk_weights, _ = buf.internode_combine(
+        recv_x,
+        recv_topk_weights,
+        recv_src_meta,
+        is_token_in_rank,
+        recv_rdma_channel_prefix_matrix,
+        recv_rdma_rank_prefix_sum,
+        recv_gbl_channel_prefix_matrix,
+        send_rdma_head,
+        send_nvl_head,
+        cfg,
+        None,
+        False,
+        False,
+    )
 
-        num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
-        expected = num_dst * float(rank)
-        got = combined_x.float().mean(dim=1)
-        diff = (got - expected).abs().max().item()
-        max_exp = expected.abs().max().item()
-        print(f"[combine r{rank}] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
-        # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
-        # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
-        tol = max(1e-2, max_exp * (1.0 / 64))
-        assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
+    num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
+    expected = num_dst * float(rank)
+    got = combined_x.float().mean(dim=1)
+    diff = (got - expected).abs().max().item()
+    max_exp = expected.abs().max().item()
+    print(f"[combine r{rank}] max|got-expected|={diff:.4e} max|expected|={max_exp:.4e}", flush=True)
+    # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
+    # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
+    tol = max(1e-2, max_exp * (1.0 / 64))
+    assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
 
-        dist.barrier(group=group)
-        if rank == 0:
-            print("PASS", flush=True)
-    else:
-        # inc6 (kEpFlat) all-sender ceiling probe: combine deadlocks without the
-        # forwarder/receiver breadcrumbs (send_nvl_head, *_channel_prefix_matrix).
-        # Skip it; the dispatch correctness check above already validated recv_x.
-        dist.barrier(group=group)
-        if rank == 0:
-            print("PASS (dispatch-only)", flush=True)
+    dist.barrier(group=group)
+    if rank == 0:
+        print("PASS", flush=True)
 
     # ------------------------------------------------------------------
     # Optional benchmark (enable with MSCCLPP_EP_BENCH=1).
@@ -328,7 +324,7 @@ def main():
             print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
-    # Respect the Buffer's pre-sized num_nvl_bytes / num_rdma_bytes budget.
+    # Respect the runtime's pre-sized num_nvl_bytes / num_rdma_bytes budget.
     per_peer_nvl = num_nvl_bytes // max(1, num_ranks)
     per_peer_rdma = num_rdma_bytes // max(1, num_ranks)
     if bench_hidden * x.element_size() > min(per_peer_nvl, per_peer_rdma):
@@ -336,7 +332,7 @@ def main():
             print(
                 f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
                 f">= min(per-peer NVL {per_peer_nvl}, RDMA {per_peer_rdma}). "
-                f"Rerun with a larger Buffer or smaller hidden.",
+                f"Rerun with a larger runtime or smaller hidden.",
                 flush=True,
             )
         return
@@ -370,41 +366,46 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # ------------------------------------------------------------------
-    # Drive the benchmark through the high-level MoECommunicator (mode="ht").
-    # The communicator owns its own Buffer sized for the bench shape and
-    # auto-selects the internode transport (world_size > NUM_MAX_NVL_PEERS).
-    # The first (uncached) dispatch records the routing layout on the returned
-    # handle; the timed dispatches reuse it via previous_handle, which skips
-    # get_dispatch_layout -- matching the previous raw-Buffer benchmark that
-    # passed a precomputed layout, so dispatch timing stays comparable.
-    # ------------------------------------------------------------------
-    moe = ep.MoECommunicator(
-        group=group,
-        num_experts=bench_num_experts,
-        hidden_size=bench_hidden,
-        topk=bench_num_topk,
-        max_tokens_per_rank=bench_tokens,
-        mode="ht",
-        num_sms=int(os.environ.get("MSCCLPP_EP_NSM", "152")),
-        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
-        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
-        rdma_chunked_send=int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
-        rdma_chunked_recv=int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
-    )
-    assert moe.is_available() and moe.is_internode_available()
-
-    # One uncached dispatch builds the cached routing layout on the handle.
-    _handle0 = moe.dispatch(x_b, topk_idx_b, topk_weights_b)[1]
-    torch.cuda.synchronize()
-    dist.barrier(group=group)
-
     def _dispatch():
-        return moe.dispatch(x_b, topk_idx_b, topk_weights_b, previous_handle=_handle0)
+        return buf.internode_dispatch(
+            x_b,
+            None,
+            topk_idx_b,
+            topk_weights_b,
+            num_tokens_per_rank_b,
+            num_tokens_per_rdma_rank_b,
+            is_token_in_rank_b,
+            num_tokens_per_expert_b,
+            0,
+            0,
+            None,
+            None,
+            None,
+            None,
+            1,
+            cfg,
+            None,
+            False,
+            False,
+        )
 
     def _combine(dout):
-        dispatch_out_, handle_ = dout
-        moe.combine(dispatch_out_.tokens, handle_)
+        rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
+        buf.internode_combine(
+            rx,
+            rtw,
+            rsm,
+            is_token_in_rank_b,
+            rrcpm,
+            rrps,
+            rgpm,
+            sh_rdma,
+            sh_nvl,
+            cfg,
+            None,
+            False,
+            False,
+        )
 
     # Warmup (full round-trip with the sync/barrier guard between phases,
     # matching the correctness-path invariant).
@@ -412,8 +413,7 @@ def main():
         dout = _dispatch()
         torch.cuda.synchronize()
         dist.barrier(group=group)
-        if not _disp_only:
-            _combine(dout)
+        _combine(dout)
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
@@ -434,17 +434,12 @@ def main():
     dist.barrier(group=group)
 
     # Time combine alone (reusing the same dispatch output each iter).
-    if _disp_only:
-        # inc6 ceiling probe: no combine. Mirror dispatch time so the downstream
-        # BW math (which divides by combine time) stays crash-free.
-        comb_us = disp_us
-    else:
-        start_ev.record()
-        for _ in range(iters):
-            _combine(dout)
-        end_ev.record()
-        torch.cuda.synchronize()
-        comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+    start_ev.record()
+    for _ in range(iters):
+        _combine(dout)
+    end_ev.record()
+    torch.cuda.synchronize()
+    comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
 
     # Per-rank "send bytes" matches NCCL-EP's `ep_bench` accounting (`RDMA_send`):
     # bench_tokens * hidden * sizeof(bf16). Each rank ships its `bench_tokens`
@@ -529,8 +524,7 @@ def main():
     c_recv_rdma_bw = rdma_send_bytes / comb_t_s / 1e9
     if rank == 0:
         print(
-            f"[bench internode HT]{' (dispatch-only)' if _disp_only else ''} "
-            f"nodes={num_nodes} num_ranks={num_ranks} "
+            f"[bench internode HT] nodes={num_nodes} num_ranks={num_ranks} "
             f"tokens={bench_tokens} hidden={bench_hidden} "
             f"experts={bench_num_experts} topk={bench_num_topk} "
             f"warmup={warmup} iters={iters}",

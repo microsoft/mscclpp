@@ -3,36 +3,32 @@
 #
 # Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
 # branch ``chhwang/dev-atomic-add-cleanup``. Licensed under the MIT License.
-"""High-level MoE expert-parallel communicator (:class:`MoECommunicator`).
+"""Python frontend for the MSCCL++ Expert-Parallel extension.
 
-This module implements the high-level API described in
-``python/mscclpp/ext/ep/README.md``. A single :class:`MoECommunicator` selects
-its backend from :attr:`MoECommunicatorConfig.mode`:
+This is a thin wrapper around the nanobind extension ``mscclpp_ep_cpp``.
+``MoECommunicator`` is the high-level API. ``_MoERuntime`` is a private
+low-latency runtime wrapper used internally by the high-level API.
 
-* ``mode="ll"`` — low-latency dispatch/combine (decode). Wraps the C++
-  :class:`MoERuntime` (RDMA + CUDA-IPC PortChannel path). Output layout is
-  ``DispatchLayout.EXPERT_MAJOR``; the caller pre-allocates the recv buffer.
-* ``mode="ht"`` — high-throughput dispatch/combine (prefill). Wraps the
-  DeepEP-style :class:`mscclpp.ext.ep.Buffer` (NVLink intranode + RDMA
-  internode HT kernels). Output layout is ``DispatchLayout.FLAT`` grouped by
-  local expert id; intranode vs internode is selected internally from the
-  RDMA buffer-size hint, so the user never picks a transport.
+Current status (see ``src/ext/ep/README.md``):
 
-The two backends are independent C++ runtimes; the LL runtime is constructed
-lazily so a build that only binds :class:`Buffer` (HT) can still use
-``mode="ht"`` without the LL runtime being present.
+* Intranode (NVLink-only) dispatch and combine: ported and validated on
+  one node with 8 GPUs.
+* ``get_dispatch_layout``: ported.
+* Internode HT (MSCCL++ PortChannel + MemoryChannel) dispatch and combine:
+  ported and validated on 2 nodes x 8 H100 GPUs with
+  ``test/python/ext/ep/test_internode_multirank.py``.
+* Low-latency kernels (RDMA + CUDA IPC paths):
+  ported and validated on intra-node and 2 nodes x 8 H100 GPUs with
+  ``test/python/ext/ep/test_low_latency_multirank.py``.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Optional
 
 import torch
-import torch.distributed as dist
-
-from .buffer import Buffer, Config
+from mscclpp._core import CommGroup
 
 try:
     import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
@@ -43,19 +39,34 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-class DispatchLayout(str, Enum):
-    """MLP input layout returned by :meth:`MoECommunicator.dispatch`."""
+DispatchLayout = _cpp.DispatchLayout
+MoEMode = _cpp.MoEMode
 
-    #: ``[total_recv_tokens, hidden]`` rows grouped by local expert id (HT).
-    FLAT = "flat"
-    #: ``[num_local_experts, max_slots_per_expert, hidden]`` padded (LL).
-    EXPERT_MAJOR = "expert_major"
+
+@dataclass
+class MoECommunicatorConfig:
+    """Configuration for the high-level MoE dispatch/combine API."""
+
+    comm: Optional[CommGroup] = None
+    device: Optional[torch.device | int] = None
+    num_experts: int = 0
+    num_local_experts: Optional[int] = None
+    local_expert_start: Optional[int] = None
+    hidden_size: int = 0
+    topk: int = 0
+    max_tokens_per_rank: int = 0
+    max_recv_tokens_per_rank: Optional[int] = None
+    mode: MoEMode = MoEMode.LOW_LATENCY
+    output_layout: Optional[DispatchLayout] = None
+    input_dtype: Optional[torch.dtype] = None
+    quant_format: Optional[str] = None
+    num_rdma_qps_per_rank: int = 12
+    num_sms: int = 20
+    enable_overlap: bool = False
 
 
 @dataclass
 class QuantScales:
-    """Activation quantization metadata for ``input`` / dispatched tokens."""
-
     local: Optional[torch.Tensor] = None
     global_scale: Optional[torch.Tensor] = None
     format: Optional[str] = None
@@ -64,52 +75,35 @@ class QuantScales:
 
 @dataclass
 class DispatchOutput:
-    """MLP-ready dispatch output."""
-
     tokens: torch.Tensor
     scales: Optional[QuantScales]
-    num_tokens_per_expert: Union[torch.Tensor, List[int]]
+    num_tokens_per_expert: torch.Tensor | list[int]
     expert_offsets: Optional[torch.Tensor] = None
     layout: DispatchLayout = DispatchLayout.FLAT
 
 
 @dataclass
 class DispatchHandle:
-    """Opaque dispatch metadata consumed by :meth:`MoECommunicator.combine`.
-
-    The MLP should not need to inspect this handle. The reverse-dispatch
-    metadata is backend-specific:
-
-    * LL keeps ``src_info`` / ``layout_range`` (EXPERT_MAJOR).
-    * HT keeps the transport-tagged ``combine_meta`` bundle (FLAT); the keys
-      differ for intranode vs internode and :meth:`MoECommunicator.combine` is
-      the only reader.
-    """
+    """Opaque dispatch metadata consumed by :meth:`MoECommunicator.combine`."""
 
     topk_ids: torch.Tensor
     weights: torch.Tensor
+    src_info: torch.Tensor
+    layout_range: torch.Tensor
+    num_max_dispatch_tokens_per_rank: int
+    num_experts: int
     num_tokens: int
     hidden_size: int
-    num_experts: int
     num_local_experts: int
     local_expert_start: int
-    layout: DispatchLayout = DispatchLayout.FLAT
+    layout: DispatchLayout
     output_scales: Optional[QuantScales] = None
-    # --- LL backend metadata ---
-    src_info: Optional[torch.Tensor] = None
-    layout_range: Optional[torch.Tensor] = None
-    num_max_dispatch_tokens_per_rank: int = 0
-    # --- HT backend metadata ---
-    is_internode: bool = False
-    combine_meta: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CommOverlapConfig:
-    """Optional overlap configuration for ``*_async`` dispatch/combine."""
-
-    op: str  # "dispatch" or "combine"
-    level: str = "op"  # "op" or "block"
+    op: str
+    level: str = "op"
     stream: Optional[torch.cuda.Stream] = None
     wait_event: Optional[torch.cuda.Event] = None
     signal: Optional[torch.Tensor] = None
@@ -118,57 +112,23 @@ class CommOverlapConfig:
     block_ready_value: Optional[int] = None
 
 
-@dataclass
-class MoECommunicatorConfig:
-    """Configuration for the high-level MoE dispatch/combine API."""
+class _MoERuntime:
+    """Private low-level MoE communication runtime wrapper.
 
-    # Communication. ``comm`` is an ``mscclpp.CommGroup`` (used by the LL
-    # backend); ``group`` is a ``torch.distributed`` process group (used by
-    # the HT backend). Provide whichever matches ``mode``; the constructor can
-    # derive a ``CommGroup`` from a ``group`` when ``mode="ll"``.
-    comm: Optional[Any] = None
-    group: Optional[dist.ProcessGroup] = None
-    device: Optional[Union[torch.device, int]] = None
-
-    # Expert topology
-    num_experts: int = 0
-    num_local_experts: Optional[int] = None
-    local_expert_start: Optional[int] = None
-
-    # Model shape and capacity
-    hidden_size: int = 0
-    topk: int = 0
-    max_tokens_per_rank: int = 0
-    max_recv_tokens_per_rank: Optional[int] = None
-
-    # Runtime mode and output layout
-    mode: str = "ll"
-    output_layout: Optional[Union[DispatchLayout, str]] = None
-
-    # Quantization defaults
-    input_dtype: Optional[torch.dtype] = None
-    quant_format: Optional[str] = None
-
-    # Transport / launch tuning (advanced)
-    num_sms: int = 20
-    num_rdma_qps_per_rank: int = 12
-    expert_alignment: int = 1
-    nvl_chunked_send: int = 8
-    nvl_chunked_recv: int = 256
-    rdma_chunked_send: int = 16
-    rdma_chunked_recv: int = 128
-
-    # Streams and overlap
-    comm_stream: Optional[torch.cuda.Stream] = None
-    enable_overlap: bool = False
-
-
-class MoERuntime:
-    """Low-level low-latency MoE communication runtime wrapper.
-
-    Thin wrapper over the C++ ``mscclpp_ep_cpp.MoERuntime``. New callers should
-    use :class:`MoECommunicator` (``mode="ll"``) instead of touching this
-    runtime directly.
+    Parameters
+    ----------
+    comm:
+    The :class:`mscclpp.CommGroup`. Used only for out-of-band
+        exchange of IPC handles and the MSCCL++ unique id.
+    num_nvl_bytes:
+        Size of the NVLink-accessible scratch buffer. Reserved for archived HT mode.
+    num_rdma_bytes:
+        Size of the LL RDMA scratch buffer.
+    mode:
+        Runtime mode selector. ``MoEMode.LOW_LATENCY`` is active;
+        ``MoEMode.HIGH_THROUGHPUT`` is archived and not compiled.
+    num_qps_per_rank:
+        RDMA QPs per peer rank.
     """
 
     #: Default number of SMs reserved for comms kernels. Matches DeepEP.
@@ -176,31 +136,33 @@ class MoERuntime:
 
     def __init__(
         self,
-        comm: Any,
+        comm: CommGroup,
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
-        low_latency_mode: bool = False,
+        mode: MoEMode = MoEMode.LOW_LATENCY,
         num_qps_per_rank: int = 12,
     ) -> None:
-        if not hasattr(_cpp, "MoERuntime"):
-            raise NotImplementedError(
-                "mscclpp_ep_cpp.MoERuntime is not bound in this build. The low-latency "
-                "(mode='ll') backend requires the MoERuntime binding; this build only "
-                "exposes the HT Buffer backend. Use mode='ht' or rebuild with MoERuntime."
-            )
+        if not isinstance(mode, MoEMode):
+            raise TypeError("mode must be a MoEMode")
+        self.mode = mode
+        if self.mode != MoEMode.LOW_LATENCY:
+            raise NotImplementedError("mode='ht' is archived under src/ext/ep/ht and is not compiled")
+
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
-        self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
+        self._cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode)
 
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
-        self._cpp_runtime.sync()
+
+    # ------------------------------------------------------------------
+    # Sanity helpers
+    # ------------------------------------------------------------------
 
     def is_available(self) -> bool:
         return self._cpp_runtime.is_available()
@@ -221,142 +183,56 @@ class MoERuntime:
         return self._cpp_runtime.get_root_rdma_rank(global_)
 
 
-def _normalize_output_layout(output_layout: Optional[Union[DispatchLayout, str]], mode: str) -> DispatchLayout:
-    if output_layout is None:
-        return DispatchLayout.EXPERT_MAJOR if mode == "ll" else DispatchLayout.FLAT
-    if isinstance(output_layout, DispatchLayout):
-        return output_layout
-    normalized = output_layout.lower().replace("-", "_")
-    if normalized in ("flat", "flat_2d", "flat_expert_major"):
-        return DispatchLayout.FLAT
-    if normalized in ("expert_major", "expert_major_3d", "padded_expert_major"):
-        return DispatchLayout.EXPERT_MAJOR
-    raise ValueError(f"unsupported dispatch output layout: {output_layout}")
-
-
-def _cpp_dispatch_layout(layout: DispatchLayout) -> int:
-    if layout == DispatchLayout.EXPERT_MAJOR:
-        return 0
-    if layout == DispatchLayout.FLAT:
-        return 1
-    raise ValueError(f"unsupported dispatch output layout: {layout}")
-
-
-def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
-    if fmt is None:
-        return None
-    normalized = fmt.lower().replace("-", "_")
-    if normalized in ("fp8", "fp8_e4m3", "f8e4m3", "float8_e4m3fn"):
-        return "fp8_e4m3"
-    return normalized
-
-
-def _is_fp8_e4m3_tensor(tensor: torch.Tensor) -> bool:
-    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
-    return fp8_dtype is not None and tensor.dtype == fp8_dtype
-
-
-def _get_low_latency_rdma_size_hint(
-    num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
-) -> int:
-    return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
-
-
-def _exclusive_cumsum(counts: Union[torch.Tensor, List[int]]) -> torch.Tensor:
-    """``[0, c0, c0+c1, ...]`` expert offsets for the FLAT grouped layout."""
-    if isinstance(counts, torch.Tensor):
-        flat = counts.to(torch.int64).flatten()
-        zero = torch.zeros(1, dtype=torch.int64, device=flat.device)
-        return torch.cat([zero, torch.cumsum(flat, dim=0)])
-    offsets = [0]
-    for c in counts:
-        offsets.append(offsets[-1] + int(c))
-    return torch.tensor(offsets, dtype=torch.int64)
-
-
-class _CompletionRequest:
-    """Request handle returned by the ``*_async`` methods."""
-
-    def __init__(self, event, result):
-        self._event = event
-        self._result = result
-
-    def wait(self):
-        if self._event is not None:
-            try:
-                self._event.current_stream_wait()
-            except AttributeError:
-                torch.cuda.current_stream().synchronize()
-        return self._result
-
-
 class MoECommunicator:
-    """High-level MoE communicator for dispatch/combine.
+    """High-level MoE communicator API for dispatch/combine.
 
-    ``mode="ll"`` selects the low-latency backend (EXPERT_MAJOR), ``mode="ht"``
-    selects the high-throughput backend (FLAT). The communicator owns the
-    communication setup, scratch buffers, expert placement, and layout choice,
-    configured once instead of being passed to every call.
+    The first implementation supports the low-latency backend.
     """
 
     def __init__(self, config: Optional[MoECommunicatorConfig] = None, **kwargs) -> None:
         if config is not None and kwargs:
             raise ValueError("Pass either MoECommunicatorConfig or keyword arguments, not both")
         if config is None:
+            if "group" in kwargs and "comm" not in kwargs:
+                kwargs["comm"] = kwargs.pop("group")
             config = MoECommunicatorConfig(**kwargs)
 
         if config.device is not None:
             torch.cuda.set_device(config.device)
 
-        self.mode = config.mode.lower()
-        if self.mode not in ("ll", "ht"):
-            raise ValueError(f"unsupported mode: {config.mode!r} (expected 'll' or 'ht')")
+        comm = config.comm
+        if comm is None:
+            raise ValueError("MoECommunicator requires an mscclpp.CommGroup")
 
-        self.output_layout = _normalize_output_layout(config.output_layout, self.mode)
+        self.comm = comm
+        self.rank: int = comm.my_rank
+        self.world_size: int = comm.nranks
+        self.local_rank: int = torch.cuda.current_device()
+        self.device = torch.device("cuda", self.local_rank)
 
-        # ---- shared model shape / placement ----
+        if not isinstance(config.mode, MoEMode):
+            raise TypeError("MoECommunicatorConfig.mode must be a MoEMode")
+        self.mode = config.mode
+        if self.mode != MoEMode.LOW_LATENCY:
+            raise NotImplementedError("mode='ht' is archived under src/ext/ep/ht and is not compiled")
+
+        self.output_layout = _resolve_output_layout(config.output_layout, self.mode)
+
         self.num_experts = config.num_experts
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
         if self.num_experts <= 0 or self.hidden_size <= 0 or self.topk <= 0 or self.max_tokens_per_rank <= 0:
             raise ValueError("num_experts, hidden_size, topk, and max_tokens_per_rank must be positive")
-
-        self.num_sms = config.num_sms
-        self.comm_stream = config.comm_stream
-        self.enable_overlap = config.enable_overlap
-
-        if self.mode == "ll":
-            self._init_ll(config)
-        else:
-            self._init_ht(config)
-
-    # ------------------------------------------------------------------
-    # Backend construction
-    # ------------------------------------------------------------------
-
-    def _init_ll(self, config: MoECommunicatorConfig) -> None:
-        comm = config.comm
-        if comm is None:
-            if config.group is None:
-                raise ValueError("mode='ll' requires an mscclpp.CommGroup via comm= (or a torch group via group=)")
-            from mscclpp import CommGroup  # local import: only LL needs it
-
-            comm = CommGroup(torch_group=config.group)
-        self.comm = comm
-        self.rank = comm.my_rank
-        self.world_size = comm.nranks
-        self.local_rank = torch.cuda.current_device()
-        self.device = torch.device("cuda", self.local_rank)
-
-        if self.output_layout != DispatchLayout.EXPERT_MAJOR:
-            raise NotImplementedError("low-latency mode currently supports only DispatchLayout.EXPERT_MAJOR")
         if self.num_experts % self.world_size != 0:
             raise ValueError("low-latency mode requires num_experts divisible by world_size")
 
-        self.num_local_experts = config.num_local_experts or (self.num_experts // self.world_size)
+        self.num_local_experts = config.num_local_experts
+        if self.num_local_experts is None:
+            self.num_local_experts = self.num_experts // self.world_size
         if self.num_local_experts * self.world_size != self.num_experts:
             raise NotImplementedError("only even contiguous expert placement is currently supported")
+
         self.local_expert_start = config.local_expert_start
         if self.local_expert_start is None:
             self.local_expert_start = self.rank * self.num_local_experts
@@ -367,105 +243,35 @@ class MoECommunicator:
             raise NotImplementedError("low-latency dispatch currently supports BF16 input only")
 
         self.quant_format = _normalize_quant_format(config.quant_format)
-        self.dispatch_use_fp8 = self.quant_format == "fp8_e4m3"
         if self.quant_format not in (None, "fp8_e4m3"):
             raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
+        self.dispatch_requires_quantization = self.quant_format is not None
 
-        self._is_internode = True  # LL always drives every peer through PortChannel
+        num_nvl_bytes = 0
         num_rdma_bytes = _get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
         )
-        if self.comm_stream is not None:
-            raise NotImplementedError("custom comm_stream is not wired into the low-latency runtime yet")
 
+        self.enable_overlap = config.enable_overlap
+        self.num_sms = config.num_sms
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
 
-        self._runtime = MoERuntime(
+        self._runtime = _MoERuntime(
             comm,
-            num_nvl_bytes=0,
-            num_rdma_bytes=num_rdma_bytes,
-            low_latency_mode=True,
-            num_qps_per_rank=config.num_rdma_qps_per_rank,
-        )
-
-    def _init_ht(self, config: MoECommunicatorConfig) -> None:
-        group = config.group
-        if group is None:
-            raise ValueError("mode='ht' requires a torch.distributed ProcessGroup via group=")
-        self.group = group
-        self.rank = group.rank()
-        self.world_size = group.size()
-        self.local_rank = torch.cuda.current_device()
-        self.device = torch.device("cuda", self.local_rank)
-
-        if self.output_layout != DispatchLayout.FLAT:
-            raise NotImplementedError("HT mode currently supports only DispatchLayout.FLAT")
-
-        self.num_local_experts = config.num_local_experts
-        if self.num_local_experts is None:
-            if self.num_experts % self.world_size != 0:
-                raise ValueError("num_experts must be divisible by world_size for even contiguous placement")
-            self.num_local_experts = self.num_experts // self.world_size
-        if self.num_local_experts * self.world_size != self.num_experts:
-            raise NotImplementedError("only even contiguous expert placement is currently supported")
-        self.local_expert_start = config.local_expert_start
-        if self.local_expert_start is None:
-            self.local_expert_start = self.rank * self.num_local_experts
-
-        if config.input_dtype not in (None, torch.bfloat16):
-            raise NotImplementedError("HT dispatch currently supports BF16 input only")
-        if config.quant_format is not None:
-            raise NotImplementedError("HT quantized dispatch (scales) is not implemented yet")
-
-        self.expert_alignment = config.expert_alignment
-
-        # Config(num_sms, nvl_send, nvl_recv, rdma_send, rdma_recv). The C++ size
-        # hints return 0 RDMA bytes when world_size <= NUM_MAX_NVL_PEERS, which is
-        # exactly the intranode/internode boundary — so derive the transport from
-        # the hint instead of hardcoding the NVL peer count.
-        self._cfg = Config(
-            self.num_sms,
-            config.nvl_chunked_send,
-            config.nvl_chunked_recv,
-            config.rdma_chunked_send,
-            config.rdma_chunked_recv,
-        )
-        hidden_bytes = self.hidden_size * torch.tensor([], dtype=torch.bfloat16).element_size()
-        num_nvl_bytes = self._cfg.get_nvl_buffer_size_hint(hidden_bytes, self.world_size)
-        num_rdma_bytes = self._cfg.get_rdma_buffer_size_hint(hidden_bytes, self.world_size)
-        self._is_internode = num_rdma_bytes > 0
-
-        self._buffer = Buffer(
-            group,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
-            low_latency_mode=False,
+            mode=self.mode,
             num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
 
-    # ------------------------------------------------------------------
-    # Introspection
-    # ------------------------------------------------------------------
-
     def is_available(self) -> bool:
-        if self.mode == "ll":
-            return self._runtime.is_available()
-        return self._buffer.is_available()
+        return self._runtime.is_available()
 
     def is_internode_available(self) -> bool:
-        if self.mode == "ll":
-            return self._runtime.is_internode_available()
-        return self._buffer.is_internode_available()
-
-    def is_internode(self) -> bool:
-        return self._is_internode
-
-    # ------------------------------------------------------------------
-    # Dispatch
-    # ------------------------------------------------------------------
+        return self._runtime.is_internode_available()
 
     def dispatch(
         self,
@@ -474,278 +280,104 @@ class MoECommunicator:
         weights: Optional[torch.Tensor] = None,
         scales: Optional[QuantScales] = None,
         *,
-        output_buffer: Optional[torch.Tensor] = None,
-        async_finish: bool = False,
-        previous_handle: Optional[DispatchHandle] = None,
-    ) -> Tuple[DispatchOutput, DispatchHandle]:
-        """Dispatch local tokens to their expert owners.
-
-        ``previous_handle`` (HT intranode only) reuses the routing layout from a
-        prior dispatch with identical ``topk_ids``, skipping the layout/notify
-        setup so a benchmark can isolate the dispatch-kernel cost.
-        """
-        if self.mode == "ll":
-            return self._dispatch_ll(input, topk_ids, weights, scales, output_buffer)
-        return self._dispatch_ht(input, topk_ids, weights, scales, async_finish, previous_handle)
-
-    def _dispatch_ll(
-        self,
-        input: torch.Tensor,
-        topk_ids: torch.Tensor,
-        weights: Optional[torch.Tensor],
-        scales: Optional[QuantScales],
-        output_buffer: Optional[torch.Tensor],
-    ) -> Tuple[DispatchOutput, DispatchHandle]:
-        self._validate_dispatch_inputs_ll(input, topk_ids, weights, scales, output_buffer)
+        output_buffer: torch.Tensor,
+        stream: Optional[torch.cuda.Stream] = None,
+    ) -> tuple[DispatchOutput, DispatchHandle]:
+        self._validate_dispatch_inputs(input, topk_ids, weights, scales, output_buffer)
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
-        out_buf, packed_scales, src_info, layout_range, count = self._get_dispatch_output_tensors_ll(output_buffer)
+        output_tensors = self._get_dispatch_output_tensors(output_buffer)
+        output_buffer, packed_scales, src_info, layout_range, num_tokens_per_expert = output_tensors
         self._runtime._cpp_runtime.dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
-            out_buf.data_ptr(),
+            output_buffer.data_ptr(),
             0 if packed_scales is None else packed_scales.data_ptr(),
             src_info.data_ptr(),
             layout_range.data_ptr(),
-            count.data_ptr(),
+            num_tokens_per_expert.data_ptr(),
             input.size(0),
             self.hidden_size,
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
-            self.dispatch_use_fp8,
-            _cpp_dispatch_layout(self.output_layout),
-            torch.cuda.current_stream().cuda_stream,
+            self.dispatch_requires_quantization,
+            self.output_layout,
+            _cuda_stream_ptr(stream),
         )
         output_scales = None
         if packed_scales is not None:
             output_scales = QuantScales(local=packed_scales, format="fp8_e4m3", block_size=128)
+
         dispatch_out = DispatchOutput(
-            tokens=out_buf,
+            tokens=output_buffer,
             scales=output_scales,
-            num_tokens_per_expert=count,
+            num_tokens_per_expert=num_tokens_per_expert,
             expert_offsets=None,
             layout=self.output_layout,
         )
         handle = DispatchHandle(
             topk_ids=topk_ids,
             weights=weights,
+            src_info=src_info,
+            layout_range=layout_range,
+            num_max_dispatch_tokens_per_rank=self.max_tokens_per_rank,
+            num_experts=self.num_experts,
             num_tokens=input.size(0),
             hidden_size=self.hidden_size,
-            num_experts=self.num_experts,
             num_local_experts=self.num_local_experts,
             local_expert_start=self.local_expert_start,
             layout=self.output_layout,
             output_scales=output_scales,
-            src_info=src_info,
-            layout_range=layout_range,
-            num_max_dispatch_tokens_per_rank=self.max_tokens_per_rank,
         )
         return dispatch_out, handle
 
-    def _dispatch_ht(
-        self,
-        input: torch.Tensor,
-        topk_ids: torch.Tensor,
-        weights: Optional[torch.Tensor],
-        scales: Optional[QuantScales],
-        async_finish: bool,
-        previous_handle: Optional[DispatchHandle],
-    ) -> Tuple[DispatchOutput, DispatchHandle]:
-        self._validate_dispatch_inputs_ht(input, topk_ids, weights, scales)
-        if weights is None:
-            weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
-
-        # ``previous_handle`` reuses the routing layout (the get_dispatch_layout
-        # outputs) from a prior dispatch with identical ``topk_ids``. For
-        # intranode it additionally drives a *cached* intranode_dispatch that
-        # skips notify_dispatch's host-side counter wait. This lets a benchmark
-        # isolate the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
-        cache = getattr(previous_handle, "_dispatch_cache", None) if previous_handle is not None else None
-        if cache is not None:
-            num_tokens_per_rank = cache["num_tokens_per_rank"]
-            num_tokens_per_rdma_rank = cache["num_tokens_per_rdma_rank"]
-            num_tokens_per_expert = cache["num_tokens_per_expert"]
-            is_token_in_rank = cache["is_token_in_rank"]
-        else:
-            (
-                num_tokens_per_rank,
-                num_tokens_per_rdma_rank,
-                num_tokens_per_expert,
-                is_token_in_rank,
-                _layout_event,
-            ) = self._buffer.get_dispatch_layout(topk_ids, self.num_experts, None, False, False)
-
-        if self._is_internode:
-            (
-                recv_x,
-                _recv_x_scales,
-                _recv_topk_idx,
-                recv_topk_weights,
-                num_recv_tokens_per_expert_list,
-                _rdma_channel_prefix_matrix,
-                _gbl_channel_prefix_matrix,
-                recv_rdma_channel_prefix_matrix,
-                recv_rdma_rank_prefix_sum,
-                recv_gbl_channel_prefix_matrix,
-                _recv_gbl_rank_prefix_sum,
-                recv_src_meta,
-                send_rdma_head,
-                send_nvl_head,
-                event,
-            ) = self._buffer.internode_dispatch(
-                input,
-                None,
-                topk_ids,
-                weights,
-                num_tokens_per_rank,
-                num_tokens_per_rdma_rank,
-                is_token_in_rank,
-                num_tokens_per_expert,
-                0,
-                0,
-                None,
-                None,
-                None,
-                None,
-                self.expert_alignment,
-                self._cfg,
-                None,
-                async_finish,
-                False,
+    def _get_dispatch_output_tensors(self, output_buffer: torch.Tensor) -> tuple[
+        torch.Tensor,
+        Optional[torch.Tensor],
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        device = output_buffer.device
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        if self._dispatch_src_info is None or self._dispatch_src_info.device != device:
+            self._dispatch_src_info = torch.empty(
+                (self.num_local_experts, slots_per_expert),
+                dtype=torch.int32,
+                device=device,
             )
-            combine_meta = {
-                "recv_topk_weights": recv_topk_weights,
-                "src_meta": recv_src_meta,
-                "is_token_in_rank": is_token_in_rank,
-                "recv_rdma_channel_prefix_matrix": recv_rdma_channel_prefix_matrix,
-                "recv_rdma_rank_prefix_sum": recv_rdma_rank_prefix_sum,
-                "recv_gbl_channel_prefix_matrix": recv_gbl_channel_prefix_matrix,
-                "send_rdma_head": send_rdma_head,
-                "send_nvl_head": send_nvl_head,
-            }
-            dispatch_cache = cache if cache is not None else {
-                "num_tokens_per_rank": num_tokens_per_rank,
-                "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
-                "num_tokens_per_expert": num_tokens_per_expert,
-                "is_token_in_rank": is_token_in_rank,
-            }
-        elif cache is not None:
-            # Cached intranode dispatch: routing layout reused, notify skipped.
-            (
-                recv_x,
-                _recv_x_scales,
-                _recv_topk_idx,
-                recv_topk_weights,
-                num_recv_tokens_per_expert_list,
-                rank_prefix_matrix,
-                _channel_prefix_matrix,
-                recv_channel_prefix_matrix,
-                recv_src_idx,
-                send_head,
-                event,
-            ) = self._buffer.intranode_dispatch(
-                input,
-                None,
-                None,
-                None,
-                None,
-                is_token_in_rank,
-                None,
-                cache["num_recv_tokens"],
-                cache["rank_prefix_matrix"],
-                cache["channel_prefix_matrix"],
-                self.expert_alignment,
-                self._cfg,
-                None,
-                async_finish,
-                False,
+            self._dispatch_layout_range = torch.empty(
+                (self.num_local_experts, self.world_size),
+                dtype=torch.int64,
+                device=device,
             )
-            combine_meta = {
-                "recv_topk_weights": recv_topk_weights,
-                "src_idx": recv_src_idx,
-                "rank_prefix_matrix": rank_prefix_matrix,
-                "recv_channel_prefix_matrix": recv_channel_prefix_matrix,
-                "send_head": send_head,
-            }
-            dispatch_cache = cache
-        else:
-            (
-                recv_x,
-                _recv_x_scales,
-                _recv_topk_idx,
-                recv_topk_weights,
-                num_recv_tokens_per_expert_list,
-                rank_prefix_matrix,
-                channel_prefix_matrix,
-                recv_channel_prefix_matrix,
-                recv_src_idx,
-                send_head,
-                event,
-            ) = self._buffer.intranode_dispatch(
-                input,
-                None,
-                topk_ids,
-                weights,
-                num_tokens_per_rank,
-                is_token_in_rank,
-                num_tokens_per_expert,
-                0,
-                None,
-                None,
-                self.expert_alignment,
-                self._cfg,
-                None,
-                async_finish,
-                False,
+            self._dispatch_count = torch.empty(
+                (self.num_local_experts,),
+                dtype=torch.int32,
+                device=device,
             )
-            combine_meta = {
-                "recv_topk_weights": recv_topk_weights,
-                "src_idx": recv_src_idx,
-                "rank_prefix_matrix": rank_prefix_matrix,
-                "recv_channel_prefix_matrix": recv_channel_prefix_matrix,
-                "send_head": send_head,
-            }
-            # Stash the routing layout so a later dispatch can run cached.
-            dispatch_cache = {
-                "num_tokens_per_rank": num_tokens_per_rank,
-                "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
-                "num_tokens_per_expert": num_tokens_per_expert,
-                "is_token_in_rank": is_token_in_rank,
-                "rank_prefix_matrix": rank_prefix_matrix,
-                "channel_prefix_matrix": channel_prefix_matrix,
-                "num_recv_tokens": int(recv_x.size(0)),
-            }
+            self._dispatch_scales = None
+            if self.dispatch_requires_quantization:
+                num_scales = self.hidden_size // 128
+                scales_storage = torch.empty(
+                    (self.num_local_experts, num_scales, slots_per_expert),
+                    dtype=torch.float32,
+                    device=device,
+                )
+                self._dispatch_scales = scales_storage.transpose(1, 2)
 
-        dispatch_out = DispatchOutput(
-            tokens=recv_x,
-            scales=None,  # BF16 path; FP8 scales plumbed in a later increment.
-            num_tokens_per_expert=num_recv_tokens_per_expert_list,
-            expert_offsets=_exclusive_cumsum(num_recv_tokens_per_expert_list),
-            layout=DispatchLayout.FLAT,
+        assert self._dispatch_src_info is not None
+        assert self._dispatch_layout_range is not None
+        assert self._dispatch_count is not None
+        return (
+            output_buffer,
+            self._dispatch_scales,
+            self._dispatch_src_info,
+            self._dispatch_layout_range,
+            self._dispatch_count,
         )
-        handle = DispatchHandle(
-            topk_ids=topk_ids,
-            weights=weights,
-            num_tokens=int(input.size(0)),
-            hidden_size=self.hidden_size,
-            num_experts=self.num_experts,
-            num_local_experts=self.num_local_experts,
-            local_expert_start=self.local_expert_start,
-            layout=DispatchLayout.FLAT,
-            output_scales=None,
-            is_internode=self._is_internode,
-            combine_meta=combine_meta,
-        )
-        handle._event = event  # type: ignore[attr-defined]
-        if dispatch_cache is not None:
-            handle._dispatch_cache = dispatch_cache  # type: ignore[attr-defined]
-        return dispatch_out, handle
-
-    # ------------------------------------------------------------------
-    # Combine
-    # ------------------------------------------------------------------
 
     def combine(
         self,
@@ -753,22 +385,16 @@ class MoECommunicator:
         handle: DispatchHandle,
         *,
         out: Optional[torch.Tensor] = None,
-        async_finish: bool = False,
+        stream: Optional[torch.cuda.Stream] = None,
     ) -> torch.Tensor:
-        """Reduce expert outputs back to local token-major order."""
-        if self.mode == "ll":
-            return self._combine_ll(expert_output, handle, out)
-        return self._combine_ht(expert_output, handle, out, async_finish)
-
-    def _combine_ll(
-        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
-    ) -> torch.Tensor:
-        self._validate_combine_inputs_ll(expert_output, handle, out)
+        self._validate_combine_inputs(expert_output, handle, out)
+        combine_requires_dequantization = _requires_dequantization(expert_output)
         x_scales = None
-        if _is_fp8_e4m3_tensor(expert_output):
+        if combine_requires_dequantization:
             if handle.output_scales is None or handle.output_scales.local is None:
                 raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
             x_scales = handle.output_scales.local
+
         if out is None:
             out = torch.empty((handle.num_tokens, self.hidden_size), dtype=torch.bfloat16, device=expert_output.device)
         self._runtime._cpp_runtime.combine(
@@ -784,82 +410,16 @@ class MoECommunicator:
             handle.weights.size(1),
             handle.num_max_dispatch_tokens_per_rank,
             handle.num_experts,
-            _is_fp8_e4m3_tensor(expert_output),
-            torch.cuda.current_stream().cuda_stream,
+            combine_requires_dequantization,
+            _cuda_stream_ptr(stream),
         )
         return out
 
-    def _combine_ht(
-        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor], async_finish: bool
-    ) -> torch.Tensor:
-        self._validate_combine_inputs_ht(expert_output, handle)
-        m = handle.combine_meta
-        if handle.is_internode:
-            combined_x, _combined_w, _event = self._buffer.internode_combine(
-                expert_output,
-                m["recv_topk_weights"],
-                m["src_meta"],
-                m["is_token_in_rank"],
-                m["recv_rdma_channel_prefix_matrix"],
-                m["recv_rdma_rank_prefix_sum"],
-                m["recv_gbl_channel_prefix_matrix"],
-                m["send_rdma_head"],
-                m["send_nvl_head"],
-                self._cfg,
-                None,
-                async_finish,
-                False,
-            )
-        else:
-            combined_x, _combined_w, _event = self._buffer.intranode_combine(
-                expert_output,
-                m["recv_topk_weights"],
-                m["src_idx"],
-                m["rank_prefix_matrix"],
-                m["recv_channel_prefix_matrix"],
-                m["send_head"],
-                self._cfg,
-                None,
-                async_finish,
-                False,
-            )
-        if out is not None:
-            out.copy_(combined_x)
-            return out
-        return combined_x
+    def dispatch_async(self, *args, **kwargs):
+        raise NotImplementedError("dispatch_async is not implemented for MoECommunicator yet")
 
-    # ------------------------------------------------------------------
-    # Optional async / overlap APIs
-    # ------------------------------------------------------------------
-
-    def dispatch_async(
-        self,
-        input: torch.Tensor,
-        topk_ids: torch.Tensor,
-        weights: Optional[torch.Tensor] = None,
-        scales: Optional[QuantScales] = None,
-        *,
-        output_buffer: Optional[torch.Tensor] = None,
-        overlap_config: Optional[CommOverlapConfig] = None,
-    ) -> _CompletionRequest:
-        if self.mode != "ht":
-            raise NotImplementedError("dispatch_async is only implemented for mode='ht'")
-        result = self.dispatch(input, topk_ids, weights, scales, output_buffer=output_buffer, async_finish=True)
-        _dispatch_out, handle = result
-        return _CompletionRequest(getattr(handle, "_event", None), result)
-
-    def combine_async(
-        self,
-        expert_output: torch.Tensor,
-        handle: DispatchHandle,
-        *,
-        out: Optional[torch.Tensor] = None,
-        overlap_config: Optional[CommOverlapConfig] = None,
-    ) -> _CompletionRequest:
-        if self.mode != "ht":
-            raise NotImplementedError("combine_async is only implemented for mode='ht'")
-        combined = self.combine(expert_output, handle, out=out, async_finish=True)
-        return _CompletionRequest(None, combined)
+    def combine_async(self, *args, **kwargs):
+        raise NotImplementedError("combine_async is not implemented for MoECommunicator yet")
 
     def create_overlap_config(
         self,
@@ -874,39 +434,16 @@ class MoECommunicator:
             raise NotImplementedError("block-level overlap is not implemented yet")
         if op == "combine" and handle is None:
             raise ValueError("combine overlap config requires a DispatchHandle")
-        return CommOverlapConfig(op=op, level=level, stream=self.comm_stream)
+        return CommOverlapConfig(op=op, level=level)
 
-    # ------------------------------------------------------------------
-    # Validation — LL
-    # ------------------------------------------------------------------
-
-    def _get_dispatch_output_tensors_ll(self, output_buffer: torch.Tensor):
-        device = output_buffer.device
-        slots_per_expert = self.world_size * self.max_tokens_per_rank
-        if self._dispatch_src_info is None or self._dispatch_src_info.device != device:
-            self._dispatch_src_info = torch.empty(
-                (self.num_local_experts, slots_per_expert), dtype=torch.int32, device=device
-            )
-            self._dispatch_layout_range = torch.empty(
-                (self.num_local_experts, self.world_size), dtype=torch.int64, device=device
-            )
-            self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
-            self._dispatch_scales = None
-            if self.dispatch_use_fp8:
-                num_scales = self.hidden_size // 128
-                scales_storage = torch.empty(
-                    (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
-                )
-                self._dispatch_scales = scales_storage.transpose(1, 2)
-        return (
-            output_buffer,
-            self._dispatch_scales,
-            self._dispatch_src_info,
-            self._dispatch_layout_range,
-            self._dispatch_count,
-        )
-
-    def _validate_dispatch_inputs_ll(self, input, topk_ids, weights, scales, output_buffer) -> None:
+    def _validate_dispatch_inputs(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor],
+        scales: Optional[QuantScales],
+        output_buffer: torch.Tensor,
+    ) -> None:
         if output_buffer is None:
             raise ValueError("output_buffer is required for low-latency dispatch")
         if scales is not None and (scales.local is not None or scales.global_scale is not None):
@@ -932,14 +469,33 @@ class MoECommunicator:
                 raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
+        expected_dtype = torch.float8_e4m3fn if self.dispatch_requires_quantization else torch.bfloat16
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        if self.output_layout == DispatchLayout.EXPERT_MAJOR:
+            expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
+        else:
+            expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
+        if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
+            raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
+        if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
+            raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
+        if tuple(output_buffer.shape) != expected_shape:
+            raise ValueError(f"output_buffer shape must be {expected_shape}")
 
-    def _validate_combine_inputs_ll(self, expert_output, handle, out) -> None:
-        if not isinstance(handle, DispatchHandle):
-            raise TypeError("handle must be a DispatchHandle returned by dispatch")
+    def _validate_combine_inputs(
+        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
+    ) -> None:
         if handle.num_experts != self.num_experts or handle.hidden_size != self.hidden_size:
             raise ValueError("DispatchHandle does not belong to this MoECommunicator configuration")
-        if expert_output.dim() != 3 or not expert_output.is_contiguous():
-            raise ValueError("expert_output must keep dispatch output's contiguous EXPERT_MAJOR layout")
+        slots_per_expert = self.world_size * self.max_tokens_per_rank
+        if handle.layout == DispatchLayout.EXPERT_MAJOR:
+            expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
+        else:
+            expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
+        if expert_output.dim() != len(expected_shape) or not expert_output.is_contiguous():
+            raise ValueError("expert_output must keep dispatch output's contiguous layout")
+        if tuple(expert_output.shape) != expected_shape:
+            raise ValueError(f"expert_output shape must be {expected_shape}")
         if expert_output.dtype not in (torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
             raise ValueError("expert_output must be BF16 or FP8 E4M3")
         if out is not None:
@@ -947,41 +503,34 @@ class MoECommunicator:
             if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
                 raise ValueError(f"out must be a contiguous BF16 tensor with shape {expected_out_shape}")
 
-    # ------------------------------------------------------------------
-    # Validation — HT
-    # ------------------------------------------------------------------
 
-    def _validate_dispatch_inputs_ht(self, input, topk_ids, weights, scales) -> None:
-        if scales is not None and (scales.local is not None or scales.global_scale is not None):
-            raise NotImplementedError("HT dispatch does not support quantized input scales yet")
-        if input.dim() != 2 or not input.is_contiguous():
-            raise ValueError("input must be a contiguous [num_tokens, hidden] tensor")
-        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("HT dispatch input must be a CUDA BF16 tensor")
-        if input.size(1) != self.hidden_size:
-            raise ValueError(f"input hidden size {input.size(1)} != configured {self.hidden_size}")
-        if input.size(0) > self.max_tokens_per_rank:
-            raise ValueError("input token count exceeds max_tokens_per_rank")
-        if topk_ids.dim() != 2 or not topk_ids.is_contiguous():
-            raise ValueError("topk_ids must be a contiguous [num_tokens, topk] tensor")
-        if topk_ids.device != input.device or topk_ids.dtype != torch.int64:
-            raise ValueError("topk_ids must be an int64 CUDA tensor on the same device as input")
-        if topk_ids.shape != (input.size(0), self.topk):
-            raise ValueError("topk_ids shape must be [input.size(0), topk]")
-        if weights is not None:
-            if weights.dim() != 2 or not weights.is_contiguous():
-                raise ValueError("weights must be a contiguous [num_tokens, topk] tensor")
-            if weights.device != input.device or weights.dtype != torch.float32:
-                raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
-            if weights.shape != topk_ids.shape:
-                raise ValueError("weights shape must match topk_ids")
+def _resolve_output_layout(layout: Optional[DispatchLayout], mode: MoEMode) -> DispatchLayout:
+    if layout is None:
+        return DispatchLayout.EXPERT_MAJOR if mode == MoEMode.LOW_LATENCY else DispatchLayout.FLAT
+    if not isinstance(layout, DispatchLayout):
+        raise TypeError("MoECommunicatorConfig.output_layout must be a DispatchLayout")
+    return layout
 
-    def _validate_combine_inputs_ht(self, expert_output, handle) -> None:
-        if not isinstance(handle, DispatchHandle):
-            raise TypeError("handle must be a DispatchHandle returned by dispatch")
-        if expert_output.dim() != 2 or not expert_output.is_contiguous():
-            raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")
-        if expert_output.size(1) != self.hidden_size:
-            raise ValueError(f"expert_output hidden size {expert_output.size(1)} != configured {self.hidden_size}")
-        if handle.is_internode != self._is_internode:
-            raise ValueError("handle transport does not match this communicator")
+
+def _cuda_stream_ptr(stream: Optional[torch.cuda.Stream]) -> int:
+    return (stream if stream is not None else torch.cuda.current_stream()).cuda_stream
+
+
+def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
+    if fmt is None:
+        return None
+    normalized = fmt.lower().replace("-", "_")
+    if normalized in ("fp8", "fp8_e4m3", "f8e4m3", "float8_e4m3fn"):
+        return "fp8_e4m3"
+    return normalized
+
+
+def _requires_dequantization(tensor: torch.Tensor) -> bool:
+    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+    return fp8_dtype is not None and tensor.dtype == fp8_dtype
+
+
+def _get_low_latency_rdma_size_hint(
+    num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
+) -> int:
+    return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
