@@ -73,7 +73,7 @@ class CommGroup:
         self.my_rank = self.bootstrap.get_rank()
         self.nranks = self.bootstrap.get_n_ranks()
         self.nranks_per_node = self.bootstrap.get_n_ranks_per_node()
-        self.ipc_domain_n_ranks = self.bootstrap.get_n_ranks_per_ipc_domain()
+        self.nranks_per_ipc_domain = self.bootstrap.get_n_ranks_per_ipc_domain()
 
     def barrier(self):
         self.bootstrap.barrier()
