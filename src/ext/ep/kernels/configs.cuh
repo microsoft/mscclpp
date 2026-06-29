@@ -39,8 +39,11 @@
 #endif
 #define NUM_WAIT_NANOSECONDS 500
 
-#define LOW_LATENCY_SEND_PHASE 1
-#define LOW_LATENCY_RECV_PHASE 2
+// Phase control for low-latency kernels (internal use in kernel code)
+// Public API uses low_latency::Phase enum instead
+#define LOW_LATENCY_SEND_PHASE 1  // = low_latency::SEND_ONLY
+#define LOW_LATENCY_RECV_PHASE 2  // = low_latency::RECV_ONLY
+// (SEND_AND_RECV = 3)
 
 // Make CLion CUDA indexing work.
 #ifdef __CLION_IDE__

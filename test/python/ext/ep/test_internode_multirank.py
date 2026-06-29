@@ -85,7 +85,10 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 
 def main():
     rank, num_ranks, local_rank, group = init_dist()
+    from mscclpp import CommGroup
     from mscclpp.ext import ep
+
+    ep_group = CommGroup(torch_group=group)
 
     NUM_MAX_NVL_PEERS = _detect_local_world_size()
     assert (
@@ -139,7 +142,7 @@ def main():
 
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Buffer config for internode HT: needs num_rdma_bytes > 0. Size buffers
+    # Runtime config for internode HT: needs num_rdma_bytes > 0. Size buffers
     # using max(hidden, bench_hidden) so the optional bench phase fits.
     cfg = ep.Config(
         int(os.environ.get("MSCCLPP_EP_NSM", "152")),
@@ -160,16 +163,18 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating Buffer", flush=True)
-    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False)
+    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
+    buf = ep.ExpertParallelRuntime(
+        ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
+    )
     print(
-        f"[rank {rank}] Buffer created is_available={buf.is_available()} "
+        f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()} "
         f"is_internode={buf.is_internode_available()}",
         flush=True,
     )
     assert buf.is_available() and buf.is_internode_available()
 
-    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.runtime.get_dispatch_layout(
+    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(
         topk_idx, num_experts, None, False, False
     )
     assert torch.allclose(ref_rank, num_tokens_per_rank)
@@ -203,7 +208,7 @@ def main():
         send_rdma_head,
         send_nvl_head,
         _event,
-    ) = buf.runtime.internode_dispatch(
+    ) = buf.internode_dispatch(
         x,
         None,
         topk_idx,
@@ -226,7 +231,7 @@ def main():
     )
     dist.barrier(group=group)
 
-    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY","0") in ("1","true","True")
+    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY", "0") in ("1", "true", "True")
     # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
     start = 0
@@ -248,7 +253,7 @@ def main():
     # the various *_channel_prefix_matrix tensors can still be in flight on
     # the comm stream when combine launches, producing a deadlock inside the
     # combine forwarder (NVL check never advances). Investigate proper
-    # stream-dependency hand-off in Buffer::internode_dispatch.
+    # stream-dependency hand-off in ExpertParallelRuntime.internode_dispatch.
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
@@ -261,7 +266,7 @@ def main():
     # matrices passed here must be the RECEIVER-side ones returned by dispatch
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    combined_x, combined_topk_weights, _ = buf.runtime.internode_combine(
+    combined_x, combined_topk_weights, _ = buf.internode_combine(
         recv_x,
         recv_topk_weights,
         recv_src_meta,
@@ -319,7 +324,7 @@ def main():
             print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
-    # Respect the Buffer's pre-sized num_nvl_bytes / num_rdma_bytes budget.
+    # Respect the runtime's pre-sized num_nvl_bytes / num_rdma_bytes budget.
     per_peer_nvl = num_nvl_bytes // max(1, num_ranks)
     per_peer_rdma = num_rdma_bytes // max(1, num_ranks)
     if bench_hidden * x.element_size() > min(per_peer_nvl, per_peer_rdma):
@@ -327,7 +332,7 @@ def main():
             print(
                 f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
                 f">= min(per-peer NVL {per_peer_nvl}, RDMA {per_peer_rdma}). "
-                f"Rerun with a larger Buffer or smaller hidden.",
+                f"Rerun with a larger runtime or smaller hidden.",
                 flush=True,
             )
         return
@@ -362,7 +367,7 @@ def main():
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
     def _dispatch():
-        return buf.runtime.internode_dispatch(
+        return buf.internode_dispatch(
             x_b,
             None,
             topk_idx_b,
@@ -386,7 +391,7 @@ def main():
 
     def _combine(dout):
         rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
-        buf.runtime.internode_combine(
+        buf.internode_combine(
             rx,
             rtw,
             rsm,

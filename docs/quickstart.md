@@ -105,6 +105,8 @@ Python 3.10 or later is required.
 ```bash
 # For NVIDIA platforms (specify your CUDA version)
 $ python -m pip install ".[cuda12]"
+# For NVIDIA platforms with the Expert Parallel (MoE dispatch/combine) extension
+$ python -m pip install ".[cuda12,ep]"
 # For AMD platforms
 $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 ```
@@ -116,14 +118,19 @@ $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 Optional extras can be installed by specifying them in brackets. Available extras:
 - **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
 - **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
+- **`ep`**: Build and install the Expert Parallel extension (`mscclpp.ext.ep`). The extension itself does
+  not add a PyTorch dependency, but the high-level Python API expects user-provided `torch.Tensor` inputs.
+  CUDA architectures 90 or newer are required for EP kernels.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
 
 ```bash
 # Example: install with CUDA 12 and benchmark extras
 $ python -m pip install ".[cuda12,benchmark]"
+# Example: install with CUDA 12 and the EP extension
+$ python -m pip install ".[cuda12,ep]"
 # Example: install with all extras for testing on CUDA 12
-$ python -m pip install ".[cuda12,benchmark,test]"
+$ python -m pip install ".[cuda12,ep,benchmark,test]"
 ```
 
 (mrc-support)=
@@ -291,4 +298,3 @@ Version: 0.8.0.post1.dev0+gc632fee37.d20251007
 mscclpp.version
 {'version': '0.8.0.post1.dev0+gc632fee37.d20251007', 'git_commit': 'g50382c567'}
 ```
-

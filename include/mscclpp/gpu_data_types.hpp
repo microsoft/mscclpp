@@ -64,7 +64,13 @@ using __fp8x4_e5m2 = __nv_fp8x4_e5m2;
 #define __FP8_TYPES_EXIST__
 #endif
 
+// GCC's x86 intrinsic headers may define __bfloat16 before this header is
+// included by host-only Torch extension translation units. Avoid redefining it
+// there; CUDA device compilation still uses __nv_bfloat16.
+#if !defined(MSCCLPP_AVOID_BFLOAT16_ALIAS) && !defined(__AVX512BF16INTRIN_H_INCLUDED) && \
+    !defined(__AVX512BF16VLINTRIN_H_INCLUDED)
 using __bfloat16 = __nv_bfloat16;
+#endif
 using __bfloat162 = __nv_bfloat162;
 
 #endif

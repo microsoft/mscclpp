@@ -4,79 +4,90 @@
 // Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP)
 // branch `chhwang/dev-atomic-add-cleanup`. Licensed under the MIT License.
 //
-// pybind11 module definition for the MSCCL++ EP extension. Mirrors
-// DeepEP's `PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)` so call sites port
-// with minimal changes.
+// nanobind module definition for the MSCCL++ EP extension.
 
-#include <pybind11/functional.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-#include <torch/python.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/optional.h>
+#include <nanobind/stl/string.h>
 
-#include "buffer.hpp"
+#include <cstdint>
+#include <memory>
+#include <stdexcept>
+#include <string>
+
 #include "config.hpp"
+#include "kernels/api.cuh"
+#include "moe_runtime.hpp"
 
-namespace py = pybind11;
+namespace nb = nanobind;
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+namespace {
+
+nb::bytes stringToBytes(const std::string& data) { return nb::bytes(data.data(), data.size()); }
+
+void* ptr(uintptr_t address) { return reinterpret_cast<void*>(address); }
+
+cudaStream_t stream(uintptr_t address) { return reinterpret_cast<cudaStream_t>(address); }
+
+}  // namespace
+
+NB_MODULE(mscclpp_ep_cpp, m) {
   m.doc() = "MSCCL++ Expert-Parallel (MoE dispatch/combine) extension";
 
-  py::class_<mscclpp::ep::Config>(m, "Config")
-      .def(py::init<int, int, int, int, int>(), py::arg("num_sms") = 20, py::arg("num_max_nvl_chunked_send_tokens") = 6,
-           py::arg("num_max_nvl_chunked_recv_tokens") = 256, py::arg("num_max_rdma_chunked_send_tokens") = 6,
-           py::arg("num_max_rdma_chunked_recv_tokens") = 256)
-      .def("get_nvl_buffer_size_hint", &mscclpp::ep::Config::get_nvl_buffer_size_hint)
-      .def("get_rdma_buffer_size_hint", &mscclpp::ep::Config::get_rdma_buffer_size_hint);
+  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::getLowLatencyRdmaSizeHint);
 
-  m.def("get_low_latency_rdma_size_hint", &mscclpp::ep::get_low_latency_rdma_size_hint);
+  nb::module_::import_("mscclpp._mscclpp");
 
-  py::class_<mscclpp::ep::EventHandle>(m, "EventHandle")
-      .def(py::init<>())
-      .def("current_stream_wait", &mscclpp::ep::EventHandle::current_stream_wait);
+  nb::enum_<mscclpp::ep::MoEMode>(m, "MoEMode")
+      .value("LOW_LATENCY", mscclpp::ep::MoEMode::LOW_LATENCY)
+      .value("HIGH_THROUGHPUT", mscclpp::ep::MoEMode::HIGH_THROUGHPUT);
 
-  // NOTE: `mscclpp::UniqueId` is `std::array<uint8_t, 128>`, which pybind11
-  // implicitly converts to a Python list. We therefore avoid exposing it as
-  // a py::class_ and convert to/from `py::bytes` at the binding boundary.
+  nb::enum_<mscclpp::ep::DispatchLayout>(m, "DispatchLayout")
+      .value("EXPERT_MAJOR", mscclpp::ep::DispatchLayout::EXPERT_MAJOR)
+      .value("FLAT", mscclpp::ep::DispatchLayout::FLAT);
 
-  py::class_<mscclpp::ep::Buffer>(m, "Buffer")
-      .def(py::init<int, int, int64_t, int64_t, bool>(), py::arg("rank"), py::arg("num_ranks"),
-           py::arg("num_nvl_bytes"), py::arg("num_rdma_bytes"), py::arg("low_latency_mode"))
-      .def("is_available", &mscclpp::ep::Buffer::is_available)
-      .def("is_internode_available", &mscclpp::ep::Buffer::is_internode_available)
-      .def("get_num_rdma_ranks", &mscclpp::ep::Buffer::get_num_rdma_ranks)
-      .def("get_rdma_rank", &mscclpp::ep::Buffer::get_rdma_rank)
-      .def("get_root_rdma_rank", &mscclpp::ep::Buffer::get_root_rdma_rank)
-      .def("get_local_device_id", &mscclpp::ep::Buffer::get_local_device_id)
-      .def("get_local_ipc_handle", &mscclpp::ep::Buffer::get_local_ipc_handle)
-      .def("get_local_nvshmem_unique_id", &mscclpp::ep::Buffer::get_local_nvshmem_unique_id)
-      .def("get_local_buffer_tensor", &mscclpp::ep::Buffer::get_local_buffer_tensor)
-      .def("create_unique_id",
-           [](const mscclpp::ep::Buffer& self) {
-             auto uid = self.create_unique_id();
-             return py::bytes(reinterpret_cast<const char*>(uid.data()), uid.size());
-           })
-      .def("connect",
-           [](mscclpp::ep::Buffer& self, py::bytes data) {
-             std::string s = data;
-             mscclpp::UniqueId uid;
-             if (s.size() != uid.size()) {
-               throw std::runtime_error("mscclpp_ep_cpp.Buffer.connect: UniqueId size mismatch");
-             }
-             std::memcpy(uid.data(), s.data(), s.size());
-             self.connect(uid);
-           })
-      .def("sync", &mscclpp::ep::Buffer::sync)
-      .def("get_dispatch_layout", &mscclpp::ep::Buffer::get_dispatch_layout)
-      .def("intranode_dispatch", &mscclpp::ep::Buffer::intranode_dispatch)
-      .def("intranode_combine", &mscclpp::ep::Buffer::intranode_combine)
-      .def("internode_dispatch", &mscclpp::ep::Buffer::internode_dispatch)
-      .def("internode_combine", &mscclpp::ep::Buffer::internode_combine)
-      .def("clean_low_latency_buffer", &mscclpp::ep::Buffer::clean_low_latency_buffer)
-      .def("low_latency_dispatch", &mscclpp::ep::Buffer::low_latency_dispatch, py::arg("x"), py::arg("topk_idx"),
-           py::arg("num_max_dispatch_tokens_per_rank"), py::arg("num_experts"), py::arg("use_fp8"), py::arg("async"),
-           py::arg("return_recv_hook"), py::arg("out_packed_recv_x") = py::none(),
-           py::arg("out_packed_recv_x_scales") = py::none(), py::arg("out_packed_recv_src_info") = py::none(),
-           py::arg("out_packed_recv_layout_range") = py::none(), py::arg("out_packed_recv_count") = py::none())
-      .def("low_latency_combine", &mscclpp::ep::Buffer::low_latency_combine)
-      .def("get_next_low_latency_combine_buffer", &mscclpp::ep::Buffer::get_next_low_latency_combine_buffer);
+  nb::class_<mscclpp::ep::MoERuntime>(m, "MoERuntime")
+      .def(nb::init<mscclpp::Communicator&, int64_t, int64_t, mscclpp::ep::MoEMode>(), nb::arg("comm"),
+           nb::arg("num_nvl_bytes"), nb::arg("num_rdma_bytes"), nb::arg("mode"))
+      .def("is_available", &mscclpp::ep::MoERuntime::isAvailable)
+      .def("is_internode_available", &mscclpp::ep::MoERuntime::isInternodeAvailable)
+      .def("get_num_rdma_ranks", &mscclpp::ep::MoERuntime::getNumRdmaRanks)
+      .def("get_rdma_rank", &mscclpp::ep::MoERuntime::getRdmaRank)
+      .def("get_root_rdma_rank", &mscclpp::ep::MoERuntime::getRootRdmaRank)
+      .def("get_local_device_id", &mscclpp::ep::MoERuntime::getLocalDeviceId)
+      .def("get_local_ipc_handle",
+           [](const mscclpp::ep::MoERuntime& self) { return stringToBytes(self.getLocalIpcHandle()); })
+      .def(
+          "dispatch",
+          [](mscclpp::ep::MoERuntime& self, uintptr_t inputPtr, uintptr_t topkIdxPtr, uintptr_t outputPtr,
+             uintptr_t outputScalesPtr, uintptr_t outputSrcInfoPtr, uintptr_t outputLayoutRangePtr,
+             uintptr_t outputCountPtr, int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank,
+             int numExperts, bool requiresQuantization, mscclpp::ep::DispatchLayout outputLayout, uintptr_t streamPtr) {
+            self.dispatch(
+                ptr(outputPtr), reinterpret_cast<float*>(ptr(outputScalesPtr)),
+                reinterpret_cast<int*>(ptr(outputSrcInfoPtr)), reinterpret_cast<int64_t*>(ptr(outputLayoutRangePtr)),
+                reinterpret_cast<int*>(ptr(outputCountPtr)), ptr(inputPtr), reinterpret_cast<int64_t*>(ptr(topkIdxPtr)),
+                numTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, requiresQuantization, outputLayout,
+                stream(streamPtr));
+          },
+          nb::arg("input_ptr"), nb::arg("topk_idx_ptr"), nb::arg("output_ptr"), nb::arg("output_scales_ptr"),
+          nb::arg("output_src_info_ptr"), nb::arg("output_layout_range_ptr"), nb::arg("output_count_ptr"),
+          nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_max_dispatch_tokens_per_rank"),
+          nb::arg("num_experts"), nb::arg("requires_quantization"), nb::arg("output_layout"), nb::arg("stream_ptr"))
+      .def(
+          "combine",
+          [](mscclpp::ep::MoERuntime& self, uintptr_t expertOutputPtr, uintptr_t expertScalesPtr, uintptr_t topkIdxPtr,
+             uintptr_t topkWeightsPtr, uintptr_t srcInfoPtr, uintptr_t layoutRangePtr, uintptr_t outputPtr,
+             int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
+             bool requiresDequantization, uintptr_t streamPtr) {
+            self.combine(ptr(outputPtr), ptr(expertOutputPtr), reinterpret_cast<float*>(ptr(expertScalesPtr)),
+                         reinterpret_cast<int64_t*>(ptr(topkIdxPtr)), reinterpret_cast<float*>(ptr(topkWeightsPtr)),
+                         reinterpret_cast<int*>(ptr(srcInfoPtr)), reinterpret_cast<int64_t*>(ptr(layoutRangePtr)),
+                         numTokens, hidden, numTopk, numMaxDispatchTokensPerRank, numExperts, requiresDequantization,
+                         stream(streamPtr));
+          },
+          nb::arg("expert_output_ptr"), nb::arg("expert_scales_ptr"), nb::arg("topk_idx_ptr"),
+          nb::arg("topk_weights_ptr"), nb::arg("src_info_ptr"), nb::arg("layout_range_ptr"), nb::arg("output_ptr"),
+          nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_max_dispatch_tokens_per_rank"),
+          nb::arg("num_experts"), nb::arg("requires_dequantization"), nb::arg("stream_ptr"));
 }

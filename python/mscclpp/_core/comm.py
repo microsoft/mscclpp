@@ -54,14 +54,21 @@ class CommGroup:
                 import torch
                 import torch.distributed as dist
 
+                backend = str(dist.get_backend(torch_group)).lower()
+                device = torch.device("cuda", torch.cuda.current_device()) if "nccl" in backend else torch.device("cpu")
                 if rank == 0:
-                    uniq_id_global = uniq_id
                     pickled_data = pickle.dumps(uniq_id)
-                    data_tensor = torch.frombuffer(bytearray(pickled_data), dtype=torch.uint8).clone()
+                    size_tensor = torch.tensor([len(pickled_data)], dtype=torch.int64, device=device)
                 else:
-                    data_tensor = torch.zeros(256, dtype=torch.uint8)
+                    size_tensor = torch.zeros(1, dtype=torch.int64, device=device)
+                dist.broadcast(size_tensor, src=0, group=torch_group)
+                payload_size = int(size_tensor.item())
+                if rank == 0:
+                    data_tensor = torch.frombuffer(bytearray(pickled_data), dtype=torch.uint8).clone().to(device)
+                else:
+                    data_tensor = torch.zeros(payload_size, dtype=torch.uint8, device=device)
                 dist.broadcast(data_tensor, src=0, group=torch_group)
-                uniq_id_global = pickle.loads(data_tensor.numpy().tobytes())
+                uniq_id_global = pickle.loads(data_tensor.cpu().numpy().tobytes())
             self.bootstrap.initialize(uniq_id_global)
         elif not interfaceIpPortTrio == "":
             assert rank >= 0 and size >= 1
