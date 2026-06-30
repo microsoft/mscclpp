@@ -176,6 +176,7 @@ struct NvlsBlockPipelineAdapter {
 
 void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) {
   nSwitchChannels_ = 8;
+  fp8NvlsSupported_ = isFp8NvlsSupported();
   int nBaseChannels = 64;
   this->conns_ = setupConnections(comm);
   // setup semaphores
@@ -193,6 +194,10 @@ CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(const std::shared_ptr
                                                            const std::unordered_map<std::string, uintptr_t>& extras,
                                                            DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
+  if (isNativeFp8DataType(dtype) && !fp8NvlsSupported_) {
+    WARN("FP8 NVLS allreduce requires device support for FP8 multimem reduction.");
+    return CommResult::CommInvalidArgument;
+  }
   AllreduceFunc allreduce = dispatch<NvlsBlockPipelineAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));

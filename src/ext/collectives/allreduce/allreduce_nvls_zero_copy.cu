@@ -102,6 +102,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   cudaDeviceProp deviceProp;
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
   computeCapabilityMajor_ = deviceProp.major;
+  fp8NvlsSupported_ = isFp8NvlsSupported();
   nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
   // setup semaphores
@@ -124,6 +125,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
     return CommResult::CommInvalidArgument;
   }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
+  if (isNativeFp8DataType(dtype) && !fp8NvlsSupported_) {
+    WARN("FP8 NVLS allreduce requires device support for FP8 multimem reduction.");
+    return CommResult::CommInvalidArgument;
+  }
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));
