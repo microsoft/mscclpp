@@ -853,6 +853,7 @@ class GroupLoadReduce(BaseOperation):
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+        tbg_info: ThreadBlockGroupInfo = None,
     ):
         super().__init__(Instruction.group_load_reduce)
         self.buffer_type = buffer_type
@@ -862,6 +863,7 @@ class GroupLoadReduce(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+        self.tbg_info = tbg_info
 
     def shift_buffers(self, instance, num_instances, replication_function):
         self.buffer_offset = replication_function(self.buffer_offset, self.size, instance, num_instances)
@@ -876,6 +878,7 @@ class GroupLoadReduce(BaseOperation):
             and self.dst_chunk == other.src_chunk
             and self.channel_ids == other.channel_ids
             and self.channel_type == other.channel_type
+            and self.tbg_info == other.tbg_info
         ):
             fused_operation = GroupLoadReduceStore(
                 buffer_type=self.buffer_type,
@@ -885,6 +888,7 @@ class GroupLoadReduce(BaseOperation):
                 channel_ids=self.channel_ids,
                 channel_type=self.channel_type,
                 reduce_operation=self.reduce_operation,
+                tbg_info=self.tbg_info,
             )
 
         return fused_operation
@@ -898,6 +902,8 @@ class GroupLoadReduce(BaseOperation):
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
@@ -911,6 +917,7 @@ class GroupStore(BaseOperation):
         size: int,
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
+        tbg_info: ThreadBlockGroupInfo = None,
     ):
         super().__init__(Instruction.group_store)
         self.src_chunk = src_chunk
@@ -919,6 +926,7 @@ class GroupStore(BaseOperation):
         self.size = size
         self.channel_ids = channel_ids
         self.channel_type = channel_type
+        self.tbg_info = tbg_info
 
     def shift_buffers(self, instance, num_instances, replication_function):
         self.buffer_offset = replication_function(self.buffer_offset, self.size, instance, num_instances)
@@ -932,6 +940,8 @@ class GroupStore(BaseOperation):
         result["size"] = self.size
         result["channel_ids"] = self.channel_ids
         result["channel_type"] = self.channel_type.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
@@ -946,6 +956,7 @@ class GroupLoadReduceStore(BaseOperation):
         channel_ids: List[int],
         channel_type: ChannelType = ChannelType.switch,
         reduce_operation: ReduceOperationType = ReduceOperationType.sum,
+        tbg_info: ThreadBlockGroupInfo = None,
     ):
         super().__init__(Instruction.group_load_reduce_store)
         self.buffer_type = buffer_type
@@ -955,6 +966,7 @@ class GroupLoadReduceStore(BaseOperation):
         self.channel_ids = channel_ids
         self.channel_type = channel_type
         self.reduce_operation = reduce_operation
+        self.tbg_info = tbg_info
 
     def shift_buffers(self, instance, num_instances, replication_function):
         for i in range(len(self.src_index)):
@@ -976,6 +988,8 @@ class GroupLoadReduceStore(BaseOperation):
             )
         result["channel_type"] = self.channel_type.value
         result["reduce_op"] = self.reduce_operation.value
+        if self.tbg_info is not None:
+            result["tbg_info"] = self.tbg_info.to_dict()
         return result
 
 
