@@ -11,7 +11,7 @@ the DeepEP-style :class:`Buffer` HT backend (GB200 TMA direct-gather combine +
 all-sender dispatch).
 """
 
-from .buffer import Buffer, Config, EventHandle  # noqa: F401
+from .buffer import Buffer, Config, EventHandle, ExpertParallelRuntime  # noqa: F401
 from .communicator import (  # noqa: F401
     CommOverlapConfig,
     DispatchHandle,
@@ -24,6 +24,7 @@ from .communicator import (  # noqa: F401
 )
 
 __all__ = [
+    "ExpertParallelRuntime",
     "Buffer",
     "Config",
     "EventHandle",

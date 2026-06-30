@@ -37,7 +37,7 @@ except ImportError as exc:  # pragma: no cover
         "or install with `pip install .[ep]`."
     ) from exc
 
-from .buffer import Buffer, Config
+from .buffer import Config, ExpertParallelRuntime
 
 DispatchLayout = _cpp.DispatchLayout
 MoEMode = _cpp.MoEMode
@@ -347,7 +347,7 @@ class MoECommunicator:
         num_rdma_bytes = self._cfg.get_rdma_buffer_size_hint(hidden_bytes, self.world_size)
         self._is_internode = num_rdma_bytes > 0
 
-        self._buffer = Buffer(
+        self._buffer = ExpertParallelRuntime(
             group,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,

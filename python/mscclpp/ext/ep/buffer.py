@@ -5,8 +5,9 @@
 # branch ``chhwang/dev-atomic-add-cleanup``. Licensed under the MIT License.
 """Low-level HT (high-throughput) runtime wrapper for the MSCCL++ EP extension.
 
-This is a thin wrapper around the nanobind extension ``mscclpp_ep_cpp.Buffer``
-(the DeepEP-style high-throughput runtime). The extension carries
+This is a thin wrapper around the nanobind extension
+``mscclpp_ep_cpp.ExpertParallelRuntime`` (the DeepEP-style high-throughput
+runtime). The extension carries
 ``torch.Tensor`` across the Python boundary as **DLPack capsules**, so this
 wrapper converts tensors to capsules on the way in (``to_dlpack``) and rebuilds
 tensors from capsules on the way out (``from_dlpack``). The :class:`Buffer`
@@ -47,8 +48,8 @@ def _ten(c):
     return None if c is None else from_dlpack(c)
 
 
-class Buffer:
-    """Core high-throughput expert-parallel (EP) communication buffer.
+class ExpertParallelRuntime:
+    """Core high-throughput expert-parallel (EP) communication runtime.
 
     Parameters mirror ``deep_ep.Buffer``. ``group`` is the ``torch.distributed``
     process group used only for the out-of-band exchange of device ids, CUDA-IPC
@@ -74,7 +75,9 @@ class Buffer:
         self.low_latency_mode = low_latency_mode
         self.num_qps_per_rank = num_qps_per_rank
 
-        self.runtime = _cpp.Buffer(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode)
+        self.runtime = _cpp.ExpertParallelRuntime(
+            self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes, low_latency_mode
+        )
 
         # Exchange device ids + CUDA-IPC handles + (for RDMA) the MSCCL++ unique id.
         device_ids: List[Optional[int]] = [None] * self.group_size
@@ -302,3 +305,7 @@ class Buffer:
         num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
     ) -> int:
         return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
+
+
+# Backward-compatible alias for the former DeepEP-style name.
+Buffer = ExpertParallelRuntime

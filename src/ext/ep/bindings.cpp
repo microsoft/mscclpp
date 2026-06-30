@@ -203,7 +203,7 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def(nb::init<>())
       .def("current_stream_wait", &mscclpp::ep::EventHandle::current_stream_wait);
 
-  nb::class_<mscclpp::ep::Buffer>(m, "Buffer")
+  nb::class_<mscclpp::ep::Buffer>(m, "ExpertParallelRuntime")
       .def(nb::init<int, int, int64_t, int64_t, bool>(), nb::arg("rank").none(), nb::arg("num_ranks").none(),
            nb::arg("num_nvl_bytes").none(), nb::arg("num_rdma_bytes").none(), nb::arg("low_latency_mode").none())
       .def("is_available", &mscclpp::ep::Buffer::is_available)
