@@ -35,10 +35,10 @@ __device__ mscclpp::DeviceSyncer globalSyncer;
 //
 // This approach requires registering both input and output buffers as remote
 // memories (2 * nPeers handles), but avoids scratch buffer allocation and
-// the extra copy steps of the standard RSAG. The NRanksPerNode template
+// the extra copy steps of the standard RSAG. The NRanks template
 // parameter enables compile-time unrolling of peer loops (supports 4 or 8).
 
-template <int NRanksPerNode, ReduceOp OpType, typename T, typename AccumT = T>
+template <int NRanks, ReduceOp OpType, typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceRsAgZeroCopy(T* buff, T* scratch, T* resultBuff, DeviceHandle<BaseMemoryChannel>* memoryChannels,
                           DeviceHandle<SwitchChannel>* switchChannels, void* remoteMemories, int rank, int worldSize,
@@ -48,12 +48,12 @@ __global__ void __launch_bounds__(1024, 1)
   assert((uintptr_t)buff % sizeof(int4) == 0);
   assert((uintptr_t)resultBuff % sizeof(int4) == 0);
 
-  constexpr int NPeers = NRanksPerNode - 1;
+  constexpr int NPeers = NRanks - 1;
   constexpr uint32_t nelemsPerInt4 = sizeof(int4) / sizeof(T);
-  const uint32_t outputRemoteBufferOffset = NRanksPerNode - 1;
-  uint32_t alignedNelems = ((nelems + NRanksPerNode - 1) / NRanksPerNode + nelemsPerInt4 - 1) / nelemsPerInt4 *
-                           nelemsPerInt4 * NRanksPerNode;
-  uint32_t nelemsPerRank = alignedNelems / NRanksPerNode;
+  constexpr uint32_t outputRemoteBufferOffset = NPeers;
+  uint32_t alignedNelems =
+      ((nelems + NRanks - 1) / NRanks + nelemsPerInt4 - 1) / nelemsPerInt4 * nelemsPerInt4 * NRanks;
+  uint32_t nelemsPerRank = alignedNelems / NRanks;
   uint32_t nInt4PerRank = nelemsPerRank / nelemsPerInt4;
   uint32_t nInt4Total = (nelems + nelemsPerInt4 - 1) / nelemsPerInt4;
 
@@ -69,7 +69,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
   if (nInt4PerBlock == 0) return;
 
-  if (threadIdx.x < NPeers) {
+  if ((int)threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].relaxedSignal();
     memoryChannelsLocal[threadIdx.x].relaxedWait();
   }
@@ -86,18 +86,19 @@ __global__ void __launch_bounds__(1024, 1)
     int4 tmp_raw = buff4[offset];
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % NRanksPerNode;
+      int rankIdx = (rank + i + 1) % NRanks;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       data[i] = mscclpp::read<int4>(((void**)remoteMemories)[peerIdx], offset);
     }
     AccumVec acc = mscclpp::upcastVector<T, AccumT, AccumVec>(tmp_raw);
+#pragma unroll
     for (int i = 0; i < NPeers; i++) {
       acc = mscclpp::calVectorAccum<T, AccumT, OpType, AccumVec>(acc, data[i]);
     }
     int4 tmp = mscclpp::downcastVector<T, AccumT, int4>(acc);
 #pragma unroll
     for (int i = 0; i < NPeers; i++) {
-      int rankIdx = (rank + i + 1) % NRanksPerNode;
+      int rankIdx = (rank + i + 1) % NRanks;
       int peerIdx = rankIdx < rank ? rankIdx : rankIdx - 1;
       mscclpp::write<int4>(((void**)remoteMemories)[outputRemoteBufferOffset + peerIdx], offset, tmp);
     }
@@ -105,7 +106,7 @@ __global__ void __launch_bounds__(1024, 1)
   }
   // Use device barrier gives better performance here.
   globalSyncer.sync(gridDim.x);
-  if (blockIdx.x == 0 && threadIdx.x < NPeers) {
+  if (blockIdx.x == 0 && (int)threadIdx.x < NPeers) {
     memoryChannelsLocal[threadIdx.x].signal();
     memoryChannelsLocal[threadIdx.x].wait();
   }
@@ -115,8 +116,8 @@ template <ReduceOp OpType, typename T, typename AccumT = T>
 struct AllreduceRsAgZeroCopyAdapter {
   static cudaError_t call(const void* input, void* scratch, void* output, void* memoryChannels, void* remoteMemories,
                           DeviceHandle<SwitchChannel>* switchChannel, DeviceHandle<SwitchChannel>*, size_t, size_t,
-                          size_t, int rank, int nRanksPerNode, int worldSize, size_t inputSize, cudaStream_t stream,
-                          void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
+                          size_t, int rank, int nRanksPerIpcDomain, int worldSize, size_t inputSize,
+                          cudaStream_t stream, void*, uint32_t, uint32_t, int nBlocks, int nThreadsPerBlock) {
     using ChannelType = DeviceHandle<BaseMemoryChannel>;
     size_t nelems = inputSize / sizeof(T);
     if (nBlocks == 0 || nThreadsPerBlock == 0) {
@@ -126,16 +127,17 @@ struct AllreduceRsAgZeroCopyAdapter {
         nBlocks = 128;
       }
     }
-    if (nRanksPerNode == 4) {
+    if (nRanksPerIpcDomain == 4) {
       allreduceRsAgZeroCopy<4, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
-    } else if (nRanksPerNode == 8) {
+    } else if (nRanksPerIpcDomain == 8) {
       allreduceRsAgZeroCopy<8, OpType, T, AccumT>
           <<<nBlocks, nThreadsPerBlock, 0, stream>>>((T*)input, (T*)scratch, (T*)output, (ChannelType*)memoryChannels,
                                                      switchChannel, remoteMemories, rank, worldSize, nelems);
     } else {
-      THROW(ALGO, Error, ErrorCode::InvalidUsage, "Unsupported number of ranks per node: ", nRanksPerNode);
+      WARN(ALGO, "AllreduceRsAgZeroCopy only supports nRanksPerIpcDomain of 4 or 8, got: ", nRanksPerIpcDomain);
+      return cudaErrorInvalidValue;
     }
     return cudaGetLastError();
   }
@@ -164,11 +166,19 @@ CommResult AllreduceRsAgZeroCopy::allreduceKernelFunc(const std::shared_ptr<void
     return CommResult::CommInvalidArgument;
   }
   std::pair<int, int> numBlocksAndThreads = {nBlocks, nThreadsPerBlock};
+  if (numBlocksAndThreads.first > nChannelsPerConnection_) {
+    WARN(ALGO, "Block number ", numBlocksAndThreads.first, " exceeds the maximum limit ", nChannelsPerConnection_);
+    return CommResult::CommInvalidArgument;
+  }
   cudaError_t error =
       allreduce(input, nullptr, output, this->baseMemoryChannelHandles_.get(), algoCtx->remoteMemoryHandles.get(),
-                nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerNode, algoCtx->workSize, inputSize, stream,
-                nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+                nullptr, nullptr, 0, 0, 0, algoCtx->rank, algoCtx->nRanksPerIpcDomain, algoCtx->worldSize, inputSize,
+                stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
+    if (error == cudaErrorInvalidValue) {
+      WARN(ALGO, "AllreduceRsAgZeroCopy received invalid launch arguments: ", cudaGetErrorString(error));
+      return CommResult::CommInvalidArgument;
+    }
     WARN(ALGO, "Allreduce kernel launch failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
@@ -193,16 +203,14 @@ std::shared_ptr<void> AllreduceRsAgZeroCopy::initAllreduceContext(std::shared_pt
                                                                   void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
-  ctx->workSize = comm->bootstrap()->getNranks();
-  ctx->nRanksPerNode = comm->bootstrap()->getNranksPerNode();
+  ctx->worldSize = comm->bootstrap()->getNranks();
+  ctx->nRanksPerIpcDomain = comm->bootstrap()->getNranksPerIpcDomain();
 
   ctx->memorySemaphores = this->semaphores_;
 
   // register input and output memories
   RegisteredMemory inputMemory = comm->registerMemory((void*)input, size, Transport::CudaIpc);
   RegisteredMemory outputMemory = comm->registerMemory(output, size, Transport::CudaIpc);
-  this->inputMemories_.push_back(inputMemory);
-  this->outputMemories_.push_back(outputMemory);
 
   auto remoteInputMemories = setupRemoteMemories(comm, ctx->rank, inputMemory);
   auto remoteOutputMemories = setupRemoteMemories(comm, ctx->rank, outputMemory);

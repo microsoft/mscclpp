@@ -1,16 +1,93 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "collective_utils.hpp"
-
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
 
+#include "collective_utils.hpp"
+
 namespace mscclpp {
 namespace collective {
+
+namespace {
+
+#if !defined(MSCCLPP_DEVICE_HIP)
+__global__ void fp8NvlsSupportProbeKernel(int* supported) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1000 && \
+    (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
+  *supported = 1;
+#else
+  *supported = 0;
+#endif
+}
+
+bool detectFp8NvlsSupport() {
+  AvoidCudaGraphCaptureGuard cgcGuard;
+  auto supportedDevice = mscclpp::detail::gpuCallocUnique<int>();
+  int supportedHost = 0;
+  auto stream = gpuStreamPool()->getStream();
+
+  fp8NvlsSupportProbeKernel<<<1, 1, 0, stream>>>(supportedDevice.get());
+  cudaError_t err = cudaGetLastError();
+  if (err != cudaSuccess) {
+    return false;
+  }
+
+  MSCCLPP_CUDATHROW(
+      cudaMemcpyAsync(&supportedHost, supportedDevice.get(), sizeof(supportedHost), cudaMemcpyDeviceToHost, stream));
+  err = cudaStreamSynchronize(stream);
+  if (err != cudaSuccess) {
+    (void)cudaGetLastError();
+    return false;
+  }
+  return supportedHost != 0;
+}
+#endif
+
+}  // namespace
+
+bool isFp8DataType(DataType dtype) {
+  return dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ || dtype == DataType::FLOAT8_E5M2 ||
+         dtype == DataType::FLOAT8_E5M2FNUZ || dtype == DataType::FLOAT8_E4M3B15;
+}
+
+bool isNativeFp8DataType(DataType dtype) {
+#if defined(__FP8_TYPES_EXIST__)
+#if defined(__FP8_E4M3_IS_FNUZ__)
+  if (dtype == DataType::FLOAT8_E4M3FNUZ) {
+    return true;
+  }
+#else
+  if (dtype == DataType::FLOAT8_E4M3FN) {
+    return true;
+  }
+#endif
+#if defined(__FP8_E5M2_IS_FNUZ__)
+  if (dtype == DataType::FLOAT8_E5M2FNUZ) {
+    return true;
+  }
+#else
+  if (dtype == DataType::FLOAT8_E5M2) {
+    return true;
+  }
+#endif
+#endif
+  return false;
+}
+
+bool isFp8NvlsSupported() {
+#if defined(MSCCLPP_DEVICE_HIP)
+  return false;
+#else
+  static const bool supported = detectFp8NvlsSupport();
+  return supported;
+#endif
+}
+
 std::vector<mscclpp::RegisteredMemory> setupRemoteMemories(std::shared_ptr<mscclpp::Communicator> comm, int rank,
                                                            mscclpp::RegisteredMemory localMemory) {
   std::vector<mscclpp::RegisteredMemory> remoteMemories;
@@ -98,7 +175,8 @@ std::vector<std::shared_ptr<mscclpp::NvlsConnection>> setupNvlsConnections(std::
   return nvlsConnections;
 }
 
-std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
+std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::shared_ptr<mscclpp::Communicator> comm,
+                                                      std::vector<std::shared_ptr<mscclpp::NvlsConnection>> conns,
                                                       void* buffer, size_t bufferSize, int nSwitchChannels) {
   std::vector<mscclpp::SwitchChannel> channels;
 
@@ -107,6 +185,8 @@ std::vector<mscclpp::SwitchChannel> setupNvlsChannels(std::vector<std::shared_pt
     mscclpp::SwitchChannel switchChannel = nvlsConnection->bindAllocatedMemory((CUdeviceptr)buffer, bufferSize);
     channels.push_back(switchChannel);
   }
+  // Synchronize to make sure all ranks have their NVLS channels set up before any rank starts using them.
+  comm->bootstrap()->barrier();
   return channels;
 }
 

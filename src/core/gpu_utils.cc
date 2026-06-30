@@ -2,8 +2,13 @@
 // Licensed under the MIT License.
 
 #include <cstring>
+#include <iterator>
+#include <map>
 #include <mscclpp/gpu.hpp>
 #include <mscclpp/gpu_utils.hpp>
+#include <mutex>
+#include <unordered_map>
+#include <utility>
 
 #include "gpu_utils_internal.hpp"
 
@@ -274,7 +279,170 @@ void gpuMemset(void* ptr, int value, size_t bytes) {
   MSCCLPP_CUDATHROW(cudaStreamSynchronize(stream));
 }
 
+class GpuBufferPoolStorage : public std::enable_shared_from_this<GpuBufferPoolStorage> {
+ public:
+  GpuBufferPoolStorage(size_t bytes, GpuBufferGranularity granularity);
+  std::shared_ptr<GpuBufferPool::Buffer> allocate(size_t bytes, size_t alignment);
+  void release(size_t offset) noexcept;
+  size_t bytes() const;
+  size_t freeBytes() const;
+  size_t activeBytes() const;
+  char* data();
+  int deviceId() const;
+
+ private:
+  struct Block {
+    size_t offset;
+    size_t bytes;
+    size_t reservedOffset;
+    size_t reservedBytes;
+  };
+
+  static size_t alignUp(size_t offset, size_t alignment);
+  Block reserveBlock(size_t bytes, size_t alignment);
+  void releaseBlock(size_t offset, size_t bytes) noexcept;
+
+  mutable std::mutex mutex_;
+  GpuBuffer<char> buffer_;
+  std::map<size_t, size_t> freeBlocks_;
+  std::unordered_map<size_t, Block> activeBlocks_;
+};
+
+GpuBufferPoolStorage::GpuBufferPoolStorage(size_t bytes, GpuBufferGranularity granularity)
+    : buffer_(bytes, granularity) {
+  if (bytes == 0) {
+    throw Error("GpuBufferPool size must be positive.", ErrorCode::InvalidUsage);
+  }
+  freeBlocks_[0] = buffer_.bytes();
+}
+
+size_t GpuBufferPoolStorage::alignUp(size_t offset, size_t alignment) {
+  if (alignment == 0) {
+    throw Error("GpuBufferPool allocation alignment must be positive.", ErrorCode::InvalidUsage);
+  }
+  size_t remainder = offset % alignment;
+  if (remainder == 0) {
+    return offset;
+  }
+  return offset + alignment - remainder;
+}
+
+GpuBufferPoolStorage::Block GpuBufferPoolStorage::reserveBlock(size_t bytes, size_t alignment) {
+  if (bytes == 0) {
+    throw Error("GpuBufferPool allocation size must be positive.", ErrorCode::InvalidUsage);
+  }
+  for (auto it = freeBlocks_.begin(); it != freeBlocks_.end(); ++it) {
+    size_t blockOffset = it->first;
+    size_t blockBytes = it->second;
+    size_t alignedOffset = alignUp(blockOffset, alignment);
+    size_t prefixBytes = alignedOffset - blockOffset;
+    if (prefixBytes > blockBytes || bytes > blockBytes - prefixBytes) {
+      continue;
+    }
+
+    size_t suffixOffset = alignedOffset + bytes;
+    size_t reservedBytes = prefixBytes + bytes;
+    size_t suffixBytes = blockBytes - reservedBytes;
+    freeBlocks_.erase(it);
+    if (suffixBytes > 0) {
+      freeBlocks_[suffixOffset] = suffixBytes;
+    }
+    Block block{alignedOffset, bytes, blockOffset, reservedBytes};
+    activeBlocks_[alignedOffset] = block;
+    return block;
+  }
+  throw Error("GpuBufferPool does not have enough free memory for the requested allocation.", ErrorCode::InvalidUsage);
+}
+
+void GpuBufferPoolStorage::releaseBlock(size_t offset, size_t bytes) noexcept {
+  auto next = freeBlocks_.lower_bound(offset);
+  if (next != freeBlocks_.begin()) {
+    auto prev = std::prev(next);
+    if (prev->first + prev->second == offset) {
+      offset = prev->first;
+      bytes += prev->second;
+      next = freeBlocks_.erase(prev);
+    }
+  }
+  if (next != freeBlocks_.end() && offset + bytes == next->first) {
+    bytes += next->second;
+    freeBlocks_.erase(next);
+  }
+  freeBlocks_[offset] = bytes;
+}
+
+std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPoolStorage::allocate(size_t bytes, size_t alignment) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Block block = reserveBlock(bytes, alignment);
+  return std::shared_ptr<GpuBufferPool::Buffer>(new GpuBufferPool::Buffer(shared_from_this(), block.offset, bytes));
+}
+
+void GpuBufferPoolStorage::release(size_t offset) noexcept {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto active = activeBlocks_.find(offset);
+  if (active == activeBlocks_.end()) {
+    return;
+  }
+  Block block = active->second;
+  activeBlocks_.erase(active);
+  releaseBlock(block.reservedOffset, block.reservedBytes);
+}
+
+size_t GpuBufferPoolStorage::bytes() const { return buffer_.bytes(); }
+
+size_t GpuBufferPoolStorage::freeBytes() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  size_t freeBytes = 0;
+  for (auto const& block : freeBlocks_) {
+    freeBytes += block.second;
+  }
+  return freeBytes;
+}
+
+size_t GpuBufferPoolStorage::activeBytes() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  size_t activeBytes = 0;
+  for (auto const& block : activeBlocks_) {
+    activeBytes += block.second.bytes;
+  }
+  return activeBytes;
+}
+
+char* GpuBufferPoolStorage::data() { return buffer_.data(); }
+
+int GpuBufferPoolStorage::deviceId() const { return buffer_.deviceId(); }
+
 }  // namespace detail
+
+GpuBufferPool::Buffer::Buffer(std::shared_ptr<detail::GpuBufferPoolStorage> storage, size_t offset, size_t bytes)
+    : storage_(std::move(storage)), offset_(offset), bytes_(bytes) {}
+
+GpuBufferPool::Buffer::~Buffer() { storage_->release(offset_); }
+
+size_t GpuBufferPool::Buffer::bytes() const { return bytes_; }
+
+size_t GpuBufferPool::Buffer::offset() const { return offset_; }
+
+char* GpuBufferPool::Buffer::data() const { return storage_->data() + offset_; }
+
+int GpuBufferPool::Buffer::deviceId() const { return storage_->deviceId(); }
+
+GpuBufferPool::GpuBufferPool(size_t bytes, GpuBufferGranularity granularity)
+    : storage_(std::make_shared<detail::GpuBufferPoolStorage>(bytes, granularity)) {}
+
+std::shared_ptr<GpuBufferPool::Buffer> GpuBufferPool::allocate(size_t bytes, size_t alignment) {
+  return storage_->allocate(bytes, alignment);
+}
+
+size_t GpuBufferPool::bytes() const { return storage_->bytes(); }
+
+size_t GpuBufferPool::freeBytes() const { return storage_->freeBytes(); }
+
+size_t GpuBufferPool::activeBytes() const { return storage_->activeBytes(); }
+
+char* GpuBufferPool::data() { return storage_->data(); }
+
+int GpuBufferPool::deviceId() const { return storage_->deviceId(); }
 
 bool isNvlsSupported() {
   if (env()->forceDisableNvls) {

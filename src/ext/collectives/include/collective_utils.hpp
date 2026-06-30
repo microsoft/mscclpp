@@ -26,11 +26,22 @@ namespace mscclpp {
 
 namespace collective {
 constexpr int NUM_NVLS_CONNECTION = 8;
-constexpr int NUM_SEMAPHORES = 64;
+// Sized to cover MAX_IPC_DOMAIN_NRANKS-scale allreduce algos whose device-side
+// semaphore indices grow as O(nRanksPerIpcDomain) (e.g. nvls_block_pipeline uses
+// up to ~5 * nRanksPerIpcDomain entries).
+constexpr int NUM_SEMAPHORES = 512;
 
-constexpr int MAX_NRANKS_PER_NODE = 8;
+// Upper bound on the number of NVLink-reachable ranks that participate in a
+// single collective. Sized to cover Multi-Node NVLink (MNNVL) domains up to
+// GB200 NVL72 (72 GPUs sharing one NVLink fabric). Drives compile-time sizing
+// of shared-memory channel arrays in the allreduce/allgather kernels.
+constexpr int MAX_IPC_DOMAIN_NRANKS = 72;
 
-constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // double buffer * 35 thread-blocks * 8 ranks * 256KB = 70MB
+constexpr int SCRATCH_SIZE = 2 * 1024 * 1024 * 70;  // Two 70 MiB buffers for double-buffered packet scratch space.
+
+bool isFp8DataType(DataType dtype);
+bool isNativeFp8DataType(DataType dtype);
+bool isFp8NvlsSupported();
 
 std::vector<RegisteredMemory> setupRemoteMemories(std::shared_ptr<Communicator> comm, int rank,
                                                   RegisteredMemory localMemory);
@@ -50,7 +61,8 @@ std::shared_ptr<DeviceHandle<MemoryChannel>> setupMemoryChannelDeviceHandles(
 std::vector<std::shared_ptr<NvlsConnection>> setupNvlsConnections(std::shared_ptr<Communicator> comm, size_t size,
                                                                   int numConnections);
 
-std::vector<SwitchChannel> setupNvlsChannels(std::vector<std::shared_ptr<NvlsConnection>> conns, void* buffer,
+std::vector<SwitchChannel> setupNvlsChannels(std::shared_ptr<Communicator> comm,
+                                             std::vector<std::shared_ptr<NvlsConnection>> conns, void* buffer,
                                              size_t bufferSize, int nSwitchChannels);
 
 std::shared_ptr<DeviceHandle<SwitchChannel>> setupNvlsChannelDeviceHandles(
@@ -71,8 +83,9 @@ std::shared_ptr<DeviceHandle<BaseMemoryChannel>> setupBaseMemoryChannelDeviceHan
 class AlgorithmCtx {
  public:
   int rank;
-  int workSize;
+  int worldSize;
   int nRanksPerNode;
+  int nRanksPerIpcDomain;
 
   std::vector<RegisteredMemory> registeredMemories;
   std::vector<MemoryChannel> memoryChannels;

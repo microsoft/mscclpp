@@ -29,7 +29,7 @@ class AllreducePacket : public AlgorithmBuilder {
   void* scratchBuffer_;
   size_t scratchBufferSize_;
   const int nSegmentsForScratchBuffer_ = 2;
-  const int maxBlockNum_ = 56;
+  const int maxBlockNum_ = 112;
   std::vector<Connection> conns_;
   uintptr_t flagBuffer_;
   size_t flagBufferSize_;

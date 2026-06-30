@@ -525,7 +525,15 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
   if constexpr (std::is_same_v<T, uint8_t>) {
     assert(false && "MULTI_LOAD_REDUCE_STORE is not supported for uint8_t data type");
     return;
-  } else {
+  }
+#if defined(__FP8_TYPES_EXIST__) && \
+    (!(defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000))
+  else if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
+    assert(false && "FP8 MULTI_LOAD_REDUCE_STORE requires sm_100a or newer");
+    return;
+  }
+#endif
+  else {
     static_assert(sizeof(T) <= 8, "Only support type with size <= 8 bytes");
     const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
     if (size <= 0) {

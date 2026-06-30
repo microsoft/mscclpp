@@ -407,6 +407,7 @@ struct Executor::Impl {
           nvlsConnection->bindAllocatedMemory((CUdeviceptr)bufferInfo.first, bufferInfo.second);
       context.nvlsChannels.push_back(switchChannel);
     }
+    this->comm->bootstrap()->barrier();
   }
 
   void setupSemaphores(ExecutionContext& context, const ExecutionPlan& plan) {
