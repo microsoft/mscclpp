@@ -182,8 +182,17 @@ class ExpertParallelRuntime:
         # num_recv_tokens_per_expert_list(list), rank_prefix_matrix, channel_prefix_matrix,
         # recv_channel_prefix_matrix, recv_src_idx, send_head, event
         return (
-            _ten(r[0]), _ten(r[1]), _ten(r[2]), _ten(r[3]), r[4],
-            _ten(r[5]), _ten(r[6]), _ten(r[7]), _ten(r[8]), _ten(r[9]), r[10],
+            _ten(r[0]),
+            _ten(r[1]),
+            _ten(r[2]),
+            _ten(r[3]),
+            r[4],
+            _ten(r[5]),
+            _ten(r[6]),
+            _ten(r[7]),
+            _ten(r[8]),
+            _ten(r[9]),
+            r[10],
         )
 
     def intranode_combine(
@@ -258,9 +267,21 @@ class ExpertParallelRuntime:
         )
         # 15-tuple; element 4 is the list, element 14 is the event; rest are tensors/None.
         return (
-            _ten(r[0]), _ten(r[1]), _ten(r[2]), _ten(r[3]), r[4],
-            _ten(r[5]), _ten(r[6]), _ten(r[7]), _ten(r[8]), _ten(r[9]),
-            _ten(r[10]), _ten(r[11]), _ten(r[12]), _ten(r[13]), r[14],
+            _ten(r[0]),
+            _ten(r[1]),
+            _ten(r[2]),
+            _ten(r[3]),
+            r[4],
+            _ten(r[5]),
+            _ten(r[6]),
+            _ten(r[7]),
+            _ten(r[8]),
+            _ten(r[9]),
+            _ten(r[10]),
+            _ten(r[11]),
+            _ten(r[12]),
+            _ten(r[13]),
+            r[14],
         )
 
     def internode_combine(

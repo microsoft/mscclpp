@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstdlib>
+
 #include "../config.hpp"
 #include "../kernels/api.cuh"
-#include <cstdlib>
 
 namespace mscclpp {
 namespace ep {

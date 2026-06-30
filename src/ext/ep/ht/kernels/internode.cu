@@ -1618,35 +1618,35 @@ void dispatch(void* recv_x, float* recv_x_scales, int64_t* recv_topk_idx, float*
   }
 #endif
 
-#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                           \
-  {                                                                                                                    \
-    auto dispatch_func =                                                                                               \
-        low_latency_mode ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>     \
-                                               : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)   \
-                         : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>    \
-                                               : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>); \
-    if (EP_NCCLEP_TMA) {                                                                                               \
-      /* B-depth-3: opt in to the >48KB dynamic-shared half-token TMA send ring (EP_TMA_SND_*). */                     \
-      const size_t ep_dyn_bytes =                                                                                      \
-          (size_t)kNumDispatchRDMASenderWarps * EP_TMA_SND_NSTAGE * EP_TMA_SND_CHUNK_BYTES;                            \
-      static bool s_ep_dyn_attr = false;                                                                               \
-      if (!s_ep_dyn_attr) {                                                                                            \
-        CUDA_CHECK(cudaFuncSetAttribute(dispatch_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                    \
-                                        static_cast<int>(ep_dyn_bytes)));                                              \
-        s_ep_dyn_attr = true;                                                                                          \
-      }                                                                                                                \
-      cfg.dynamicSmemBytes = ep_dyn_bytes;                                                                             \
-    }                                                                                                                  \
-    LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                  \
-                  recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),   \
-                  x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,    \
-                  recv_gbl_channel_prefix_matrix, rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,               \
-                  gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum, num_tokens, hidden_int4, num_scales, num_topk,  \
-                  num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                    \
-                  num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                      \
-                  num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,      \
-                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);                          \
-  }                                                                                                                    \
+#define DISPATCH_LAUNCH_CASE(num_rdma_ranks)                                                                          \
+  {                                                                                                                   \
+    auto dispatch_func =                                                                                              \
+        low_latency_mode                                                                                              \
+            ? (is_cached_dispatch ? EP_DISPATCH_KERNEL<true, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>       \
+                                  : EP_DISPATCH_KERNEL<true, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>)     \
+            : (is_cached_dispatch ? EP_DISPATCH_KERNEL<false, num_rdma_ranks, true, kNumDispatchRDMASenderWarps>      \
+                                  : EP_DISPATCH_KERNEL<false, num_rdma_ranks, false, kNumDispatchRDMASenderWarps>);   \
+    if (EP_NCCLEP_TMA) {                                                                                              \
+      /* B-depth-3: opt in to the >48KB dynamic-shared half-token TMA send ring (EP_TMA_SND_*). */                    \
+      const size_t ep_dyn_bytes = (size_t)kNumDispatchRDMASenderWarps * EP_TMA_SND_NSTAGE * EP_TMA_SND_CHUNK_BYTES;   \
+      static bool s_ep_dyn_attr = false;                                                                              \
+      if (!s_ep_dyn_attr) {                                                                                           \
+        CUDA_CHECK(cudaFuncSetAttribute(dispatch_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                   \
+                                        static_cast<int>(ep_dyn_bytes)));                                             \
+        s_ep_dyn_attr = true;                                                                                         \
+      }                                                                                                               \
+      cfg.dynamicSmemBytes = ep_dyn_bytes;                                                                            \
+    }                                                                                                                 \
+    LAUNCH_KERNEL(&cfg, dispatch_func, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_topk_idx,                 \
+                  recv_topk_weights, reinterpret_cast<SourceMeta*>(recv_src_meta), reinterpret_cast<const int4*>(x),  \
+                  x_scales, topk_idx, topk_weights, send_rdma_head, send_nvl_head, recv_rdma_channel_prefix_matrix,   \
+                  recv_gbl_channel_prefix_matrix, rdma_channel_prefix_matrix, recv_rdma_rank_prefix_sum,              \
+                  gbl_channel_prefix_matrix, recv_gbl_rank_prefix_sum, num_tokens, hidden_int4, num_scales, num_topk, \
+                  num_experts, is_token_in_rank, rdma_buffer_ptr, num_max_rdma_chunked_send_tokens,                   \
+                  num_max_rdma_chunked_recv_tokens, buffer_ptrs, num_max_nvl_chunked_send_tokens,                     \
+                  num_max_nvl_chunked_recv_tokens, rank, num_ranks, port_channel_handles, memory_channel_handles,     \
+                  nvls_head_mc, nvls_head_dev, nvls_tail_mc, nvls_tail_dev, peer_rdma_bases EP_DISPATCH_EXTRA_ARGS);  \
+  }                                                                                                                   \
   break
 
   EP_HOST_ASSERT((topk_idx == nullptr) == (topk_weights == nullptr));
@@ -1966,10 +1966,9 @@ __global__ void __launch_bounds__(1024, 1)
       const bool is_in =
           (lane_id < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + lane_id];
       const int recv_idx = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + lane_id] : 0;
-      combine_token<kEpNumRanks, dtype_t, 8>(is_in, recv_idx, lane_id, hidden_int4, num_topk,
-                                             combined_x + static_cast<int64_t>(t) * hidden_int4,
-                                             combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30,
-                                             recv_fn, recv_tw_fn);
+      combine_token<kEpNumRanks, dtype_t, 8>(
+          is_in, recv_idx, lane_id, hidden_int4, num_topk, combined_x + static_cast<int64_t>(t) * hidden_int4,
+          combined_topk_weights + static_cast<int64_t>(t) * num_topk, 1 << 30, recv_fn, recv_tw_fn);
     }
   } else {
     constexpr int kEpMaxContrib = 8;
@@ -1978,8 +1977,7 @@ __global__ void __launch_bounds__(1024, 1)
       int topk_ranks[kEpMaxContrib], slot_indices[kEpMaxContrib], num_topk_ranks = 0;
       for (int base = 0; base < kEpNumRanks; base += 32) {
         const int r = base + lane_id;
-        const bool is_in =
-            (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+        const bool is_in = (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
         const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
         unsigned ballot = __ballot_sync(0xffffffffu, is_in);
         while (ballot != 0u) {
@@ -2011,8 +2009,7 @@ __global__ void __launch_bounds__(1024, 1)
         for (int k = 0; k < kDtypePerInt4; ++k) out_dtypes[k] = static_cast<dtype_t>(values[k]);
         st_na_global(combined_row + i, out_int4);
       }
-      if (lane_id < num_topk)
-        st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+      if (lane_id < num_topk) st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
     }
   }
 }
@@ -2038,7 +2035,8 @@ __global__ void __launch_bounds__(1024, 1)
 // hidden=7168 bf16; the warp (token) count per block is channel-adaptive (see below);
 // overridable at compile time via -D for other shapes.
 #ifndef EP_CMB_TMA_CHUNK_INT4
-#define EP_CMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors; 896 int4 / 64 = 14 chunks @ hidden=7168 bf16)
+#define EP_CMB_TMA_CHUNK_INT4 \
+  64  // hidden chunk in int4 (1KB TMA descriptors; 896 int4 / 64 = 14 chunks @ hidden=7168 bf16)
 #endif
 // Warp (token) count per block is CHANNEL-ADAPTIVE. More warps add token-parallelism, which wins
 // when the grid has FEW blocks (low SM → many tokens/block, latency-bound), but at high block
@@ -2061,9 +2059,9 @@ __global__ void __launch_bounds__(1024, 1)
 
 template <typename dtype_t, int kNumRDMARanks, int kWarps>
 __global__ void __launch_bounds__(kWarps * 32, 1)
-    combine_flat_gather_tma(int4* combined_x, float* combined_topk_weights,
-                            const bool* is_combined_token_in_rank, int num_combined_tokens, int hidden, int num_topk,
-                            int num_ranks, void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
+    combine_flat_gather_tma(int4* combined_x, float* combined_topk_weights, const bool* is_combined_token_in_rank,
+                            int num_combined_tokens, int hidden, int num_topk, int num_ranks,
+                            void* const* recv_pool_global_ptrs, const int* ep_combine_recv_idx) {
   constexpr int kMaxContrib = 8;
   constexpr int kChunkInt4 = EP_CMB_TMA_CHUNK_INT4;
   constexpr int kStages = EP_CMB_TMA_STAGES;  // pipeline depth (outstanding chunks in flight)
@@ -2095,8 +2093,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
     int topk_ranks[kMaxContrib], slot_indices[kMaxContrib], num_topk_ranks = 0;
     for (int base = 0; base < kEpNumRanks; base += 32) {
       const int r = base + lane_id;
-      const bool is_in =
-          (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
+      const bool is_in = (r < kEpNumRanks) and is_combined_token_in_rank[static_cast<int64_t>(t) * num_ranks + r];
       const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
       unsigned ballot = __ballot_sync(0xffffffffu, is_in);
       while (ballot != 0u) {
@@ -2120,13 +2117,12 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
         asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
         const uint32_t cbytes = static_cast<uint32_t>(csize_int4 * static_cast<int>(sizeof(int4)));
         for (int j = 0; j < num_topk_ranks; ++j) {
-          const uint8_t* src = reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[topk_ranks[j]]) +
-                               ep_pool_header_bytes +
-                               static_cast<int64_t>(slot_indices[j]) * hidden_int4 * static_cast<int64_t>(sizeof(int4)) +
-                               static_cast<int64_t>(c0) * sizeof(int4);
+          const uint8_t* src =
+              reinterpret_cast<const uint8_t*>(recv_pool_global_ptrs[topk_ranks[j]]) + ep_pool_header_bytes +
+              static_cast<int64_t>(slot_indices[j]) * hidden_int4 * static_cast<int64_t>(sizeof(int4)) +
+              static_cast<int64_t>(c0) * sizeof(int4);
           const uint32_t dst = static_cast<uint32_t>(__cvta_generic_to_shared(stage_buf(s, j)));
-          asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(
-                           dst),
+          asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(dst),
                        "l"(src), "r"(cbytes), "r"(mbar_a)
                        : "memory");
         }
@@ -2203,8 +2199,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
       reduce_store(s, c0, csize);
       __syncwarp();
     }
-    if (lane_id < num_topk)
-      st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+    if (lane_id < num_topk) st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
   }
 }
 
@@ -2954,28 +2949,30 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
       // latency-bound), NARROW above it (high SM, where the marginal warp costs more scheduling
       // than it buys). Each branch instantiates its own kernel + sets its own SMEM attribute.
       const bool cmb_wide = (num_channels <= EP_CMB_TMA_WARPS_MAXCH);
-#define COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, WARPS)                                              \
-  {                                                                                                       \
-    auto tma_func = combine_flat_gather_tma<nv_bfloat16, num_rdma_ranks, WARPS>;                          \
-    const size_t cmb_tma_smem =                                                                           \
-        static_cast<size_t>(WARPS) * kCmbTmaStages * kCmbTmaMaxContrib * kCmbTmaChunkInt4 * sizeof(int4) + \
-        static_cast<size_t>(WARPS) * kCmbTmaStages * sizeof(uint64_t);                                    \
-    CUDA_CHECK(cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize,                \
-                                    static_cast<int>(cmb_tma_smem)));                                      \
-    cudaLaunchConfig_t cfg = {static_cast<unsigned>(num_channels * 2),                                    \
-                              static_cast<unsigned>((WARPS) * 32), cmb_tma_smem, stream, nullptr, 0};     \
-    cudaLaunchAttribute a[1];                                                                             \
-    a[0].id = cudaLaunchAttributeCooperative;                                                             \
-    a[0].val.cooperative = 1;                                                                             \
-    cfg.attrs = a;                                                                                        \
-    cfg.numAttrs = 1;                                                                                     \
-    LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,             \
-                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks,            \
-                  recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
+#define COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, WARPS)                                                          \
+  {                                                                                                                    \
+    auto tma_func = combine_flat_gather_tma<nv_bfloat16, num_rdma_ranks, WARPS>;                                       \
+    const size_t cmb_tma_smem =                                                                                        \
+        static_cast<size_t>(WARPS) * kCmbTmaStages * kCmbTmaMaxContrib * kCmbTmaChunkInt4 * sizeof(int4) +             \
+        static_cast<size_t>(WARPS) * kCmbTmaStages * sizeof(uint64_t);                                                 \
+    CUDA_CHECK(                                                                                                        \
+        cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(cmb_tma_smem)));  \
+    cudaLaunchConfig_t cfg = {                                                                                         \
+        static_cast<unsigned>(num_channels * 2), static_cast<unsigned>((WARPS)*32), cmb_tma_smem, stream, nullptr, 0}; \
+    cudaLaunchAttribute a[1];                                                                                          \
+    a[0].id = cudaLaunchAttributeCooperative;                                                                          \
+    a[0].val.cooperative = 1;                                                                                          \
+    cfg.attrs = a;                                                                                                     \
+    cfg.numAttrs = 1;                                                                                                  \
+    LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,                          \
+                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks, recv_pool_global_ptrs,  \
+                  ep_combine_recv_idx);                                                                                \
   }
-#define COMBINE_FLAT_GATHER_TMA_CASE(num_rdma_ranks)                                                       \
-  if (cmb_wide) COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_WIDE)                      \
-  else COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_NARROW)                             \
+#define COMBINE_FLAT_GATHER_TMA_CASE(num_rdma_ranks)                        \
+  if (cmb_wide)                                                             \
+    COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_WIDE)   \
+  else                                                                      \
+    COMBINE_FLAT_GATHER_TMA_LAUNCH(num_rdma_ranks, EP_CMB_TMA_WARPS_NARROW) \
   break
       SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_TMA_CASE);
 #undef COMBINE_FLAT_GATHER_TMA_CASE
@@ -2988,13 +2985,13 @@ void combine(cudaDataType_t type, void* combined_x, float* combined_topk_weights
     // gather branch runs.
     constexpr int kEpCombineLeanMaxChannels = 14;
     if (num_channels <= kEpCombineLeanMaxChannels) {
-#define COMBINE_FLAT_GATHER_CASE(num_rdma_ranks)                                                           \
-  {                                                                                                       \
-    auto gather_func = combine_flat_gather<nv_bfloat16, num_rdma_ranks>;                                  \
-    LAUNCH_KERNEL(&cfg, gather_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,          \
-                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks,            \
-                  recv_pool_global_ptrs, ep_combine_recv_idx);                                            \
-  }                                                                                                       \
+#define COMBINE_FLAT_GATHER_CASE(num_rdma_ranks)                                                                      \
+  {                                                                                                                   \
+    auto gather_func = combine_flat_gather<nv_bfloat16, num_rdma_ranks>;                                              \
+    LAUNCH_KERNEL(&cfg, gather_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights,                      \
+                  is_combined_token_in_rank, num_combined_tokens, hidden, num_topk, num_ranks, recv_pool_global_ptrs, \
+                  ep_combine_recv_idx);                                                                               \
+  }                                                                                                                   \
   break
       SETUP_LAUNCH_CONFIG(num_channels * 2, 1024, stream);
       SWITCH_RDMA_RANKS(COMBINE_FLAT_GATHER_CASE);

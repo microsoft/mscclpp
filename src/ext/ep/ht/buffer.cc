@@ -1,7 +1,5 @@
 #include "buffer.hpp"
 
-#include <stdexcept>
-
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDADataType.h>
 #include <cuda_runtime.h>
@@ -11,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <mscclpp/gpu_utils.hpp>
+#include <stdexcept>
 
 #include "../kernels/api.cuh"
 #include "../kernels/configs.cuh"
@@ -1190,12 +1189,12 @@ Buffer::intranode_dispatch(
     recv_channel_prefix_matrix.zero_();
     const int64_t meta_base = static_cast<int64_t>(Config::get_recv_pool_meta_base(num_ranks));
     const int64_t meta_slot_bytes = Config::kEpRecvPoolMetaBytes;
-    intranode::dispatch_allsender(send_head.data_ptr<int>(), x.data_ptr(), topk_idx_ptr, topk_weights_ptr,
-                                  x_scales_ptr, is_token_in_rank.data_ptr<bool>(),
-                                  channel_prefix_matrix.data_ptr<int>(), num_tokens, dispatch_hidden_int4, num_topk,
-                                  num_experts, num_scales, buffer_ptrs_gpu, rank, num_ranks, comm_stream,
-                                  num_channels, recv_pool_ptrs_gpu, static_cast<int64_t>(ep_intra_pool_header_bytes),
-                                  meta_base, meta_slot_bytes, ep_combine_recv_idx_gpu);
+    intranode::dispatch_allsender(send_head.data_ptr<int>(), x.data_ptr(), topk_idx_ptr, topk_weights_ptr, x_scales_ptr,
+                                  is_token_in_rank.data_ptr<bool>(), channel_prefix_matrix.data_ptr<int>(), num_tokens,
+                                  dispatch_hidden_int4, num_topk, num_experts, num_scales, buffer_ptrs_gpu, rank,
+                                  num_ranks, comm_stream, num_channels, recv_pool_ptrs_gpu,
+                                  static_cast<int64_t>(ep_intra_pool_header_bytes), meta_base, meta_slot_bytes,
+                                  ep_combine_recv_idx_gpu);
     // Unpack the per-token metadata the senders packed into our pool META region.
     intranode::intranode_meta_drain(recv_pool_local_ptr_, meta_base, num_recv_tokens, recv_src_idx.data_ptr<int>(),
                                     recv_topk_idx_ptr, recv_topk_weights_ptr, recv_x_scales_ptr, num_topk, num_scales,
@@ -1332,17 +1331,17 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       const char* e = std::getenv("MSCCLPP_EP_COMBINE_TMA");
       return e != nullptr and std::atoi(e) == 0;
     }();
-    const bool tma_inputs_ready = recv_pool_ptrs_gpu != nullptr and ep_combine_recv_idx_gpu != nullptr and
-                                  x.scalar_type() == torch::kBFloat16;
+    const bool tma_inputs_ready =
+        recv_pool_ptrs_gpu != nullptr and ep_combine_recv_idx_gpu != nullptr and x.scalar_type() == torch::kBFloat16;
     if (not ep_combine_tma_disabled and tma_inputs_ready) {
       int combine_sms = config.num_sms;
       const char* e_cnsm = std::getenv("MSCCLPP_EP_COMBINE_NSM");
       if (e_cnsm != nullptr and std::atoi(e_cnsm) >= 1) combine_sms = std::atoi(e_cnsm);
       const int64_t intra_pool_header_bytes = static_cast<int64_t>(config.get_recv_pool_header_bytes(num_ranks));
-      used_tma_combine = intranode::combine_tma(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), recv_x.data_ptr(),
-                                                recv_topk_weights_ptr, send_head.data_ptr<int>(), num_recv_tokens,
-                                                hidden, num_topk, num_ranks, recv_pool_ptrs_gpu, ep_combine_recv_idx_gpu,
-                                                intra_pool_header_bytes, combine_sms, comm_stream);
+      used_tma_combine = intranode::combine_tma(
+          at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), recv_x.data_ptr(), recv_topk_weights_ptr,
+          send_head.data_ptr<int>(), num_recv_tokens, hidden, num_topk, num_ranks, recv_pool_ptrs_gpu,
+          ep_combine_recv_idx_gpu, intra_pool_header_bytes, combine_sms, comm_stream);
     }
   }
 
@@ -1716,10 +1715,9 @@ Buffer::internode_dispatch(
     const bool ep_flat = (e_flat && std::atoi(e_flat) != 0) && (e_direct && std::atoi(e_direct) != 0);
     if (ep_flat and ep_use_direct and not cached_mode and topk_idx.has_value()) {
       const int64_t ep_meta_base = static_cast<int64_t>(Config::get_recv_pool_meta_base(num_ranks));
-      internode::flat_meta_drain(recv_pool_local_ptr_, ep_meta_base, num_recv_tokens,
-                                 recv_src_meta->data_ptr(), recv_x_scales_ptr, recv_topk_idx_ptr,
-                                 recv_topk_weights_ptr, num_scales, num_topk, num_experts, num_ranks, rank,
-                                 Config::kEpRecvPoolMetaBytes, comm_stream);
+      internode::flat_meta_drain(recv_pool_local_ptr_, ep_meta_base, num_recv_tokens, recv_src_meta->data_ptr(),
+                                 recv_x_scales_ptr, recv_topk_idx_ptr, recv_topk_weights_ptr, num_scales, num_topk,
+                                 num_experts, num_ranks, rank, Config::kEpRecvPoolMetaBytes, comm_stream);
     }
   }
 #endif
@@ -1904,17 +1902,17 @@ std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandl
       nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_mc_ptr) + nvls_ht_off_tail) : nullptr;
   void* combine_nvls_tail_dev =
       nvls_ht_enabled ? static_cast<void*>(static_cast<char*>(nvls_ht_dev_ptr) + nvls_ht_off_tail) : nullptr;
-  internode::combine(
-      at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(), combined_topk_weights_ptr,
-      is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(), topk_weights_ptr, combined_rdma_head.data_ptr<int>(),
-      combined_nvl_head.data_ptr<int>(), src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
-      rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens, num_combined_tokens,
-      hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
-      config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
-      config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, combine_grid_channels, low_latency_mode,
-      port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(), combine_nvls_head_mc,
-      combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev, peer_rdma_bases_gpu,
-      recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);
+  internode::combine(at::cuda::ScalarTypeToCudaDataType(x.scalar_type()), combined_x.data_ptr(),
+                     combined_topk_weights_ptr, is_combined_token_in_rank.data_ptr<bool>(), x.data_ptr(),
+                     topk_weights_ptr, combined_rdma_head.data_ptr<int>(), combined_nvl_head.data_ptr<int>(),
+                     src_meta.data_ptr(), rdma_channel_prefix_matrix.data_ptr<int>(),
+                     rdma_rank_prefix_sum.data_ptr<int>(), gbl_channel_prefix_matrix.data_ptr<int>(), num_tokens,
+                     num_combined_tokens, hidden, num_topk, rdma_buffer_ptr, config.num_max_rdma_chunked_send_tokens,
+                     config.num_max_rdma_chunked_recv_tokens, buffer_ptrs_gpu, config.num_max_nvl_chunked_send_tokens,
+                     config.num_max_nvl_chunked_recv_tokens, rank, num_ranks, comm_stream, combine_grid_channels,
+                     low_latency_mode, port_channel_handles_device_ptr.get(), memory_channel_handles_device_ptr.get(),
+                     combine_nvls_head_mc, combine_nvls_head_dev, combine_nvls_tail_mc, combine_nvls_tail_dev,
+                     peer_rdma_bases_gpu, recv_pool_global_ptrs_gpu, ep_combine_recv_idx_gpu);
 
   std::optional<EventHandle> event;
   if (async) {

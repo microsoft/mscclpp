@@ -358,9 +358,9 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // recv_pool_bytes_static (config.hpp): header + worst-case hidden region, padded to
     // 128; kEpFlatMetaBytes per token. The sender writes SourceMeta + scales + topk here
     // so a local consumer can produce recv_* without the forwarder/ring 2-hop.
-    constexpr int64_t kEpFlatPoolMaxTokens = 65536;     // == Config::kEpRecvPoolMaxTokens
+    constexpr int64_t kEpFlatPoolMaxTokens = 65536;       // == Config::kEpRecvPoolMaxTokens
     constexpr int64_t kEpFlatPoolMaxHiddenBytes = 16384;  // == Config::kEpRecvPoolMaxHiddenBytes
-    constexpr int64_t kEpFlatMetaBytes = 128;           // == Config::kEpRecvPoolMetaBytes
+    constexpr int64_t kEpFlatMetaBytes = 128;             // == Config::kEpRecvPoolMetaBytes
     const int64_t ep_meta_base =
         ((ep_pool_header_bytes + kEpFlatPoolMaxTokens * kEpFlatPoolMaxHiddenBytes + 127) / 128) * 128;
     if (kEpDirect and recv_pool_global_ptrs != nullptr) {
@@ -560,7 +560,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const int stage = (ep_tma_gbase + ci) % kEpTmaSndNStage;
             const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
                 ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
-            const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
+            const uint32_t smem_mbar =
+                static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
             asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
             asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
             asm volatile(
@@ -591,7 +592,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const int stage = (ep_tma_gbase + c) % kEpTmaSndNStage;
             const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
                 ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
-            const uint32_t smem_mbar = static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
+            const uint32_t smem_mbar =
+                static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
 
             // Whole warp waits on this chunk's G2S mbarrier so every S2G lane sees the tile.
             uint32_t done = 0;
@@ -607,8 +609,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             bool issued = false;
             for (int j = lane_id; j < ep_num_pools; j += 32) {
               uint8_t* dst_b = reinterpret_cast<uint8_t*>(ep_dst_pools[j]) + off;
-              asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b),
-                           "r"(smem_tile), "r"(csz)
+              asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b), "r"(smem_tile),
+                           "r"(csz)
                            : "memory");
               issued = true;
             }
@@ -645,8 +647,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         // NOTE: only active under kEpFlat; the inc5 2-hop path (kEpFlat unset) is unchanged.
         if (kEpFlat) {
           // 8 (SourceMeta) + num_scales*4 + num_topk*4 (idx) + num_topk*4 (weights) must fit.
-          EP_DEVICE_ASSERT(static_cast<int64_t>(sizeof(SourceMeta)) +
-                               static_cast<int64_t>(num_scales) * 4 +
+          EP_DEVICE_ASSERT(static_cast<int64_t>(sizeof(SourceMeta)) + static_cast<int64_t>(num_scales) * 4 +
                                static_cast<int64_t>(num_topk) * 8 <=
                            kEpFlatMetaBytes);
 #pragma unroll
@@ -669,8 +670,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               if (lane_id < num_topk) {
                 int* idst = reinterpret_cast<int*>(mbase + sizeof(SourceMeta) + num_scales * sizeof(float));
                 float* wdst = reinterpret_cast<float*>(idst + num_topk);
-                st_na_global(idst + lane_id,
-                             static_cast<int>(ld_nc_global(topk_idx + token_idx * num_topk + lane_id)));
+                st_na_global(idst + lane_id, static_cast<int>(ld_nc_global(topk_idx + token_idx * num_topk + lane_id)));
                 st_na_global(wdst + lane_id, ld_nc_global(topk_weights + token_idx * num_topk + lane_id));
               }
             }

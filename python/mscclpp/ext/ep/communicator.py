@@ -476,8 +476,24 @@ class MoECommunicator:
                 send_nvl_head,
                 event,
             ) = self._buffer.internode_dispatch(
-                input, None, topk_ids, weights, num_tokens_per_rank, num_tokens_per_rdma_rank, is_token_in_rank,
-                num_tokens_per_expert, 0, 0, None, None, None, None, self.expert_alignment, self._cfg, None, False,
+                input,
+                None,
+                topk_ids,
+                weights,
+                num_tokens_per_rank,
+                num_tokens_per_rdma_rank,
+                is_token_in_rank,
+                num_tokens_per_expert,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+                self.expert_alignment,
+                self._cfg,
+                None,
+                False,
                 False,
             )
             combine_meta = {
@@ -490,12 +506,16 @@ class MoECommunicator:
                 "send_rdma_head": send_rdma_head,
                 "send_nvl_head": send_nvl_head,
             }
-            dispatch_cache = cache if cache is not None else {
-                "num_tokens_per_rank": num_tokens_per_rank,
-                "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
-                "num_tokens_per_expert": num_tokens_per_expert,
-                "is_token_in_rank": is_token_in_rank,
-            }
+            dispatch_cache = (
+                cache
+                if cache is not None
+                else {
+                    "num_tokens_per_rank": num_tokens_per_rank,
+                    "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
+                    "num_tokens_per_expert": num_tokens_per_expert,
+                    "is_token_in_rank": is_token_in_rank,
+                }
+            )
         elif cache is not None:
             (
                 recv_x,
@@ -510,9 +530,21 @@ class MoECommunicator:
                 send_head,
                 event,
             ) = self._buffer.intranode_dispatch(
-                input, None, None, None, None, is_token_in_rank, None, cache["num_recv_tokens"],
-                cache["rank_prefix_matrix"], cache["channel_prefix_matrix"], self.expert_alignment, self._cfg, None,
-                False, False,
+                input,
+                None,
+                None,
+                None,
+                None,
+                is_token_in_rank,
+                None,
+                cache["num_recv_tokens"],
+                cache["rank_prefix_matrix"],
+                cache["channel_prefix_matrix"],
+                self.expert_alignment,
+                self._cfg,
+                None,
+                False,
+                False,
             )
             combine_meta = {
                 "recv_topk_weights": recv_topk_weights,
@@ -536,8 +568,21 @@ class MoECommunicator:
                 send_head,
                 event,
             ) = self._buffer.intranode_dispatch(
-                input, None, topk_ids, weights, num_tokens_per_rank, is_token_in_rank, num_tokens_per_expert, 0, None,
-                None, self.expert_alignment, self._cfg, None, False, False,
+                input,
+                None,
+                topk_ids,
+                weights,
+                num_tokens_per_rank,
+                is_token_in_rank,
+                num_tokens_per_expert,
+                0,
+                None,
+                None,
+                self.expert_alignment,
+                self._cfg,
+                None,
+                False,
+                False,
             )
             combine_meta = {
                 "recv_topk_weights": recv_topk_weights,
@@ -629,14 +674,32 @@ class MoECommunicator:
         m = handle.combine_meta
         if handle.is_internode:
             combined_x, _combined_w, _event = self._buffer.internode_combine(
-                expert_output, m["recv_topk_weights"], m["src_meta"], m["is_token_in_rank"],
-                m["recv_rdma_channel_prefix_matrix"], m["recv_rdma_rank_prefix_sum"], m["recv_gbl_channel_prefix_matrix"],
-                m["send_rdma_head"], m["send_nvl_head"], self._cfg, None, False, False,
+                expert_output,
+                m["recv_topk_weights"],
+                m["src_meta"],
+                m["is_token_in_rank"],
+                m["recv_rdma_channel_prefix_matrix"],
+                m["recv_rdma_rank_prefix_sum"],
+                m["recv_gbl_channel_prefix_matrix"],
+                m["send_rdma_head"],
+                m["send_nvl_head"],
+                self._cfg,
+                None,
+                False,
+                False,
             )
         else:
             combined_x, _combined_w, _event = self._buffer.intranode_combine(
-                expert_output, m["recv_topk_weights"], m["src_idx"], m["rank_prefix_matrix"],
-                m["recv_channel_prefix_matrix"], m["send_head"], self._cfg, None, False, False,
+                expert_output,
+                m["recv_topk_weights"],
+                m["src_idx"],
+                m["rank_prefix_matrix"],
+                m["recv_channel_prefix_matrix"],
+                m["send_head"],
+                self._cfg,
+                None,
+                False,
+                False,
             )
         if out is not None:
             out.copy_(combined_x)
