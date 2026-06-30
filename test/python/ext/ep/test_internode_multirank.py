@@ -366,64 +366,59 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    def _dispatch():
-        return buf.internode_dispatch(
-            x_b,
-            None,
-            topk_idx_b,
-            topk_weights_b,
-            num_tokens_per_rank_b,
-            num_tokens_per_rdma_rank_b,
-            is_token_in_rank_b,
-            num_tokens_per_expert_b,
-            0,
-            0,
-            None,
-            None,
-            None,
-            None,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+    # Drive the benchmark through the high-level MoECommunicator (the public
+    # #818 API), mode=HIGH_THROUGHPUT. With world_size > NUM_MAX_NVL_PEERS the
+    # RDMA size hint is non-zero, so the communicator auto-selects the internode
+    # transport (internode_dispatch / internode_combine) internally. It owns its
+    # own ExpertParallelRuntime sized for the bench shape and runs
+    # get_dispatch_layout internally on the first (uncached) dispatch, recording
+    # the routing layout on the returned handle; subsequent dispatches reuse it
+    # via previous_handle, skipping the host-side layout computation. This
+    # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
+    moe = ep.MoECommunicator(
+        group=group,
+        num_experts=bench_num_experts,
+        hidden_size=bench_hidden,
+        topk=bench_num_topk,
+        max_tokens_per_rank=bench_tokens,
+        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        num_sms=int(os.environ.get("MSCCLPP_EP_NSM", "152")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+        rdma_chunked_send=int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
+        rdma_chunked_recv=int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
+    )
+    assert moe.is_available() and moe.is_internode_available()
+    assert moe.is_internode(), "expected the communicator to select the internode HT transport"
+
+    # One uncached dispatch to build the cached routing layout on the handle.
+    _handle0 = moe.dispatch(x_b, topk_idx_b, topk_weights_b)[1]
+
+    def _dispatch_cached():
+        return moe.dispatch(x_b, topk_idx_b, topk_weights_b, previous_handle=_handle0)
 
     def _combine(dout):
-        rx, _rxs, _rti, rtw, _lst, _rpm, _gpm, rrcpm, rrps, rgpm, _rgps, rsm, sh_rdma, sh_nvl, _ev = dout
-        buf.internode_combine(
-            rx,
-            rtw,
-            rsm,
-            is_token_in_rank_b,
-            rrcpm,
-            rrps,
-            rgpm,
-            sh_rdma,
-            sh_nvl,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        dispatch_out_, handle_ = dout
+        moe.combine(dispatch_out_.tokens, handle_)
 
     # Warmup (full round-trip with the sync/barrier guard between phases,
-    # matching the correctness-path invariant).
+    # matching the correctness-path invariant: internode combine must observe
+    # the completed dispatch outputs before it launches).
     for _ in range(warmup):
-        dout = _dispatch()
+        dout = _dispatch_cached()
         torch.cuda.synchronize()
         dist.barrier(group=group)
         _combine(dout)
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
-    # Time dispatch alone.
+    # Time dispatch alone (cached mode -- skips the host-side layout computation).
     start_ev = torch.cuda.Event(enable_timing=True)
     end_ev = torch.cuda.Event(enable_timing=True)
     start_ev.record()
     dout = None
     for _ in range(iters):
-        dout = _dispatch()
+        dout = _dispatch_cached()
     end_ev.record()
     torch.cuda.synchronize()
     disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
