@@ -188,11 +188,10 @@ void AllreduceNvlsBlockPipeline::initialize(std::shared_ptr<Communicator> comm) 
   this->nvlsConnections_ = setupNvlsConnections(comm, nvlsBufferSize_, nSwitchChannels_);
 }
 
-CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(const std::shared_ptr<void> ctx_void, const void* input,
-                                                           void* output, size_t inputSize, DataType dtype, ReduceOp op,
-                                                           cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
-                                                           const std::unordered_map<std::string, uintptr_t>& extras,
-                                                           DataType accumDtype) {
+CommResult AllreduceNvlsBlockPipeline::allreduceKernelFunc(
+    const std::shared_ptr<void> ctx_void, const void* input, void* output, size_t inputSize, DataType dtype,
+    ReduceOp op, cudaStream_t stream, int nBlocks, int nThreadsPerBlock,
+    [[maybe_unused]] const std::unordered_map<std::string, uintptr_t>& extras, DataType accumDtype) {
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
   if (isNativeFp8DataType(dtype) && !fp8NvlsSupported_) {
     WARN("FP8 NVLS allreduce requires device support for FP8 multimem reduction.");

@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include "collective_utils.hpp"
-
 #include <algorithm>
 #include <mscclpp/algorithm.hpp>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
 #include <mscclpp/memory_channel.hpp>
 #include <mscclpp/switch_channel.hpp>
+
+#include "collective_utils.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -37,8 +37,8 @@ bool detectFp8NvlsSupport() {
     return false;
   }
 
-  MSCCLPP_CUDATHROW(cudaMemcpyAsync(&supportedHost, supportedDevice.get(), sizeof(supportedHost),
-                                    cudaMemcpyDeviceToHost, stream));
+  MSCCLPP_CUDATHROW(
+      cudaMemcpyAsync(&supportedHost, supportedDevice.get(), sizeof(supportedHost), cudaMemcpyDeviceToHost, stream));
   err = cudaStreamSynchronize(stream);
   if (err != cudaSuccess) {
     (void)cudaGetLastError();
@@ -51,9 +51,8 @@ bool detectFp8NvlsSupport() {
 }  // namespace
 
 bool isFp8DataType(DataType dtype) {
-  return dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ ||
-         dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E5M2FNUZ ||
-         dtype == DataType::FLOAT8_E4M3B15;
+  return dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ || dtype == DataType::FLOAT8_E5M2 ||
+         dtype == DataType::FLOAT8_E5M2FNUZ || dtype == DataType::FLOAT8_E4M3B15;
 }
 
 bool isNativeFp8DataType(DataType dtype) {

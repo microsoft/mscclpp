@@ -88,9 +88,9 @@ struct NvlsAdapter {
 #endif
     {
       using ChannelType = DeviceHandle<mscclpp::BaseMemoryChannel>;
-      allreduceNvls<T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
-          (ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels, channelInOffset, channelOutOffset, inputSize,
-          rank, nRanksPerNode);
+      allreduceNvls<T, AccumT>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
+                                                     channelInOffset, channelOutOffset, inputSize, rank, nRanksPerNode);
       return cudaGetLastError();
     }
   }
