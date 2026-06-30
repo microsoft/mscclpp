@@ -191,7 +191,7 @@ def main():
     #  cached_num_recv_tokens=0, cached_num_rdma_recv_tokens=0,
     #  cached_rdma_channel_prefix_matrix=None, cached_recv_rdma_rank_prefix_sum=None,
     #  cached_gbl_channel_prefix_matrix=None, cached_recv_gbl_rank_prefix_sum=None,
-    #  expert_alignment, config, previous_event, async, allocate_on_comm_stream)
+    #  expert_alignment, config)
     (
         recv_x,
         recv_x_scales,
@@ -207,7 +207,6 @@ def main():
         recv_src_meta,
         send_rdma_head,
         send_nvl_head,
-        _event,
     ) = buf.internode_dispatch(
         x,
         None,
@@ -225,9 +224,6 @@ def main():
         None,
         1,
         cfg,
-        None,
-        False,
-        False,
     )
     dist.barrier(group=group)
 
@@ -261,12 +257,12 @@ def main():
     # (x, topk_weights,
     #  src_meta, is_combined_token_in_rank,
     #  rdma_channel_prefix_matrix, rdma_rank_prefix_sum, gbl_channel_prefix_matrix,
-    #  combined_rdma_head, combined_nvl_head, config, previous_event, async, allocate_on_comm_stream)
+    #  combined_rdma_head, combined_nvl_head, config)
     # NOTE: combine goes in the reverse direction of dispatch, so the prefix
     # matrices passed here must be the RECEIVER-side ones returned by dispatch
     # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
     # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    combined_x, combined_topk_weights, _ = buf.internode_combine(
+    combined_x, combined_topk_weights = buf.internode_combine(
         recv_x,
         recv_topk_weights,
         recv_src_meta,
@@ -277,9 +273,6 @@ def main():
         send_rdma_head,
         send_nvl_head,
         cfg,
-        None,
-        False,
-        False,
     )
 
     num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)

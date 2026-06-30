@@ -1311,6 +1311,18 @@ void* MoEHighThroughputRuntime::resolveInternodeRecvXBuffer(int numRecvTokens, i
 #endif
 }
 
+int MoEHighThroughputRuntime::getInternodeDispatchNumChannels(const Config& config) const {
+#ifdef EP_DISPATCH_NCCLEP
+  return ep_flat_dispatch_channels(config.num_sms);
+#else
+  return config.num_sms / 2;
+#endif
+}
+
+int MoEHighThroughputRuntime::getSourceMetaBytes() const { return internode::get_source_meta_bytes(); }
+
+int MoEHighThroughputRuntime::getNumMaxNvlPeers() const { return NUM_MAX_NVL_PEERS; }
+
 int MoEHighThroughputRuntime::internodeNotifyDispatch(
     int* rdmaChannelPrefixMatrix, int* recvRdmaRankPrefixSum, int* gblChannelPrefixMatrix, int* recvGblRankPrefixSum,
     int* numRecvTokensPerExpert, int* numRdmaRecvTokens, const int* numTokensPerRank, const int* numTokensPerRdmaRank,

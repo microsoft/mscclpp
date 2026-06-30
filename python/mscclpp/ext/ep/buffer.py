@@ -382,15 +382,237 @@ class ExpertParallelRuntime:
     # Internode dispatch (two-phase) + combine
     # ------------------------------------------------------------------
 
-    def internode_dispatch(self, *args, **kwargs):
-        raise NotImplementedError(
-            "ExpertParallelRuntime internode dispatch is not yet ported to the torch-free pointer API."
+    def internode_dispatch(
+        self,
+        x: torch.Tensor,
+        x_scales: Optional[torch.Tensor],
+        topk_idx: Optional[torch.Tensor],
+        topk_weights: Optional[torch.Tensor],
+        num_tokens_per_rank: Optional[torch.Tensor],
+        num_tokens_per_rdma_rank: Optional[torch.Tensor],
+        is_token_in_rank: torch.Tensor,
+        num_tokens_per_expert: Optional[torch.Tensor],
+        cached_num_recv_tokens: int,
+        cached_num_rdma_recv_tokens: int,
+        cached_rdma_channel_prefix_matrix: Optional[torch.Tensor],
+        cached_recv_rdma_rank_prefix_sum: Optional[torch.Tensor],
+        cached_gbl_channel_prefix_matrix: Optional[torch.Tensor],
+        cached_recv_gbl_rank_prefix_sum: Optional[torch.Tensor],
+        expert_alignment: int,
+        config,
+    ):
+        """High-throughput internode (NVLink + RDMA) dispatch.
+
+        Returns ``(recv_x, recv_x_scales, recv_topk_idx, recv_topk_weights,
+        num_recv_tokens_per_expert_list, rdma_channel_prefix_matrix,
+        gbl_channel_prefix_matrix, recv_rdma_channel_prefix_matrix,
+        recv_rdma_rank_prefix_sum, recv_gbl_channel_prefix_matrix,
+        recv_gbl_rank_prefix_sum, recv_src_meta, send_rdma_head, send_nvl_head)``
+        to mirror the previous DeepEP-style surface."""
+        assert x.dim() == 2 and x.is_contiguous()
+        cached_mode = cached_rdma_channel_prefix_matrix is not None
+        num_tokens, hidden = int(x.size(0)), int(x.size(1))
+        x_element_size = x.element_size()
+        num_rdma_ranks = self.runtime.get_num_rdma_ranks()
+        num_channels = self.runtime.get_internode_dispatch_num_channels(config)
+
+        num_topk = int(topk_idx.size(1)) if topk_idx is not None else 0
+        num_scales = 0
+        if x_scales is not None:
+            num_scales = 1 if x_scales.dim() == 1 else int(x_scales.size(1))
+
+        # ----- Phase A: notify (non-cached) or reuse cached layout -----
+        if cached_mode:
+            num_recv_tokens = cached_num_recv_tokens
+            num_rdma_recv_tokens = cached_num_rdma_recv_tokens
+            rdma_channel_prefix_matrix = cached_rdma_channel_prefix_matrix
+            recv_rdma_rank_prefix_sum = cached_recv_rdma_rank_prefix_sum
+            gbl_channel_prefix_matrix = cached_gbl_channel_prefix_matrix
+            recv_gbl_rank_prefix_sum = cached_recv_gbl_rank_prefix_sum
+            num_recv_tokens_per_expert_list: List[int] = []
+            num_experts = 0
+        else:
+            assert (
+                num_tokens_per_rank is not None
+                and num_tokens_per_rdma_rank is not None
+                and num_tokens_per_expert is not None
+            )
+            num_experts = int(num_tokens_per_expert.size(0))
+            num_local_experts = num_experts // self.group_size
+            rdma_channel_prefix_matrix = torch.empty((num_rdma_ranks, num_channels), dtype=torch.int32, device="cuda")
+            recv_rdma_rank_prefix_sum = torch.empty((num_rdma_ranks,), dtype=torch.int32, device="cuda")
+            gbl_channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
+            recv_gbl_rank_prefix_sum = torch.empty((self.group_size,), dtype=torch.int32, device="cuda")
+            # num_recv_tokens_per_expert and num_rdma_recv_tokens are written on the host.
+            num_recv_per_expert_host = torch.empty((num_local_experts,), dtype=torch.int32, device="cpu")
+            num_rdma_recv_host = torch.empty((1,), dtype=torch.int32, device="cpu")
+            num_recv_tokens = self.runtime.internode_notify_dispatch(
+                _ptr(rdma_channel_prefix_matrix),
+                _ptr(recv_rdma_rank_prefix_sum),
+                _ptr(gbl_channel_prefix_matrix),
+                _ptr(recv_gbl_rank_prefix_sum),
+                _ptr(num_recv_per_expert_host),
+                _ptr(num_rdma_recv_host),
+                _ptr(num_tokens_per_rank),
+                _ptr(num_tokens_per_rdma_rank),
+                _ptr(num_tokens_per_expert),
+                _ptr(is_token_in_rank),
+                num_tokens,
+                num_experts,
+                hidden,
+                num_scales,
+                num_topk,
+                x_element_size,
+                expert_alignment,
+                config,
+                _stream_ptr(),
+            )
+            num_rdma_recv_tokens = int(num_rdma_recv_host[0].item())
+            num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
+
+        # ----- Phase B: allocate recv outputs (or view the recv pool) -----
+        recv_x = self._alloc_internode_recv_x(num_recv_tokens, hidden, x_element_size, config, cached_mode)
+        recv_topk_idx = (
+            torch.empty((num_recv_tokens, num_topk), dtype=torch.int64, device="cuda") if topk_idx is not None else None
+        )
+        recv_topk_weights = (
+            torch.empty((num_recv_tokens, num_topk), dtype=torch.float32, device="cuda")
+            if topk_weights is not None
+            else None
+        )
+        recv_x_scales = (
+            torch.empty((num_recv_tokens, num_scales), dtype=torch.float32, device="cuda")
+            if x_scales is not None
+            else None
+        )
+        # The receiver-side metadata / head buffers are only produced (and only
+        # needed by combine) on the non-cached forward path.
+        if cached_mode:
+            recv_src_meta = None
+            recv_rdma_channel_prefix_matrix = None
+            recv_gbl_channel_prefix_matrix = None
+            send_rdma_head = None
+            send_nvl_head = None
+        else:
+            meta_bytes = self.runtime.get_source_meta_bytes()
+            num_max_nvl_peers = self.runtime.get_num_max_nvl_peers()
+            recv_src_meta = torch.empty((num_recv_tokens, meta_bytes), dtype=torch.uint8, device="cuda")
+            recv_rdma_channel_prefix_matrix = torch.empty(
+                (num_rdma_ranks, num_channels), dtype=torch.int32, device="cuda"
+            )
+            recv_gbl_channel_prefix_matrix = torch.empty(
+                (self.group_size, num_channels), dtype=torch.int32, device="cuda"
+            )
+            send_rdma_head = torch.empty((num_tokens, num_rdma_ranks), dtype=torch.int32, device="cuda")
+            send_nvl_head = torch.empty((num_rdma_recv_tokens, num_max_nvl_peers), dtype=torch.int32, device="cuda")
+
+        self.runtime.internode_dispatch(
+            _ptr(recv_x),
+            _ptr(recv_x_scales),
+            _ptr(recv_topk_idx),
+            _ptr(recv_topk_weights),
+            _ptr(recv_src_meta),
+            _ptr(recv_rdma_channel_prefix_matrix),
+            _ptr(recv_gbl_channel_prefix_matrix),
+            _ptr(send_rdma_head),
+            _ptr(send_nvl_head),
+            _ptr(x),
+            _ptr(x_scales),
+            _ptr(topk_idx),
+            _ptr(topk_weights),
+            _ptr(is_token_in_rank),
+            _ptr(rdma_channel_prefix_matrix),
+            _ptr(recv_rdma_rank_prefix_sum),
+            _ptr(gbl_channel_prefix_matrix),
+            _ptr(recv_gbl_rank_prefix_sum),
+            num_tokens,
+            hidden,
+            num_topk,
+            num_scales,
+            num_experts,
+            x_element_size,
+            num_recv_tokens,
+            num_rdma_recv_tokens,
+            cached_mode,
+            config,
+            _stream_ptr(),
+        )
+        return (
+            recv_x,
+            recv_x_scales,
+            recv_topk_idx,
+            recv_topk_weights,
+            num_recv_tokens_per_expert_list,
+            rdma_channel_prefix_matrix,
+            gbl_channel_prefix_matrix,
+            recv_rdma_channel_prefix_matrix,
+            recv_rdma_rank_prefix_sum,
+            recv_gbl_channel_prefix_matrix,
+            recv_gbl_rank_prefix_sum,
+            recv_src_meta,
+            send_rdma_head,
+            send_nvl_head,
         )
 
-    def internode_combine(self, *args, **kwargs):
-        raise NotImplementedError(
-            "ExpertParallelRuntime internode combine is not yet ported to the torch-free pointer API."
+    def _alloc_internode_recv_x(
+        self, num_recv_tokens: int, hidden: int, x_element_size: int, config, cached_mode: bool
+    ) -> torch.Tensor:
+        """Allocate ``recv_x`` or, on the non-cached direct path, view this rank's
+        recv pool (so the cross-GPU forwarder writes hidden into the pool and the
+        direct-gather combine reads it back). The pool view is non-cached only,
+        matching the ``ep_use_direct`` gate in the C++ runtime."""
+        if not cached_mode:
+            pool_ptr = self.runtime.resolve_internode_recv_x_buffer(num_recv_tokens, hidden, x_element_size, config)
+            if pool_ptr != 0:
+                return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
+        return torch.empty((num_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+
+    def internode_combine(
+        self,
+        x: torch.Tensor,
+        topk_weights: Optional[torch.Tensor],
+        src_meta: torch.Tensor,
+        is_combined_token_in_rank: torch.Tensor,
+        rdma_channel_prefix_matrix: torch.Tensor,
+        rdma_rank_prefix_sum: torch.Tensor,
+        gbl_channel_prefix_matrix: torch.Tensor,
+        combined_rdma_head: torch.Tensor,
+        combined_nvl_head: torch.Tensor,
+        config,
+    ):
+        """Returns ``(combined_x, combined_topk_weights|None)``."""
+        assert x.dim() == 2 and x.is_contiguous()
+        num_tokens, hidden = int(x.size(0)), int(x.size(1))
+        num_combined_tokens = int(is_combined_token_in_rank.size(0))
+        num_topk = int(topk_weights.size(1)) if topk_weights is not None else 0
+
+        combined_x = torch.empty((num_combined_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        combined_topk_weights = (
+            torch.empty((num_combined_tokens, num_topk), dtype=torch.float32, device="cuda")
+            if topk_weights is not None
+            else None
         )
+        self.runtime.internode_combine(
+            _ptr(combined_x),
+            _ptr(combined_topk_weights),
+            _ptr(x),
+            _ptr(topk_weights),
+            _ptr(src_meta),
+            _ptr(is_combined_token_in_rank),
+            _ptr(rdma_channel_prefix_matrix),
+            _ptr(rdma_rank_prefix_sum),
+            _ptr(gbl_channel_prefix_matrix),
+            _ptr(combined_rdma_head),
+            _ptr(combined_nvl_head),
+            num_tokens,
+            num_combined_tokens,
+            hidden,
+            num_topk,
+            x.element_size(),
+            config,
+            _stream_ptr(),
+        )
+        return combined_x, combined_topk_weights
 
     # ------------------------------------------------------------------
     # Static helpers

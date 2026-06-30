@@ -290,6 +290,22 @@ struct MoEHighThroughputRuntime {
   // term, since the helper is only consulted on the non-cached forward path).
   void* resolveInternodeRecvXBuffer(int numRecvTokens, int hidden, int xElementSize, const Config& config) const;
 
+  // Number of channels the non-cached internode dispatch resolves for this
+  // config (mirrors `internodeDispatch`'s `ep_flat_dispatch_channels(num_sms)`
+  // under EP_DISPATCH_NCCLEP, else `num_sms/2`). The caller uses it to size the
+  // rdma/gbl channel-prefix matrices ([numRdmaRanks|numRanks * numChannels]).
+  int getInternodeDispatchNumChannels(const Config& config) const;
+
+  // Per-token source-meta row width in bytes (recvSrcMeta is
+  // [numRecvTokens * getSourceMetaBytes()]). Exposes
+  // `internode::get_source_meta_bytes()` so the caller can size recvSrcMeta.
+  int getSourceMetaBytes() const;
+
+  // Compile-time NUM_MAX_NVL_PEERS (4 on GB200, 8 on HGX). The caller uses it to
+  // size sendNvlHead ([numRdmaRecvTokens * NUM_MAX_NVL_PEERS]) and to validate
+  // combinedNvlHead's second dimension.
+  int getNumMaxNvlPeers() const;
+
   // Phase A (non-cached): send sizes / notify. Writes rankPrefixMatrix
   // [numRanks*numRanks], channelPrefixMatrix [numRanks*numChannels] and the host
   // array numRecvTokensPerExpert [numLocalExperts]; returns numRecvTokens.

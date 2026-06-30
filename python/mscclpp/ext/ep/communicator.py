@@ -473,7 +473,6 @@ class MoECommunicator:
                 recv_src_meta,
                 send_rdma_head,
                 send_nvl_head,
-                event,
             ) = self._buffer.internode_dispatch(
                 input,
                 None,
@@ -491,9 +490,6 @@ class MoECommunicator:
                 None,
                 self.expert_alignment,
                 self._cfg,
-                None,
-                False,
-                False,
             )
             combine_meta = {
                 "recv_topk_weights": recv_topk_weights,
@@ -666,7 +662,7 @@ class MoECommunicator:
         self._validate_combine_inputs_ht(expert_output, handle)
         m = handle.combine_meta
         if handle.is_internode:
-            combined_x, _combined_w, _event = self._buffer.internode_combine(
+            combined_x, _combined_w = self._buffer.internode_combine(
                 expert_output,
                 m["recv_topk_weights"],
                 m["src_meta"],
@@ -677,9 +673,6 @@ class MoECommunicator:
                 m["send_rdma_head"],
                 m["send_nvl_head"],
                 self._cfg,
-                None,
-                False,
-                False,
             )
         else:
             combined_x, _combined_w = self._buffer.intranode_combine(

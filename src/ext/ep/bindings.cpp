@@ -209,6 +209,14 @@ NB_MODULE(mscclpp_ep_cpp, m) {
              return reinterpret_cast<uintptr_t>(
                  self.resolveInternodeRecvXBuffer(num_recv_tokens, hidden, x_element_size, config));
            })
+      .def("get_internode_dispatch_num_channels",
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self, const mscclpp::ep::Config& config) {
+             return self.getInternodeDispatchNumChannels(config);
+           })
+      .def("get_source_meta_bytes",
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self) { return self.getSourceMetaBytes(); })
+      .def("get_num_max_nvl_peers",
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self) { return self.getNumMaxNvlPeers(); })
       .def(
           "intranode_notify_dispatch",
           [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t rank_prefix_matrix_ptr,
