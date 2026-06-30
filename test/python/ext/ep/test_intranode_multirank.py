@@ -130,7 +130,7 @@ def main():
     assert buf.is_available()
 
     # get_dispatch_layout sanity
-    ref_rank, _, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(topk_idx, num_experts, None, False, False)
+    ref_rank, _, ref_exp, ref_in_rank = buf.get_dispatch_layout(topk_idx, num_experts)
     assert torch.allclose(ref_rank, num_tokens_per_rank)
     assert torch.allclose(ref_exp, num_tokens_per_expert)
     assert torch.allclose(ref_in_rank, is_token_in_rank)
@@ -149,7 +149,6 @@ def main():
         recv_channel_prefix_matrix,
         recv_src_idx,
         send_head,
-        _event,
     ) = buf.intranode_dispatch(
         x,
         None,
@@ -163,9 +162,6 @@ def main():
         None,
         1,
         cfg,
-        None,
-        False,
-        False,
     )
     dist.barrier(group=group)
 
@@ -191,7 +187,7 @@ def main():
     handle_rank_prefix_matrix = rank_prefix_matrix
     handle_channel_prefix_matrix = recv_channel_prefix_matrix
 
-    combined_x, combined_topk_weights, _ = buf.intranode_combine(
+    combined_x, combined_topk_weights = buf.intranode_combine(
         recv_x,
         recv_topk_weights,
         handle_recv_src_idx,
@@ -199,9 +195,6 @@ def main():
         handle_channel_prefix_matrix,
         send_head,
         cfg,
-        None,
-        False,
-        False,
     )
 
     # Expected: we dispatched with x = rank * ones, so every destination r

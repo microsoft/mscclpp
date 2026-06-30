@@ -455,8 +455,7 @@ class MoECommunicator:
                 num_tokens_per_rdma_rank,
                 num_tokens_per_expert,
                 is_token_in_rank,
-                _layout_event,
-            ) = self._buffer.get_dispatch_layout(topk_ids, self.num_experts, None, False, False)
+            ) = self._buffer.get_dispatch_layout(topk_ids, self.num_experts)
 
         if self._is_internode:
             (
@@ -528,7 +527,6 @@ class MoECommunicator:
                 recv_channel_prefix_matrix,
                 recv_src_idx,
                 send_head,
-                event,
             ) = self._buffer.intranode_dispatch(
                 input,
                 None,
@@ -542,9 +540,6 @@ class MoECommunicator:
                 cache["channel_prefix_matrix"],
                 self.expert_alignment,
                 self._cfg,
-                None,
-                False,
-                False,
             )
             combine_meta = {
                 "recv_topk_weights": recv_topk_weights,
@@ -566,7 +561,6 @@ class MoECommunicator:
                 recv_channel_prefix_matrix,
                 recv_src_idx,
                 send_head,
-                event,
             ) = self._buffer.intranode_dispatch(
                 input,
                 None,
@@ -580,9 +574,6 @@ class MoECommunicator:
                 None,
                 self.expert_alignment,
                 self._cfg,
-                None,
-                False,
-                False,
             )
             combine_meta = {
                 "recv_topk_weights": recv_topk_weights,
@@ -621,7 +612,9 @@ class MoECommunicator:
             is_internode=self._is_internode,
             combine_meta=combine_meta,
         )
-        handle._event = event  # type: ignore[attr-defined]
+        # The torch-free HT runtime orders its work on the caller's CUDA stream
+        # (no separate event handle), so there is nothing to attach here.
+        handle._event = None  # type: ignore[attr-defined]
         handle._dispatch_cache = dispatch_cache  # type: ignore[attr-defined]
         return dispatch_out, handle
 
@@ -689,7 +682,7 @@ class MoECommunicator:
                 False,
             )
         else:
-            combined_x, _combined_w, _event = self._buffer.intranode_combine(
+            combined_x, _combined_w = self._buffer.intranode_combine(
                 expert_output,
                 m["recv_topk_weights"],
                 m["src_idx"],
@@ -697,9 +690,6 @@ class MoECommunicator:
                 m["recv_channel_prefix_matrix"],
                 m["send_head"],
                 self._cfg,
-                None,
-                False,
-                False,
             )
         if out is not None:
             out.copy_(combined_x)

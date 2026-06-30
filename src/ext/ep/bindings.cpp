@@ -6,13 +6,14 @@
 //
 // nanobind module definition for the MSCCL++ EP extension.
 //
-// Two backends are exposed in one module:
-//   - MoERuntime: low-latency (LL) path. Pointer-based API (uintptr_t), no
-//     torch at the boundary.
-//   - Buffer: high-throughput (HT) DeepEP-style path. Carries `torch::Tensor`;
-//     tensors cross the Python boundary as DLPack capsules (ATen toDLPack /
-//     fromDLPack), so this module links libtorch (ATen) but never libtorch_python
-//     (which would pull pybind11 into the nanobind TU).
+// Two backends are exposed in one module, both with a torch-free, raw-pointer
+// (uintptr_t) boundary so the module never links libtorch:
+//   - MoERuntime: low-latency (LL) path.
+//   - MoEHighThroughputRuntime (exposed as `ExpertParallelRuntime`): the
+//     high-throughput (HT) DeepEP-style path. Dynamic recv sizing uses an
+//     explicit two-phase API (intranode_notify_dispatch -> caller allocates ->
+//     intranode_dispatch); the caller passes device pointers (`tensor.data_ptr()`)
+//     and sizes, exactly like the LL runtime.
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/optional.h>
@@ -27,14 +28,10 @@
 #include <vector>
 
 #include "config.hpp"
+#include "ht/config.hpp"
+#include "ht_runtime.hpp"
 #include "kernels/api.cuh"
 #include "moe_runtime.hpp"
-
-// HT backend (DeepEP-style Buffer). ATen-level torch headers only (no pybind11).
-#include <ATen/DLConvertor.h>
-
-#include "ht/buffer.hpp"
-#include "ht/config.hpp"
 
 namespace nb = nanobind;
 
@@ -45,70 +42,6 @@ nb::bytes stringToBytes(const std::string& data) { return nb::bytes(data.data(),
 void* ptr(uintptr_t address) { return reinterpret_cast<void*>(address); }
 
 cudaStream_t stream(uintptr_t address) { return reinterpret_cast<cudaStream_t>(address); }
-
-// ----------------------------------------------------------------------------
-// DLPack bridge: torch::Tensor <-> Python, via DLPack capsules.
-//
-// Python wraps the HT Buffer (buffer.py): it passes inputs as
-// `torch.utils.dlpack.to_dlpack(t)` capsules and rebuilds outputs with
-// `torch.from_dlpack(capsule)`. The capsule ownership follows the standard
-// DLPack protocol (capsule named "dltensor"; the consumer renames it to
-// "used_dltensor" once it takes ownership).
-// ----------------------------------------------------------------------------
-
-void dlpackCapsuleDestructor(PyObject* capsule) {
-  // Only free if the receiver never consumed it (torch renames to
-  // "used_dltensor" when it takes ownership of the managed tensor).
-  if (PyCapsule_IsValid(capsule, "used_dltensor")) return;
-  auto* mt = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(capsule, "dltensor"));
-  if (mt != nullptr && mt->deleter != nullptr) {
-    mt->deleter(mt);
-  } else {
-    PyErr_Clear();
-  }
-}
-
-// torch::Tensor -> owning Python DLPack capsule named "dltensor".
-nb::object tensorToCapsule(const torch::Tensor& t) {
-  DLManagedTensor* mt = at::toDLPack(t);
-  PyObject* cap = PyCapsule_New(mt, "dltensor", dlpackCapsuleDestructor);
-  if (cap == nullptr) {
-    if (mt->deleter != nullptr) mt->deleter(mt);
-    throw std::runtime_error("mscclpp_ep: failed to create DLPack capsule");
-  }
-  return nb::steal(cap);
-}
-
-nb::object optTensorToCapsule(const std::optional<torch::Tensor>& t) {
-  if (!t.has_value()) return nb::none();
-  return tensorToCapsule(*t);
-}
-
-// Python DLPack capsule -> torch::Tensor (consumes the capsule).
-torch::Tensor capsuleToTensor(nb::handle obj) {
-  PyObject* cap = obj.ptr();
-  if (!PyCapsule_IsValid(cap, "dltensor")) {
-    throw std::runtime_error("mscclpp_ep: expected a DLPack capsule named 'dltensor'");
-  }
-  auto* mt = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(cap, "dltensor"));
-  PyCapsule_SetName(cap, "used_dltensor");
-  return at::fromDLPack(mt);
-}
-
-std::optional<torch::Tensor> objToOptTensor(nb::handle obj) {
-  if (obj.is_none()) return std::nullopt;
-  return capsuleToTensor(obj);
-}
-
-nb::object eventToObj(std::optional<mscclpp::ep::EventHandle>& ev) {
-  if (!ev.has_value()) return nb::none();
-  return nb::cast(*ev);
-}
-
-std::optional<mscclpp::ep::EventHandle> objToOptEvent(nb::handle o) {
-  if (o.is_none()) return std::nullopt;
-  return nb::cast<mscclpp::ep::EventHandle>(o);
-}
 
 // Python bytes / bytearray -> std::string (raw bytes).
 std::string bytesToString(nb::handle h) {
@@ -188,8 +121,9 @@ NB_MODULE(mscclpp_ep_cpp, m) {
           nb::arg("num_experts"), nb::arg("requires_dequantization"), nb::arg("stream_ptr"));
 
   // ==========================================================================
-  // High-throughput (HT) DeepEP-style backend: Config, EventHandle, Buffer.
-  // Tensors cross the boundary as DLPack capsules (see helpers above).
+  // High-throughput (HT) DeepEP-style backend: Config + MoEHighThroughputRuntime.
+  // Torch-free, raw-pointer boundary (uintptr_t == device pointer). Dynamic recv
+  // sizing uses the two-phase notify -> (caller allocates) -> dispatch API.
   // ==========================================================================
 
   nb::class_<mscclpp::ep::Config>(m, "Config")
@@ -199,40 +133,36 @@ NB_MODULE(mscclpp_ep_cpp, m) {
       .def("get_nvl_buffer_size_hint", &mscclpp::ep::Config::get_nvl_buffer_size_hint)
       .def("get_rdma_buffer_size_hint", &mscclpp::ep::Config::get_rdma_buffer_size_hint);
 
-  nb::class_<mscclpp::ep::EventHandle>(m, "EventHandle")
-      .def(nb::init<>())
-      .def("current_stream_wait", &mscclpp::ep::EventHandle::current_stream_wait);
-
-  nb::class_<mscclpp::ep::Buffer>(m, "ExpertParallelRuntime")
-      .def(nb::init<int, int, int64_t, int64_t, bool>(), nb::arg("rank").none(), nb::arg("num_ranks").none(),
-           nb::arg("num_nvl_bytes").none(), nb::arg("num_rdma_bytes").none(), nb::arg("low_latency_mode").none())
-      .def("is_available", &mscclpp::ep::Buffer::is_available)
-      .def("is_internode_available", &mscclpp::ep::Buffer::is_internode_available)
-      .def("get_num_rdma_ranks", &mscclpp::ep::Buffer::get_num_rdma_ranks)
-      .def("get_rdma_rank", &mscclpp::ep::Buffer::get_rdma_rank)
-      .def("get_root_rdma_rank", &mscclpp::ep::Buffer::get_root_rdma_rank)
-      .def("get_local_device_id", &mscclpp::ep::Buffer::get_local_device_id)
+  nb::class_<mscclpp::ep::MoEHighThroughputRuntime>(m, "ExpertParallelRuntime")
+      .def(nb::init<int, int, int64_t, int64_t>(), nb::arg("rank"), nb::arg("num_ranks"), nb::arg("num_nvl_bytes"),
+           nb::arg("num_rdma_bytes"))
+      .def("is_available", &mscclpp::ep::MoEHighThroughputRuntime::isAvailable)
+      .def("is_internode_available", &mscclpp::ep::MoEHighThroughputRuntime::isInternodeAvailable)
+      .def("get_num_rdma_ranks", &mscclpp::ep::MoEHighThroughputRuntime::getNumRdmaRanks)
+      .def("get_rdma_rank", &mscclpp::ep::MoEHighThroughputRuntime::getRdmaRank)
+      .def("get_root_rdma_rank", &mscclpp::ep::MoEHighThroughputRuntime::getRootRdmaRank)
+      .def("get_local_device_id", &mscclpp::ep::MoEHighThroughputRuntime::getLocalDeviceId)
       .def("get_local_ipc_handle",
-           [](const mscclpp::ep::Buffer& self) { return stringToBytes(self.get_local_ipc_handle()); })
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self) { return stringToBytes(self.getLocalIpcHandle()); })
       .def("create_unique_id",
-           [](const mscclpp::ep::Buffer& self) {
-             auto uid = self.create_unique_id();
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self) {
+             auto uid = self.createUniqueId();
              return nb::bytes(reinterpret_cast<const char*>(uid.data()), uid.size());
            })
       .def("connect",
-           [](mscclpp::ep::Buffer& self, nb::object data) {
+           [](mscclpp::ep::MoEHighThroughputRuntime& self, nb::object data) {
              std::string s = bytesToString(data);
              mscclpp::UniqueId uid;
              if (s.size() != uid.size()) {
-               throw std::runtime_error("mscclpp_ep_cpp.Buffer.connect: UniqueId size mismatch");
+               throw std::runtime_error("mscclpp_ep_cpp.ExpertParallelRuntime.connect: UniqueId size mismatch");
              }
              std::memcpy(uid.data(), s.data(), s.size());
              self.connect(uid);
            })
       .def(
           "sync",
-          [](mscclpp::ep::Buffer& self, const std::vector<int>& device_ids, nb::sequence all_gathered_handles,
-             nb::object root_unique_id_opt) {
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, const std::vector<int>& device_ids,
+             nb::sequence all_gathered_handles, nb::object root_unique_id_opt) {
             std::vector<std::optional<std::string>> handles;
             for (nb::handle h : all_gathered_handles) {
               if (h.is_none())
@@ -245,118 +175,200 @@ NB_MODULE(mscclpp_ep_cpp, m) {
                                                       : std::optional<std::string>(bytesToString(root_unique_id_opt));
             self.sync(device_ids, handles, root_uid);
           },
-          nb::arg("device_ids").none(), nb::arg("all_gathered_handles").none(), nb::arg("root_unique_id").none())
+          nb::arg("device_ids"), nb::arg("all_gathered_handles").none(), nb::arg("root_unique_id").none())
       .def(
           "get_dispatch_layout",
-          [](mscclpp::ep::Buffer& self, nb::object topk_idx, int num_experts, nb::object previous_event,
-             bool async_finish, bool allocate_on_comm_stream) {
-            std::optional<mscclpp::ep::EventHandle> prev = objToOptEvent(previous_event);
-            auto r = self.get_dispatch_layout(capsuleToTensor(topk_idx), num_experts, prev, async_finish,
-                                              allocate_on_comm_stream);
-            return nb::make_tuple(tensorToCapsule(std::get<0>(r)), optTensorToCapsule(std::get<1>(r)),
-                                  tensorToCapsule(std::get<2>(r)), tensorToCapsule(std::get<3>(r)),
-                                  eventToObj(std::get<4>(r)));
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t num_tokens_per_rank_ptr,
+             uintptr_t num_tokens_per_rdma_rank_ptr, uintptr_t num_tokens_per_expert_ptr,
+             uintptr_t is_token_in_rank_ptr, uintptr_t topk_idx_ptr, int num_tokens, int num_topk, int num_experts,
+             uintptr_t stream_ptr) {
+            self.getDispatchLayout(reinterpret_cast<int*>(ptr(num_tokens_per_rank_ptr)),
+                                   reinterpret_cast<int*>(ptr(num_tokens_per_rdma_rank_ptr)),
+                                   reinterpret_cast<int*>(ptr(num_tokens_per_expert_ptr)),
+                                   reinterpret_cast<bool*>(ptr(is_token_in_rank_ptr)),
+                                   reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)), num_tokens, num_topk,
+                                   num_experts, stream(stream_ptr));
           },
-          nb::arg("topk_idx").none(), nb::arg("num_experts").none(), nb::arg("previous_event").none(),
-          nb::arg("async_finish").none(), nb::arg("allocate_on_comm_stream").none())
+          nb::arg("num_tokens_per_rank_ptr"), nb::arg("num_tokens_per_rdma_rank_ptr"),
+          nb::arg("num_tokens_per_expert_ptr"), nb::arg("is_token_in_rank_ptr"), nb::arg("topk_idx_ptr"),
+          nb::arg("num_tokens"), nb::arg("num_topk"), nb::arg("num_experts"), nb::arg("stream_ptr"))
+      .def(
+          "get_intranode_dispatch_num_channels",
+          [](const mscclpp::ep::MoEHighThroughputRuntime& self, int x_element_size, const mscclpp::ep::Config& config) {
+            return self.getIntranodeDispatchNumChannels(x_element_size, config);
+          })
+      .def("resolve_intranode_recv_x_buffer",
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self, int num_recv_tokens, int hidden, int x_element_size,
+              const mscclpp::ep::Config& config) -> uintptr_t {
+             return reinterpret_cast<uintptr_t>(
+                 self.resolveIntranodeRecvXBuffer(num_recv_tokens, hidden, x_element_size, config));
+           })
+      .def("resolve_internode_recv_x_buffer",
+           [](const mscclpp::ep::MoEHighThroughputRuntime& self, int num_recv_tokens, int hidden, int x_element_size,
+              const mscclpp::ep::Config& config) -> uintptr_t {
+             return reinterpret_cast<uintptr_t>(
+                 self.resolveInternodeRecvXBuffer(num_recv_tokens, hidden, x_element_size, config));
+           })
+      .def(
+          "intranode_notify_dispatch",
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t rank_prefix_matrix_ptr,
+             uintptr_t channel_prefix_matrix_ptr, uintptr_t num_recv_tokens_per_expert_ptr,
+             uintptr_t num_tokens_per_rank_ptr, uintptr_t num_tokens_per_expert_ptr, uintptr_t is_token_in_rank_ptr,
+             int num_tokens, int num_experts, int x_element_size, int expert_alignment,
+             const mscclpp::ep::Config& config, uintptr_t stream_ptr) {
+            return self.intranodeNotifyDispatch(reinterpret_cast<int*>(ptr(rank_prefix_matrix_ptr)),
+                                                reinterpret_cast<int*>(ptr(channel_prefix_matrix_ptr)),
+                                                reinterpret_cast<int*>(ptr(num_recv_tokens_per_expert_ptr)),
+                                                reinterpret_cast<const int*>(ptr(num_tokens_per_rank_ptr)),
+                                                reinterpret_cast<const int*>(ptr(num_tokens_per_expert_ptr)),
+                                                reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)), num_tokens,
+                                                num_experts, x_element_size, expert_alignment, config,
+                                                stream(stream_ptr));
+          },
+          nb::arg("rank_prefix_matrix_ptr"), nb::arg("channel_prefix_matrix_ptr"),
+          nb::arg("num_recv_tokens_per_expert_ptr"), nb::arg("num_tokens_per_rank_ptr"),
+          nb::arg("num_tokens_per_expert_ptr"), nb::arg("is_token_in_rank_ptr"), nb::arg("num_tokens"),
+          nb::arg("num_experts"), nb::arg("x_element_size"), nb::arg("expert_alignment"), nb::arg("config"),
+          nb::arg("stream_ptr"))
       .def(
           "intranode_dispatch",
-          [](mscclpp::ep::Buffer& self, nb::object x, nb::object x_scales, nb::object topk_idx, nb::object topk_weights,
-             nb::object num_tokens_per_rank, nb::object is_token_in_rank, nb::object num_tokens_per_expert,
-             int cached_num_recv_tokens, nb::object cached_rank_prefix_matrix, nb::object cached_channel_prefix_matrix,
-             int expert_alignment, const mscclpp::ep::Config& config, nb::object previous_event, bool async_finish,
-             bool allocate_on_comm_stream) {
-            std::optional<mscclpp::ep::EventHandle> prev = objToOptEvent(previous_event);
-            auto r = self.intranode_dispatch(capsuleToTensor(x), objToOptTensor(x_scales), objToOptTensor(topk_idx),
-                                             objToOptTensor(topk_weights), objToOptTensor(num_tokens_per_rank),
-                                             capsuleToTensor(is_token_in_rank), objToOptTensor(num_tokens_per_expert),
-                                             cached_num_recv_tokens, objToOptTensor(cached_rank_prefix_matrix),
-                                             objToOptTensor(cached_channel_prefix_matrix), expert_alignment, config,
-                                             prev, async_finish, allocate_on_comm_stream);
-            return nb::make_tuple(
-                tensorToCapsule(std::get<0>(r)), optTensorToCapsule(std::get<1>(r)), optTensorToCapsule(std::get<2>(r)),
-                optTensorToCapsule(std::get<3>(r)), nb::cast(std::get<4>(r)), tensorToCapsule(std::get<5>(r)),
-                tensorToCapsule(std::get<6>(r)), tensorToCapsule(std::get<7>(r)), tensorToCapsule(std::get<8>(r)),
-                tensorToCapsule(std::get<9>(r)), eventToObj(std::get<10>(r)));
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t recv_x_ptr, uintptr_t recv_x_scales_ptr,
+             uintptr_t recv_topk_idx_ptr, uintptr_t recv_topk_weights_ptr, uintptr_t recv_src_idx_ptr,
+             uintptr_t send_head_ptr, uintptr_t recv_channel_prefix_matrix_ptr, uintptr_t x_ptr, uintptr_t x_scales_ptr,
+             uintptr_t topk_idx_ptr, uintptr_t topk_weights_ptr, uintptr_t is_token_in_rank_ptr,
+             uintptr_t rank_prefix_matrix_ptr, uintptr_t channel_prefix_matrix_ptr, int num_tokens, int hidden,
+             int num_topk, int num_scales, int num_experts, int x_element_size, int num_recv_tokens, bool cached_mode,
+             const mscclpp::ep::Config& config, uintptr_t stream_ptr) {
+            self.intranodeDispatch(
+                ptr(recv_x_ptr), reinterpret_cast<float*>(ptr(recv_x_scales_ptr)),
+                reinterpret_cast<int64_t*>(ptr(recv_topk_idx_ptr)),
+                reinterpret_cast<float*>(ptr(recv_topk_weights_ptr)), reinterpret_cast<int*>(ptr(recv_src_idx_ptr)),
+                reinterpret_cast<int*>(ptr(send_head_ptr)), reinterpret_cast<int*>(ptr(recv_channel_prefix_matrix_ptr)),
+                ptr(x_ptr), reinterpret_cast<const float*>(ptr(x_scales_ptr)),
+                reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)),
+                reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
+                reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
+                reinterpret_cast<const int*>(ptr(rank_prefix_matrix_ptr)),
+                reinterpret_cast<const int*>(ptr(channel_prefix_matrix_ptr)), num_tokens, hidden, num_topk, num_scales,
+                num_experts, x_element_size, num_recv_tokens, cached_mode, config, stream(stream_ptr));
           },
-          nb::arg("x").none(), nb::arg("x_scales").none(), nb::arg("topk_idx").none(), nb::arg("topk_weights").none(),
-          nb::arg("num_tokens_per_rank").none(), nb::arg("is_token_in_rank").none(),
-          nb::arg("num_tokens_per_expert").none(), nb::arg("cached_num_recv_tokens").none(),
-          nb::arg("cached_rank_prefix_matrix").none(), nb::arg("cached_channel_prefix_matrix").none(),
-          nb::arg("expert_alignment").none(), nb::arg("config").none(), nb::arg("previous_event").none(),
-          nb::arg("async_finish").none(), nb::arg("allocate_on_comm_stream").none())
+          nb::arg("recv_x_ptr"), nb::arg("recv_x_scales_ptr"), nb::arg("recv_topk_idx_ptr"),
+          nb::arg("recv_topk_weights_ptr"), nb::arg("recv_src_idx_ptr"), nb::arg("send_head_ptr"),
+          nb::arg("recv_channel_prefix_matrix_ptr"), nb::arg("x_ptr"), nb::arg("x_scales_ptr"), nb::arg("topk_idx_ptr"),
+          nb::arg("topk_weights_ptr"), nb::arg("is_token_in_rank_ptr"), nb::arg("rank_prefix_matrix_ptr"),
+          nb::arg("channel_prefix_matrix_ptr"), nb::arg("num_tokens"), nb::arg("hidden"), nb::arg("num_topk"),
+          nb::arg("num_scales"), nb::arg("num_experts"), nb::arg("x_element_size"), nb::arg("num_recv_tokens"),
+          nb::arg("cached_mode"), nb::arg("config"), nb::arg("stream_ptr"))
       .def(
           "intranode_combine",
-          [](mscclpp::ep::Buffer& self, nb::object x, nb::object topk_weights, nb::object src_idx,
-             nb::object rank_prefix_matrix, nb::object channel_prefix_matrix, nb::object send_head,
-             const mscclpp::ep::Config& config, nb::object previous_event, bool async_finish,
-             bool allocate_on_comm_stream) {
-            std::optional<mscclpp::ep::EventHandle> prev = objToOptEvent(previous_event);
-            auto r =
-                self.intranode_combine(capsuleToTensor(x), objToOptTensor(topk_weights), capsuleToTensor(src_idx),
-                                       capsuleToTensor(rank_prefix_matrix), capsuleToTensor(channel_prefix_matrix),
-                                       capsuleToTensor(send_head), config, prev, async_finish, allocate_on_comm_stream);
-            return nb::make_tuple(tensorToCapsule(std::get<0>(r)), optTensorToCapsule(std::get<1>(r)),
-                                  eventToObj(std::get<2>(r)));
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t combined_x_ptr, uintptr_t combined_topk_weights_ptr,
+             uintptr_t x_ptr, uintptr_t topk_weights_ptr, uintptr_t src_idx_ptr, uintptr_t rank_prefix_matrix_ptr,
+             uintptr_t channel_prefix_matrix_ptr, uintptr_t send_head_ptr, int num_tokens, int num_recv_tokens,
+             int hidden, int num_topk, int x_element_size, int ring_num_channels, const mscclpp::ep::Config& config,
+             uintptr_t stream_ptr) {
+            self.intranodeCombine(ptr(combined_x_ptr), reinterpret_cast<float*>(ptr(combined_topk_weights_ptr)),
+                                  ptr(x_ptr), reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
+                                  reinterpret_cast<const int*>(ptr(src_idx_ptr)),
+                                  reinterpret_cast<const int*>(ptr(rank_prefix_matrix_ptr)),
+                                  reinterpret_cast<const int*>(ptr(channel_prefix_matrix_ptr)),
+                                  reinterpret_cast<const int*>(ptr(send_head_ptr)), num_tokens, num_recv_tokens, hidden,
+                                  num_topk, x_element_size, ring_num_channels, config, stream(stream_ptr));
           },
-          nb::arg("x").none(), nb::arg("topk_weights").none(), nb::arg("src_idx").none(),
-          nb::arg("rank_prefix_matrix").none(), nb::arg("channel_prefix_matrix").none(), nb::arg("send_head").none(),
-          nb::arg("config").none(), nb::arg("previous_event").none(), nb::arg("async_finish").none(),
-          nb::arg("allocate_on_comm_stream").none())
+          nb::arg("combined_x_ptr"), nb::arg("combined_topk_weights_ptr"), nb::arg("x_ptr"),
+          nb::arg("topk_weights_ptr"), nb::arg("src_idx_ptr"), nb::arg("rank_prefix_matrix_ptr"),
+          nb::arg("channel_prefix_matrix_ptr"), nb::arg("send_head_ptr"), nb::arg("num_tokens"),
+          nb::arg("num_recv_tokens"), nb::arg("hidden"), nb::arg("num_topk"), nb::arg("x_element_size"),
+          nb::arg("ring_num_channels"), nb::arg("config"), nb::arg("stream_ptr"))
+      .def(
+          "internode_notify_dispatch",
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t rdma_channel_prefix_matrix_ptr,
+             uintptr_t recv_rdma_rank_prefix_sum_ptr, uintptr_t gbl_channel_prefix_matrix_ptr,
+             uintptr_t recv_gbl_rank_prefix_sum_ptr, uintptr_t num_recv_tokens_per_expert_ptr,
+             uintptr_t num_rdma_recv_tokens_ptr, uintptr_t num_tokens_per_rank_ptr,
+             uintptr_t num_tokens_per_rdma_rank_ptr, uintptr_t num_tokens_per_expert_ptr,
+             uintptr_t is_token_in_rank_ptr, int num_tokens, int num_experts, int hidden, int num_scales, int num_topk,
+             int x_element_size, int expert_alignment, const mscclpp::ep::Config& config, uintptr_t stream_ptr) {
+            return self.internodeNotifyDispatch(reinterpret_cast<int*>(ptr(rdma_channel_prefix_matrix_ptr)),
+                                                reinterpret_cast<int*>(ptr(recv_rdma_rank_prefix_sum_ptr)),
+                                                reinterpret_cast<int*>(ptr(gbl_channel_prefix_matrix_ptr)),
+                                                reinterpret_cast<int*>(ptr(recv_gbl_rank_prefix_sum_ptr)),
+                                                reinterpret_cast<int*>(ptr(num_recv_tokens_per_expert_ptr)),
+                                                reinterpret_cast<int*>(ptr(num_rdma_recv_tokens_ptr)),
+                                                reinterpret_cast<const int*>(ptr(num_tokens_per_rank_ptr)),
+                                                reinterpret_cast<const int*>(ptr(num_tokens_per_rdma_rank_ptr)),
+                                                reinterpret_cast<const int*>(ptr(num_tokens_per_expert_ptr)),
+                                                reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)), num_tokens,
+                                                num_experts, hidden, num_scales, num_topk, x_element_size,
+                                                expert_alignment, config, stream(stream_ptr));
+          },
+          nb::arg("rdma_channel_prefix_matrix_ptr"), nb::arg("recv_rdma_rank_prefix_sum_ptr"),
+          nb::arg("gbl_channel_prefix_matrix_ptr"), nb::arg("recv_gbl_rank_prefix_sum_ptr"),
+          nb::arg("num_recv_tokens_per_expert_ptr"), nb::arg("num_rdma_recv_tokens_ptr"),
+          nb::arg("num_tokens_per_rank_ptr"), nb::arg("num_tokens_per_rdma_rank_ptr"),
+          nb::arg("num_tokens_per_expert_ptr"), nb::arg("is_token_in_rank_ptr"), nb::arg("num_tokens"),
+          nb::arg("num_experts"), nb::arg("hidden"), nb::arg("num_scales"), nb::arg("num_topk"),
+          nb::arg("x_element_size"), nb::arg("expert_alignment"), nb::arg("config"), nb::arg("stream_ptr"))
       .def(
           "internode_dispatch",
-          [](mscclpp::ep::Buffer& self, nb::object x, nb::object x_scales, nb::object topk_idx, nb::object topk_weights,
-             nb::object num_tokens_per_rank, nb::object num_tokens_per_rdma_rank, nb::object is_token_in_rank,
-             nb::object num_tokens_per_expert, int cached_num_recv_tokens, int cached_num_rdma_recv_tokens,
-             nb::object cached_rdma_channel_prefix_matrix, nb::object cached_recv_rdma_rank_prefix_sum,
-             nb::object cached_gbl_channel_prefix_matrix, nb::object cached_recv_gbl_rank_prefix_sum,
-             int expert_alignment, const mscclpp::ep::Config& config, nb::object previous_event, bool async_finish,
-             bool allocate_on_comm_stream) {
-            std::optional<mscclpp::ep::EventHandle> prev = objToOptEvent(previous_event);
-            auto r = self.internode_dispatch(
-                capsuleToTensor(x), objToOptTensor(x_scales), objToOptTensor(topk_idx), objToOptTensor(topk_weights),
-                objToOptTensor(num_tokens_per_rank), objToOptTensor(num_tokens_per_rdma_rank),
-                capsuleToTensor(is_token_in_rank), objToOptTensor(num_tokens_per_expert), cached_num_recv_tokens,
-                cached_num_rdma_recv_tokens, objToOptTensor(cached_rdma_channel_prefix_matrix),
-                objToOptTensor(cached_recv_rdma_rank_prefix_sum), objToOptTensor(cached_gbl_channel_prefix_matrix),
-                objToOptTensor(cached_recv_gbl_rank_prefix_sum), expert_alignment, config, prev, async_finish,
-                allocate_on_comm_stream);
-            return nb::make_tuple(
-                tensorToCapsule(std::get<0>(r)), optTensorToCapsule(std::get<1>(r)), optTensorToCapsule(std::get<2>(r)),
-                optTensorToCapsule(std::get<3>(r)), nb::cast(std::get<4>(r)), tensorToCapsule(std::get<5>(r)),
-                tensorToCapsule(std::get<6>(r)), optTensorToCapsule(std::get<7>(r)), tensorToCapsule(std::get<8>(r)),
-                optTensorToCapsule(std::get<9>(r)), tensorToCapsule(std::get<10>(r)),
-                optTensorToCapsule(std::get<11>(r)), optTensorToCapsule(std::get<12>(r)),
-                optTensorToCapsule(std::get<13>(r)), eventToObj(std::get<14>(r)));
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t recv_x_ptr, uintptr_t recv_x_scales_ptr,
+             uintptr_t recv_topk_idx_ptr, uintptr_t recv_topk_weights_ptr, uintptr_t recv_src_meta_ptr,
+             uintptr_t recv_rdma_channel_prefix_matrix_ptr, uintptr_t recv_gbl_channel_prefix_matrix_ptr,
+             uintptr_t send_rdma_head_ptr, uintptr_t send_nvl_head_ptr, uintptr_t x_ptr, uintptr_t x_scales_ptr,
+             uintptr_t topk_idx_ptr, uintptr_t topk_weights_ptr, uintptr_t is_token_in_rank_ptr,
+             uintptr_t rdma_channel_prefix_matrix_ptr, uintptr_t recv_rdma_rank_prefix_sum_ptr,
+             uintptr_t gbl_channel_prefix_matrix_ptr, uintptr_t recv_gbl_rank_prefix_sum_ptr, int num_tokens,
+             int hidden, int num_topk, int num_scales, int num_experts, int x_element_size, int num_recv_tokens,
+             int num_rdma_recv_tokens, bool cached_mode, const mscclpp::ep::Config& config, uintptr_t stream_ptr) {
+            self.internodeDispatch(ptr(recv_x_ptr), reinterpret_cast<float*>(ptr(recv_x_scales_ptr)),
+                                   reinterpret_cast<int64_t*>(ptr(recv_topk_idx_ptr)),
+                                   reinterpret_cast<float*>(ptr(recv_topk_weights_ptr)), ptr(recv_src_meta_ptr),
+                                   reinterpret_cast<int*>(ptr(recv_rdma_channel_prefix_matrix_ptr)),
+                                   reinterpret_cast<int*>(ptr(recv_gbl_channel_prefix_matrix_ptr)),
+                                   reinterpret_cast<int*>(ptr(send_rdma_head_ptr)),
+                                   reinterpret_cast<int*>(ptr(send_nvl_head_ptr)), ptr(x_ptr),
+                                   reinterpret_cast<const float*>(ptr(x_scales_ptr)),
+                                   reinterpret_cast<const int64_t*>(ptr(topk_idx_ptr)),
+                                   reinterpret_cast<const float*>(ptr(topk_weights_ptr)),
+                                   reinterpret_cast<const bool*>(ptr(is_token_in_rank_ptr)),
+                                   reinterpret_cast<const int*>(ptr(rdma_channel_prefix_matrix_ptr)),
+                                   reinterpret_cast<const int*>(ptr(recv_rdma_rank_prefix_sum_ptr)),
+                                   reinterpret_cast<const int*>(ptr(gbl_channel_prefix_matrix_ptr)),
+                                   reinterpret_cast<const int*>(ptr(recv_gbl_rank_prefix_sum_ptr)), num_tokens, hidden,
+                                   num_topk, num_scales, num_experts, x_element_size, num_recv_tokens,
+                                   num_rdma_recv_tokens, cached_mode, config, stream(stream_ptr));
           },
-          nb::arg("x").none(), nb::arg("x_scales").none(), nb::arg("topk_idx").none(), nb::arg("topk_weights").none(),
-          nb::arg("num_tokens_per_rank").none(), nb::arg("num_tokens_per_rdma_rank").none(),
-          nb::arg("is_token_in_rank").none(), nb::arg("num_tokens_per_expert").none(),
-          nb::arg("cached_num_recv_tokens").none(), nb::arg("cached_num_rdma_recv_tokens").none(),
-          nb::arg("cached_rdma_channel_prefix_matrix").none(), nb::arg("cached_recv_rdma_rank_prefix_sum").none(),
-          nb::arg("cached_gbl_channel_prefix_matrix").none(), nb::arg("cached_recv_gbl_rank_prefix_sum").none(),
-          nb::arg("expert_alignment").none(), nb::arg("config").none(), nb::arg("previous_event").none(),
-          nb::arg("async_finish").none(), nb::arg("allocate_on_comm_stream").none())
+          nb::arg("recv_x_ptr"), nb::arg("recv_x_scales_ptr"), nb::arg("recv_topk_idx_ptr"),
+          nb::arg("recv_topk_weights_ptr"), nb::arg("recv_src_meta_ptr"),
+          nb::arg("recv_rdma_channel_prefix_matrix_ptr"), nb::arg("recv_gbl_channel_prefix_matrix_ptr"),
+          nb::arg("send_rdma_head_ptr"), nb::arg("send_nvl_head_ptr"), nb::arg("x_ptr"), nb::arg("x_scales_ptr"),
+          nb::arg("topk_idx_ptr"), nb::arg("topk_weights_ptr"), nb::arg("is_token_in_rank_ptr"),
+          nb::arg("rdma_channel_prefix_matrix_ptr"), nb::arg("recv_rdma_rank_prefix_sum_ptr"),
+          nb::arg("gbl_channel_prefix_matrix_ptr"), nb::arg("recv_gbl_rank_prefix_sum_ptr"), nb::arg("num_tokens"),
+          nb::arg("hidden"), nb::arg("num_topk"), nb::arg("num_scales"), nb::arg("num_experts"),
+          nb::arg("x_element_size"), nb::arg("num_recv_tokens"), nb::arg("num_rdma_recv_tokens"),
+          nb::arg("cached_mode"), nb::arg("config"), nb::arg("stream_ptr"))
       .def(
           "internode_combine",
-          [](mscclpp::ep::Buffer& self, nb::object x, nb::object topk_weights, nb::object src_meta,
-             nb::object is_combined_token_in_rank, nb::object rdma_channel_prefix_matrix,
-             nb::object rdma_rank_prefix_sum, nb::object gbl_channel_prefix_matrix, nb::object combined_rdma_head,
-             nb::object combined_nvl_head, const mscclpp::ep::Config& config, nb::object previous_event,
-             bool async_finish, bool allocate_on_comm_stream) {
-            std::optional<mscclpp::ep::EventHandle> prev = objToOptEvent(previous_event);
-            auto r = self.internode_combine(
-                capsuleToTensor(x), objToOptTensor(topk_weights), capsuleToTensor(src_meta),
-                capsuleToTensor(is_combined_token_in_rank), capsuleToTensor(rdma_channel_prefix_matrix),
-                capsuleToTensor(rdma_rank_prefix_sum), capsuleToTensor(gbl_channel_prefix_matrix),
-                capsuleToTensor(combined_rdma_head), capsuleToTensor(combined_nvl_head), config, prev, async_finish,
-                allocate_on_comm_stream);
-            return nb::make_tuple(tensorToCapsule(std::get<0>(r)), optTensorToCapsule(std::get<1>(r)),
-                                  eventToObj(std::get<2>(r)));
+          [](mscclpp::ep::MoEHighThroughputRuntime& self, uintptr_t combined_x_ptr, uintptr_t combined_topk_weights_ptr,
+             uintptr_t x_ptr, uintptr_t topk_weights_ptr, uintptr_t src_meta_ptr,
+             uintptr_t is_combined_token_in_rank_ptr, uintptr_t rdma_channel_prefix_matrix_ptr,
+             uintptr_t rdma_rank_prefix_sum_ptr, uintptr_t gbl_channel_prefix_matrix_ptr,
+             uintptr_t combined_rdma_head_ptr, uintptr_t combined_nvl_head_ptr, int num_tokens, int num_combined_tokens,
+             int hidden, int num_topk, int x_element_size, const mscclpp::ep::Config& config, uintptr_t stream_ptr) {
+            self.internodeCombine(ptr(combined_x_ptr), reinterpret_cast<float*>(ptr(combined_topk_weights_ptr)),
+                                  ptr(x_ptr), reinterpret_cast<const float*>(ptr(topk_weights_ptr)), ptr(src_meta_ptr),
+                                  reinterpret_cast<const bool*>(ptr(is_combined_token_in_rank_ptr)),
+                                  reinterpret_cast<const int*>(ptr(rdma_channel_prefix_matrix_ptr)),
+                                  reinterpret_cast<const int*>(ptr(rdma_rank_prefix_sum_ptr)),
+                                  reinterpret_cast<const int*>(ptr(gbl_channel_prefix_matrix_ptr)),
+                                  reinterpret_cast<const int*>(ptr(combined_rdma_head_ptr)),
+                                  reinterpret_cast<const int*>(ptr(combined_nvl_head_ptr)), num_tokens,
+                                  num_combined_tokens, hidden, num_topk, x_element_size, config, stream(stream_ptr));
           },
-          nb::arg("x").none(), nb::arg("topk_weights").none(), nb::arg("src_meta").none(),
-          nb::arg("is_combined_token_in_rank").none(), nb::arg("rdma_channel_prefix_matrix").none(),
-          nb::arg("rdma_rank_prefix_sum").none(), nb::arg("gbl_channel_prefix_matrix").none(),
-          nb::arg("combined_rdma_head").none(), nb::arg("combined_nvl_head").none(), nb::arg("config").none(),
-          nb::arg("previous_event").none(), nb::arg("async_finish").none(), nb::arg("allocate_on_comm_stream").none());
+          nb::arg("combined_x_ptr"), nb::arg("combined_topk_weights_ptr"), nb::arg("x_ptr"),
+          nb::arg("topk_weights_ptr"), nb::arg("src_meta_ptr"), nb::arg("is_combined_token_in_rank_ptr"),
+          nb::arg("rdma_channel_prefix_matrix_ptr"), nb::arg("rdma_rank_prefix_sum_ptr"),
+          nb::arg("gbl_channel_prefix_matrix_ptr"), nb::arg("combined_rdma_head_ptr"), nb::arg("combined_nvl_head_ptr"),
+          nb::arg("num_tokens"), nb::arg("num_combined_tokens"), nb::arg("hidden"), nb::arg("num_topk"),
+          nb::arg("x_element_size"), nb::arg("config"), nb::arg("stream_ptr"));
 }
