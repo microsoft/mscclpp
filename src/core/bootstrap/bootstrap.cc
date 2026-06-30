@@ -462,12 +462,30 @@ int TcpBootstrap::Impl::getNranksPerIpcDomain() {
   ipcDomainHashes[rank_] = getIpcDomainHash();
   allGather(ipcDomainHashes.data(), sizeof(uint64_t));
 
-  int nRanksPerIpcDomain = 0;
-  for (int i = 0; i < nRanks_; ++i) {
-    if (ipcDomainHashes[i] == ipcDomainHashes[rank_]) {
-      ++nRanksPerIpcDomain;
+  std::unordered_map<uint64_t, int> ipcDomainCounts;
+  for (uint64_t ipcDomainHash : ipcDomainHashes) {
+    ipcDomainCounts[ipcDomainHash]++;
+  }
+
+  const int nRanksPerIpcDomain = ipcDomainCounts[ipcDomainHashes[rank_]];
+  const std::string invalidIpcDomainLayout =
+      "IPC domain ranks must have the same size and be arranged in consecutive rank order";
+  if (nRanks_ % nRanksPerIpcDomain != 0) {
+    throw Error(invalidIpcDomainLayout + ": rank count is not divisible by IPC domain size", ErrorCode::InvalidUsage);
+  }
+
+  for (const auto& entry : ipcDomainCounts) {
+    if (entry.second != nRanksPerIpcDomain) {
+      throw Error(invalidIpcDomainLayout + ": IPC domains have different sizes", ErrorCode::InvalidUsage);
     }
   }
+  for (int i = 0; i < nRanks_; ++i) {
+    const int ipcDomainFirstRank = i - i % nRanksPerIpcDomain;
+    if (ipcDomainHashes[i] != ipcDomainHashes[ipcDomainFirstRank]) {
+      throw Error(invalidIpcDomainLayout + ": ranks are not grouped by IPC domain", ErrorCode::InvalidUsage);
+    }
+  }
+
   INFO(MSCCLPP_INIT, "rank %d IPC domain fabric hash 0x%016llx nRanksPerIpcDomain %d", rank_,
        static_cast<unsigned long long>(ipcDomainHashes[rank_]), nRanksPerIpcDomain);
   nRanksPerIpcDomain_ = nRanksPerIpcDomain;

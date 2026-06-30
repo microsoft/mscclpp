@@ -186,6 +186,11 @@ class NvmlState {
  public:
   NvmlState() : initialized_(nvmlInit_v2() == NVML_SUCCESS) {}
 
+  NvmlState(const NvmlState&) = delete;
+  NvmlState& operator=(const NvmlState&) = delete;
+  NvmlState(NvmlState&&) = delete;
+  NvmlState& operator=(NvmlState&&) = delete;
+
   ~NvmlState() {
     if (initialized_) {
       (void)nvmlShutdown();
@@ -198,7 +203,8 @@ class NvmlState {
   bool initialized_ = false;
 };
 
-uint64_t getFabricHash(const nvmlGpuFabricInfo_t& fabricInfo) {
+template <typename FabricInfo>
+uint64_t getFabricHash(const FabricInfo& fabricInfo) {
   char hashData[NVML_GPU_FABRIC_UUID_LEN + sizeof(fabricInfo.cliqueId)];
   std::memcpy(hashData, fabricInfo.clusterUuid, NVML_GPU_FABRIC_UUID_LEN);
   std::memcpy(hashData + NVML_GPU_FABRIC_UUID_LEN, &fabricInfo.cliqueId, sizeof(fabricInfo.cliqueId));
@@ -216,10 +222,20 @@ bool tryGetNvmlIpcDomainHash(uint64_t& ipcDomainHash) {
 
   static NvmlState nvml;
   nvmlDevice_t nvmlDevice;
+  if (!nvml.isInitialized() || nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &nvmlDevice) != NVML_SUCCESS) {
+    return false;
+  }
+
+#if defined(nvmlGpuFabricInfo_v2)
+  nvmlGpuFabricInfoV_t fabricInfo = {};
+  fabricInfo.version = nvmlGpuFabricInfo_v2;
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfoV(nvmlDevice, &fabricInfo);
+#else
   nvmlGpuFabricInfo_t fabricInfo = {};
-  if (!nvml.isInitialized() || nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &nvmlDevice) != NVML_SUCCESS ||
-      nvmlDeviceGetGpuFabricInfo(nvmlDevice, &fabricInfo) != NVML_SUCCESS ||
-      fabricInfo.state != NVML_GPU_FABRIC_STATE_COMPLETED || fabricInfo.status != NVML_SUCCESS) {
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfo(nvmlDevice, &fabricInfo);
+#endif
+  if (result != NVML_SUCCESS || fabricInfo.state != NVML_GPU_FABRIC_STATE_COMPLETED ||
+      fabricInfo.status != NVML_SUCCESS) {
     return false;
   }
 

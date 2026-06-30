@@ -42,10 +42,17 @@ void BootstrapTest::bootstrapTestSendRecv(std::shared_ptr<mscclpp::Bootstrap> bo
   }
 }
 
+void BootstrapTest::bootstrapTestIpcDomain(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
+  int nRanksPerIpcDomain = bootstrap->getNranksPerIpcDomain();
+  EXPECT_GT(nRanksPerIpcDomain, 0);
+  EXPECT_LE(nRanksPerIpcDomain, bootstrap->getNranks());
+}
+
 void BootstrapTest::bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstrap) {
   bootstrapTestAllGather(bootstrap);
   bootstrapTestBarrier(bootstrap);
   bootstrapTestSendRecv(bootstrap);
+  bootstrapTestIpcDomain(bootstrap);
 }
 
 TEST(BootstrapTest, WithId) {

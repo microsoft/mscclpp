@@ -21,7 +21,7 @@ constexpr const char* kInputChannelsExtraKey = "inputChannels";
 }  // namespace
 
 template <ReduceOp OpType, typename T, typename AccumT = T>
-__global__ void __launch_bounds__(512, 1)
+__global__ void __launch_bounds__(1024, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
                       int nRanksPerIpcDomain, int worldSize, size_t nelems) {
@@ -209,7 +209,7 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
   auto& inputChannelsCache = *static_cast<InputChannelsCache*>(ctx->extras.at(kInputChannelsExtraKey).get());
   auto it = inputChannelsCache.find(input);
   if (it == inputChannelsCache.end()) {
-    RegisteredMemory localMemory = comm_->registerMemory(const_cast<void*>(input), inputSize, Transport::CudaIpc);
+    RegisteredMemory localMemory = comm_->registerMemory(const_cast<void*>(input), inputSize, TransportFlags());
     std::vector<MemoryChannel> channels =
         setupMemoryChannels(this->conns_, this->inputScratchSemaphores_, this->remoteScratchMemories_, localMemory,
                             nChannelsPerConnection_);
@@ -275,6 +275,7 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   }
   RegisteredMemory localMemory = comm->registerMemory((void*)recvBasePtr, recvBytes, Transport::CudaIpc);
   ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
+
   ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,
                                             nChannelsPerConnection_);
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
