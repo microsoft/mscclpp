@@ -124,9 +124,9 @@ def main():
             flush=True,
         )
 
-    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
-    buf = ep.ExpertParallelRuntime(ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
-    print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
+    print(f"[rank {rank}] creating Buffer", flush=True)
+    buf = ep.Buffer(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
+    print(f"[rank {rank}] Buffer created is_available={buf.is_available()}", flush=True)
     assert buf.is_available()
 
     # get_dispatch_layout sanity
