@@ -94,6 +94,30 @@ struct DispatchDTypeTraits<DType::F8E4M3> {
   using Type = __nv_fp8_storage_t;
 };
 
+template <>
+struct DispatchDTypeTraits<DType::MXF8E4M3> {
+  using Type = __nv_fp8_storage_t;
+};
+
+// Per-quantized-dtype scale encoding for the dispatch/combine path.
+//   kBlockSize = number of hidden elements covered by one scale.
+//   ScaleType  = in-packet / HBM scale element type.
+// FP8-E4M3 uses FP32 reciprocal scales over 128-element blocks; MXFP8 uses
+// E8M0 (1-byte, power-of-two) micro-scales over 32-element blocks. The two
+// encodings occupy the same number of bytes per token (H/128 * 4 == H/32 * 1
+// when H % 128 == 0), so the RDMA message layout is identical.
+template <DType kDType>
+struct DispatchScaleTraits {
+  static constexpr int kBlockSize = 128;
+  using ScaleType = float;
+};
+
+template <>
+struct DispatchScaleTraits<DType::MXF8E4M3> {
+  static constexpr int kBlockSize = 32;
+  using ScaleType = uint8_t;
+};
+
 // Keep input and output dtype separate. Current launch path only instantiates
 // BF16 input, but this keeps room for pre-quantized input with explicit scales.
 template <DType kInputDType, DType kOutputDType>
@@ -108,16 +132,21 @@ constexpr bool kDispatchNeedsScales = kInputDType != kOutputDType;
 
 template <DType kInputDType, DType kOutputDType, int kNumPerChannels>
 MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Type dispatchConvert(
-    const int4& inputValue, float* scaleOut, int laneId) {
+    const int4& inputValue, void* scaleOut, int laneId) {
   using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
   using OutputVec = typename DispatchOutputVec<kInputDType, kOutputDType>::Type;
 
   if constexpr (kInputDType == kOutputDType) {
     return inputValue;
+  } else if constexpr (kOutputDType == DType::MXF8E4M3) {
+    static_assert(kInputDType == DType::BF16, "Unsupported low-latency dispatch dtype conversion");
+    return static_cast<OutputVec>(quantizeToMxFp8<SourceType, kNumPerChannels, __NV_E4M3>(
+        inputValue, reinterpret_cast<uint8_t*>(scaleOut), laneId));
   } else {
     static_assert(kInputDType == DType::BF16 && kOutputDType == DType::F8E4M3,
                   "Unsupported low-latency dispatch dtype conversion");
-    return static_cast<OutputVec>(quantizeToFp8<SourceType, kNumPerChannels, __NV_E4M3>(inputValue, scaleOut, laneId));
+    return static_cast<OutputVec>(
+        quantizeToFp8<SourceType, kNumPerChannels, __NV_E4M3>(inputValue, reinterpret_cast<float*>(scaleOut), laneId));
   }
 }
 
@@ -126,22 +155,22 @@ MSCCLPP_DEVICE_INLINE void copyScales(float* outputScales, const int4* stagedPay
                                       int recvTokenIdx, int numRanks, int numMaxDispatchTokensPerRank,
                                       size_t hiddenBytes, int numScales, int laneId) {
   if constexpr (kDispatchNeedsScales<kInputDType, kOutputDType>) {
-    static_assert(kInputDType == DType::BF16 && kOutputDType == DType::F8E4M3,
+    static_assert(kInputDType == DType::BF16 && (kOutputDType == DType::F8E4M3 || kOutputDType == DType::MXF8E4M3),
                   "Unsupported low-latency dispatch scale copy");
+    using ScaleType = typename DispatchScaleTraits<kOutputDType>::ScaleType;
 
     EP_DEVICE_ASSERT(outputScales != nullptr);
-    EP_DEVICE_ASSERT(numScales <= 64);
 
     const auto stagedScales =
-        reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(stagedPayload) + hiddenBytes);
+        reinterpret_cast<const ScaleType*>(reinterpret_cast<const uint8_t*>(stagedPayload) + hiddenBytes);
+    const auto outputScaleTyped = reinterpret_cast<ScaleType*>(outputScales);
     const auto slotsPerExpert = numRanks * numMaxDispatchTokensPerRank;
-    const auto outputScaleBase = outputScales + localExpertIdx * slotsPerExpert * numScales;
+    const auto outputScaleBase = outputScaleTyped + localExpertIdx * slotsPerExpert * numScales;
     const auto outputScaleRow = outputScaleBase + recvTokenIdx;
 
-    auto scale0 = laneId < numScales ? ld_nc_global(stagedScales + laneId) : 0;
-    auto scale1 = (laneId + WARP_SIZE) < numScales ? ld_nc_global(stagedScales + laneId + WARP_SIZE) : 0;
-    laneId < numScales ? outputScaleRow[laneId * slotsPerExpert] = scale0 : 0.0f;
-    (laneId + WARP_SIZE) < numScales ? outputScaleRow[(laneId + WARP_SIZE) * slotsPerExpert] = scale1 : 0.0f;
+    for (int s = laneId; s < numScales; s += WARP_SIZE) {
+      outputScaleRow[s * slotsPerExpert] = ld_nc_global(stagedScales + s);
+    }
   }
 }
 
@@ -184,7 +213,6 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* 
   numRecvTokens = sharedNumRecvTokens[warpGroupId];
   recvTokenBeginIdx = sharedRecvTokenBeginIdx[warpGroupId];
 
-  EP_DEVICE_ASSERT(numScales <= 64);
   for (int i = subWarpId; i < numRecvTokens; i += kNumWarpsPerGroup) {
     const auto stagedMsg = reinterpret_cast<int*>(stagedMsgBase + i * numBytesPerMsg);
     if (laneId == 0) packedSrcInfo[recvTokenBeginIdx + i] = ld_nc_global(stagedMsg);
@@ -221,12 +249,13 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
 
   using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
   using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
-  constexpr int kNumPerChannels = 128;
+  using ScaleType = typename DispatchScaleTraits<kOutputDType>::ScaleType;
+  constexpr int kNumPerChannels = DispatchScaleTraits<kOutputDType>::kBlockSize;
   const int numScales = hidden / kNumPerChannels;
   const size_t hiddenBytes = hidden * sizeof(OutputType);
   using VecType = typename DispatchOutputVec<kInputDType, kOutputDType>::Type;
-  const size_t numBytesPerMsg =
-      sizeof(int4) + hiddenBytes + (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(float) : 0);
+  const size_t numBytesPerMsg = sizeof(int4) + hiddenBytes +
+                                (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(ScaleType) : 0);
   const size_t numInt4PerMsg = numBytesPerMsg / sizeof(int4);
 
   if (warpId < numWarps - 1) {
@@ -252,7 +281,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
         const auto stagedSendPayload =
             reinterpret_cast<VecType*>(reinterpret_cast<uint8_t*>(stagedSendMsg) + sizeof(int4));
         const auto stagedSendScales =
-            reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(stagedSendPayload) + hiddenBytes);
+            reinterpret_cast<ScaleType*>(reinterpret_cast<uint8_t*>(stagedSendPayload) + hiddenBytes);
 
         threadId == 0 ? (*stagedSendMsg = tokenIdx) : 0;
 
@@ -383,14 +412,15 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) vo
   const auto responsibleExpertIdx = smId * kNumWarpGroups + warpGroupId;
 
   using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
-  constexpr int kNumPerChannels = 128;
+  using ScaleType = typename DispatchScaleTraits<kOutputDType>::ScaleType;
+  constexpr int kNumPerChannels = DispatchScaleTraits<kOutputDType>::kBlockSize;
   const int numScales = hidden / kNumPerChannels;
   const size_t hiddenBytes = hidden * sizeof(OutputType);
   const size_t hiddenInt4 = hiddenBytes / sizeof(int4);
 
   // Message package: hidden data, optional quantization scales, index at source
-  const size_t numBytesPerMsg =
-      sizeof(int4) + hiddenBytes + (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(float) : 0);
+  const size_t numBytesPerMsg = sizeof(int4) + hiddenBytes +
+                                (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(ScaleType) : 0);
   EP_DEVICE_ASSERT(numBytesPerMsg % sizeof(int4) == 0);
 
   if (phases & LOW_LATENCY_SEND_PHASE) {
@@ -473,6 +503,9 @@ void launchDispatchForOutputDType(const DispatchLaunchArgs& args, DType outputDT
       break;
     case DType::F8E4M3:
       launchDispatchForOutput<DType::F8E4M3>(args);
+      break;
+    case DType::MXF8E4M3:
+      launchDispatchForOutput<DType::MXF8E4M3>(args);
       break;
     default:
       EP_HOST_ASSERT(false && "Unsupported low-latency dispatch output dtype");
@@ -572,7 +605,9 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
     const auto srcInt4 = reinterpret_cast<const int4*>(src);
     UNROLLED_WARP_COPY(7, laneId, hiddenBf16Int4, dst, srcInt4, ld_nc_global, st_na_global);
   } else {
-    static_assert(kInputDType == DType::F8E4M3, "Unsupported low-latency combine input dtype");
+    static_assert(kInputDType == DType::F8E4M3 || kInputDType == DType::MXF8E4M3,
+                  "Unsupported low-latency combine input dtype");
+    constexpr int kBlockSize = DispatchScaleTraits<kInputDType>::kBlockSize;
     const auto srcFp8 = reinterpret_cast<const __nv_fp8_storage_t*>(src);
     EP_DEVICE_ASSERT(scales != nullptr);
 
@@ -582,9 +617,15 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
 #pragma unroll
       for (int j = 0; j < kNumBf16PerInt4; ++j) {
         const int elemIdx = i * kNumBf16PerInt4 + j;
-        const int scaleIdx = elemIdx / 128;
-        bf16Values[j] =
-            static_cast<nv_bfloat16>(dequantizeFp8<__NV_E4M3>(srcFp8[elemIdx], scales[scaleIdx * scaleStride]));
+        const int scaleIdx = elemIdx / kBlockSize;
+        if constexpr (kInputDType == DType::MXF8E4M3) {
+          const auto e8m0Scales = reinterpret_cast<const uint8_t*>(scales);
+          bf16Values[j] =
+              static_cast<nv_bfloat16>(dequantizeMxFp8<__NV_E4M3>(srcFp8[elemIdx], e8m0Scales[scaleIdx * scaleStride]));
+        } else {
+          bf16Values[j] =
+              static_cast<nv_bfloat16>(dequantizeFp8<__NV_E4M3>(srcFp8[elemIdx], scales[scaleIdx * scaleStride]));
+        }
       }
       st_na_global(dst + i, bf16Pack);
     }
@@ -623,10 +664,12 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
     const auto globalExpertIdx = rank * numLocalExperts + localExpertIdx;
     const auto layout = __ldg(layoutRange + localExpertIdx * numRanks + dstRank);
     const int scaleStride = numRanks * numMaxDispatchTokensPerRank;
-    const int numScales = hidden / 128;
+    using ScaleType = typename DispatchScaleTraits<kInputDType>::ScaleType;
+    const int numScales = hidden / DispatchScaleTraits<kInputDType>::kBlockSize;
     const auto localInput = reinterpret_cast<const uint8_t*>(input) + localExpertIdx * scaleStride * numInputBytes;
+    const auto inputScalesTyped = reinterpret_cast<const ScaleType*>(inputScales);
     const auto localInputScales =
-        inputScales == nullptr ? nullptr : inputScales + localExpertIdx * numScales * scaleStride;
+        inputScalesTyped == nullptr ? nullptr : inputScalesTyped + localExpertIdx * numScales * scaleStride;
     const auto localSrcInfo = srcInfo + localExpertIdx * numRanks * numMaxDispatchTokensPerRank;
     const auto stagedSendBase = reinterpret_cast<uint8_t*>(stagedSend) +
                                 localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerSlot;
@@ -636,7 +679,8 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
 
     for (int tokenIdx = offset + subWarpId; tokenIdx < offset + numTokensToSend; tokenIdx += kNumWarpsPerGroup) {
       const auto inputRow = localInput + tokenIdx * numInputBytes;
-      const auto inputScaleRow = localInputScales == nullptr ? nullptr : localInputScales + tokenIdx;
+      const auto inputScaleRow =
+          localInputScales == nullptr ? nullptr : reinterpret_cast<const float*>(localInputScales + tokenIdx);
       const auto stagedSendMsg = reinterpret_cast<int*>(stagedSendBase + tokenIdx * numBytesPerSlot);
       const auto stagedSendRow = reinterpret_cast<uint8_t*>(stagedSendMsg);
 
@@ -830,9 +874,11 @@ void combine(void* output, const void* input, const float* inputScales, const in
   SETUP_LAUNCH_CONFIG(numSms, numWarps * WARP_SIZE, stream);
   if (inputDType == DType::BF16) {
     COMBINE_LAUNCH(DType::BF16);
-  } else {
-    EP_HOST_ASSERT(inputDType == DType::F8E4M3);
+  } else if (inputDType == DType::F8E4M3) {
     COMBINE_LAUNCH(DType::F8E4M3);
+  } else {
+    EP_HOST_ASSERT(inputDType == DType::MXF8E4M3);
+    COMBINE_LAUNCH(DType::MXF8E4M3);
   }
 #undef COMBINE_LAUNCH
 }

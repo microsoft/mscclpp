@@ -29,7 +29,8 @@ the same host (what an 8-GPU single-node launch exercises) currently hangs
 during dispatch; cross-node LL with one GPU per node works as designed.
 
 Adapted from DeepEP/tests/test_low_latency.py stripped to the bare checks
-we need for an LL port smoke test. BF16-only (no FP8 check).
+we need for an LL port smoke test. Covers BF16, FP8-E4M3 (block-128 FP32
+scales), and MXFP8 (block-32 E8M0 micro-scales) dispatch via ``--quant``.
 """
 
 from __future__ import annotations
@@ -54,6 +55,12 @@ def parse_args():
     parser.add_argument("--hidden", type=int, default=7168, help="LL kernels are compiled for a fixed hidden set")
     parser.add_argument("--num-topk", type=int, default=8)
     parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument(
+        "--quant",
+        choices=("none", "fp8", "mxfp8"),
+        default="none",
+        help="dispatch activation quant: none (BF16), fp8 (E4M3 block-128), mxfp8 (E8M0 block-32)",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
@@ -75,6 +82,61 @@ def init_dist():
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
 
 
+def _dequantize_recv(recv_x_fp8, scales_local_expert, block):
+    """Dequantize [tokens, hidden] FP8 codes using [tokens, num_scales] block scales.
+
+    Works for both FP8-E4M3 (FP32 reciprocal scales) and MXFP8 (E8M0 scales):
+    ``scales.float()`` yields the multiply-back factor in either case (E8M0 -> the
+    power-of-two 2^(e-127); FP32 reciprocal -> passthrough).
+    """
+    recv_f = recv_x_fp8.float()
+    scale_mul = scales_local_expert.float()
+    scale_full = scale_mul.repeat_interleave(block, dim=1)[:, : recv_f.size(1)]
+    return recv_f * scale_full
+
+
+def _validate_dispatch_scales(
+    dispatch_out,
+    counts,
+    packed_recv_x,
+    num_local_experts,
+    num_ranks,
+    num_tokens,
+    hidden,
+    quant_format,
+    block,
+    scale_dtype,
+    rank,
+):
+    """Check the quantized-dispatch scale metadata/shape/dtype and that the
+    constant source region dequantizes back to a per-row constant."""
+    scales = dispatch_out.scales
+    assert scales is not None and scales.local is not None, "quantized dispatch must return scales"
+    assert scales.format == quant_format, f"scales.format={scales.format} != {quant_format}"
+    assert scales.block_size == block, f"scales.block_size={scales.block_size} != {block}"
+    assert scales.local.dtype == scale_dtype, f"scales.local dtype {scales.local.dtype} != {scale_dtype}"
+    slots = num_ranks * num_tokens
+    num_scales = hidden // block
+    assert tuple(scales.local.shape) == (
+        num_local_experts,
+        slots,
+        num_scales,
+    ), f"scales.local shape {tuple(scales.local.shape)} != {(num_local_experts, slots, num_scales)}"
+    tol = 0.02 if quant_format == "fp8_e4m3" else 0.05
+    for i in range(num_local_experts):
+        recv_count = int(counts[i].item())
+        if recv_count == 0:
+            continue
+        deq = _dequantize_recv(packed_recv_x[i, :recv_count], scales.local[i, :recv_count], block)
+        assert torch.isfinite(deq).all(), f"rank{rank} expert{i}: non-finite dequant"
+        deq_lo = deq[:, :-128]
+        row_span = (deq_lo.amax(dim=1) - deq_lo.amin(dim=1)).abs()
+        row_scale = deq_lo.abs().amax(dim=1).clamp_min(1e-3)
+        rel = (row_span / row_scale).amax().item()
+        assert rel < tol, f"rank{rank} expert{i}: dequant lo region not constant, rel={rel:.4e}"
+        break  # one populated expert is a sufficient smoke check
+
+
 def main():
     args = parse_args()
     rank, num_ranks, local_rank, group = init_dist()
@@ -93,6 +155,12 @@ def main():
     num_experts = args.num_experts
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
+
+    quant_format = {"none": None, "fp8": "fp8_e4m3", "mxfp8": "mxfp8"}[args.quant]
+    is_quant = quant_format is not None
+    recv_dtype = torch.float8_e4m3fn if is_quant else torch.bfloat16
+    expected_scale_block = {"fp8": 128, "mxfp8": 32}.get(args.quant)
+    expected_scale_dtype = {"fp8": torch.float32, "mxfp8": getattr(torch, "float8_e8m0fnu", None)}.get(args.quant)
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -118,11 +186,12 @@ def main():
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+        quant_format=quant_format,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk}",
+            f"num_experts={num_experts} num_topk={num_topk} quant={args.quant}",
             flush=True,
         )
     print(
@@ -139,7 +208,7 @@ def main():
     # --- Dispatch ---
     dispatch_output_buffer = torch.empty(
         (num_local_experts, num_ranks * num_tokens, hidden),
-        dtype=torch.bfloat16,
+        dtype=recv_dtype,
         device="cuda",
     )
     dispatch_out, handle = moe_comm.dispatch(
@@ -176,14 +245,33 @@ def main():
 
         if recv_count:
             recv_x = packed_recv_x[i, :recv_count]
-            # All columns except the last 128 should share the value (src_rank - rank_offset)
-            recv_x_lo = recv_x[:, :-128]
+            # All columns except the last 128 share the source value (src_rank -
+            # rank_offset); for quantized dispatch the raw FP8 codes are uniform
+            # too because each source block is constant.
+            recv_x_lo = recv_x[:, :-128].float()
             amin = recv_x_lo.amin(dim=-1)
             amax = recv_x_lo.amax(dim=-1)
             assert torch.equal(amin, amax), f"rank{rank} expert{expert_id}: non-uniform recv block"
 
     if rank == 0:
         print(f"[dispatch] OK (ranks={num_ranks})", flush=True)
+
+    if is_quant:
+        _validate_dispatch_scales(
+            dispatch_out,
+            packed_recv_count,
+            packed_recv_x,
+            num_local_experts,
+            num_ranks,
+            num_tokens,
+            hidden,
+            quant_format,
+            expected_scale_block,
+            expected_scale_dtype,
+            rank,
+        )
+        if rank == 0:
+            print(f"[dispatch quant={args.quant}] scale + dequant check OK", flush=True)
 
     # --- Combine ---
     # Simulate the downstream GEMM output = identity (bf16 copy) so combine
@@ -208,7 +296,12 @@ def main():
         flush=True,
     )
     assert torch.isnan(combined_x).any().item() is False
-    assert diff < 1e-2, f"rank{rank}: LL combine mismatch diff={diff}"
+    if is_quant:
+        rel = diff / max(max_exp, 1e-3)
+        tol = 0.05 if quant_format == "fp8_e4m3" else 0.15
+        assert rel < tol, f"rank{rank}: LL {args.quant} combine mismatch rel={rel:.4e} diff={diff} max={max_exp}"
+    else:
+        assert diff < 1e-2, f"rank{rank}: LL combine mismatch diff={diff}"
 
     dist.barrier(group=group)
     if rank == 0:
