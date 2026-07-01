@@ -290,7 +290,6 @@ class MoECommunicator:
             raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
         self.dispatch_requires_quantization = self.quant_format is not None
 
-        self._is_internode = True
         num_rdma_bytes = _get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
         )
@@ -306,6 +305,11 @@ class MoECommunicator:
             mode=self.mode,
             num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
+        # Report internode only for genuine multi-node (multi-NVLink-domain) jobs
+        # instead of hard-coding True: LL always uses the RDMA transport, but a
+        # single-node LL job is not internode topology-wise. num_rdma_ranks > 1
+        # iff world_size spans more than one local NVLink domain.
+        self._is_internode = self._runtime.get_num_rdma_ranks() > 1
 
     def _init_ht(self, config: MoECommunicatorConfig) -> None:
         group = config.group
@@ -387,6 +391,12 @@ class MoECommunicator:
     ) -> Tuple[DispatchOutput, DispatchHandle]:
         if self.mode == MoEMode.LOW_LATENCY:
             return self._dispatch_ll(input, topk_ids, weights, scales, output_buffer, stream)
+        # HT honors a caller-provided stream by running its kernels on it (the HT
+        # runtime reads torch.cuda.current_stream()); routing the whole call
+        # through a stream context keeps the two-phase notify/dispatch ordered.
+        if stream is not None:
+            with torch.cuda.stream(stream):
+                return self._dispatch_ht(input, topk_ids, weights, scales, previous_handle)
         return self._dispatch_ht(input, topk_ids, weights, scales, previous_handle)
 
     def _dispatch_ll(self, input, topk_ids, weights, scales, output_buffer, stream):
@@ -628,6 +638,10 @@ class MoECommunicator:
     ) -> torch.Tensor:
         if self.mode == MoEMode.LOW_LATENCY:
             return self._combine_ll(expert_output, handle, out, stream)
+        # HT honors a caller-provided stream by running its kernels on it (see dispatch()).
+        if stream is not None:
+            with torch.cuda.stream(stream):
+                return self._combine_ht(expert_output, handle, out)
         return self._combine_ht(expert_output, handle, out)
 
     def _combine_ll(self, expert_output, handle, out, stream):
