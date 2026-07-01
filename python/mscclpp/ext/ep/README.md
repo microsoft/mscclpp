@@ -137,7 +137,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 
 | Field | Purpose |
 |---|---|
-| `mode` | Backend selection (`"ll"` active; `"ht"` archived/not compiled) |
+| `mode` | Backend selection (`"ll"` and `"ht"` both active) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `max_tokens_per_rank` | dispatch capacity |
 | `max_recv_tokens_per_rank` | recv buffer capacity |
@@ -151,10 +151,11 @@ specialized advanced path.
 
 ### Mode selection
 
-The active implementation supports `mode=MoEMode.LOW_LATENCY`. `mode` must be a
-`MoEMode` enum value, not a string. `MoEMode.HIGH_THROUGHPUT` raises
-`NotImplementedError` because the HT implementation is archived under
-`src/ext/ep/ht/` and is not compiled into `mscclpp_ep_cpp`.
+The active implementation supports both `mode=MoEMode.LOW_LATENCY` and
+`mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
+string. The HT backend (exposed at the raw layer as `ExpertParallelRuntime`) is
+compiled into `mscclpp_ep_cpp`; its CUDA kernels live under `src/ext/ep/ht/` and
+its torch-free orchestration is `src/ext/ep/ht_runtime.cc`.
 
 ```python
 moe_comm = MoECommunicator(..., mode=MoEMode.LOW_LATENCY)
@@ -406,6 +407,55 @@ Examples:
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
 
+### Implemented quantization: FP8-E4M3 / MXFP8, and input/output selection
+
+Two activation-quantization formats are implemented today, selected by
+`quant_format` on the `MoECommunicator`:
+
+| `quant_format`   | element dtype   | scale block | `scales.local` dtype / shape         |
+|------------------|-----------------|-------------|--------------------------------------|
+| `None` (default) | `bfloat16`      | —           | — (no scales)                        |
+| `"fp8_e4m3"`     | `float8_e4m3fn` | 128         | `float32` (reciprocal), `[T, H/128]` |
+| `"mxfp8"`        | `float8_e4m3fn` | 32          | `float8_e8m0fnu` (E8M0), `[T, H/32]` |
+
+`quant_format` accepts aliases (`"fp8"` → `"fp8_e4m3"`; `"mx_fp8"` /
+`"mxfp8_e4m3"` / `"ocp_mxfp8"` → `"mxfp8"`). Quantization only affects the
+**dispatch** leg; `combine` is always BF16 → BF16 in both backends (a real expert
+GEMM emits BF16). Requires `hidden % 128 == 0`.
+
+**Where each backend quantizes** determines the legal input → output dtype
+combinations for dispatch:
+
+- **HT is a byte-mover.** The caller pre-quantizes; the kernel transports the
+  FP8 tokens and their block scales verbatim (it never interprets the scales, so
+  MXFP8's 1-byte E8M0 `[T, H/32]` and FP8's FP32 `[T, H/128]` ride the same
+  transport when `H % 128 == 0`). The output dtype **equals** the input dtype.
+- **LL can quantize in-kernel.** BF16 input is quantized to FP8/MXFP8 by the LL
+  dispatch kernel (for MXFP8, an E8M0 power-of-two micro-scale per 32-element
+  block); pre-quantized FP8/MXFP8 input is transported verbatim like HT.
+
+| dispatch                                                  | HT | LL |
+|-----------------------------------------------------------|----|----|
+| `bf16 → bf16`                                             | ✅ | ✅ |
+| `bf16 → fp8` / `bf16 → mxfp8` (kernel quantizes)          | ❌ | ✅ |
+| `fp8 → fp8` / `mxfp8 → mxfp8` (pre-quantized passthrough) | ✅ | ✅ |
+
+Kernel-side `bf16 → fp8` / `bf16 → mxfp8` is **LL-only**; HT always requires the
+caller to pre-quantize.
+
+Parameters that select input / output:
+
+- `quant_format` (`MoECommunicator`): `None` / `"fp8_e4m3"` / `"mxfp8"` — the
+  quantized element + scale encoding.
+- `input_dtype` (`MoECommunicator`): `torch.bfloat16` (default) or
+  `torch.float8_e4m3fn`. For **LL**, BF16 selects kernel-quantize and
+  `float8_e4m3fn` selects pre-quantized passthrough (output = input); for **HT**
+  it is always pre-quantized, so FP8 input is implied by `quant_format`.
+- `scales=QuantScales(local=..., format=...)` on `dispatch`: required for
+  pre-quantized input; `local` is `[T, H/block]` in the format's scale dtype.
+  `DispatchOutput.scales` returns the routed scales in the dispatched tokens'
+  layout.
+
 ### `output_buffer`
 
 Low-latency dispatch requires the caller to provide the receive token buffer:
@@ -495,7 +545,8 @@ same layout and slot order.
 
 If `dispatch_out.scales` is not `None`, its local scale tensor should follow
 the same packed/expert-major layout as `dispatch_out.tokens`, with the hidden
-dimension replaced by the scale dimension.
+dimension replaced by the scale dimension (`H / block_size` — `H/128` for
+`fp8_e4m3`, `H/32` for `mxfp8`). The examples below show the `fp8_e4m3` case.
 
 Examples:
 
@@ -754,3 +805,8 @@ expert_output = fp8_grouped_mlp(
 
 output = moe_comm.combine(expert_output, handle)
 ```
+
+MXFP8 uses the same shape with `format="mxfp8"`, `block_size=32`, and an E8M0
+(`torch.float8_e8m0fnu`) `local` scale tensor of shape `[T, H/32]`. On LL you
+may instead pass BF16 `input` with `quant_format="mxfp8"` and no `scales`, and
+the LL dispatch kernel produces the FP8 tokens + E8M0 scales for you.
