@@ -282,8 +282,9 @@ class MoECommunicator:
 
         if config.max_recv_tokens_per_rank not in (None, self.max_tokens_per_rank):
             raise NotImplementedError("low-latency mode currently uses max_tokens_per_rank as recv capacity")
-        if config.input_dtype not in (None, torch.bfloat16):
-            raise NotImplementedError("low-latency dispatch currently supports BF16 input only")
+        fp8_dtype = getattr(torch, "float8_e4m3fn", None)
+        if config.input_dtype not in (None, torch.bfloat16, fp8_dtype):
+            raise NotImplementedError("low-latency dispatch supports BF16 or pre-quantized FP8-E4M3 input")
 
         self.quant_format = _normalize_quant_format(config.quant_format)
         if self.quant_format not in (None, "fp8_e4m3", "mxfp8"):
@@ -291,8 +292,10 @@ class MoECommunicator:
         self.dispatch_requires_quantization = self.quant_format is not None
         # LL kernel quant mode: 0 = BF16 (no quant), 1 = FP8-E4M3 (block-128 FP32
         # reciprocal scales), 2 = MXFP8 (block-32 E8M0 power-of-two micro-scales).
-        # The LL dispatch kernel *produces* the quantization from BF16 input, so
-        # the scale block size / dtype below drive the output scale buffer.
+        # With BF16 input the LL dispatch kernel *produces* the quantization; with
+        # pre-quantized FP8/MXFP8 input (``ll_input_prequantized``) it transports the
+        # caller's tokens + scales verbatim (MXFP8 in -> MXFP8 out). Either way the
+        # scale block size / dtype below drive the output scale buffer.
         if self.quant_format == "mxfp8":
             e8m0_dtype = getattr(torch, "float8_e8m0fnu", None)
             if e8m0_dtype is None:
@@ -308,6 +311,11 @@ class MoECommunicator:
             self.ll_quant_mode = 0
             self.ll_scale_block_size = None
             self.ll_scale_dtype = None
+        # Pre-quantized passthrough dispatch: caller supplies FP8 tokens + scales.
+        self.ll_input_prequantized = fp8_dtype is not None and config.input_dtype == fp8_dtype
+        if self.ll_input_prequantized and not self.dispatch_requires_quantization:
+            raise ValueError("pre-quantized FP8 low-latency input requires quant_format='fp8_e4m3' or 'mxfp8'")
+        self.ll_input_dtype = config.input_dtype if config.input_dtype is not None else torch.bfloat16
 
         num_rdma_bytes = _get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
@@ -446,8 +454,10 @@ class MoECommunicator:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
         out_buf, packed_scales, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
+        input_scales_ptr = scales.local.data_ptr() if self.ll_input_prequantized else 0
         self._runtime._cpp_runtime.dispatch(
             input.data_ptr(),
+            input_scales_ptr,
             topk_ids.data_ptr(),
             out_buf.data_ptr(),
             0 if packed_scales is None else packed_scales.data_ptr(),
@@ -706,18 +716,10 @@ class MoECommunicator:
 
     def _combine_ll(self, expert_output, handle, out, stream):
         self._validate_combine_inputs(expert_output, handle, out)
-        combine_requires_dequantization = _requires_dequantization(expert_output)
-        combine_quant_mode = self.ll_quant_mode if combine_requires_dequantization else 0
-        x_scales = None
-        if combine_requires_dequantization:
-            if handle.output_scales is None or handle.output_scales.local is None:
-                raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
-            x_scales = handle.output_scales.local
         if out is None:
             out = torch.empty((handle.num_tokens, self.hidden_size), dtype=torch.bfloat16, device=expert_output.device)
         self._runtime._cpp_runtime.combine(
             expert_output.data_ptr(),
-            0 if x_scales is None else x_scales.data_ptr(),
             handle.topk_ids.data_ptr(),
             handle.weights.data_ptr(),
             handle.src_info.data_ptr(),
@@ -728,7 +730,6 @@ class MoECommunicator:
             handle.weights.size(1),
             handle.num_max_dispatch_tokens_per_rank,
             handle.num_experts,
-            combine_quant_mode,
             _cuda_stream_ptr(stream),
         )
         return out
@@ -820,12 +821,31 @@ class MoECommunicator:
     def _validate_dispatch_inputs(self, input, topk_ids, weights, scales, output_buffer) -> None:
         if output_buffer is None:
             raise ValueError("output_buffer is required for low-latency dispatch")
-        if scales is not None and (scales.local is not None or scales.global_scale is not None):
-            raise NotImplementedError("low-latency dispatch does not support quantized input scales yet")
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
-        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
+        if self.ll_input_prequantized:
+            # Pre-quantized MXFP8/FP8 in -> MXFP8/FP8 out passthrough: FP8 tokens
+            # plus caller-provided block scales, transported verbatim.
+            if input.device.type != "cuda" or input.dtype != self.ll_input_dtype:
+                raise ValueError(
+                    f"pre-quantized low-latency dispatch input must be a CUDA {self.ll_input_dtype} tensor"
+                )
+            if scales is None or scales.local is None:
+                raise ValueError("pre-quantized low-latency dispatch requires scales.local")
+            expected_blocks = self.hidden_size // self.ll_scale_block_size
+            if (
+                scales.local.dim() != 2
+                or not scales.local.is_contiguous()
+                or tuple(scales.local.shape) != (input.size(0), expected_blocks)
+            ):
+                raise ValueError(f"scales.local must be a contiguous [num_tokens, {expected_blocks}] tensor")
+            if scales.local.device != input.device or scales.local.dtype != self.ll_scale_dtype:
+                raise ValueError(f"scales.local must be a {self.ll_scale_dtype} tensor on input's device")
+        else:
+            if scales is not None and (scales.local is not None or scales.global_scale is not None):
+                raise NotImplementedError("low-latency dispatch does not accept input scales for BF16 input")
+            if input.device.type != "cuda" or input.dtype != torch.bfloat16:
+                raise ValueError("low-latency dispatch input must be a CUDA BF16 tensor")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} does not match configured {self.hidden_size}")
         if input.size(0) > self.max_tokens_per_rank:
@@ -868,8 +888,8 @@ class MoECommunicator:
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype not in (torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
-            raise ValueError("expert_output must be BF16 or FP8 E4M3")
+        if expert_output.dtype != torch.bfloat16:
+            raise ValueError("low-latency combine expert_output must be BF16")
         if out is not None:
             expected_out_shape = (handle.num_tokens, self.hidden_size)
             if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():
@@ -995,11 +1015,6 @@ def _scales_from_transport(recv_fp32: Optional[torch.Tensor], scale_dtype: torch
     if scale_dtype == torch.float32:
         return recv_fp32
     return recv_fp32.view(scale_dtype)
-
-
-def _requires_dequantization(tensor: torch.Tensor) -> bool:
-    fp8_dtype = getattr(torch, "float8_e4m3fn", None)
-    return fp8_dtype is not None and tensor.dtype == fp8_dtype
 
 
 def _exclusive_cumsum(counts: Union[torch.Tensor, List[int]]) -> torch.Tensor:

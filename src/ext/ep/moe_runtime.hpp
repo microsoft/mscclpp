@@ -35,13 +35,13 @@ class MoERuntime {
   std::string getLocalIpcHandle() const;
 
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-                const void* input, const int64_t* topkIdx, int numTokens, int hidden, int numTopk,
-                int numMaxDispatchTokensPerRank, int numExperts, int quantMode, DispatchLayout dispatchLayout,
-                cudaStream_t stream);
+                const void* input, const void* inputScales, const int64_t* topkIdx, int numTokens, int hidden,
+                int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int quantMode,
+                DispatchLayout dispatchLayout, cudaStream_t stream);
 
-  void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
-               int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int quantMode, cudaStream_t stream);
+  void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+               const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank,
+               int numExperts, cudaStream_t stream);
 
  private:
   int lowLatencyBufferIdx_ = 0;

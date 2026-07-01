@@ -312,14 +312,13 @@ void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, 
 /// @param stream CUDA stream to launch the kernel on.
 /// @param phase Phase control (default: SEND_AND_RECV).
 void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-              const void* input, const int64_t* topkIdx, const DispatchConfig& config, const BufferSet& currentBuffer,
-              const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
-              Phase phase = SEND_AND_RECV);
+              const void* input, const void* inputScales, const int64_t* topkIdx, const DispatchConfig& config,
+              const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
+              void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
 
 /// Low-latency combine kernel that aggregates expert outputs back to tokens.
 /// @param output Combined output [num_combined_tokens, hidden].
-/// @param input Expert outputs [num_local_experts * num_ranks * max_tokens, hidden].
-/// @param inputScales Optional FP8 scales for expert outputs.
+/// @param input Expert outputs [num_local_experts * num_ranks * max_tokens, hidden] (BF16).
 /// @param topkIdx Expert indices [num_combined_tokens, num_topk].
 /// @param topkWeights Weights [num_combined_tokens, num_topk].
 /// @param srcInfo Source rank info.
@@ -331,10 +330,10 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
 /// @param workspace Temporary workspace buffer.
 /// @param stream CUDA stream to launch the kernel on.
 /// @param phase Phase control (default: SEND_AND_RECV).
-void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-             const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, const CombineConfig& config,
-             const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
-             void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
+void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+             const int64_t* layoutRange, const CombineConfig& config, const BufferSet& currentBuffer,
+             const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
+             Phase phase = SEND_AND_RECV);
 
 }  // namespace low_latency
 
