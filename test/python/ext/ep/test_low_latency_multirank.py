@@ -29,8 +29,10 @@ the same host (what an 8-GPU single-node launch exercises) currently hangs
 during dispatch; cross-node LL with one GPU per node works as designed.
 
 Adapted from DeepEP/tests/test_low_latency.py stripped to the bare checks
-we need for an LL port smoke test. Covers BF16, FP8-E4M3 (block-128 FP32
-scales), and MXFP8 (block-32 E8M0 micro-scales) dispatch via ``--quant``.
+we need for an LL port smoke test. Dispatch input/output dtypes are chosen
+with ``--input-dtype`` / ``--output-dtype`` (bf16, fp8, mxfp8): BF16 input
+lets the kernel quantize to any output, while pre-quantized fp8/mxfp8 input
+is transported verbatim (output must match input). Combine is BF16 -> BF16.
 """
 
 from __future__ import annotations
@@ -56,15 +58,16 @@ def parse_args():
     parser.add_argument("--num-topk", type=int, default=8)
     parser.add_argument("--num-experts", type=int, default=256)
     parser.add_argument(
-        "--quant",
-        choices=("none", "fp8", "mxfp8"),
-        default="none",
-        help="dispatch activation quant: none (BF16), fp8 (E4M3 block-128), mxfp8 (E8M0 block-32)",
+        "--input-dtype",
+        choices=("bf16", "fp8", "mxfp8"),
+        default="bf16",
+        help="dispatch input dtype: bf16 (kernel quantizes) or pre-quantized fp8/mxfp8 (passthrough)",
     )
     parser.add_argument(
-        "--prequantized",
-        action="store_true",
-        help="pass pre-quantized FP8/MXFP8 input (in==out passthrough) instead of BF16 (kernel quantizes)",
+        "--output-dtype",
+        choices=("bf16", "fp8", "mxfp8"),
+        default="bf16",
+        help="dispatch output dtype: bf16, fp8 (E4M3 block-128), or mxfp8 (E8M0 block-32)",
     )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument("--bench-warmup", type=int, default=5)
@@ -85,6 +88,24 @@ def init_dist():
         rank=rank,
     )
     return rank, world_size, local_rank, dist.new_group(list(range(world_size)))
+
+
+def _resolve_ll_dtypes(input_dtype, output_dtype):
+    """Map --input-dtype/--output-dtype to the LL dispatch (quant_format, prequantized).
+
+    LL dispatch: BF16 input lets the kernel quantize to any output; pre-quantized
+    FP8/MXFP8 input is transported verbatim, so the output must match the input.
+    Combine is always BF16 -> BF16.
+    """
+    fmt = {"bf16": None, "fp8": "fp8_e4m3", "mxfp8": "mxfp8"}
+    if input_dtype == "bf16":
+        return fmt[output_dtype], False
+    if output_dtype != input_dtype:
+        raise SystemExit(
+            "low-latency pre-quantized dispatch requires --output-dtype == --input-dtype "
+            f"(got {input_dtype} -> {output_dtype})"
+        )
+    return fmt[input_dtype], True
 
 
 def _dequantize_recv(recv_x_fp8, scales_local_expert, block):
@@ -189,12 +210,13 @@ def main():
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
 
-    quant_format = {"none": None, "fp8": "fp8_e4m3", "mxfp8": "mxfp8"}[args.quant]
+    quant_format, prequantized = _resolve_ll_dtypes(args.input_dtype, args.output_dtype)
     is_quant = quant_format is not None
     recv_dtype = torch.float8_e4m3fn if is_quant else torch.bfloat16
-    expected_scale_block = {"fp8": 128, "mxfp8": 32}.get(args.quant)
-    expected_scale_dtype = {"fp8": torch.float32, "mxfp8": getattr(torch, "float8_e8m0fnu", None)}.get(args.quant)
-    assert not (args.prequantized and not is_quant), "--prequantized requires --quant fp8 or mxfp8"
+    expected_scale_block = {"fp8_e4m3": 128, "mxfp8": 32}.get(quant_format)
+    expected_scale_dtype = {"fp8_e4m3": torch.float32, "mxfp8": getattr(torch, "float8_e8m0fnu", None)}.get(
+        quant_format
+    )
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -215,7 +237,7 @@ def main():
     # x and supplies FP8 tokens + block scales, which dispatch transports verbatim.
     dispatch_scales = None
     input_dtype = None
-    if args.prequantized:
+    if prequantized:
         input_dtype = torch.float8_e4m3fn
         if quant_format == "mxfp8":
             disp_x, x_scales = _quantize_mxfp8(x, expected_scale_block)
@@ -240,7 +262,7 @@ def main():
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk} quant={args.quant} prequantized={args.prequantized}",
+            f"num_experts={num_experts} num_topk={num_topk} input={args.input_dtype} output={args.output_dtype}",
             flush=True,
         )
     print(
@@ -321,7 +343,7 @@ def main():
             rank,
         )
         if rank == 0:
-            print(f"[dispatch quant={args.quant}] scale + dequant check OK", flush=True)
+            print(f"[dispatch {args.input_dtype}->{args.output_dtype}] scale + dequant check OK", flush=True)
 
     # --- Combine (BF16 in -> BF16 out) ---
     # Combine consumes BF16 expert outputs; for quantized dispatch, dequantize the
@@ -353,7 +375,9 @@ def main():
     if is_quant:
         rel = diff / max(max_exp, 1e-3)
         tol = 0.05 if quant_format == "fp8_e4m3" else 0.15
-        assert rel < tol, f"rank{rank}: LL {args.quant} combine mismatch rel={rel:.4e} diff={diff} max={max_exp}"
+        assert (
+            rel < tol
+        ), f"rank{rank}: LL {args.input_dtype}->{args.output_dtype} combine mismatch rel={rel:.4e} diff={diff} max={max_exp}"
     else:
         assert diff < 1e-2, f"rank{rank}: LL combine mismatch diff={diff}"
 
