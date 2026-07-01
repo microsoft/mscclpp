@@ -61,6 +61,11 @@ def parse_args():
         default="none",
         help="dispatch activation quant: none (BF16), fp8 (E4M3 block-128), mxfp8 (E8M0 block-32)",
     )
+    parser.add_argument(
+        "--prequantized",
+        action="store_true",
+        help="pass pre-quantized FP8/MXFP8 input (in==out passthrough) instead of BF16 (kernel quantizes)",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
@@ -93,6 +98,34 @@ def _dequantize_recv(recv_x_fp8, scales_local_expert, block):
     scale_mul = scales_local_expert.float()
     scale_full = scale_mul.repeat_interleave(block, dim=1)[:, : recv_f.size(1)]
     return recv_f * scale_full
+
+
+def _dequantize_full(recv_x_fp8, scales_local, block):
+    """Dequantize a full [E, S, H] FP8 recv buffer with [E, S, H//block] scales to BF16."""
+    recv_f = recv_x_fp8.float()
+    scale_full = scales_local.float().repeat_interleave(block, dim=2)[..., : recv_f.size(2)]
+    return (recv_f * scale_full).nan_to_num(0.0).to(torch.bfloat16)
+
+
+def _quantize_fp8(x, block=128):
+    """Quantize [T, H] BF16 -> (FP8-E4M3 tokens [T, H], FP32 reciprocal scales [T, H//block])."""
+    tokens, hidden = x.shape
+    xb = x.float().reshape(tokens, hidden // block, block)
+    amax = xb.abs().amax(dim=-1).clamp_min(1e-4)
+    x_q = (xb * (448.0 / amax).unsqueeze(-1)).reshape(tokens, hidden).to(torch.float8_e4m3fn)
+    scale_inv = (amax / 448.0).contiguous()
+    return x_q.contiguous(), scale_inv
+
+
+def _quantize_mxfp8(x, block=32):
+    """Quantize [T, H] BF16 -> (FP8-E4M3 tokens [T, H], E8M0 scales [T, H//block])."""
+    tokens, hidden = x.shape
+    xb = x.float().reshape(tokens, hidden // block, block)
+    amax = xb.abs().amax(dim=-1).clamp_min(1e-4)
+    exp = torch.ceil(torch.log2(amax / 448.0)).clamp(-127, 127).to(torch.int32)
+    x_q = (xb * torch.exp2(-exp.float()).unsqueeze(-1)).reshape(tokens, hidden).to(torch.float8_e4m3fn)
+    e8m0 = (exp + 127).to(torch.uint8).contiguous().view(torch.float8_e8m0fnu)
+    return x_q.contiguous(), e8m0
 
 
 def _validate_dispatch_scales(
@@ -161,6 +194,7 @@ def main():
     recv_dtype = torch.float8_e4m3fn if is_quant else torch.bfloat16
     expected_scale_block = {"fp8": 128, "mxfp8": 32}.get(args.quant)
     expected_scale_dtype = {"fp8": torch.float32, "mxfp8": getattr(torch, "float8_e8m0fnu", None)}.get(args.quant)
+    assert not (args.prequantized and not is_quant), "--prequantized requires --quant fp8 or mxfp8"
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -177,6 +211,20 @@ def main():
     for _ in range(min(10, num_tokens)):
         topk_idx[random.randint(0, num_tokens - 1), random.randint(0, num_topk - 1)] = -1
 
+    # Pre-quantized passthrough (MXFP8/FP8 in -> MXFP8/FP8 out): the caller quantizes
+    # x and supplies FP8 tokens + block scales, which dispatch transports verbatim.
+    dispatch_scales = None
+    input_dtype = None
+    if args.prequantized:
+        input_dtype = torch.float8_e4m3fn
+        if quant_format == "mxfp8":
+            disp_x, x_scales = _quantize_mxfp8(x, expected_scale_block)
+        else:
+            disp_x, x_scales = _quantize_fp8(x, expected_scale_block)
+        dispatch_scales = ep.QuantScales(local=x_scales, format=quant_format, block_size=expected_scale_block)
+    else:
+        disp_x = x
+
     moe_comm = ep.MoECommunicator(
         comm=ep_group,
         num_experts=num_experts,
@@ -187,11 +235,12 @@ def main():
         mode=ep.MoEMode.LOW_LATENCY,
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
         quant_format=quant_format,
+        input_dtype=input_dtype,
     )
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk} quant={args.quant}",
+            f"num_experts={num_experts} num_topk={num_topk} quant={args.quant} prequantized={args.prequantized}",
             flush=True,
         )
     print(
@@ -212,9 +261,10 @@ def main():
         device="cuda",
     )
     dispatch_out, handle = moe_comm.dispatch(
-        x,
+        disp_x,
         topk_idx,
         topk_weights,
+        scales=dispatch_scales,
         output_buffer=dispatch_output_buffer,
     )
     packed_recv_x = dispatch_out.tokens
@@ -273,10 +323,14 @@ def main():
         if rank == 0:
             print(f"[dispatch quant={args.quant}] scale + dequant check OK", flush=True)
 
-    # --- Combine ---
-    # Simulate the downstream GEMM output = identity (bf16 copy) so combine
-    # returns sum(x * weight) across experts.
-    simulated_gemm_x = packed_recv_x.clone()
+    # --- Combine (BF16 in -> BF16 out) ---
+    # Combine consumes BF16 expert outputs; for quantized dispatch, dequantize the
+    # received tokens to BF16 first (a real expert GEMM would emit BF16). This makes
+    # combine return sum(x * weight) across experts.
+    if is_quant:
+        simulated_gemm_x = _dequantize_full(packed_recv_x, dispatch_out.scales.local, expected_scale_block)
+    else:
+        simulated_gemm_x = packed_recv_x.clone()
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="cuda")
     combined_x = moe_comm.combine(simulated_gemm_x, handle, out=out)
 

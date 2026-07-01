@@ -266,9 +266,9 @@ void MoERuntime::setup() {
 }
 
 void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
-                          int* outputCount, const void* input, const int64_t* topkIdx, int numTokens, int hidden,
-                          int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int quantMode,
-                          DispatchLayout dispatchLayout, cudaStream_t stream) {
+                          int* outputCount, const void* input, const void* inputScales, const int64_t* topkIdx,
+                          int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
+                          int quantMode, DispatchLayout dispatchLayout, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
@@ -283,6 +283,9 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
   } else {
     EP_HOST_ASSERT(quantMode == 0 && "Unsupported low-latency dispatch quant mode");
   }
+  // Pre-quantized input (caller supplies scales) is transported verbatim, so the
+  // input dtype matches the output; otherwise the kernel quantizes BF16 input.
+  low_latency::DType inputDType = inputScales != nullptr ? outputDType : low_latency::DType::BF16;
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
@@ -295,7 +298,7 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                                      .numTopk_ = numTopk,
                                      .numExperts_ = numExperts,
                                      .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
-                                     .inputDType_ = low_latency::DType::BF16,
+                                     .inputDType_ = inputDType,
                                      .outputDType_ = outputDType,
                                      .outputLayout_ = dispatchLayout};
   low_latency::BufferSet currentBuffer{.sendDataBuffer_ = buffer.dispatchRdmaSendBuffer,
@@ -319,26 +322,17 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
       .rank_ = rank_,
       .numRanks_ = numRanks_,
       .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, config,
-                        currentBuffer, nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
+  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, inputScales, topkIdx,
+                        config, currentBuffer, nextBufferSet, transport, workspace_, stream,
+                        low_latency::SEND_AND_RECV);
 }
 
-void MoERuntime::combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-                         const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens,
-                         int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts, int quantMode,
-                         cudaStream_t stream) {
+void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                         const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
+                         int numMaxDispatchTokensPerRank, int numExperts, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
-
-  low_latency::DType inputDType = low_latency::DType::BF16;
-  if (quantMode == 1) {
-    inputDType = low_latency::DType::F8E4M3;
-  } else if (quantMode == 2) {
-    inputDType = low_latency::DType::MXF8E4M3;
-  } else {
-    EP_HOST_ASSERT(quantMode == 0 && "Unsupported low-latency combine quant mode");
-  }
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
@@ -351,7 +345,7 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
                                     .numTopk_ = numTopk,
                                     .numExperts_ = numExperts,
                                     .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
-                                    .inputDType_ = inputDType,
+                                    .inputDType_ = low_latency::DType::BF16,
                                     .outputDType_ = low_latency::DType::BF16,
                                     .zeroCopy_ = false};
   low_latency::BufferSet currentBuffer{.sendDataBuffer_ = buffer.combineRdmaSendBuffer,
@@ -375,8 +369,8 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
       .rank_ = rank_,
       .numRanks_ = numRanks_,
       .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  low_latency::combine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
-                       nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
+  low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer, nextBufferSet,
+                       transport, workspace_, stream, low_latency::SEND_AND_RECV);
 }
 
 }  // namespace ep
