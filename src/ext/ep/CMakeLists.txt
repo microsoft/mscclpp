@@ -3,6 +3,13 @@
 #
 # Builds `mscclpp_ep_cpp`, a nanobind extension that exposes the EP
 # (Mixture-of-Experts dispatch/combine) runtime to Python.
+#
+# Two backends share one module, both with a torch-free, raw-pointer (uintptr_t)
+# nanobind API so the module never links libtorch:
+#  - Low-latency (LL): moe_runtime.cc + kernels/low_latency.cu.
+#  - High-throughput (HT): ht_runtime.cc + ht/kernels/*.cu, a DeepEP-style
+#    runtime de-torched to the same pointer boundary as the LL runtime (dynamic
+#    recv sizing via the two-phase notify -> allocate -> dispatch API).
 
 find_package(Python 3.10 COMPONENTS Interpreter Development.Module REQUIRED)
 include(FetchContent)
@@ -34,12 +41,17 @@ set(EP_SOURCES
     moe_runtime.cc
     bindings.cpp
     kernels/low_latency.cu
+    # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
+    ht_runtime.cc
+    ht/kernels/internode.cu
+    ht/kernels/intranode_kernel.cu
+    ht/kernels/runtime.cu
 )
 
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES kernels/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES kernels/*.cu ht/kernels/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -51,12 +63,28 @@ endif()
 
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/ht
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include
     ${PROJECT_SOURCE_DIR}/src/ext/include
     ${GPU_INCLUDE_DIRS}
 )
 target_link_libraries(mscclpp_ep_cpp PRIVATE mscclpp ${GPU_LIBRARIES} Threads::Threads)
+
+# The HT NCCL-EP dispatch/combine (sender-direct + flat all-sender + TMA) path
+# is compiled in unconditionally for this branch (the validated GB200 fast path).
+target_compile_definitions(mscclpp_ep_cpp PRIVATE EP_DISPATCH_NCCLEP)
+
+# The EP CUDA kernels call constexpr __host__ helpers (std::max / std::pair) and
+# use extended lambdas in device code. These flags were previously injected
+# implicitly by Torch's CMake package; add them explicitly now that the module
+# no longer links libtorch.
+if(MSCCLPP_USE_CUDA)
+    target_compile_options(mscclpp_ep_cpp PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+        $<$<COMPILE_LANGUAGE:CUDA>:--expt-extended-lambda>
+    )
+endif()
 
 # Number of intra-node NVLink peers compiled into the EP kernels.
 #  - 8 (default) matches DeepEP upstream and H100/HGX 8-GPU nodes.

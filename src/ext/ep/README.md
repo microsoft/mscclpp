@@ -192,13 +192,17 @@ defaults, **not** the `ep.Config(...)` constructor defaults):
 
 | Variable                  | Maps to (`ep.Config` field)         | Default | Notes                                  |
 |---------------------------|--------------------------------------|--------:|-----------------------------------------|
-| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `152`   | `20` on the intranode test. Try `64` on GB200 intranode for `dispatch` BW. |
+| `MSCCLPP_EP_NSM`          | `num_sms`                            | `152` / `20` | Single SM-count knob for **both** tests (internode default `152`, intranode `20`). `MSCCLPP_EP_NUM_SMS` is still accepted as a legacy alias. Try `64` on GB200 intranode for `dispatch` BW. |
 | `MSCCLPP_EP_NVL_SEND`     | `num_max_nvl_chunked_send_tokens`    | `8`     | Must be `<` `MSCCLPP_EP_NVL_RECV`.     |
 | `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
 | `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `16`    | Internode only.                        |
 | `MSCCLPP_EP_RDMA_RECV`    | `num_max_rdma_chunked_recv_tokens`   | `128`   | Scale **down** as `num_rdma_ranks` grows (4n→128, 8n→64, 16n→32) to keep the RDMA buffer under the 2 GiB `INT_MAX` limit. |
 | `MSCCLPP_EP_DIRECT`       | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only.** `1` enables the sender direct-write dispatch **and** receiver gather-direct combine (see [GB200 direct-path optimization](#gb200-direct-path-optimization-mscclpp_ep_direct--mscclpp_ep_intra_direct)). Unset = byte-identical 2-hop baseline. |
 | `MSCCLPP_EP_INTRA_DIRECT` | — (runtime `getenv`)                 | unset   | **GB200 single-node only.** `1` enables sender direct-write for the intra-node kernel. Independent of `MSCCLPP_EP_DIRECT` (see below). |
+| `MSCCLPP_EP_FLAT`         | — (runtime `getenv`)                 | unset   | **GB200 / NVL72 internode only; requires `MSCCLPP_EP_DIRECT=1`.** `1` enables the flat all-sender dispatch (removes the forwarder / coordinator / receiver roles; per-token metadata goes straight to the dest recv pool) + direct-gather combine (see [flat all-sender path](#gb200-flat-all-sender-path-mscclpp_ep_flat)). Unset = the `MSCCLPP_EP_DIRECT` path. |
+| `MSCCLPP_EP_DISPATCH_NSM` | — (runtime `getenv`)                 | `num_sms`/2 | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Sets the all-sender dispatch block count independently of `num_sms`; clamped to `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM budget — e.g. `num_sms=16` + `DISPATCH_NSM=16` → 16 blocks). The RDMA/NVL buffers are auto-sized to match. Lower it to free SMs for overlapping compute, or set it to `num_sms` to maximize dispatch throughput. |
+| `MSCCLPP_EP_COMBINE_NSM`  | — (runtime `getenv`)                 | `num_sms`   | **Flat path only (`MSCCLPP_EP_FLAT=1`).** Caps the combine block count independently of `num_sms`; clamped to `[2, num_sms]`. Flat combine saturates ~76 blocks. |
+| `MSCCLPP_EP_COMBINE_TMA`  | — (runtime `getenv`)                 | `1` (on) | **Flat path only (`MSCCLPP_EP_FLAT=1` + `MSCCLPP_EP_DIRECT=1`).** Selects the combine flat-gather implementation. Default (`1`) uses the TMA-staged gather (`cp.async.bulk` contributor rows → SMEM → reduce), which hides remote-NVLink read latency via the async copy engine and wins at every channel count and node scale. `0` falls back to the synchronous register-MLP gather (lean kernel ≤14 channels, else the unified flat branch). |
 
 Validated 16-node (64-rank) configs on Azure GB200 NVL72 (HIDDEN=7168,
 tokens=4096, experts=256, topk=8):
@@ -249,6 +253,46 @@ topk=8, experts=256):
 > rendezvous is not DNS-resolvable on these nodes) and set
 > `NCCL_NET_PLUGIN=none` + `NCCL_IB_HCA=mlx5_0,mlx5_1,mlx5_2,mlx5_3` so NCCL's
 > built-in IB probe does not crash `ep.MoECommunicator` construction.
+
+### GB200 flat all-sender path (`MSCCLPP_EP_FLAT`)
+
+`MSCCLPP_EP_FLAT=1` (requires `MSCCLPP_EP_DIRECT=1`) takes the direct path one
+step further. The `MSCCLPP_EP_DIRECT` dispatch still runs a sender + forwarder
+pair per channel and routes per-token metadata through the 2-hop RDMA ring →
+forwarder → NVL-receiver pipeline; the flat path removes the forwarder,
+sender-coordinator, and NVL-receiver roles entirely, so dispatch launches
+**all-sender** (one block per channel) and each sender writes its tokens'
+metadata straight into the destination recv pool. Combine is a flat
+direct-gather (no forwarder); by default it uses a **TMA-staged** gather that
+streams each contributor's hidden chunks through shared memory via `cp.async.bulk`
+(`MSCCLPP_EP_COMBINE_TMA=1`, the default), letting the async copy engine hide the
+remote-NVLink read latency. A small post-dispatch drain copies the pool metadata
+into the `recv_*` output tensors.
+
+Because both legs are now bandwidth-bound 1-hops, they saturate the NVLink
+write/read ceiling well below the full SM grid, so the dispatch and combine
+block counts can be capped **independently** of `num_sms` to free SMs for
+overlapping compute:
+
+- `MSCCLPP_EP_DISPATCH_NSM=<N>` — flat dispatch block count, clamped to
+  `[1, num_sms]` (the flat path has no forwarder, so it can use the full SM
+  budget; the RDMA/NVL buffers are auto-sized to the chosen count).
+  Default = `num_sms/2`.
+- `MSCCLPP_EP_COMBINE_NSM=<N>` — flat combine block count, clamped to
+  `[2, num_sms]`. Default = `num_sms`.
+
+Both are flat-only and leave the `MSCCLPP_EP_DIRECT` / 2-hop paths byte-
+identical when unset. Measured on Azure GB200 NVL72 (2 nodes × 4 GPU,
+HIDDEN=7168, tokens=4096, topk=8, experts=256, `MSCCLPP_EP_NSM=152`):
+
+- Dispatch (combine grid fixed): `DISPATCH_NSM` 16→**698 µs**, 32→544,
+  64→498, 76→**495 µs** — knee at ~64 blocks.
+- Combine (dispatch grid fixed): `COMBINE_NSM` 16→**1006 µs**, 32→577,
+  64→514, 152→**451 µs** — knee at ~76 blocks.
+
+So flat dispatch reaches its floor at ~64 of 76 possible blocks and combine at
+~76 of 152, leaving the remaining SMs free for the model's compute to overlap
+the communication.
 
 ## Layout
 

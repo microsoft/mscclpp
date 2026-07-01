@@ -173,8 +173,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
              int* recv_channel_offset, int* send_head, const int4* x, const float* x_scales, const int64_t* topk_idx,
              const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
              int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
-             int num_max_send_tokens, int num_recv_buffer_tokens, void** recv_pool_ptrs,
-             int64_t recv_pool_header_bytes) {
+             int num_max_send_tokens, int num_recv_buffer_tokens, void** recv_pool_ptrs, int64_t recv_pool_header_bytes,
+             int* ep_combine_recv_idx) {
   const auto num_sms = static_cast<int>(gridDim.x), sm_id = static_cast<int>(blockIdx.x);
   const auto thread_id = static_cast<int>(threadIdx.x);
   const bool is_sender = sm_id % 2 == 0;
@@ -318,6 +318,10 @@ __global__ void __launch_bounds__(kNumThreads, 1)
           if (recv_pool_ptrs != nullptr) {
             auto shifted_dst = direct_dst_pool + (direct_base + abs_pos) * hidden_int4;
             UNROLLED_WARP_COPY(5, send_lane_id, hidden_int4, shifted_dst, shifted_x, __ldg, st_na_global);
+            // inc5 combine-direct: record this token's final recv-pool slot in the dst's
+            // pool so the direct-gather combine can read it straight back (per (token, dst)).
+            if (ep_combine_recv_idx != nullptr and send_lane_id == 0)
+              ep_combine_recv_idx[token_idx * kNumRanks + responsible_rank] = static_cast<int>(direct_base + abs_pos);
           } else {
             auto shifted_channel_x_buffers = channel_x_buffers.buffer() + dst_slot_idx * hidden_int4;
             UNROLLED_WARP_COPY(5, send_lane_id, hidden_int4, shifted_channel_x_buffers, shifted_x, __ldg, st_na_global);
@@ -475,15 +479,15 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
               const float* topk_weights, const bool* is_token_in_rank, const int* channel_prefix_matrix, int num_tokens,
               int hidden_int4, int num_topk, int num_experts, int num_scales, void** buffer_ptrs, int rank,
               int num_ranks, cudaStream_t stream, int num_sms, int num_max_send_tokens, int num_recv_buffer_tokens,
-              void** recv_pool_ptrs, int64_t recv_pool_header_bytes) {
+              void** recv_pool_ptrs, int64_t recv_pool_header_bytes, int* ep_combine_recv_idx) {
   constexpr int kNumThreads = 512;
 
 #define DISPATCH_LAUNCH_CASE(ranks)                                                                                 \
-  LAUNCH_KERNEL(&cfg, dispatch<ranks, kNumThreads>, reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_src_idx,   \
+  LAUNCH_KERNEL(&cfg, (dispatch<ranks, kNumThreads>), reinterpret_cast<int4*>(recv_x), recv_x_scales, recv_src_idx, \
                 recv_topk_idx, recv_topk_weights, recv_channel_offset, send_head, reinterpret_cast<const int4*>(x), \
                 x_scales, topk_idx, topk_weights, is_token_in_rank, channel_prefix_matrix, num_tokens, hidden_int4, \
                 num_topk, num_experts, num_scales, buffer_ptrs, rank, num_max_send_tokens, num_recv_buffer_tokens,  \
-                recv_pool_ptrs, recv_pool_header_bytes);                                                            \
+                recv_pool_ptrs, recv_pool_header_bytes, ep_combine_recv_idx);                                       \
   break
 
   // Even-numbered blocks for sending, odd-numbered blocks for receiving.
@@ -491,6 +495,166 @@ void dispatch(void* recv_x, float* recv_x_scales, int* recv_src_idx, int64_t* re
   SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
   SWITCH_RANKS(DISPATCH_LAUNCH_CASE);
 #undef DISPATCH_LAUNCH_CASE
+}
+
+// ---------------------------------------------------------------------------
+// All-sender intranode dispatch (MSCCLPP_EP_INTRA_ALLSENDER, INTRA_DIRECT only).
+//
+// The 2-hop intranode dispatch splits its grid 50/50 into sender/receiver blocks
+// (is_sender = sm_id % 2). Under INTRA_DIRECT the sender writes hidden straight to
+// the destination pool, so the receiver blocks no longer drain hidden and sit
+// nearly idle -- wasting half the SMs. At NSM=16 only 8 blocks move the 14 KB/token
+// payload, vs NCCL-EP's 16 all-sender blocks (HYBRIDEP_DISPATCH_NUM_OF_BLOCKS=16).
+//
+// This kernel makes EVERY block a sender (one channel per block, num_channels =
+// gridDim.x). For each of its channel's tokens, the rank-group warps write the
+// hidden row directly to each destination's recv-pool slot, write send_head + the
+// combine gather map, and pack per-token metadata (src_idx, rebased topk_idx,
+// topk_weights, scales) into the destination pool's META region at the final recv
+// slot. A separate intranode_meta_drain kernel then unpacks the local pool META
+// region into the recv_* output tensors (mirrors the internode flat_meta_drain).
+// No ring, no head/tail flow control, no receiver. Pairs with the TMA combine,
+// which is token-parallel and ignores the channel prefix matrix.
+template <int kNumRanks, int kNumThreads>
+__global__ void __launch_bounds__(kNumThreads, 1)
+    dispatch_allsender(int* send_head, const int4* x, const int64_t* topk_idx, const float* topk_weights,
+                       const float* x_scales, const bool* is_token_in_rank, const int* channel_prefix_matrix,
+                       int num_tokens, int hidden_int4, int num_topk, int num_experts, int num_scales,
+                       void** buffer_ptrs, int rank, void** recv_pool_ptrs, int64_t recv_pool_header_bytes,
+                       int64_t recv_pool_meta_base, int64_t meta_slot_bytes, int* ep_combine_recv_idx) {
+  const int num_channels = static_cast<int>(gridDim.x);  // all-sender: one channel per block
+  const int channel = static_cast<int>(blockIdx.x);
+  const int thread_id = static_cast<int>(threadIdx.x);
+  const int num_threads_per_rank = kNumThreads / kNumRanks;
+  const int responsible_rank = thread_id / num_threads_per_rank;  // destination rank
+  const int tg_lane = thread_id % num_threads_per_rank;           // 0..num_threads_per_rank-1
+  const int lane = thread_id % 32;
+  const int experts_per_rank = num_experts / kNumRanks;
+  EP_DEVICE_ASSERT(kNumRanks <= 32);
+  EP_DEVICE_ASSERT(kNumThreads % kNumRanks == 0);
+
+  // Destination pool + this (src, dst) base recv slot. Mirrors the receiver's
+  // total_offset = rank_prefix_matrix[(src-1)*R+dst] + channel_prefix_matrix[dst*C + ch-1].
+  const int* dst_rank_prefix = reinterpret_cast<const int*>(buffer_ptrs[responsible_rank]);
+  const int rank_off = rank > 0 ? dst_rank_prefix[(rank - 1) * kNumRanks + responsible_rank] : 0;
+  const int ch_start = channel > 0 ? channel_prefix_matrix[responsible_rank * num_channels + channel - 1] : 0;
+  const int64_t direct_base = static_cast<int64_t>(rank_off + ch_start);
+  uint8_t* dst_pool_u8 = reinterpret_cast<uint8_t*>(recv_pool_ptrs[responsible_rank]);
+  int4* direct_dst_pool = reinterpret_cast<int4*>(dst_pool_u8 + recv_pool_header_bytes);
+  uint8_t* dst_meta_base = dst_pool_u8 + recv_pool_meta_base;
+
+  int token_start_idx, token_end_idx;
+  get_channel_task_range(num_tokens, num_channels, channel, token_start_idx, token_end_idx);
+
+  int abs_pos = 0;  // running count of selected tokens for this (channel, dst); all rank-group threads agree
+  for (int token_idx = token_start_idx; token_idx < token_end_idx; ++token_idx) {
+    const bool in_rank = is_token_in_rank[token_idx * kNumRanks + responsible_rank];
+    const int64_t pos = direct_base + abs_pos;
+
+    // send_head membership marker (one thread per (token, dst)).
+    if (tg_lane == 0) send_head[token_idx * kNumRanks + responsible_rank] = in_rank ? static_cast<int>(pos) : -1;
+
+    if (in_rank) {
+      // Hidden: all num_threads_per_rank threads of this rank group cooperate on one row.
+      const int4* src_row = x + static_cast<int64_t>(token_idx) * hidden_int4;
+      int4* dst_row = direct_dst_pool + pos * hidden_int4;
+      for (int i = tg_lane; i < hidden_int4; i += num_threads_per_rank) st_na_global(dst_row + i, __ldg(src_row + i));
+
+      uint8_t* m = dst_meta_base + pos * meta_slot_bytes;
+      // src_idx + combine gather map (one thread).
+      if (tg_lane == 0) {
+        *reinterpret_cast<int*>(m) = token_idx;
+        if (ep_combine_recv_idx != nullptr)
+          ep_combine_recv_idx[token_idx * kNumRanks + responsible_rank] = static_cast<int>(pos);
+      }
+      // topk idx (rebased to this dst's local expert range) + weights into the meta slot.
+      if (topk_idx != nullptr and lane < num_topk and (thread_id % num_threads_per_rank) < 32) {
+        int* tidx = reinterpret_cast<int*>(m + sizeof(int));
+        float* tw = reinterpret_cast<float*>(m + sizeof(int) + static_cast<size_t>(num_topk) * sizeof(int));
+        const int recv_expert_begin = responsible_rank * experts_per_rank;
+        const int recv_expert_end = recv_expert_begin + experts_per_rank;
+        auto idx_value = __ldg(topk_idx + token_idx * num_topk + lane);
+        const int rebased = (idx_value >= recv_expert_begin and idx_value < recv_expert_end)
+                                ? static_cast<int>(idx_value) - recv_expert_begin
+                                : -1;
+        tidx[lane] = rebased;
+        auto w = __ldg(topk_weights + token_idx * num_topk + lane);
+        tw[lane] = (rebased >= 0) ? w : 0.0f;
+      }
+      // scales into the meta slot (after src_idx + topk_idx + topk_weights).
+      if (x_scales != nullptr and (thread_id % num_threads_per_rank) < 32) {
+        float* sdat =
+            reinterpret_cast<float*>(m + sizeof(int) + static_cast<size_t>(num_topk) * (sizeof(int) + sizeof(float)));
+        for (int s = lane; s < num_scales; s += 32)
+          sdat[s] = __ldg(x_scales + static_cast<int64_t>(token_idx) * num_scales + s);
+      }
+      ++abs_pos;
+    }
+  }
+}
+
+// Unpack the local recv-pool META region (filled by the all-sender dispatch) into the
+// recv_* output tensors. One thread per recv token. Mirrors internode flat_meta_drain.
+__global__ void intranode_meta_drain_kernel(const uint8_t* __restrict__ pool_base, int64_t meta_base,
+                                            int num_recv_tokens, int* __restrict__ recv_src_idx,
+                                            int64_t* __restrict__ recv_topk_idx, float* __restrict__ recv_topk_weights,
+                                            float* __restrict__ recv_x_scales, int num_topk, int num_scales,
+                                            int64_t meta_slot_bytes) {
+  for (int t = blockIdx.x * blockDim.x + threadIdx.x; t < num_recv_tokens; t += gridDim.x * blockDim.x) {
+    const uint8_t* m = pool_base + meta_base + static_cast<int64_t>(t) * meta_slot_bytes;
+    if (recv_src_idx != nullptr) recv_src_idx[t] = *reinterpret_cast<const int*>(m);
+    if (recv_topk_idx != nullptr) {
+      const int* tidx = reinterpret_cast<const int*>(m + sizeof(int));
+      const float* tw = reinterpret_cast<const float*>(m + sizeof(int) + static_cast<size_t>(num_topk) * sizeof(int));
+      for (int k = 0; k < num_topk; ++k) {
+        recv_topk_idx[static_cast<int64_t>(t) * num_topk + k] = static_cast<int64_t>(tidx[k]);
+        recv_topk_weights[static_cast<int64_t>(t) * num_topk + k] = tw[k];
+      }
+    }
+    if (recv_x_scales != nullptr) {
+      const float* sdat = reinterpret_cast<const float*>(m + sizeof(int) +
+                                                         static_cast<size_t>(num_topk) * (sizeof(int) + sizeof(float)));
+      for (int s = 0; s < num_scales; ++s) recv_x_scales[static_cast<int64_t>(t) * num_scales + s] = sdat[s];
+    }
+  }
+}
+
+void intranode_meta_drain(void* pool_base, int64_t meta_base, int num_recv_tokens, int* recv_src_idx,
+                          int64_t* recv_topk_idx, float* recv_topk_weights, float* recv_x_scales, int num_topk,
+                          int num_scales, int64_t meta_slot_bytes, cudaStream_t stream) {
+  if (num_recv_tokens <= 0) return;
+  constexpr int kThreads = 256;
+  const int kBlocks = (num_recv_tokens + kThreads - 1) / kThreads;
+  intranode_meta_drain_kernel<<<kBlocks, kThreads, 0, stream>>>(
+      reinterpret_cast<const uint8_t*>(pool_base), meta_base, num_recv_tokens, recv_src_idx, recv_topk_idx,
+      recv_topk_weights, recv_x_scales, num_topk, num_scales, meta_slot_bytes);
+}
+
+// Host launcher for the all-sender intranode dispatch. num_sms == num_channels (every
+// block is a sender). Requires the direct recv pools; metadata lands in the pool META
+// region and must be unpacked by intranode_meta_drain afterward.
+void dispatch_allsender(int* send_head, const void* x, const int64_t* topk_idx, const float* topk_weights,
+                        const float* x_scales, const bool* is_token_in_rank, const int* channel_prefix_matrix,
+                        int num_tokens, int hidden_int4, int num_topk, int num_experts, int num_scales,
+                        void** buffer_ptrs, int rank, int num_ranks, cudaStream_t stream, int num_sms,
+                        void** recv_pool_ptrs, int64_t recv_pool_header_bytes, int64_t recv_pool_meta_base,
+                        int64_t meta_slot_bytes, int* ep_combine_recv_idx) {
+  constexpr int kNumThreads = 512;
+  EP_HOST_ASSERT(recv_pool_ptrs != nullptr);
+  // Meta slot must hold src_idx + topk_idx(int) + topk_weights(float) + scales(float).
+  EP_HOST_ASSERT(static_cast<int64_t>(sizeof(int)) + static_cast<int64_t>(num_topk) * (sizeof(int) + sizeof(float)) +
+                     static_cast<int64_t>(num_scales) * sizeof(float) <=
+                 meta_slot_bytes);
+#define DISPATCH_ALLSENDER_LAUNCH_CASE(ranks)                                                                          \
+  LAUNCH_KERNEL(&cfg, (dispatch_allsender<ranks, kNumThreads>), send_head, reinterpret_cast<const int4*>(x), topk_idx, \
+                topk_weights, x_scales, is_token_in_rank, channel_prefix_matrix, num_tokens, hidden_int4, num_topk,    \
+                num_experts, num_scales, buffer_ptrs, rank, recv_pool_ptrs, recv_pool_header_bytes,                    \
+                recv_pool_meta_base, meta_slot_bytes, ep_combine_recv_idx);                                            \
+  break
+
+  SETUP_LAUNCH_CONFIG(num_sms, kNumThreads, stream);
+  SWITCH_RANKS(DISPATCH_ALLSENDER_LAUNCH_CASE);
+#undef DISPATCH_ALLSENDER_LAUNCH_CASE
 }
 
 template <int kNumRanks>
@@ -820,6 +984,217 @@ __global__ void __launch_bounds__(kNumThreads, 1)
       if (recv_lane_id == 0) warp_retired[recv_warp_id] = true;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Intranode TMA-staged direct-gather combine (port of internode
+// combine_flat_gather_tma to the single-node NVLink/IPC path).
+//
+// Mirrors the internode flat direct-gather: for each combined output token, it
+// discovers the contributing ranks and gathers each contributor's hidden row
+// straight from that rank's IPC-mapped recv-output pool (recv_pool_ptrs[r] at
+// slot ep_combine_recv_idx[t,r]) through a kStages-deep cp.async.bulk (TMA) SMEM
+// pipeline, reduces from SMEM, and writes the summed row to combined_x. No
+// 2-hop ring, no channel partitioning -> the grid is pure token-parallel so the
+// block count can be set independently via MSCCLPP_EP_COMBINE_NSM.
+//
+// Contributor discovery uses send_head (>=0 == token routed to that rank during
+// dispatch); the per-(token,rank) recv-pool slot comes from ep_combine_recv_idx,
+// which the dispatch sender-direct path fills. combined_topk_weights is zeroed
+// (the intranode test, like the internode flat path, validates only combined_x).
+#ifndef EP_ICMB_TMA_CHUNK_INT4
+#define EP_ICMB_TMA_CHUNK_INT4 64  // hidden chunk in int4 (1KB TMA descriptors)
+#endif
+#ifndef EP_ICMB_TMA_STAGES
+#define EP_ICMB_TMA_STAGES 2  // pipeline depth (outstanding chunks in flight)
+#endif
+#ifndef EP_ICMB_TMA_WARPS
+#define EP_ICMB_TMA_WARPS 16  // token-parallel warps per block
+#endif
+
+template <typename dtype_t, int kNumRanks, int kWarps>
+__global__ void __launch_bounds__(kWarps * 32, 1)
+    combine_intranode_gather_tma(int4* combined_x, float* combined_topk_weights, const int* send_head,
+                                 int num_combined_tokens, int hidden, int num_topk, int num_ranks,
+                                 void** recv_pool_ptrs, const int* ep_combine_recv_idx,
+                                 int64_t recv_pool_header_bytes) {
+  constexpr int kMaxContrib = kNumRanks;
+  constexpr int kChunkInt4 = EP_ICMB_TMA_CHUNK_INT4;
+  constexpr int kStages = EP_ICMB_TMA_STAGES;
+  constexpr int kChunkBytes = kChunkInt4 * static_cast<int>(sizeof(int4));
+  constexpr auto kDtypePerInt4 = sizeof(int4) / sizeof(dtype_t);
+
+  const auto lane_id = get_lane_id();
+  const int warp_id = static_cast<int>(threadIdx.x) / 32;
+  const auto hidden_int4 = hidden / static_cast<int>(sizeof(int4) / sizeof(dtype_t));
+
+  // Dynamic SMEM: [kWarps][kStages][kMaxContrib][kChunkBytes] staging tiles, then [kWarps][kStages] mbarriers.
+  extern __shared__ uint8_t smem_raw[];
+  const size_t per_warp_stage_bytes = static_cast<size_t>(kStages) * kMaxContrib * kChunkBytes;
+  uint8_t* my_stage = smem_raw + warp_id * per_warp_stage_bytes;
+  uint64_t* mbar_base = reinterpret_cast<uint64_t*>(smem_raw + static_cast<size_t>(kWarps) * per_warp_stage_bytes);
+  uint64_t* my_mbar = mbar_base + warp_id * kStages;
+  auto stage_buf = [&](int s, int j) -> uint8_t* {
+    return my_stage + (static_cast<size_t>(s) * kMaxContrib + j) * kChunkBytes;
+  };
+
+  const int global_warp = static_cast<int>(blockIdx.x) * kWarps + warp_id;
+  const int total_warps = static_cast<int>(gridDim.x) * kWarps;
+  const int nchunks = (hidden_int4 + kChunkInt4 - 1) / kChunkInt4;
+
+  for (int t = global_warp; t < num_combined_tokens; t += total_warps) {
+    // ---- discovery: which ranks contributed to this token + their recv slots ----
+    int topk_ranks[kMaxContrib], slot_indices[kMaxContrib], num_topk_ranks = 0;
+    for (int base = 0; base < kNumRanks; base += 32) {
+      const int r = base + lane_id;
+      const bool is_in = (r < kNumRanks) and (send_head[static_cast<int64_t>(t) * num_ranks + r] >= 0);
+      const int slot = is_in ? ep_combine_recv_idx[static_cast<int64_t>(t) * num_ranks + r] : 0;
+      unsigned ballot = __ballot_sync(0xffffffffu, is_in);
+      while (ballot != 0u) {
+        const int l = __ffs(static_cast<int>(ballot)) - 1;
+        if (num_topk_ranks < kMaxContrib) {
+          topk_ranks[num_topk_ranks] = base + l;
+          slot_indices[num_topk_ranks] = __shfl_sync(0xffffffffu, slot, l);
+          ++num_topk_ranks;
+        }
+        ballot &= ballot - 1u;
+      }
+    }
+
+    int4* combined_row = combined_x + static_cast<int64_t>(t) * hidden_int4;
+
+    // lane 0 posts all contributors' TMA G2S loads for one chunk into stage s.
+    auto issue_loads = [&](int s, int c0, int csize_int4) {
+      if (lane_id == 0) {
+        const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
+        asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(mbar_a));
+        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+        const uint32_t cbytes = static_cast<uint32_t>(csize_int4 * static_cast<int>(sizeof(int4)));
+        for (int j = 0; j < num_topk_ranks; ++j) {
+          const uint8_t* src =
+              reinterpret_cast<const uint8_t*>(recv_pool_ptrs[topk_ranks[j]]) + recv_pool_header_bytes +
+              static_cast<int64_t>(slot_indices[j]) * hidden_int4 * static_cast<int64_t>(sizeof(int4)) +
+              static_cast<int64_t>(c0) * sizeof(int4);
+          const uint32_t dst = static_cast<uint32_t>(__cvta_generic_to_shared(stage_buf(s, j)));
+          asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];" ::"r"(dst),
+                       "l"(src), "r"(cbytes), "r"(mbar_a)
+                       : "memory");
+        }
+        uint64_t st;
+        asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+                     : "=l"(st)
+                     : "r"(mbar_a), "r"(static_cast<uint32_t>(cbytes * num_topk_ranks)));
+      }
+    };
+
+    // all lanes wait for stage s's loads, then fence so generic reads see the async-proxy writes.
+    auto wait_stage = [&](int s) {
+      if (lane_id == 0) {
+        const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
+        uint32_t done = 0;
+        while (!done) {
+          asm volatile(
+              "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], 0;"
+              " selp.u32 %0, 1, 0, p; }"
+              : "=r"(done)
+              : "r"(mbar_a));
+        }
+      }
+      __syncwarp();
+      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    };
+
+    auto reduce_store = [&](int s, int c0, int csize_int4) {
+      for (int i = lane_id; i < csize_int4; i += 32) {
+        float values[kDtypePerInt4];
+#pragma unroll
+        for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) values[k] = 0.0f;
+#pragma unroll
+        for (int j = 0; j < kMaxContrib; ++j) {
+          if (j >= num_topk_ranks) break;
+          const int4 v = *reinterpret_cast<const int4*>(stage_buf(s, j) + i * static_cast<int>(sizeof(int4)));
+          auto vd = reinterpret_cast<const dtype_t*>(&v);
+#pragma unroll
+          for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) values[k] += static_cast<float>(vd[k]);
+        }
+        int4 out_int4;
+        auto out_d = reinterpret_cast<dtype_t*>(&out_int4);
+#pragma unroll
+        for (int k = 0; k < static_cast<int>(kDtypePerInt4); ++k) out_d[k] = static_cast<dtype_t>(values[k]);
+        st_na_global(combined_row + c0 + i, out_int4);
+      }
+    };
+
+    // Software pipeline: prologue issues the first kStages-1 chunks; each iteration issues
+    // chunk c+(kStages-1) while waiting on + reducing chunk c.
+#pragma unroll
+    for (int p = 0; p < kStages - 1; ++p) {
+      if (p < nchunks) {
+        const int c0 = p * kChunkInt4;
+        const int csize = (c0 + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0);
+        issue_loads(p % kStages, c0, csize);
+      }
+    }
+    for (int c = 0; c < nchunks; ++c) {
+      const int s = c % kStages;
+      const int c0 = c * kChunkInt4;
+      const int csize = (c0 + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0);
+      const int cn = c + (kStages - 1);
+      if (cn < nchunks) {
+        const int sn = cn % kStages;
+        const int c0n = cn * kChunkInt4;
+        const int csizen = (c0n + kChunkInt4 <= hidden_int4) ? kChunkInt4 : (hidden_int4 - c0n);
+        issue_loads(sn, c0n, csizen);
+      }
+      wait_stage(s);
+      reduce_store(s, c0, csize);
+      __syncwarp();
+    }
+    if (lane_id < num_topk) st_na_global(combined_topk_weights + static_cast<int64_t>(t) * num_topk + lane_id, 0.0f);
+  }
+}
+
+// Host launcher for the intranode TMA direct-gather combine. Returns false (and
+// launches nothing) when the direct-gather inputs are unavailable, so the caller
+// falls back to the 2-hop ring combine.
+bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_weights, int* send_head, int num_tokens,
+                 int hidden, int num_topk, int num_ranks, void** recv_pool_ptrs, const int* ep_combine_recv_idx,
+                 int64_t recv_pool_header_bytes, int combine_sms, cudaStream_t stream) {
+  if (recv_pool_ptrs == nullptr or ep_combine_recv_idx == nullptr) return false;
+  EP_HOST_ASSERT(type == CUDA_R_16BF);
+  constexpr int kStages = EP_ICMB_TMA_STAGES;
+  constexpr int kChunkInt4 = EP_ICMB_TMA_CHUNK_INT4;
+  const int num_blocks = std::max(1, combine_sms);
+
+  // SMEM/block = kWarps*kStages*kMaxContrib(=ranks)*kChunkBytes + mbars. kChunkBytes=1KB,
+  // kStages=2. Keep it under the GB200 ~227KB opt-in cap: 16 warps for <=4 ranks (128KB),
+  // 12 warps for 8 ranks (192KB).
+#define COMBINE_INTRANODE_TMA_LAUNCH(ranks, WARPS)                                                                   \
+  {                                                                                                                  \
+    auto tma_func = combine_intranode_gather_tma<nv_bfloat16, ranks, WARPS>;                                         \
+    const size_t tma_smem = static_cast<size_t>(WARPS) * kStages * (ranks)*kChunkInt4 * sizeof(int4) +               \
+                            static_cast<size_t>(WARPS) * kStages * sizeof(uint64_t);                                 \
+    CUDA_CHECK(                                                                                                      \
+        cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(tma_smem)));    \
+    cudaLaunchConfig_t cfg = {                                                                                       \
+        static_cast<unsigned>(num_blocks), static_cast<unsigned>((WARPS)*32), tma_smem, stream, nullptr, 0};         \
+    LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights, send_head, num_tokens, \
+                  hidden, num_topk, num_ranks, recv_pool_ptrs, ep_combine_recv_idx, recv_pool_header_bytes);         \
+  }                                                                                                                  \
+  break
+
+  switch (num_ranks) {
+    case 2:
+      COMBINE_INTRANODE_TMA_LAUNCH(2, EP_ICMB_TMA_WARPS);
+    case 4:
+      COMBINE_INTRANODE_TMA_LAUNCH(4, EP_ICMB_TMA_WARPS);
+    case 8:
+      COMBINE_INTRANODE_TMA_LAUNCH(8, 12);
+    default:
+      EP_HOST_ASSERT(false and "Unsupported ranks");
+  }
+#undef COMBINE_INTRANODE_TMA_LAUNCH
+  return true;
 }
 
 void combine(cudaDataType_t type, void* recv_x, float* recv_topk_weights, const void* x, const float* topk_weights,
