@@ -28,12 +28,37 @@
 #define EP_NCCLEP_TMA 0
 #endif
 
+// B-depth-3 (full-token variant): per-sender-warp TMA S2G ring geometry (shared with the
+// host launcher so it can size the DYNAMIC shared-memory allocation + cudaFuncSetAttribute
+// opt-in). WHOLE-token (14336B) tiles -> just 1 cp.async.bulk S2G per destination per token
+// (matches NCCL-EP's single whole-token op), vs 2 for the half-token / 14 for the old 1024B
+// sub-chunk. The ring is kNumDispatchRDMASenderWarps(6) x NSTAGE(2) x 14336 = 172032 B (168 KB)
+// -- full-token forces NSTAGE=2 to stay under the GB200 ~227KB/block opt-in cap (NSTAGE>=3 would
+// be >=252KB). chunk MUST be a multiple of 128 (TMA align); 14336 = the full bf16 hidden so each
+// token is a single chunk (nchunks=1), and the pipeline overlap is purely cross-token.
+#ifndef EP_TMA_SND_CHUNK_BYTES
+#define EP_TMA_SND_CHUNK_BYTES 14336
+#endif
+#ifndef EP_TMA_SND_NSTAGE
+#define EP_TMA_SND_NSTAGE 2
+#endif
+
 // Increment 5 (inc5): runtime gate for the SENDER direct-write path. When set
 // (env MSCCLPP_EP_DIRECT=1), kRDMASender writes each token's hidden straight to
 // the destination GPU's domain-wide recv pool (recv_pool_global_ptrs[dst_global]),
 // skipping the rdma_channel hidden bounce + forwarder hidden transpose; metadata
 // (scales/topk/meta) still flows the legacy ring->forwarder->receiver path.
 __constant__ int kEpDirect;
+
+// Increment 6 (inc6): runtime gate for the FLAT all-sender dispatch path. When
+// set (env MSCCLPP_EP_FLAT=1, requires kEpDirect), the sender ALSO writes each
+// token's metadata (SourceMeta + scales + topk) straight into the destination
+// pool's meta region at the token's final recv slot, a per-(dst,channel) fabric
+// counter signals completion, and a lightweight LOCAL consumer copies the pool
+// meta into the recv_* output tensors -- eliminating the forwarder + both
+// coordinator roles so dispatch can launch an all-sender grid (num_channels =
+// num_sms). Unset => byte-identical inc5 2-hop metadata path.
+__constant__ int kEpFlat;
 
 template <bool kLowLatencyMode, int kNumRDMARanks, bool kCachedMode, int kNumDispatchRDMASenderWarps,
           int kNumTopkRDMARanks = get_num_topk_rdma_ranks(kNumRDMARanks)>
@@ -75,8 +100,26 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
   const auto sm_id = static_cast<int>(blockIdx.x);
   const auto thread_id = static_cast<int>(threadIdx.x), warp_id = thread_id / 32, lane_id = get_lane_id();
-  const auto num_channels = static_cast<int>(gridDim.x) / 2, channel_id = sm_id / 2;
-  const bool is_forwarder = sm_id % 2 == 0;
+  // inc6 (kEpFlat): the FLAT all-sender path launches 1 block per channel
+  // (gridDim.x == num_channels) with no forwarder blocks, so every block is a
+  // sender. The inc5 2-hop path launches 2 blocks per channel (sender + forwarder),
+  // hence the /2; channel_id and is_forwarder follow the same split.
+  const auto num_channels = kEpFlat ? static_cast<int>(gridDim.x) : static_cast<int>(gridDim.x) / 2;
+  const auto channel_id = kEpFlat ? sm_id : sm_id / 2;
+  const bool is_forwarder = kEpFlat ? false : (sm_id % 2 == 0);
+  // inc7 (atomicthr): per-channel routing-lock removal is a CROSSOVER vs channel
+  // count. num_channels == config.num_sms/2 (buffer.cc), and tokens/channel =
+  // num_tokens/num_channels. At LOW channel count (many tokens/channel) the
+  // per-token sequential lock dominates -> atomicAdd slot assignment (no spin)
+  // wins big: 8 ch (NSM16) -21.6%, 12 ch (NSM24) -21.1%, 14 ch (NSM28) -4.2%.
+  // At HIGH channel count (few tokens/channel) the lock was already cheap AND the
+  // 6 sender warps contend on the shared-mem atomics -> net regression: 16 ch
+  // (NSM32) +8.6%. Measured crossover is between 14 and 16 channels (~14.7), so
+  // use atomics at <=14 channels (every validated win) and keep the proven lock
+  // above it (the validated regression). num_channels is grid-uniform so this is
+  // a block-uniform branch (no warp divergence).
+  constexpr int kEpAtomicRouteMaxChannels = 14;
+  const bool ep_use_atomic_route = kEpFlat and (num_channels <= kEpAtomicRouteMaxChannels);
   const auto rdma_rank = rank / NUM_MAX_NVL_PEERS, nvl_rank = rank % NUM_MAX_NVL_PEERS;
 
   const auto role_meta = [=]() -> std::pair<WarpRole, int> {
@@ -209,6 +252,32 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
   static constexpr int kEpTmaTileBytes = 4096;
   __shared__ alignas(128) uint8_t ep_tma_tile[NUM_MAX_NVL_PEERS][kEpTmaTileBytes];
   __shared__ alignas(8) uint64_t ep_tma_mbar[NUM_MAX_NVL_PEERS];
+  // inc5 sender-direct TMA ring (NCCL-EP g2s_s2g_pipe pattern): per-sender-warp ring
+  // of kEpTmaSndNStage tiles+mbars. Stage A (inc6, pipelined): the ring is now drained
+  // LAZILY with a register-tracked in-flight bound (NCCL-EP hybrid_ep.cuh model) so the
+  // S2G NVLink writes of consecutive chunks overlap with each other AND with the next
+  // chunk's G2S HBM load, instead of the old per-chunk full `wait_group 0` drain (which
+  // serialized G2S vs S2G and exposed the full NVLink round-trip at every chunk -- the
+  // 8-node low-SM dispatch cliff). Pipeline: produce 1 chunk ahead, keep kEpTmaSndInFlight
+  // S2G groups in flight, reuse a tile only after its S2G has drained (proven safe for
+  // produce-ahead=1 + InFlight=NStage-2; the drained-stage index trails the refill stage
+  // by exactly one iteration). B-depth-3: chunk is now HALF-token (7168B) and the ring
+  // lives in DYNAMIC shared memory (6*4*7168 = 168KB > 48KB static cap), so each token is
+  // 2 cp.async.bulk S2G per destination instead of 14 -- fewer, larger TMA descriptors
+  // (NCCL-EP issues 1 whole-token op; this halves the gap). Host opts in to the >48KB ring
+  // via cudaFuncAttributeMaxDynamicSharedMemorySize + cfg.dynamicSmemBytes (EP_TMA_SND_*).
+  static constexpr int kEpTmaSndChunkBytes = EP_TMA_SND_CHUNK_BYTES;
+  static constexpr int kEpTmaSndNStage = EP_TMA_SND_NSTAGE;  // ring depth (lazy drain; >=3 for within-token overlap)
+  // S2G groups kept in flight: NStage-2 when there is within-token slack (half-token NSTAGE>=4),
+  // clamped to >=1 so the full-token NSTAGE=2 case keeps 1 cross-token S2G in flight.
+  static constexpr int kEpTmaSndInFlight = (kEpTmaSndNStage - 2) >= 1 ? (kEpTmaSndNStage - 2) : 1;
+  EP_STATIC_ASSERT(kEpTmaSndInFlight >= 1, "InFlight must be >=1 for pipelining");
+  EP_STATIC_ASSERT(kEpTmaSndInFlight < kEpTmaSndNStage, "InFlight must be < NStage (drain-before-reuse)");
+  EP_STATIC_ASSERT(kEpTmaSndChunkBytes % 128 == 0, "TMA tile must be 128B aligned");
+  // Dynamic per-warp ring: ep_tma_tile_snd_dyn[(warp_id*NStage + stage) * chunk]. 128B-aligned
+  // base for TMA. The mbarrier array stays static (tiny: 6*4*8 = 192B).
+  extern __shared__ __align__(128) uint8_t ep_tma_tile_snd_dyn[];
+  __shared__ alignas(8) uint64_t ep_tma_mbar_snd[kNumDispatchRDMASenderWarps][kEpTmaSndNStage];
 #endif
 
   if (warp_role == WarpRole::kRDMASender) {
@@ -284,6 +353,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     // per token in the seq-locked section below. No extra barrier: covered by the
     // sync_rdma_sender_smem() right after.
     const int64_t ep_pool_header_bytes = ((static_cast<int64_t>(num_ranks) * 4 + 127) / 128) * 128;
+    // inc6 (kEpFlat): byte offset of the per-token metadata region in the recv pool,
+    // and the per-token meta slot size. MUST match Config::get_recv_pool_meta_base /
+    // recv_pool_bytes_static (config.hpp): header + worst-case hidden region, padded to
+    // 128; kEpFlatMetaBytes per token. The sender writes SourceMeta + scales + topk here
+    // so a local consumer can produce recv_* without the forwarder/ring 2-hop.
+    constexpr int64_t kEpFlatPoolMaxTokens = 65536;       // == Config::kEpRecvPoolMaxTokens
+    constexpr int64_t kEpFlatPoolMaxHiddenBytes = 16384;  // == Config::kEpRecvPoolMaxHiddenBytes
+    constexpr int64_t kEpFlatMetaBytes = 128;             // == Config::kEpRecvPoolMetaBytes
+    const int64_t ep_meta_base =
+        ((ep_pool_header_bytes + kEpFlatPoolMaxTokens * kEpFlatPoolMaxHiddenBytes + 127) / 128) * 128;
     if (kEpDirect and recv_pool_global_ptrs != nullptr) {
       for (int dg = warp_id * 32 + lane_id; dg < num_ranks; dg += kNumDispatchRDMASenderWarps * 32) {
         const int* dst_prefix = reinterpret_cast<const int*>(recv_pool_global_ptrs[dg]);
@@ -300,6 +379,17 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     int cached_rdma_channel_head = 0, last_rdma_tail_idx = -1;
     auto send_buffer =
         lane_id == rdma_rank ? rdma_channel_data.recv_buffer(lane_id) : rdma_channel_data.send_buffer(lane_id);
+#if EP_NCCLEP_TMA
+    // B-depth-1: TMA S2G pipeline state carried ACROSS tokens so the per-token full drain
+    // (wait_group 0) is eliminated -- up to kEpTmaSndInFlight S2G groups stay in flight across
+    // token boundaries. ep_tma_gbase = global ring-stage base (continuous chunk index, advances
+    // by nchunks each token); ep_tma_in_flight = S2G groups committed but not yet drained.
+    // Safe across tokens for the same reason as within a token: NStage(4) > InFlight(2), so the
+    // stage a new G2S reuses (g) was last used by chunk g-NStage <= g-4, which is already drained
+    // by the lazy wait_group.read(InFlight) before it is overwritten.
+    int ep_tma_gbase = 0;
+    int ep_tma_in_flight = 0;
+#endif
     for (token_idx = token_start_idx + warp_id; token_idx < token_end_idx; token_idx += kNumDispatchRDMASenderWarps) {
       // Read RDMA rank existence
       NvlPackT is_token_in_rank_uint64 = 0;
@@ -307,20 +397,37 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         is_token_in_rank_uint64 =
             *reinterpret_cast<const NvlPackT*>(is_token_in_rank + token_idx * num_ranks + lane_id * NUM_MAX_NVL_PEERS);
 
-      // Acquire sequential lock
-      while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+      // inc7 (atomicthr): under kEpFlat AND low channel count the per-channel
+      // SEQUENTIAL LOCK is REMOVED (ep_use_atomic_route). Slot assignment uses
+      // atomicAdd on the shared counters (below) -> dense but order-independent
+      // packing. Correctness holds because (a) the receiver's recv_x check is
+      // amin/amax over each source's cross-rank block (order-agnostic; every token
+      // from a given source lands in that source's reserved [gbl_base, ..) range
+      // regardless of within-channel order), and (b) combine gathers via the self-
+      // consistent ep_combine_recv_idx map. The lock path (high channel count or
+      // non-flat 2-hop, whose coordinator forwards a MONOTONIC rdma_send_channel_tail
+      // to peers) is UNCHANGED -- keeps the spin-wait + plain ++.
+      while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
         ;
       __syncwarp();
 
-      // Acquire next tail
+      // Acquire next tail (atomic when lock removed: 6 sender warps race; plain ++
+      // under the lock where it is single-threaded == the committed behavior).
       int rdma_tail_idx = -1;
       if (is_token_in_rank_uint64 != 0) {
-        rdma_tail_idx = rdma_send_channel_next_tail[lane_id]++;
-        while (rdma_tail_idx - cached_rdma_channel_head >= num_max_rdma_chunked_recv_tokens) {
-          // Phase 4: head feedback path \u2014 cross-node uses fabric-VA store,
-          // self-loop uses local atomic. Both end up in rdma_channel_head;
-          // single read via ld_volatile_global covers them. NVLS removed.
-          cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+        rdma_tail_idx = ep_use_atomic_route ? atomicAdd(const_cast<int*>(rdma_send_channel_next_tail + lane_id), 1)
+                                            : rdma_send_channel_next_tail[lane_id]++;
+        // inc6 (kEpFlat): no forwarder drains the ring, so the head never advances
+        // and this flow-control wait would deadlock. The all-sender path writes
+        // hidden + metadata straight to the dest pool; rdma_tail_idx is still used
+        // below only as the per-node "token in rank" flag (>= 0) and combine head.
+        if (!kEpFlat) {
+          while (rdma_tail_idx - cached_rdma_channel_head >= num_max_rdma_chunked_recv_tokens) {
+            // Phase 4: head feedback path \u2014 cross-node uses fabric-VA store,
+            // self-loop uses local atomic. Both end up in rdma_channel_head;
+            // single read via ld_volatile_global covers them. NVLS removed.
+            cached_rdma_channel_head = static_cast<int>(ld_volatile_global(rdma_channel_head.buffer(lane_id)));
+          }
         }
       }
       __syncwarp();
@@ -328,6 +435,12 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // inc5: compute this token's final recv_x index for each destination GPU,
       // inside the seq-locked region so the running count matches the receiver's
       // drain order. lane = source NODE; one writer per ep_count[dg].
+      // inc7 (scanexp1): the running-count increments MUST stay ordered (inside the
+      // lock), but the *global* breadcrumb stores (ep_combine_recv_idx, send_rdma_head)
+      // target unique per-(token,dst) addresses and are order-independent, so they are
+      // DEFERRED to after the lock release. This shrinks the serialized critical section
+      // to just the shared-memory counter math, taking the per-token serialized
+      // global-store latency out of the lock chain (NSM16 diagnostic).
       int ep_my_idx[NUM_MAX_NVL_PEERS];
       if (kEpDirect and lane_id < kNumRDMARanks and rdma_tail_idx >= 0) {
         const bool* bvals = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
@@ -335,19 +448,16 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g)
           if (bvals[g]) {
             const int dg = lane_id * NUM_MAX_NVL_PEERS + g;
-            ep_my_idx[g] = ep_base[dg] + ep_count[dg];
-            ep_count[dg] += 1;
-            // inc5 combine-direct (Stage 1): persist this token's recv-pool slot in
-            // dst GPU dg so combine can gather it directly. Only on the uncached
-            // dispatch (matches the send_*_head breadcrumb tensors).
-            if (ep_combine_recv_idx != nullptr and not kCachedMode)
-              ep_combine_recv_idx[static_cast<int64_t>(token_idx) * num_ranks + dg] = ep_my_idx[g];
+            // inc7 (atomicthr): atomic running-count when the lock is removed
+            // (order-independent); plain ++ under the lock (== committed, serialized).
+            if (ep_use_atomic_route) {
+              ep_my_idx[g] = ep_base[dg] + atomicAdd(&ep_count[dg], 1);
+            } else {
+              ep_my_idx[g] = ep_base[dg] + ep_count[dg];
+              ep_count[dg] += 1;
+            }
           }
       }
-
-      // Store RDMA head for combine
-      if (lane_id < kNumRDMARanks and not kCachedMode)
-        send_rdma_head[token_idx * kNumRDMARanks + lane_id] = rdma_tail_idx;
 
       // Update last token tail. In-loop writes are sequenced by the
       // per-channel sequential lock and the warp-stride property of the
@@ -360,8 +470,26 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         st_release_cta(const_cast<const int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
       last_rdma_tail_idx = rdma_tail_idx;
 
-      // Release sequential lock
-      lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
+      // Release sequential lock (lock path only; atomic-route removed the lock above)
+      if (!ep_use_atomic_route and lane_id == 0) rdma_send_next_token_idx += 1;
+
+      // inc7 (scanexp1): DEFERRED global breadcrumb stores, now OUTSIDE the lock so
+      // they run in parallel across the sender warps. Addresses are unique per
+      // (token_idx, dst), so out-of-lock ordering is correctness-preserving. ep_my_idx[g]
+      // and rdma_tail_idx persist in registers from the in-lock computation above.
+      if (kEpDirect and ep_combine_recv_idx != nullptr and not kCachedMode and lane_id < kNumRDMARanks and
+          rdma_tail_idx >= 0) {
+        const bool* bvals = reinterpret_cast<const bool*>(&is_token_in_rank_uint64);
+#pragma unroll
+        for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g)
+          if (bvals[g])
+            ep_combine_recv_idx[static_cast<int64_t>(token_idx) * num_ranks + lane_id * NUM_MAX_NVL_PEERS + g] =
+                ep_my_idx[g];
+      }
+
+      // Store RDMA head for combine (deferred, post-lock; unique per (token, node)).
+      if (lane_id < kNumRDMARanks and not kCachedMode)
+        send_rdma_head[token_idx * kNumRDMARanks + lane_id] = rdma_tail_idx;
 
       // Broadcast tails
       SourceMeta src_meta;
@@ -406,11 +534,149 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                                         static_cast<int64_t>(recv_idx) * hidden_bytes);
           }
         }
+#if EP_NCCLEP_TMA
+        // inc5 + TMA ring, LANE-STRIPED broadcast (NCCL-EP hybrid_ep.cuh S2G shape),
+        // Stage A PIPELINED: lane 0 streams each chunk HBM->SMEM (G2S, mbarrier
+        // complete_tx); the whole warp waits that mbarrier then fans the staged tile out
+        // S2G with ONE destination pool per lane. Unlike the old per-chunk `wait_group 0`
+        // (which fully drained S2G before the next G2S, serializing the two and exposing
+        // the full NVLink round-trip every chunk), we now PRODUCE ONE CHUNK AHEAD and drain
+        // LAZILY: up to kEpTmaSndInFlight S2G groups stay in flight, so consecutive chunks'
+        // NVLink writes overlap each other and the next chunk's HBM load. A ring tile is
+        // refilled only one iteration after its S2G drained (proven safe for produce-ahead=1
+        // + InFlight=NStage-2). fence.proxy publishes the writes before the dispatch barrier.
+        if (ep_num_pools > 0) {
+          const uint8_t* src_b = reinterpret_cast<const uint8_t*>(x + token_idx * hidden_int4);
+          const size_t total = static_cast<size_t>(hidden_bytes);
+          const int nchunks = static_cast<int>((total + kEpTmaSndChunkBytes - 1) / kEpTmaSndChunkBytes);
+
+          // G2S issue for chunk `ci` into its ring stage (caller must guard lane 0 only).
+          auto issue_g2s = [&](int ci) {
+            const size_t goff = static_cast<size_t>(ci) * kEpTmaSndChunkBytes;
+            const size_t remain = total - goff;
+            uint32_t csz =
+                static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
+            csz = (csz + 15u) & ~15u;
+            const int stage = (ep_tma_gbase + ci) % kEpTmaSndNStage;
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
+                ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
+            const uint32_t smem_mbar =
+                static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
+            asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
+            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            asm volatile(
+                "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
+                "[%0], [%1], %2, [%3];" ::"r"(smem_tile),
+                "l"(src_b + goff), "r"(csz), "r"(smem_mbar)
+                : "memory");
+            uint64_t st;
+            asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+                         : "=l"(st)
+                         : "r"(smem_mbar), "r"(csz));
+          };
+
+          // Prologue: prime the first stage (the loop produces one chunk ahead).
+          if (lane_id == 0) issue_g2s(0);
+          __syncwarp();
+
+          for (int c = 0; c < nchunks; ++c) {
+            // Produce the next chunk's G2S so it overlaps this chunk's S2G drain.
+            if (lane_id == 0 and c + 1 < nchunks) issue_g2s(c + 1);
+            __syncwarp();
+
+            const size_t off = static_cast<size_t>(c) * kEpTmaSndChunkBytes;
+            const size_t remain = total - off;
+            uint32_t csz =
+                static_cast<uint32_t>(remain < (size_t)kEpTmaSndChunkBytes ? remain : (size_t)kEpTmaSndChunkBytes);
+            csz = (csz + 15u) & ~15u;
+            const int stage = (ep_tma_gbase + c) % kEpTmaSndNStage;
+            const uint32_t smem_tile = static_cast<uint32_t>(__cvta_generic_to_shared(
+                ep_tma_tile_snd_dyn + (warp_id * kEpTmaSndNStage + stage) * kEpTmaSndChunkBytes));
+            const uint32_t smem_mbar =
+                static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
+
+            // Whole warp waits on this chunk's G2S mbarrier so every S2G lane sees the tile.
+            uint32_t done = 0;
+            while (!done) {
+              asm volatile(
+                  "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], 0;"
+                  " selp.u32 %0, 1, 0, p; }"
+                  : "=r"(done)
+                  : "r"(smem_mbar));
+            }
+            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            // S2G: lane-striped fan-out -- one destination pool per lane.
+            bool issued = false;
+            for (int j = lane_id; j < ep_num_pools; j += 32) {
+              uint8_t* dst_b = reinterpret_cast<uint8_t*>(ep_dst_pools[j]) + off;
+              asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b), "r"(smem_tile),
+                           "r"(csz)
+                           : "memory");
+              issued = true;
+            }
+            if (issued) asm volatile("cp.async.bulk.commit_group;");
+            ++ep_tma_in_flight;
+            // Lazy drain: bound in-flight S2G to kEpTmaSndInFlight (compile-time immediate).
+            // wait_group.read also guarantees the drained group's SMEM reads are done, so
+            // its ring tile is safe to refill by a future G2S one iteration later.
+            if (ep_tma_in_flight > kEpTmaSndInFlight) {
+              if (issued) asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(kEpTmaSndInFlight) : "memory");
+              --ep_tma_in_flight;
+            }
+            __syncwarp();
+          }
+          // B-depth-1: NO per-token drain -- carry in-flight S2G groups + the ring stage
+          // (ep_tma_gbase) to the next token so consecutive tokens' S2G NVLink writes overlap
+          // each other (removes the per-token full-drain bubble = ~1 NVLink RT/token at low SM).
+          ep_tma_gbase += nchunks;
+        }
+        __syncwarp();
+#else
         auto st_pool_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
           for (int j = 0; j < ep_num_pools; ++j) st_na_global(ep_dst_pools[j] + key, value);
         };
         UNROLLED_WARP_COPY(5, lane_id, hidden_int4, 0, x + token_idx * hidden_int4, ld_nc_global, st_pool_broadcast);
+#endif
+        // inc6 (kEpFlat): write this token's metadata (SourceMeta + scales + topk) straight
+        // into each destination GPU's pool META region at the token's final recv slot, so a
+        // local consumer can produce recv_* without the forwarder + ring 2-hop. Mirrors the
+        // ep_dst_pools capture loop (warp-uniform over (node, g)); fields are written
+        // warp-cooperatively. topk_idx is stored RAW; the consumer rebases to its own expert
+        // range. The per-token __threadfence_system() in the epilogue publishes these writes.
+        // NOTE: only active under kEpFlat; the inc5 2-hop path (kEpFlat unset) is unchanged.
+        if (kEpFlat) {
+          // 8 (SourceMeta) + num_scales*4 + num_topk*4 (idx) + num_topk*4 (weights) must fit.
+          EP_DEVICE_ASSERT(static_cast<int64_t>(sizeof(SourceMeta)) + static_cast<int64_t>(num_scales) * 4 +
+                               static_cast<int64_t>(num_topk) * 8 <=
+                           kEpFlatMetaBytes);
+#pragma unroll
+          for (int j = 0; j < num_topk_ranks; ++j) {
+            const int node = topk_ranks[j];
+            SourceMeta sm_j = broadcast(src_meta, j);
+            NvlPackT bools_j = broadcast(is_token_in_rank_uint64, node);
+            const bool* bvals_j = reinterpret_cast<const bool*>(&bools_j);
+#pragma unroll
+            for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g) {
+              if (not bvals_j[g]) continue;
+              const int dg = node * NUM_MAX_NVL_PEERS + g;
+              const int recv_idx = __shfl_sync(0xffffffff, ep_my_idx[g], node);
+              uint8_t* mbase = reinterpret_cast<uint8_t*>(recv_pool_global_ptrs[dg]) + ep_meta_base +
+                               static_cast<int64_t>(recv_idx) * kEpFlatMetaBytes;
+              if (lane_id == 0) st_na_global(reinterpret_cast<SourceMeta*>(mbase), sm_j);
+              float* sdst = reinterpret_cast<float*>(mbase + sizeof(SourceMeta));
+              for (int s = lane_id; s < num_scales; s += 32)
+                st_na_global(sdst + s, ld_nc_global(x_scales + token_idx * num_scales + s));
+              if (lane_id < num_topk) {
+                int* idst = reinterpret_cast<int*>(mbase + sizeof(SourceMeta) + num_scales * sizeof(float));
+                float* wdst = reinterpret_cast<float*>(idst + num_topk);
+                st_na_global(idst + lane_id, static_cast<int>(ld_nc_global(topk_idx + token_idx * num_topk + lane_id)));
+                st_na_global(wdst + lane_id, ld_nc_global(topk_weights + token_idx * num_topk + lane_id));
+              }
+            }
+          }
+          __syncwarp();
+        }
       } else {
         auto st_broadcast = [=](const int key, const int4& value) {
 #pragma unroll
@@ -452,17 +718,28 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     }
 
     // Epilogue
-    // Acquire sequential lock
-    while (lane_id == 0 and rdma_send_next_token_idx != token_idx)
+    // Acquire sequential lock (lock path only; atomic-route removed the lock)
+    while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
       ;
     __syncwarp();
 
-    // Update last token tail (epilogue). See in-loop note on atomicMax.
+    // Update last token tail (epilogue). Dead under kEpFlat (coordinator returns
+    // before reading rdma_send_channel_tail); kept for the non-flat path.
     if (last_rdma_tail_idx >= 0) atomicMax(const_cast<int*>(rdma_send_channel_tail + lane_id), last_rdma_tail_idx + 1);
 
-    // Release sequential lock
-    lane_id == 0 ? (rdma_send_next_token_idx += 1) : 0;
+    // Release sequential lock (lock path only)
+    if (!ep_use_atomic_route and lane_id == 0) rdma_send_next_token_idx += 1;
 
+#if EP_NCCLEP_TMA
+    // B-depth-1: single drain of all cross-token in-flight TMA S2G groups at warp end
+    // (replaces the per-token wait_group 0), then publish to the generic proxy before the
+    // metadata threadfence below so the post-barrier consumer sees complete hidden + meta.
+    if (kEpDirect) {
+      asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+      __syncwarp();
+      asm volatile("fence.proxy.async.global;" ::: "memory");
+    }
+#endif
     // inc5: flush the direct cross-node hidden writes to the fabric so the
     // destination ranks observe a complete recv_x after the dispatch barrier.
     if (kEpDirect) __threadfence_system();
@@ -472,6 +749,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Synchronize shared memory
     sync_rdma_sender_smem();
+    // inc6 (kEpFlat): the all-sender path delivers hidden + metadata directly to
+    // the destination pools, so there is no RDMA ring to coordinate. The barrier
+    // above keeps the sender warps' bar.sync 0 balanced (7 warps); after it this
+    // coordinator warp exits.
+    if (kEpFlat) return;
     if (lane_id == 0 && channel_id == 0 && rank == 0) {
       (void)0;
     }
@@ -1056,6 +1338,10 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
     }
   } else {
     // NVL consumers
+    // inc6 (kEpFlat): the all-sender path has no forwarder feeding the NVL receive
+    // buffers, so these consumer warps would spin to the timeout trap. The flat
+    // metadata drain (flat_meta_drain) produces recv_* from the pool instead.
+    if (kEpFlat) return;
     // Retrieve rank offset from barrier results (each lane's register stores an RDMA rank)
     int src_nvl_rank = target_rank, total_offset = 0;
     // Increment 1: same-GPU tokens (src_nvl_rank == nvl_rank) are written

@@ -2,11 +2,37 @@
 // Licensed under the MIT License.
 #pragma once
 
+#include <cstdlib>
+
 #include "../config.hpp"
 #include "../kernels/api.cuh"
 
 namespace mscclpp {
 namespace ep {
+
+// inc7: resolve the flat all-sender dispatch channel count (== block count).
+// Default num_sms/2; MSCCLPP_EP_DISPATCH_NSM (flat path only) overrides it, clamped
+// to [1, num_sms]. The flat path launches one sender block per channel (no forwarder),
+// so it can use the FULL SM budget with a SINGLE knob. Non-flat/unset -> num_sms/2.
+inline int ep_flat_dispatch_channels(int num_sms) {
+  const char* f = std::getenv("MSCCLPP_EP_FLAT");
+  const char* d = std::getenv("MSCCLPP_EP_DIRECT");
+  if (!(f != nullptr && std::atoi(f) != 0 && d != nullptr && std::atoi(d) != 0)) return num_sms / 2;
+  const char* e = std::getenv("MSCCLPP_EP_DISPATCH_NSM");
+  if (e == nullptr) return num_sms / 2;
+  const int n = std::atoi(e);
+  if (n < 1) return num_sms / 2;
+  return n < num_sms ? n : num_sms;
+}
+
+// Channel count the RDMA/NVL buffers must hold: max of the flat dispatch channels
+// and the default num_sms/2 (combine grid). Keeps per-channel offsets in bounds when
+// DISPATCH_NSM raises/lowers the dispatch channel count relative to num_sms/2.
+inline int ep_buffer_channels(int num_sms) {
+  const int dc = ep_flat_dispatch_channels(num_sms);
+  const int half = num_sms / 2;
+  return dc > half ? dc : half;
+}
 
 struct Config {
   int num_sms;
@@ -44,7 +70,7 @@ struct Config {
     EP_HOST_ASSERT(num_ranks <= NUM_MAX_NVL_PEERS or num_sms % 2 == 0);
     const auto num_rdma_ranks = std::max(num_ranks / NUM_MAX_NVL_PEERS, 1);
     const auto num_nvl_ranks = std::min(num_ranks, NUM_MAX_NVL_PEERS);
-    const int num_channels = num_sms / 2;
+    const int num_channels = ep_buffer_channels(num_sms);
 
     size_t num_bytes = 0;
     num_bytes += num_channels * num_nvl_ranks * (2 * num_rdma_ranks + 3) * sizeof(int);
@@ -59,13 +85,26 @@ struct Config {
 
 #ifdef EP_DISPATCH_NCCLEP
   static constexpr int kEpRecvPoolMaxTokens = 65536;
-  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;
+  static constexpr int64_t kEpRecvPoolMaxHiddenBytes = 16384;  // worst-case per-token bytes (hidden<=8192 bf16)
+  // inc6 (flat all-sender dispatch): per-token meta region appended AFTER the
+  // worst-case hidden region. The flat sender writes SourceMeta + scales + topk
+  // straight into the dest pool meta region; a local consumer copies it into the
+  // recv_* tensors. 128B/token (allocated unconditionally; only touched under flat).
+  static constexpr int64_t kEpRecvPoolMetaBytes = 128;  // per-token meta slot (128B aligned)
   size_t get_recv_pool_header_bytes(int num_ranks) const {
     return ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
   }
-  static size_t recv_pool_bytes_static(int num_ranks) {
+  // Byte offset (from pool base) where the inc6 meta region starts: after the
+  // header and the full worst-case hidden region, so it never overlaps runtime
+  // hidden tokens regardless of the runtime hidden dim.
+  static size_t get_recv_pool_meta_base(int num_ranks) {
     size_t header = ((static_cast<size_t>(num_ranks) * sizeof(int) + 127) / 128) * 128;
-    size_t b = header + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    size_t hidden = static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMaxHiddenBytes);
+    return ((header + hidden + 127) / 128) * 128;
+  }
+  static size_t recv_pool_bytes_static(int num_ranks) {
+    size_t meta_base = get_recv_pool_meta_base(num_ranks);
+    size_t b = meta_base + static_cast<size_t>(kEpRecvPoolMaxTokens) * static_cast<size_t>(kEpRecvPoolMetaBytes);
     return ((b + 127) / 128) * 128;
   }
 #endif
@@ -85,7 +124,7 @@ struct Config {
     EP_HOST_ASSERT(num_ranks % NUM_MAX_NVL_PEERS == 0);
     EP_HOST_ASSERT(num_sms % 2 == 0);
     const int num_rdma_ranks = num_ranks / NUM_MAX_NVL_PEERS;
-    const int num_channels = num_sms / 2;
+    const int num_channels = ep_buffer_channels(num_sms);
 
     size_t num_bytes = 0;
     num_bytes += num_channels * num_rdma_ranks * (NUM_MAX_NVL_PEERS * 2 + 2) * 2 * sizeof(int);
