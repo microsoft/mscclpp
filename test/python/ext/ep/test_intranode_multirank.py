@@ -125,12 +125,12 @@ def main():
         )
 
     print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
-    buf = ep.ExpertParallelRuntime(ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
+    buf = ep.ExpertParallelRuntime(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
     print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
     assert buf.is_available()
 
     # get_dispatch_layout sanity
-    ref_rank, _, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(topk_idx, num_experts, None, False, False)
+    ref_rank, _, ref_exp, ref_in_rank = buf.get_dispatch_layout(topk_idx, num_experts)
     assert torch.allclose(ref_rank, num_tokens_per_rank)
     assert torch.allclose(ref_exp, num_tokens_per_expert)
     assert torch.allclose(ref_in_rank, is_token_in_rank)
@@ -149,7 +149,6 @@ def main():
         recv_channel_prefix_matrix,
         recv_src_idx,
         send_head,
-        _event,
     ) = buf.intranode_dispatch(
         x,
         None,
@@ -163,9 +162,6 @@ def main():
         None,
         1,
         cfg,
-        None,
-        False,
-        False,
     )
     dist.barrier(group=group)
 
@@ -191,7 +187,7 @@ def main():
     handle_rank_prefix_matrix = rank_prefix_matrix
     handle_channel_prefix_matrix = recv_channel_prefix_matrix
 
-    combined_x, combined_topk_weights, _ = buf.intranode_combine(
+    combined_x, combined_topk_weights = buf.intranode_combine(
         recv_x,
         recv_topk_weights,
         handle_recv_src_idx,
@@ -199,9 +195,6 @@ def main():
         handle_channel_prefix_matrix,
         send_head,
         cfg,
-        None,
-        False,
-        False,
     )
 
     # Expected: we dispatched with x = rank * ones, so every destination r
@@ -283,73 +276,35 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    def _dispatch():
-        return buf.intranode_dispatch(
-            x_b,
-            None,
-            topk_idx_b,
-            topk_weights_b,
-            num_tokens_per_rank_b,
-            is_token_in_rank_b,
-            num_tokens_per_expert_b,
-            0,
-            None,
-            None,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+    # Drive the benchmark through the high-level MoECommunicator (the public
+    # #818 API), mode=HIGH_THROUGHPUT. It owns its own ExpertParallelRuntime
+    # sized for the bench shape and runs get_dispatch_layout + intranode
+    # dispatch/combine internally. The first (uncached) dispatch records the
+    # routing layout on the returned handle; subsequent dispatches reuse it via
+    # previous_handle, skipping notify_dispatch's host-side counter wait. This
+    # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
+    moe = ep.MoECommunicator(
+        group=group,
+        num_experts=bench_num_experts,
+        hidden_size=bench_hidden,
+        topk=bench_num_topk,
+        max_tokens_per_rank=bench_tokens,
+        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+    )
+    assert moe.is_available()
 
-    # Run one uncached dispatch to capture the layout (rank/channel prefix
-    # matrices + num_recv_tokens). Subsequent dispatch iters reuse these in
-    # cached mode, which skips `notify_dispatch` and its host-side busy-wait on
-    # mapped pinned counters (`moe_recv_counter`, `moe_recv_expert_counter`).
-    # This matches NCCL-EP's `ep_bench` convention and isolates the on-GPU
-    # dispatch kernel cost from one-time setup overhead.
-    _layout = _dispatch()
-    _cached_rpm = _layout[5]  # rank_prefix_matrix
-    _cached_cpm = _layout[6]  # channel_prefix_matrix
-    _cached_n = int(_layout[0].size(0))  # num_recv_tokens on this rank
+    # One uncached dispatch to build the cached routing layout on the handle.
+    _handle0 = moe.dispatch(x_b, topk_idx_b, topk_weights_b)[1]
 
     def _dispatch_cached():
-        # In cached mode `num_experts` is taken as 0, so we must not pass
-        # topk_idx/topk_weights (those require num_experts > 0). We still get
-        # send_head/rank_prefix_matrix/channel_prefix_matrix/recv_src_idx out
-        # of dispatch -- enough to drive combine.
-        return buf.intranode_dispatch(
-            x_b,
-            None,
-            None,
-            None,
-            None,
-            is_token_in_rank_b,
-            None,
-            _cached_n,
-            _cached_rpm,
-            _cached_cpm,
-            1,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        return moe.dispatch(x_b, topk_idx_b, topk_weights_b, previous_handle=_handle0)
 
     def _combine(dout):
-        rx, _rxs, _rti, rtw, _lst, rpm, _cpm, rcpm, rsi, sh, _ev = dout
-        buf.intranode_combine(
-            rx,
-            rtw,
-            rsi,
-            rpm,
-            rcpm,
-            sh,
-            cfg,
-            None,
-            False,
-            False,
-        )
+        dispatch_out_, handle_ = dout
+        moe.combine(dispatch_out_.tokens, handle_)
 
     # Warmup (full round-trip) using cached dispatch.
     for _ in range(warmup):
