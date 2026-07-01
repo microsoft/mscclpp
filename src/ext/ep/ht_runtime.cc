@@ -991,7 +991,7 @@ void* MoEHighThroughputRuntime::resolveIntranodeRecvXBuffer(int numRecvTokens, i
 #ifdef EP_DISPATCH_NCCLEP
   const size_t ep_intra_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
   const char* e_intra_direct = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
-  const bool ep_intra_direct = e_intra_direct != nullptr && std::atoi(e_intra_direct) != 0 &&
+  const bool ep_intra_direct = e_intra_direct != nullptr && std::atoi(e_intra_direct) != 0 && xElementSize == 2 &&
                                recv_pool_local_ptr_ != nullptr && recv_pool_ptrs_gpu != nullptr &&
                                numRecvTokens <= Config::kEpRecvPoolMaxTokens &&
                                static_cast<int64_t>(numRecvTokens) * hidden * static_cast<int64_t>(xElementSize) <=
@@ -1115,7 +1115,7 @@ void MoEHighThroughputRuntime::intranodeDispatch(void* recvX, float* recvXScales
 #ifdef EP_DISPATCH_NCCLEP
   const size_t ep_intra_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
   const char* e_intra_direct = std::getenv("MSCCLPP_EP_INTRA_DIRECT");
-  const bool ep_intra_direct = e_intra_direct != nullptr && std::atoi(e_intra_direct) != 0 &&
+  const bool ep_intra_direct = e_intra_direct != nullptr && std::atoi(e_intra_direct) != 0 && xElementSize == 2 &&
                                recv_pool_local_ptr_ != nullptr && recv_pool_ptrs_gpu != nullptr &&
                                numRecvTokens <= Config::kEpRecvPoolMaxTokens &&
                                static_cast<int64_t>(numRecvTokens) * hidden * static_cast<int64_t>(xElementSize) <=
@@ -1294,10 +1294,9 @@ void* MoEHighThroughputRuntime::resolveInternodeRecvXBuffer(int numRecvTokens, i
   // forward path); returns nullptr when the caller should allocate recvX itself.
 #ifdef EP_DISPATCH_NCCLEP
   const size_t ep_pool_header_bytes = config.get_recv_pool_header_bytes(num_ranks);
-  const bool ep_use_direct = num_nvl_bytes > 0 and recv_pool_local_ptr_ != nullptr and recv_pool_ptrs_gpu != nullptr and
-                             numRecvTokens <= Config::kEpRecvPoolMaxTokens;
+  const bool ep_use_direct = num_nvl_bytes > 0 and xElementSize == 2 and recv_pool_local_ptr_ != nullptr and
+                             recv_pool_ptrs_gpu != nullptr and numRecvTokens <= Config::kEpRecvPoolMaxTokens;
   (void)hidden;
-  (void)xElementSize;
   if (ep_use_direct) {
     return static_cast<uint8_t*>(recv_pool_local_ptr_) + ep_pool_header_bytes;
   }
@@ -1466,8 +1465,9 @@ void MoEHighThroughputRuntime::internodeDispatch(
   // straight to the destination's recv_x via TMA-eligible peer VAs. Publish our
   // recv_gbl_rank_prefix_sum into the peer-readable pool header. recv_x (= recvX) is the
   // caller-resolved pool view (recv_pool_local_ptr_ + header) from resolveInternodeRecvXBuffer.
-  const bool ep_use_direct = (not cachedMode) and num_nvl_bytes > 0 and recv_pool_local_ptr_ != nullptr and
-                             recv_pool_ptrs_gpu != nullptr and numRecvTokens <= Config::kEpRecvPoolMaxTokens;
+  const bool ep_use_direct = (not cachedMode) and num_nvl_bytes > 0 and xElementSize == 2 and
+                             recv_pool_local_ptr_ != nullptr and recv_pool_ptrs_gpu != nullptr and
+                             numRecvTokens <= Config::kEpRecvPoolMaxTokens;
   if (ep_use_direct) {
     ep_recv_pool_ptrs = recv_pool_ptrs_gpu;
     ep_recv_pool_global_ptrs = recv_pool_global_ptrs_gpu;  // inc5: null unless MSCCLPP_EP_DIRECT exchanged

@@ -269,7 +269,7 @@ class ExpertParallelRuntime:
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
 
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
-        recv_x = self._alloc_recv_x(num_recv_tokens, hidden, x_element_size, config)
+        recv_x = self._alloc_recv_x(num_recv_tokens, hidden, x_element_size, x.dtype, config)
         recv_src_idx = torch.empty((num_recv_tokens,), dtype=torch.int32, device="cuda")
         send_head = torch.empty((num_tokens, self.group_size), dtype=torch.int32, device="cuda")
         recv_channel_prefix_matrix = torch.empty((self.group_size, num_channels), dtype=torch.int32, device="cuda")
@@ -326,14 +326,19 @@ class ExpertParallelRuntime:
             send_head,
         )
 
-    def _alloc_recv_x(self, num_recv_tokens: int, hidden: int, x_element_size: int, config) -> torch.Tensor:
+    def _alloc_recv_x(
+        self, num_recv_tokens: int, hidden: int, x_element_size: int, x_dtype: torch.dtype, config
+    ) -> torch.Tensor:
         """Allocate ``recv_x`` or, when the zero-copy direct path is active, view
         this rank's recv pool (so the sender writes hidden straight to its final
-        slot and the TMA combine gathers from the same pool)."""
+        slot and the TMA combine gathers from the same pool). The pool view is
+        bf16-only (the C++ direct gate requires ``xElementSize == 2``), so a
+        quantized (FP8) dispatch always allocates a fresh recv_x of the input
+        dtype."""
         pool_ptr = self.runtime.resolve_intranode_recv_x_buffer(num_recv_tokens, hidden, x_element_size, config)
         if pool_ptr != 0:
             return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
-        return torch.empty((num_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        return torch.empty((num_recv_tokens, hidden), dtype=x_dtype, device="cuda")
 
     def intranode_combine(
         self,
@@ -471,7 +476,7 @@ class ExpertParallelRuntime:
             num_recv_tokens_per_expert_list = num_recv_per_expert_host.tolist()
 
         # ----- Phase B: allocate recv outputs (or view the recv pool) -----
-        recv_x = self._alloc_internode_recv_x(num_recv_tokens, hidden, x_element_size, config, cached_mode)
+        recv_x = self._alloc_internode_recv_x(num_recv_tokens, hidden, x_element_size, x.dtype, config, cached_mode)
         recv_topk_idx = (
             torch.empty((num_recv_tokens, num_topk), dtype=torch.int64, device="cuda") if topk_idx is not None else None
         )
@@ -555,17 +560,19 @@ class ExpertParallelRuntime:
         )
 
     def _alloc_internode_recv_x(
-        self, num_recv_tokens: int, hidden: int, x_element_size: int, config, cached_mode: bool
+        self, num_recv_tokens: int, hidden: int, x_element_size: int, x_dtype: torch.dtype, config, cached_mode: bool
     ) -> torch.Tensor:
         """Allocate ``recv_x`` or, on the non-cached direct path, view this rank's
         recv pool (so the cross-GPU forwarder writes hidden into the pool and the
-        direct-gather combine reads it back). The pool view is non-cached only,
-        matching the ``ep_use_direct`` gate in the C++ runtime."""
+        direct-gather combine reads it back). The pool view is non-cached and
+        bf16-only (the C++ ``ep_use_direct`` gate requires ``xElementSize == 2``),
+        so a quantized (FP8) dispatch always allocates a fresh recv_x of the input
+        dtype."""
         if not cached_mode:
             pool_ptr = self.runtime.resolve_internode_recv_x_buffer(num_recv_tokens, hidden, x_element_size, config)
             if pool_ptr != 0:
                 return _bf16_view(pool_ptr, num_recv_tokens, hidden, owner=self)
-        return torch.empty((num_recv_tokens, hidden), dtype=torch.bfloat16, device="cuda")
+        return torch.empty((num_recv_tokens, hidden), dtype=x_dtype, device="cuda")
 
     def internode_combine(
         self,
