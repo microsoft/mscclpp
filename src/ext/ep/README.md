@@ -1,16 +1,19 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A port of low-latency MoE `dispatch` / `combine` primitives into MSCCL++.
-The active build exposes the LL `MoECommunicator` path. The older
-High-Throughput (HT) prototype has been moved under `src/ext/ep/ht/` for
-reference and is not compiled into `mscclpp_ep_cpp`.
+A port of MoE `dispatch` / `combine` primitives into MSCCL++. The build
+exposes two backends through the high-level `MoECommunicator` API: the
+low-latency (LL) path (`MoEMode.LOW_LATENCY`) and the high-throughput (HT)
+DeepEP-style path (`MoEMode.HIGH_THROUGHPUT`, exposed at the raw layer as
+`ExpertParallelRuntime`). The HT CUDA kernels live under `src/ext/ep/ht/`;
+their torch-free orchestration is `src/ext/ep/ht_runtime.cc`.
 
 ## Status
 
 | Feature                            | Status                                      |
 |------------------------------------|---------------------------------------------|
 | Runtime construction + IPC + sync  | ✅ ported for LL                                  |
-| HT prototype                       | Archived under `src/ext/ep/ht/`; not compiled     |
+| HT backend (`ExpertParallelRuntime`) | ✅ compiled — kernels `src/ext/ep/ht/`, torch-free runtime `ht_runtime.cc` |
+| Activation quant (FP8-E4M3 / MXFP8) | ✅ HT (byte-mover) + LL (kernel-quantize or passthrough) |
 | `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
 | GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
@@ -77,8 +80,101 @@ dst_rank)`.
 - Unlike DeepEP, this port drives LL through `PortChannel` /
   `MemoryChannel` rather than NVSHMEM, so runtime sync connects
   every peer even in `low_latency_mode=True`.
-- HT code is archived for reference only and is not part of the active
-  extension build.
+
+## Activation quantization (FP8-E4M3 / MXFP8)
+
+Both backends can carry **quantized activations** through `dispatch`. The
+format is selected by `quant_format` on the `MoECommunicator`:
+
+| `quant_format`    | element dtype     | scale block | scale dtype                         | `scales.local` shape |
+|-------------------|-------------------|-------------|-------------------------------------|----------------------|
+| `None` (default)  | `bfloat16`        | —           | —                                   | — (no scales)        |
+| `"fp8_e4m3"`      | `float8_e4m3fn`   | 128         | `float32` (reciprocal)              | `[T, H/128]`         |
+| `"mxfp8"`         | `float8_e4m3fn`   | 32          | `float8_e8m0fnu` (E8M0, power-of-2) | `[T, H/32]`          |
+
+`combine` is always **BF16 → BF16** in both backends: quantization only
+affects the dispatch leg (a real expert GEMM emits BF16). Requires
+`hidden % 128 == 0`. `quant_format` accepts aliases (`"fp8"` → `"fp8_e4m3"`;
+`"mx_fp8"` / `"mxfp8_e4m3"` / `"ocp_mxfp8"` → `"mxfp8"`).
+
+### HT vs LL: where the quantization happens
+
+The two backends draw the quantization boundary in opposite places, which
+determines the legal input → output dtype combinations:
+
+- **HT dispatch is a byte-mover.** The caller pre-quantizes; the kernel
+  transports the FP8 tokens and their block scales **verbatim** and never
+  interprets the scales. MXFP8's 1-byte E8M0 `[T, H/32]` scale tensor and
+  FP8-E4M3's FP32 `[T, H/128]` tensor occupy the same bytes per token when
+  `H % 128 == 0`, so they ride the same transport. The output dtype
+  therefore **equals** the input dtype.
+- **LL dispatch can quantize in-kernel.** BF16 input is quantized to
+  FP8/MXFP8 by the LL kernel (for MXFP8, an E8M0 power-of-two micro-scale is
+  derived per 32-element block); pre-quantized FP8/MXFP8 input is
+  transported verbatim like HT.
+
+| dispatch mode                                             | HT | LL |
+|-----------------------------------------------------------|----|----|
+| `bf16 → bf16`                                             | ✅ | ✅ |
+| `bf16 → fp8` / `bf16 → mxfp8` (kernel quantizes)          | ❌ | ✅ |
+| `fp8 → fp8` / `mxfp8 → mxfp8` (pre-quantized passthrough) | ✅ | ✅ |
+
+Kernel-side `bf16 → fp8` / `bf16 → mxfp8` is **LL-only**; HT always requires
+the caller to pre-quantize, so its output dtype must equal its input dtype.
+
+### API — specifying input / output
+
+High-level `MoECommunicator`:
+
+```python
+import torch
+from mscclpp.ext import ep
+
+# LL: kernel quantizes BF16 -> MXFP8 on dispatch (input_dtype defaults to bf16).
+moe = ep.MoECommunicator(mode=ep.MoEMode.LOW_LATENCY, quant_format="mxfp8", ...)
+dout, handle = moe.dispatch(x_bf16, topk_idx, topk_weights, output_buffer=fp8_buf)
+
+# HT (or LL) pre-quantized MXFP8 -> MXFP8 passthrough: pass FP8 tokens + E8M0 scales.
+moe = ep.MoECommunicator(mode=ep.MoEMode.HIGH_THROUGHPUT, quant_format="mxfp8", ...)
+dout, handle = moe.dispatch(
+    x_fp8, topk_idx, topk_weights,
+    scales=ep.QuantScales(local=e8m0_scales, format="mxfp8"),
+)
+# dout.scales carries the routed block scales in the tokens' layout
+# (format="mxfp8", block_size=32).
+```
+
+- `quant_format`: `None` / `"fp8_e4m3"` / `"mxfp8"`.
+- `input_dtype`: selects kernel-quantize vs passthrough.
+  - **LL:** `torch.bfloat16` (default) → the kernel quantizes on dispatch;
+    `torch.float8_e4m3fn` → pre-quantized passthrough (output = input).
+  - **HT:** always pre-quantized (byte-mover), so FP8 input is implied by
+    `quant_format`; passing `input_dtype` is optional and must match
+    `float8_e4m3fn`.
+- `dispatch(..., scales=QuantScales(local=..., format=...))`: required for
+  pre-quantized input (`local` is `[T, H/block]` in the format's scale
+  dtype). `DispatchOutput.scales` returns the routed scales in the same
+  layout as the dispatched tokens.
+
+### Test flags
+
+The three multirank tests select the dispatch dtypes at runtime with
+`--input-dtype` / `--output-dtype` (each `bf16` / `fp8` / `mxfp8`):
+
+```bash
+# LL: kernel quantizes BF16 -> MXFP8.
+torchrun ... test/python/ext/ep/test_low_latency_multirank.py \
+    --input-dtype bf16 --output-dtype mxfp8
+
+# HT: pre-quantized MXFP8 -> MXFP8 passthrough (output must equal input).
+torchrun ... test/python/ext/ep/test_intranode_multirank.py \
+    --input-dtype mxfp8 --output-dtype mxfp8
+```
+
+For the HT tests (`test_intranode_multirank.py`,
+`test_internode_multirank.py`) the two flags must be **equal** (byte-mover);
+for LL (`test_low_latency_multirank.py`) BF16 input may target any output,
+and pre-quantized fp8/mxfp8 input requires a matching output.
 
 ## Build
 
