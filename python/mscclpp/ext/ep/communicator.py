@@ -328,10 +328,32 @@ class MoECommunicator:
         self.local_expert_start = config.local_expert_start
         self._resolve_placement()
 
-        if config.input_dtype not in (None, torch.bfloat16):
-            raise NotImplementedError("HT dispatch currently supports BF16 input only")
-        if config.quant_format is not None:
-            raise NotImplementedError("HT quantized dispatch (scales) is not implemented yet")
+        if config.input_dtype not in (None, torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
+            raise NotImplementedError("HT dispatch supports BF16 or FP8-E4M3 input")
+        # Activation quantization. None -> BF16 tokens, no scales. "fp8_e4m3" and
+        # "mxfp8" carry FP8 tokens plus per-token block scales through dispatch
+        # (combine stays BF16, so quantization only affects the dispatch leg).
+        self.quant_format = _normalize_quant_format(config.quant_format)
+        if self.quant_format not in (None, "fp8_e4m3", "mxfp8"):
+            raise NotImplementedError(f"HT dispatch does not support quant_format={config.quant_format!r}")
+        self.ht_requires_quant = self.quant_format is not None
+        if self.ht_requires_quant:
+            spec = _HT_QUANT_FORMATS[self.quant_format]
+            self.scale_block_size = spec["block_size"]
+            self.quant_input_dtype = getattr(torch, spec["input_dtype"], None)
+            self.quant_scale_dtype = getattr(torch, spec["scale_dtype"], None)
+            if self.quant_input_dtype is None or self.quant_scale_dtype is None:
+                raise NotImplementedError(
+                    f"this torch build lacks the dtypes required for quant_format={self.quant_format!r}"
+                )
+            if self.hidden_size % 128 != 0:
+                raise ValueError("HT quantized dispatch requires hidden_size divisible by 128")
+            if config.input_dtype is not None and config.input_dtype != self.quant_input_dtype:
+                raise ValueError(f"input_dtype {config.input_dtype} conflicts with quant_format={self.quant_format!r}")
+        else:
+            self.scale_block_size = None
+            self.quant_input_dtype = torch.bfloat16
+            self.quant_scale_dtype = None
 
         self.expert_alignment = config.expert_alignment
 
@@ -453,6 +475,11 @@ class MoECommunicator:
         if weights is None:
             weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
+        # Quantized dispatch: transport the per-token block scales alongside the
+        # FP8 tokens (reinterpreted to the FP32 words the kernel moves). The recv
+        # scales come back and are reinterpreted to the caller's native encoding.
+        x_scales_transport = _scales_to_transport(scales.local) if self.ht_requires_quant else None
+
         cache = getattr(previous_handle, "_dispatch_cache", None) if previous_handle is not None else None
         if cache is not None:
             num_tokens_per_rank = cache["num_tokens_per_rank"]
@@ -470,7 +497,7 @@ class MoECommunicator:
         if self._is_internode:
             (
                 recv_x,
-                _recv_x_scales,
+                recv_x_scales,
                 _recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
@@ -485,7 +512,7 @@ class MoECommunicator:
                 send_nvl_head,
             ) = self._buffer.internode_dispatch(
                 input,
-                None,
+                x_scales_transport,
                 topk_ids,
                 weights,
                 num_tokens_per_rank,
@@ -524,7 +551,7 @@ class MoECommunicator:
         elif cache is not None:
             (
                 recv_x,
-                _recv_x_scales,
+                recv_x_scales,
                 _recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
@@ -535,7 +562,7 @@ class MoECommunicator:
                 send_head,
             ) = self._buffer.intranode_dispatch(
                 input,
-                None,
+                x_scales_transport,
                 None,
                 None,
                 None,
@@ -558,7 +585,7 @@ class MoECommunicator:
         else:
             (
                 recv_x,
-                _recv_x_scales,
+                recv_x_scales,
                 _recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,
@@ -569,7 +596,7 @@ class MoECommunicator:
                 send_head,
             ) = self._buffer.intranode_dispatch(
                 input,
-                None,
+                x_scales_transport,
                 topk_ids,
                 weights,
                 num_tokens_per_rank,
@@ -598,9 +625,21 @@ class MoECommunicator:
                 "num_recv_tokens": int(recv_x.size(0)),
             }
 
+        # Quantized dispatch returns the recv block scales in the same flat
+        # expert-major layout as the tokens (hidden dim -> scale-block dim),
+        # reinterpreted back to the caller's native scale encoding.
+        dispatch_scales = None
+        if self.ht_requires_quant and recv_x_scales is not None:
+            dispatch_scales = QuantScales(
+                local=_scales_from_transport(recv_x_scales, self.quant_scale_dtype),
+                global_scale=None,
+                format=self.quant_format,
+                block_size=self.scale_block_size,
+            )
+
         dispatch_out = DispatchOutput(
             tokens=recv_x,
-            scales=None,
+            scales=dispatch_scales,
             num_tokens_per_expert=num_recv_tokens_per_expert_list,
             expert_offsets=_exclusive_cumsum(num_recv_tokens_per_expert_list),
             layout=DispatchLayout.FLAT,
@@ -614,7 +653,7 @@ class MoECommunicator:
             num_local_experts=self.num_local_experts,
             local_expert_start=self.local_expert_start,
             layout=DispatchLayout.FLAT,
-            output_scales=None,
+            output_scales=dispatch_scales,
             is_internode=self._is_internode,
             combine_meta=combine_meta,
         )
@@ -817,16 +856,36 @@ class MoECommunicator:
     # ------------------------------------------------------------------
 
     def _validate_dispatch_inputs_ht(self, input, topk_ids, weights, scales) -> None:
-        if scales is not None and (scales.local is not None or scales.global_scale is not None):
-            raise NotImplementedError("HT dispatch does not support quantized input scales yet")
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden] tensor")
-        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
-            raise ValueError("HT dispatch input must be a CUDA BF16 tensor")
+        if input.device.type != "cuda":
+            raise ValueError("HT dispatch input must be a CUDA tensor")
+        if input.dtype != self.quant_input_dtype:
+            raise ValueError(f"HT dispatch input must be {self.quant_input_dtype} for this quant_format")
         if input.size(1) != self.hidden_size:
             raise ValueError(f"input hidden size {input.size(1)} != configured {self.hidden_size}")
         if input.size(0) > self.max_tokens_per_rank:
             raise ValueError("input token count exceeds max_tokens_per_rank")
+        # Activation quantization scales.
+        if self.ht_requires_quant:
+            if scales is None or scales.local is None:
+                raise ValueError(f"quant_format={self.quant_format!r} dispatch requires scales.local")
+            if scales.global_scale is not None:
+                raise NotImplementedError("HT quantized dispatch does not support scales.global_scale yet")
+            local = scales.local
+            expected_blocks = self.hidden_size // self.scale_block_size
+            if local.dim() != 2 or not local.is_contiguous():
+                raise ValueError("scales.local must be a contiguous [num_tokens, hidden/block_size] tensor")
+            if local.device != input.device:
+                raise ValueError("scales.local must be on the same device as input")
+            if local.dtype != self.quant_scale_dtype:
+                raise ValueError(
+                    f"scales.local must be {self.quant_scale_dtype} for quant_format={self.quant_format!r}"
+                )
+            if local.shape != (input.size(0), expected_blocks):
+                raise ValueError(f"scales.local shape must be [num_tokens, {expected_blocks}]")
+        elif scales is not None and (scales.local is not None or scales.global_scale is not None):
+            raise ValueError("BF16 HT dispatch does not take scales; set quant_format for FP8/MXFP8 input")
         if topk_ids.dim() != 2 or not topk_ids.is_contiguous():
             raise ValueError("topk_ids must be a contiguous [num_tokens, topk] tensor")
         if topk_ids.device != input.device or topk_ids.dtype != torch.int64:
@@ -870,7 +929,48 @@ def _normalize_quant_format(fmt: Optional[str]) -> Optional[str]:
     normalized = fmt.lower().replace("-", "_")
     if normalized in ("fp8", "fp8_e4m3", "f8e4m3", "float8_e4m3fn"):
         return "fp8_e4m3"
+    if normalized in ("mxfp8", "mx_fp8", "mxfp8_e4m3", "ocp_mxfp8"):
+        return "mxfp8"
     return normalized
+
+
+# Per-format HT quantization metadata.
+#   block_size  = hidden elements covered by one scale block.
+#   input_dtype = the token (activation) dtype.
+#   scale_dtype = the caller's native ``scales.local`` encoding.
+# The HT dispatch kernel is a pure byte-mover for scales: it transports
+# ``num_scales`` FP32 words per token and never interprets them. FP8-E4M3 uses
+# FP32 per-128-block scales directly. MXFP8 uses E8M0 (1-byte) micro-scales over
+# 32-element blocks (``[T, H/32]``); those are transported byte-exact by
+# reinterpreting the E8M0 tensor as FP32 ``[T, H/128]`` (H/32 bytes == H/128 FP32
+# words when ``H % 128 == 0``), so no kernel change is needed.
+_HT_QUANT_FORMATS = {
+    "fp8_e4m3": {"block_size": 128, "input_dtype": "float8_e4m3fn", "scale_dtype": "float32"},
+    "mxfp8": {"block_size": 32, "input_dtype": "float8_e4m3fn", "scale_dtype": "float8_e8m0fnu"},
+}
+
+
+def _scales_to_transport(local: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+    """Reinterpret the caller's ``scales.local`` to the FP32 tensor the HT dispatch
+    kernel moves. FP32 scales pass through unchanged; 1-byte scales (e.g. MXFP8
+    E8M0 micro-scales) are byte-reinterpreted to FP32 (valid when the per-token
+    scale-byte count is a multiple of 4, i.e. ``H % 128 == 0``)."""
+    if local is None:
+        return None
+    local = local.contiguous()
+    if local.dtype == torch.float32:
+        return local
+    return local.view(torch.float32)
+
+
+def _scales_from_transport(recv_fp32: Optional[torch.Tensor], scale_dtype: torch.dtype) -> Optional[torch.Tensor]:
+    """Reinterpret the FP32 recv scales back to the caller's native scale dtype
+    (inverse of :func:`_scales_to_transport`)."""
+    if recv_fp32 is None:
+        return None
+    if scale_dtype == torch.float32:
+        return recv_fp32
+    return recv_fp32.view(scale_dtype)
 
 
 def _requires_dequantization(tensor: torch.Tensor) -> bool:
