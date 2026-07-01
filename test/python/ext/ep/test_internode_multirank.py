@@ -18,6 +18,13 @@ Launch on each node with (example: 2 nodes x 8 GPUs = 16 ranks):
 
 Round-trip dispatch + combine using internode HT kernels across nodes.
 
+Dispatch input/output dtypes are chosen with ``--input-dtype`` / ``--output-dtype``
+(bf16, fp8, mxfp8). HT dispatch is a byte-mover, so the output dtype must equal the
+input dtype: BF16->BF16 runs the full dispatch+combine round-trip, while FP8->FP8
+(block-128 FP32 scales) and MXFP8->MXFP8 (block-32 E8M0 micro-scales) validate that
+the FP8 tokens and their block scales are routed byte-exact, plus the high-level
+``MoECommunicator`` metadata. HT combine is always BF16->BF16.
+
 Set ``MSCCLPP_EP_BENCH=1`` to also run a post-correctness benchmark pass
 that times dispatch and combine **separately** with CUDA events. Reports
 per-phase latency (max across ranks) plus aggregate effective bandwidth
@@ -28,6 +35,7 @@ problem size with ``MSCCLPP_EP_BENCH_TOKENS`` / ``_HIDDEN``.
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -83,12 +91,198 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
     x[:, :valid_len] = sorted_bin_idx[:, :valid_len]
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="MSCCL++ EP high-throughput internode correctness/benchmark test")
+    # num_tokens / hidden default to the existing MSCCLPP_EP_BENCH_* env vars so
+    # older launch scripts keep working; the CLI flags override them.
+    parser.add_argument("--num-tokens", type=int, default=int(os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128")))
+    parser.add_argument(
+        "--hidden",
+        type=int,
+        default=int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "1024")),
+        help="must be a multiple of 128 for quantized dispatch",
+    )
+    parser.add_argument(
+        "--input-dtype",
+        choices=("bf16", "fp8", "mxfp8"),
+        default="bf16",
+        help="dispatch input dtype (HT is a byte-mover, so output must match): bf16, fp8, or mxfp8",
+    )
+    parser.add_argument(
+        "--output-dtype",
+        choices=("bf16", "fp8", "mxfp8"),
+        default="bf16",
+        help="dispatch output dtype; for HT it must equal --input-dtype",
+    )
+    parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
+    return parser.parse_args()
+
+
+def _run_internode_quantized_dispatch_check(
+    ep,
+    buf,
+    group,
+    rank,
+    num_ranks,
+    num_tokens,
+    hidden,
+    num_topk,
+    num_experts,
+    quant_format,
+    topk_idx,
+    topk_weights,
+    num_tokens_per_rank,
+    num_tokens_per_rdma_rank,
+    is_token_in_rank,
+    num_tokens_per_expert,
+    cfg,
+):
+    """Validate pre-quantized FP8-E4M3 / MXFP8 internode dispatch (HT is a byte-mover):
+    (1) the raw ExpertParallelRuntime routes FP8 tokens + block scales byte-exact to
+        the same recv rows across nodes, and
+    (2) the high-level MoECommunicator(quant_format=...) returns dispatch_out.scales
+        with the right metadata/layout and token<->scale self-consistency.
+    """
+    is_mx = quant_format == "mxfp8"
+    block_size = 32 if is_mx else 128
+    num_blocks = hidden // block_size
+
+    # Encode the SOURCE rank into both the FP8 tokens and the scales (value ==
+    # rank + 1, exact in FP8-E4M3 and representable as an E8M0 exponent / FP32
+    # value) so we can verify the scales are routed identically to the tokens.
+    src_val = rank + 1
+    x_fp8 = (torch.ones((num_tokens, hidden), device="cuda") * float(src_val)).to(torch.float8_e4m3fn)
+    if is_mx:
+        scales = torch.full((num_tokens, num_blocks), src_val, dtype=torch.uint8, device="cuda").view(
+            torch.float8_e8m0fnu
+        )
+        x_scales_transport = scales.view(torch.float32)  # [T, num_blocks/4] == [T, H/128]
+    else:
+        scales = torch.full((num_tokens, num_blocks), float(src_val), dtype=torch.float32, device="cuda")
+        x_scales_transport = scales  # FP32 scales pass through unchanged
+
+    # (1) Low-level transport: dispatch FP8 tokens + scales, verify byte-exact routing.
+    (
+        recv_x,
+        recv_x_scales,
+        _recv_topk_idx,
+        _recv_topk_weights,
+        _num_recv_tokens_per_expert_list,
+        _rdma_channel_prefix_matrix,
+        _gbl_channel_prefix_matrix,
+        _recv_rdma_channel_prefix_matrix,
+        _recv_rdma_rank_prefix_sum,
+        _recv_gbl_channel_prefix_matrix,
+        recv_gbl_rank_prefix_sum,
+        _recv_src_meta,
+        _send_rdma_head,
+        _send_nvl_head,
+    ) = buf.internode_dispatch(
+        x_fp8,
+        x_scales_transport,
+        topk_idx,
+        topk_weights,
+        num_tokens_per_rank,
+        num_tokens_per_rdma_rank,
+        is_token_in_rank,
+        num_tokens_per_expert,
+        0,
+        0,
+        None,
+        None,
+        None,
+        None,
+        1,
+        cfg,
+    )
+    dist.barrier(group=group)
+
+    assert recv_x.dtype == torch.float8_e4m3fn and recv_x.size(1) == hidden, "recv_x must stay FP8 [recv, H]"
+    if is_mx:
+        recv_scales = recv_x_scales.view(torch.float8_e8m0fnu).view(torch.uint8)
+        assert recv_scales.shape == (recv_x.size(0), num_blocks), "recv E8M0 scales must be [recv, H/32]"
+    else:
+        recv_scales = recv_x_scales
+        assert recv_scales.shape == (recv_x.size(0), num_blocks), "recv FP32 scales must be [recv, H/128]"
+
+    # recv_x is grouped by global source rank; recv_gbl_rank_prefix_sum[src] is the
+    # cumulative recv count from sources <= src. Each block must decode to its
+    # source (src + 1) in BOTH the tokens and the scales.
+    start = 0
+    for src in range(num_ranks):
+        end = recv_gbl_rank_prefix_sum[src].item()
+        if end > start:
+            tok_block = recv_x[start:end].float()
+            assert (tok_block == float(src + 1)).all(), f"rank{rank}: token block from src={src} != {src + 1}"
+            expected_scale = (src + 1) if is_mx else float(src + 1)
+            assert (recv_scales[start:end] == expected_scale).all(), f"rank{rank}: scale block from src={src} mismatch"
+        start = end
+    if rank == 0:
+        print(
+            f"[raw {quant_format}] FP8 tokens + block scales routed byte-exact (recv {recv_x.size(0)} tokens)  OK",
+            flush=True,
+        )
+
+    # (2) High-level MoECommunicator(quant_format=...): verify dispatch_out.scales
+    #     metadata/layout and token<->scale self-consistency.
+    moe = ep.MoECommunicator(
+        group=group,
+        num_experts=num_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        quant_format=quant_format,
+        num_sms=int(os.environ.get("MSCCLPP_EP_NSM", "152")),
+    )
+    assert moe.is_available()
+    dout, _handle = moe.dispatch(
+        x_fp8, topk_idx, topk_weights, scales=ep.QuantScales(local=scales, format=quant_format)
+    )
+    assert dout.tokens.dtype == torch.float8_e4m3fn, "dispatch tokens must stay FP8"
+    assert dout.scales is not None, "quantized dispatch must return scales"
+    assert dout.scales.format == quant_format, f"format={dout.scales.format}"
+    assert dout.scales.block_size == block_size, f"block_size={dout.scales.block_size}"
+    expected_scale_dtype = torch.float8_e8m0fnu if is_mx else torch.float32
+    assert dout.scales.local.dtype == expected_scale_dtype, f"scale dtype={dout.scales.local.dtype}"
+    assert dout.scales.local.shape == (dout.tokens.size(0), num_blocks), f"scale shape={tuple(dout.scales.local.shape)}"
+    tok_src = dout.tokens.float()[:, 0].round().to(torch.int64)
+    if is_mx:
+        sc_src = dout.scales.local.view(torch.uint8)[:, 0].to(torch.int64)
+    else:
+        sc_src = dout.scales.local[:, 0].round().to(torch.int64)
+    assert torch.equal(tok_src, sc_src), f"rank{rank}: recv token/scale source mismatch"
+
+    dist.barrier(group=group)
+    if rank == 0:
+        print(f"[moe {quant_format}] dispatch_out.scales metadata + token/scale self-consistency  OK", flush=True)
+        print("PASS", flush=True)
+
+
 def main():
+    args = parse_args()
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
     from mscclpp.ext import ep
 
     ep_group = CommGroup(torch_group=group)
+
+    # HT dispatch is a byte-mover: the output dtype must match the input dtype
+    # (BF16->BF16, FP8->FP8, or MXFP8->MXFP8). Combine is always BF16->BF16.
+    input_fmt, output_fmt = args.input_dtype, args.output_dtype
+    if output_fmt != input_fmt:
+        raise SystemExit(
+            f"HT dispatch is a byte-mover: --output-dtype must equal --input-dtype "
+            f"(got {input_fmt} -> {output_fmt}). HT combine is always BF16->BF16."
+        )
+    quant_format = {"bf16": None, "fp8": "fp8_e4m3", "mxfp8": "mxfp8"}[input_fmt]
+    is_quant = quant_format is not None
+    if is_quant and (
+        not hasattr(torch, "float8_e4m3fn") or (input_fmt == "mxfp8" and not hasattr(torch, "float8_e8m0fnu"))
+    ):
+        if rank == 0:
+            print("[skip] this torch build lacks the float8 dtypes required for quantized dispatch", flush=True)
+        return
 
     NUM_MAX_NVL_PEERS = _detect_local_world_size()
     assert (
@@ -100,12 +294,14 @@ def main():
     # Small settings for functional check
     import os as _os
 
-    num_tokens = int(_os.environ.get("MSCCLPP_EP_BENCH_TOKENS", "128"))
-    hidden = int(_os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "1024"))
+    num_tokens = args.num_tokens
+    hidden = args.hidden
     num_topk = int(_os.environ.get("MSCCLPP_EP_BENCH_TOPK", str(min(4, num_ranks))))
     _experts_env = _os.environ.get("MSCCLPP_EP_BENCH_EXPERTS", "")
     num_experts = int(_experts_env) if _experts_env else num_ranks * 4
     assert num_experts % num_ranks == 0
+    if is_quant and hidden % 128 != 0:
+        raise SystemExit("quantized dispatch requires hidden % 128 == 0")
 
     torch.manual_seed(0xA1B2 + rank)
 
@@ -184,6 +380,31 @@ def main():
     if rank == 0:
         print("[layout] OK", flush=True)
     dist.barrier(group=group)
+
+    # Pre-quantized FP8-E4M3 / MXFP8 dispatch is a byte-mover (output == input);
+    # validate byte-exact routing + MoECommunicator metadata, then return (HT
+    # combine is BF16->BF16, so the quantized path is dispatch-only).
+    if is_quant:
+        _run_internode_quantized_dispatch_check(
+            ep,
+            buf,
+            group,
+            rank,
+            num_ranks,
+            num_tokens,
+            hidden,
+            num_topk,
+            num_experts,
+            quant_format,
+            topk_idx,
+            topk_weights,
+            num_tokens_per_rank,
+            num_tokens_per_rdma_rank,
+            is_token_in_rank,
+            num_tokens_per_expert,
+            cfg,
+        )
+        return
 
     # internode_dispatch signature (non-cached mode):
     # (x, x_scales, topk_idx, topk_weights,
