@@ -192,8 +192,10 @@ namespace low_latency {
 enum class DType {
   /// NVIDIA bfloat16.
   BF16,
-  /// NVIDIA FP8 E4M3.
-  F8E4M3
+  /// NVIDIA FP8 E4M3 with FP32 per-128-element block scales.
+  F8E4M3,
+  /// MXFP8: FP8 E4M3 elements with E8M0 (power-of-two) per-32-element block scales.
+  MXF8E4M3
 };
 
 /// Transport context that encapsulates all transport-related state.

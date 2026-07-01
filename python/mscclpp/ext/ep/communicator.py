@@ -286,9 +286,28 @@ class MoECommunicator:
             raise NotImplementedError("low-latency dispatch currently supports BF16 input only")
 
         self.quant_format = _normalize_quant_format(config.quant_format)
-        if self.quant_format not in (None, "fp8_e4m3"):
+        if self.quant_format not in (None, "fp8_e4m3", "mxfp8"):
             raise NotImplementedError(f"unsupported low-latency quant_format: {config.quant_format}")
         self.dispatch_requires_quantization = self.quant_format is not None
+        # LL kernel quant mode: 0 = BF16 (no quant), 1 = FP8-E4M3 (block-128 FP32
+        # reciprocal scales), 2 = MXFP8 (block-32 E8M0 power-of-two micro-scales).
+        # The LL dispatch kernel *produces* the quantization from BF16 input, so
+        # the scale block size / dtype below drive the output scale buffer.
+        if self.quant_format == "mxfp8":
+            e8m0_dtype = getattr(torch, "float8_e8m0fnu", None)
+            if e8m0_dtype is None:
+                raise NotImplementedError("this torch build lacks torch.float8_e8m0fnu required for mxfp8")
+            self.ll_quant_mode = 2
+            self.ll_scale_block_size = 32
+            self.ll_scale_dtype = e8m0_dtype
+        elif self.quant_format == "fp8_e4m3":
+            self.ll_quant_mode = 1
+            self.ll_scale_block_size = 128
+            self.ll_scale_dtype = torch.float32
+        else:
+            self.ll_quant_mode = 0
+            self.ll_scale_block_size = None
+            self.ll_scale_dtype = None
 
         num_rdma_bytes = _get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
@@ -440,13 +459,15 @@ class MoECommunicator:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
-            self.dispatch_requires_quantization,
+            self.ll_quant_mode,
             self.output_layout,
             _cuda_stream_ptr(stream),
         )
         output_scales = None
         if packed_scales is not None:
-            output_scales = QuantScales(local=packed_scales, format="fp8_e4m3", block_size=128)
+            output_scales = QuantScales(
+                local=packed_scales, format=self.quant_format, block_size=self.ll_scale_block_size
+            )
         dispatch_out = DispatchOutput(
             tokens=out_buf,
             scales=output_scales,
@@ -686,6 +707,7 @@ class MoECommunicator:
     def _combine_ll(self, expert_output, handle, out, stream):
         self._validate_combine_inputs(expert_output, handle, out)
         combine_requires_dequantization = _requires_dequantization(expert_output)
+        combine_quant_mode = self.ll_quant_mode if combine_requires_dequantization else 0
         x_scales = None
         if combine_requires_dequantization:
             if handle.output_scales is None or handle.output_scales.local is None:
@@ -706,7 +728,7 @@ class MoECommunicator:
             handle.weights.size(1),
             handle.num_max_dispatch_tokens_per_rank,
             handle.num_experts,
-            combine_requires_dequantization,
+            combine_quant_mode,
             _cuda_stream_ptr(stream),
         )
         return out
@@ -780,9 +802,11 @@ class MoECommunicator:
             self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
             self._dispatch_scales = None
             if self.dispatch_requires_quantization:
-                num_scales = self.hidden_size // 128
+                num_scales = self.hidden_size // self.ll_scale_block_size
                 scales_storage = torch.empty(
-                    (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
+                    (self.num_local_experts, num_scales, slots_per_expert),
+                    dtype=self.ll_scale_dtype,
+                    device=device,
                 )
                 self._dispatch_scales = scales_storage.transpose(1, 2)
         return (
