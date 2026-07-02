@@ -115,12 +115,6 @@ class Env {
   /// Default is false.
   const bool forceDisableGdr;
 
-  /// Env name: `MSCCLPP_FORCE_DISABLE_IB`. If set to true, it will disable the InfiniBand (IB) transport in MSCCL++,
-  /// forcing data movement to use other available transports (e.g., NVLink/CudaIpc). This is useful on systems with
-  /// multi-node NVLink (MNNVL) where cross-node communication should ride NVLink instead of IB.
-  /// Default is false.
-  const bool forceDisableIb;
-
   /// Env name: `MSCCLPP_IB_GID_INDEX`. The GID index to use for IB transport.
   /// Default is 0. Used when `EndpointConfig::Ib::gidIndex` is -1 (unspecified).
   const int ibGidIndex;

@@ -97,7 +97,6 @@ auto hasIBDevices = []() { return mscclpp::getIBDeviceCount() > 0; };
 
 // TODO(binyli): Need to add NVL domain check.
 auto useIB = [](int rank1, int rank2, int nranksPerNode) {
-  if (mscclpp::env()->forceDisableIb) return false;
   bool inSameNode = rank1 / nranksPerNode == rank2 / nranksPerNode;
   return hasIBDevices() && !inSameNode;
 };
@@ -312,7 +311,7 @@ struct Executor::Impl {
     context.localMemoryIdBegin = context.proxyService->nextMemoryId(3);
     for (auto& bufferType : {BufferType::INPUT, BufferType::OUTPUT, BufferType::SCRATCH}) {
       TransportFlags flags = Transport::CudaIpc;
-      if (hasIBDevices() && !mscclpp::env()->forceDisableIb) flags |= IBs[rank % this->nranksPerNode];
+      if (hasIBDevices()) flags |= IBs[rank % this->nranksPerNode];
       RegisteredMemory localMemory;
       auto bufferInfo = getBufferInfo(bufferType, sendbuff, recvbuff, context.scratchBuffer.get(), sendBufferSize,
                                       recvBufferSize, context.scratchBufferSize);
