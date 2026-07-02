@@ -11,7 +11,7 @@
 namespace mscclpp {
 namespace collective {
 
-template <typename T>
+template <typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvlsWarpPipeline([[maybe_unused]] const void* src, [[maybe_unused]] void* scratch,
                               [[maybe_unused]] void* dst,
@@ -85,7 +85,8 @@ __global__ void __launch_bounds__(1024, 1)
       asm volatile("bar.sync %0, %1;" ::"r"(1), "r"((NCOPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
       T* mcBuff = (T*)multicastPtr->mcPtr;
       size_t offset = blockScratchOffset + (it * copyPerIter) % scratchSizePerBlock;
-      handleMultiLoadReduceStore(mcBuff, mcBuff, offset, offset, iterSize, tidInReduce, NREDUCE_WARPS * WARP_SIZE);
+      handleMultiLoadReduceStore<T, AccumT>(mcBuff, mcBuff, offset, offset, iterSize, tidInReduce,
+                                            NREDUCE_WARPS * WARP_SIZE);
       asm volatile("bar.sync %0, %1;" ::"r"(2), "r"((NRECV_COPY_WARPS + NREDUCE_WARPS) * WARP_SIZE) : "memory");
     }
     if (warpId >= startRecvCopyWid && warpId < endRecvCopyWid) {
@@ -121,19 +122,13 @@ struct NvlsWarpPipelineAdapter {
     } else if constexpr (std::is_same_v<T, __fp8_e4m3b15>) {
       // fp8_e4m3b15 is a software-only type with no hardware NVLS support.
       return cudaErrorNotSupported;
-    } else
-#if defined(__CUDA_ARCH__)  // Skip the __CUDA_ARCH__ < 1000 since FP8 has not been supported for NVLS
-      if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-        return cudaErrorNotSupported;
-      } else
-#endif
-      {
-        using ChannelType = DeviceHandle<BaseMemoryChannel>;
-        allreduceNvlsWarpPipeline<T>
-            <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels,
-                                                       nvlsChannels, inputSize, scratchBufferSize, rank, nRanksPerNode);
-        return cudaGetLastError();
-      }
+    } else {
+      using ChannelType = DeviceHandle<BaseMemoryChannel>;
+      allreduceNvlsWarpPipeline<T, AccumT>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>(input, scratch, output, (ChannelType*)memoryChannels, nvlsChannels,
+                                                     inputSize, scratchBufferSize, rank, nRanksPerNode);
+      return cudaGetLastError();
+    }
   }
 };
 
