@@ -11,7 +11,9 @@
 #include <cuda_fp16.h>
 #endif  // defined(MSCCLPP_DEVICE_CUDA)
 
+#include <mscclpp/atomic_device.hpp>
 #include <mscclpp/gpu_data_types.hpp>
+#include <mscclpp/poll_device.hpp>
 
 #include "device.hpp"
 
@@ -25,8 +27,60 @@ struct SwitchChannelDeviceHandle {
   void* devicePtr;
   void* mcPtr;
   size_t bufferSize;
+  /// Multicast pointer to the shared arrival counter used by barrier(). A single multimem add on
+  /// this pointer is reflected into every rank's copy of the counter by the switch. Null if the
+  /// owning connection was created without barrier support.
+  uint32_t* mcBarrierFlag;
+  /// Local (unicast) pointer to this rank's own copy of the arrival counter used by barrier().
+  /// This is the address barrier() spins on. Null if the connection has no barrier support.
+  uint32_t* localBarrierFlag;
+  /// Local pointer to this rank's persistent barrier generation counter. It advances by nRanks on
+  /// every barrier() call and provides the per-rank wait target (see barrier()). Persisting it in
+  /// GPU memory lets barrier() be called repeatedly within and across kernel launches without any
+  /// host-side reset. Null if the connection has no barrier support.
+  uint32_t* barrierGen;
+  /// Number of ranks (devices) participating in the multicast group.
+  int nRanks;
 
 #if defined(MSCCLPP_DEVICE_CUDA)
+  /// Synchronize all ranks in the multicast group using the switch's multimem atomics.
+  ///
+  /// This is a device-side cross-rank barrier: it lets a kernel synchronize all ranks in the NVLS
+  /// group without a separate set of memory-channel semaphores or any host-side barrier. Memory
+  /// writes issued by any rank before its barrier() call are guaranteed visible to all ranks after
+  /// their barrier() call returns.
+  ///
+  /// The protocol: every rank advances its private target by nRanks, performs one multimem add of 1
+  /// on the shared counter (which the switch applies to every rank's copy), then spins on its own
+  /// local copy until the counter reaches the target. Because every rank calls barrier() the same
+  /// number of times and advances its target identically, the targets stay in lock-step and the
+  /// counter is never reset.
+  ///
+  /// @note Must be called by exactly one thread per rank (e.g. block 0, thread 0); the barrier
+  /// counts ranks, not threads. For a grid-wide cross-rank barrier, converge the grid (e.g. via
+  /// `mscclpp::DeviceSyncer::sync`) before and after this call. Requires that the owning
+  /// `NvlsConnection` was created with barrier support, i.e. the barrier pointers are non-null.
+  /// @param maxSpinCount The maximum number of spin counts before asserting. Never assert if negative.
+  MSCCLPP_DEVICE_INLINE void barrier([[maybe_unused]] int64_t maxSpinCount = 100000000) {
+    // Guard against calling barrier() on a channel whose connection has no barrier support. This is
+    // a debug-only diagnostic; in release builds a null pointer here dereferences and crashes, which
+    // is intentionally preferred over a silent no-op barrier (that would hide a cross-rank race).
+    MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::barrier() called without barrier support");
+    // Make our prior writes (e.g. the broadcast data) visible system-wide before we signal arrival,
+    // so a peer that observes our arrival also observes that data.
+    __threadfence_system();
+    // Advance this rank's private target. All ranks advance identically, so targets stay in lock-step.
+    const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
+    // Signal arrival: one multimem add increments every rank's copy of the counter through the switch.
+    asm volatile("multimem.red.relaxed.sys.global.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    // Wait until every rank has arrived. The signed (wrap-safe) compare means "counter is behind target".
+    POLL_MAYBE_JAILBREAK(
+        (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, memoryOrderAcquire) - target) < 0),
+        maxSpinCount);
+    // Ensure peers' pre-barrier writes are visible to our post-barrier reads.
+    __threadfence_system();
+  }
+
   template <typename T>
   MSCCLPP_DEVICE_INLINE T reduce(uint64_t index) {
     return SwitchChannelDeviceHandle::multimemLoadReduce(reinterpret_cast<T*>(mcPtr) + index);
