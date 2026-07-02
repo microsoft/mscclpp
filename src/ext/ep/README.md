@@ -1,42 +1,42 @@
 # MSCCL++ Expert-Parallel (EP) extension
 
-A port of low-latency MoE `dispatch` / `combine` primitives into MSCCL++.
-The active build exposes the LL `MoECommunicator` path. The older
-High-Throughput (HT) prototype has been moved under `src/ext/ep/ht/` for
-reference and is not compiled into `mscclpp_ep_cpp`.
+A torch-free nanobind extension for MoE `dispatch` / `combine` primitives in
+MSCCL++. The module builds two active backends:
+
+- **Low-latency (LL)**: `MoERuntime` / `MoECommunicator(mode=LOW_LATENCY)`,
+  backed by `kernels/low_latency.cu`.
+- **High-throughput (HT)**: `ExpertParallelRuntime` /
+  `MoECommunicator(mode=HIGH_THROUGHPUT)`, backed by `ht_runtime.cc` and
+  `ht/kernels/*`.
 
 ## Status
 
-| Feature                            | Status                                      |
-|------------------------------------|---------------------------------------------|
-| Runtime construction + IPC + sync  | ✅ ported for LL                                  |
-| HT prototype                       | Archived under `src/ext/ep/ht/`; not compiled     |
-| `low_latency_dispatch` (RDMA+IPC)  | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
-| `low_latency_combine` (RDMA+IPC)   | ✅ validated (8 ranks H100; 16 ranks 2×H100×8; 64 ranks 16×GB200 via NVLS fabric IPC) |
-| GB200 NVLS multimem fast path      | ✅ runtime-gated by `mscclpp::isNvlsSupported()`    |
-| Multi-`ProxyService` sharding      | ✅ env-tunable, arch-aware default                 |
-| `Connection::atomicAdd` API        | ✅ cherry-picked into mscclpp                      |
-| Python frontend `mscclpp.ext.ep`   | ✅ wraps the new LL MoECommunicator path                 |
-| nanobind module `mscclpp_ep_cpp`   | ✅ builds conditionally                            |
+| Feature                          | Status |
+|----------------------------------|--------|
+| `mscclpp_ep_cpp` module          | ✅ builds LL + HT backends when `MSCCLPP_BUILD_EXT_EP=ON` |
+| LL dispatch/combine              | ✅ validated on 8-rank H100, 16-rank 2×H100×8, and 64-rank GB200 NVL72 |
+| HT dispatch/combine              | ✅ active DeepEP-style backend with intranode and internode paths |
+| HT GB200 direct/flat fast paths  | ✅ runtime-gated by `MSCCLPP_EP_DIRECT`, `MSCCLPP_EP_INTRA_DIRECT`, and `MSCCLPP_EP_FLAT` |
+| GB200 LL NVLS multimem fast path | ✅ runtime-gated by `mscclpp::isNvlsSupported()` |
+| Python frontend `mscclpp.ext.ep` | ✅ `MoECommunicator` selects LL or HT by `MoEMode` |
 
 On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), LL was validated at
 16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168, tokens=4096,
 experts=256, top-k=8: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
 combine ~**21 148 GB/s** agg (defaults).
 
-The GB200 path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
+The GB200 LL path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
 routing peer pointers through cuMem fabric IPC over the NVL72 fabric
 (`nvidia-imex`) and emitting NVLink-SHARP `multimem.*` atomics from the
 kernels. The legacy RDMA-atomic PortChannel path is retained as a
 fallback when `mscclpp::isNvlsSupported()` returns `false`.
 
-The low-latency (LL) path uses a mixed transport: `MemoryChannel` (CUDA
-IPC) for same-node peers and `PortChannel` (CPU proxy + IB verbs) for
-remote peers. On GB200 NVL72, cross-node peers are *also* reached via
-CUDA-IPC — peer pointers are exchanged as cuMem fabric handles over
-`nvidia-imex` and the kernels emit NVLink-SHARP `multimem.*` atomics
-directly on the NVL72 fabric, bypassing CX-7 RoCE's broken IB atomics.
-The DeepEP LL kernels were translated as follows:
+The LL backend is a DeepEP legacy low-latency-style port, not a port of
+DeepEP elastic. It uses a mixed transport: `MemoryChannel` (CUDA IPC) for
+same-node peers and `PortChannel` (CPU proxy + IB verbs) for remote peers.
+On GB200 NVL72, cross-node peers are also reached through imported cuMem
+fabric handles over `nvidia-imex`, and kernels emit NVLink-SHARP
+`multimem.*` atomics directly on the NVL72 fabric. The LL primitive mapping is:
 
 | DeepEP / IBGDA                           | MSCCL++ replacement                                              |
 |------------------------------------------|------------------------------------------------------------------|
@@ -71,14 +71,15 @@ dst_rank)`.
 
 ### Known limitations
 
-- LL performance will NOT match IBGDA for cross-node traffic — remote
-  peers go through a CPU proxy. The port is for functional parity, not
-  latency. (Intra-node LL traffic uses CUDA IPC and is competitive.)
-- Unlike DeepEP, this port drives LL through `PortChannel` /
-  `MemoryChannel` rather than NVSHMEM, so runtime sync connects
-  every peer even in `low_latency_mode=True`.
-- HT code is archived for reference only and is not part of the active
-  extension build.
+- ROCm is not supported for the EP extension yet.
+- LL currently supports BF16 input, optional FP8 E4M3 dispatch output, and
+  `DispatchLayout.EXPERT_MAJOR`.
+- HT currently supports BF16 input and `DispatchLayout.FLAT`; quantized HT
+  dispatch is not implemented.
+- LL fallback cross-node traffic uses `PortChannel` and a CPU proxy. GB200 NVL72
+  uses the fabric-IPC/NVLS path instead when it is available.
+- HT direct and flat paths are GB200/NVL72 optimizations. Leave the env vars
+  unset for the baseline DeepEP-style HT path.
 
 ## Build
 
@@ -177,7 +178,7 @@ Runtime prerequisites on GB200:
 GB200 runtime env (export on every node before launching the tests):
 
 ```bash
-export NCCL_IB_DISABLE=1                              # mscclpp owns IB
+export NCCL_IB_DISABLE=1                              # avoid NCCL's own IB probe on Azure CX-7
 export NCCL_MNNVL_ENABLE=0                            # Azure GB200 is NOT one MNNVL fabric across nodes
 export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3  # avoid mlx5_bond_0 (PORT_DOWN)
 # Bootstrap NIC (only if auto-detect picks wrong) — on Azure GB200:
@@ -186,13 +187,14 @@ export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
 export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
 ```
 
-Runtime knobs (env vars, exposed by `test_intranode_multirank.py` /
-`test_internode_multirank.py` — defaults below are the test-script
-defaults, **not** the `ep.Config(...)` constructor defaults):
+HT runtime knobs (env vars exposed by `test_intranode_multirank.py` /
+`test_internode_multirank.py` — defaults below are the test-script defaults,
+**not** the `ep.Config(...)` constructor defaults):
 
 | Variable                  | Maps to (`ep.Config` field)         | Default | Notes                                  |
 |---------------------------|--------------------------------------|--------:|-----------------------------------------|
-| `MSCCLPP_EP_NSM`          | `num_sms`                            | `152` / `20` | Single SM-count knob for **both** tests (internode default `152`, intranode `20`). `MSCCLPP_EP_NUM_SMS` is still accepted as a legacy alias. Try `64` on GB200 intranode for `dispatch` BW. |
+| `MSCCLPP_EP_NUM_SMS`      | `num_sms`                            | `20`    | HT intranode test only. Try `64` on GB200 intranode for `dispatch` BW. |
+| `MSCCLPP_EP_NSM`          | `num_sms`                            | `152`   | HT internode test only. |
 | `MSCCLPP_EP_NVL_SEND`     | `num_max_nvl_chunked_send_tokens`    | `8`     | Must be `<` `MSCCLPP_EP_NVL_RECV`.     |
 | `MSCCLPP_EP_NVL_RECV`     | `num_max_nvl_chunked_recv_tokens`    | `256`   | Scales NVL ring buffer linearly.       |
 | `MSCCLPP_EP_RDMA_SEND`    | `num_max_rdma_chunked_send_tokens`   | `16`    | Internode only.                        |
@@ -303,7 +305,8 @@ src/ext/ep/
 ├── moe_runtime.hpp / .cc       — LL MoE runtime state and raw-pointer dispatch/combine
 ├── config.hpp                  — LL layout helpers and size hints
 ├── bindings.cpp                — nanobind module definition
-├── ht/                         — archived HT prototype; not compiled
+├── ht_runtime.hpp / .cc        — HT runtime state and raw-pointer dispatch/combine
+├── ht/                         — active HT kernel/config sources
 │   ├── buffer.hpp / buffer.cc
 │   ├── config.hpp
 │   ├── event.hpp
@@ -444,8 +447,9 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
 
 Add `-x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface>
 -x GLOO_SOCKET_IFNAME=<iface>` to the `mpirun` lines above only if the
-default bootstrap NIC is wrong. `NCCL_IB_DISABLE` / `NCCL_TOPO_FILE`
-are not required — EP traffic goes through mscclpp, not NCCL.
+default bootstrap NIC is wrong. Generic H100/HGX runs do not require
+`NCCL_IB_DISABLE` or `NCCL_TOPO_FILE`; the GB200 reference env above sets
+`NCCL_IB_DISABLE=1` only to avoid NCCL's own IB probing on Azure CX-7.
 
 If Open MPI's own bootstrap misbehaves (e.g. UCX is mis-configured or
 the host is multi-homed), force its control channel onto plain TCP
@@ -476,91 +480,72 @@ Env knobs:
 | `MSCCLPP_EP_BENCH_TOPK`       | top-k routing                          | `8`     |
 | `MSCCLPP_EP_NUM_PROXIES`      | Number of runtime `ProxyService`s      | 8 (Hopper) / 1 (Blackwell) |
 
-## Migration plan
+## Implementation notes
 
-This section is historical. The HT prototype from the earlier migration phases
-is archived under `src/ext/ep/ht/` and is not part of the active extension
-target; the current `mscclpp_ep_cpp` build compiles the LL runtime only.
+### Backend map
 
-### Phase 1 — DONE
+`mscclpp_ep_cpp` exposes both backends in one Python extension:
 
-- [x] Copy DeepEP kernel headers (configs / buffer / utils / launch / exception).
-- [x] Port intranode kernels + runtime (NVLink only).
-- [x] Port `get_dispatch_layout` (host-safe subset of internode kernels).
-- [x] Port host runtime: ctor, sync, get_dispatch_layout, intranode
-      dispatch/combine.
-- [x] nanobind `mscclpp_ep_cpp` module + Python frontend.
+| Backend | Python API | C++ runtime | Kernel sources | Layout |
+|---------|------------|-------------|----------------|--------|
+| LL | `MoECommunicator(mode=MoEMode.LOW_LATENCY)` / `MoERuntime` | `moe_runtime.cc` | `kernels/low_latency.cu` | `EXPERT_MAJOR` |
+| HT | `MoECommunicator(mode=MoEMode.HIGH_THROUGHPUT)` / `ExpertParallelRuntime` | `ht_runtime.cc` | `ht/kernels/*` | `FLAT` |
 
-### Phase 2 — internode HT (NVLink + RDMA) — DONE
+The `ht/` directory is active source code for the HT backend in the current
+build.
 
-- [x] Port `notify_dispatch`, `dispatch`, `cached_notify`, `combine` kernels.
-- [x] Wire internode dispatch/combine host
-      orchestration.
-- [x] Runtime sync builds `port_channel_handles_device_ptr` and
-      `memory_channel_handles_device_ptr`, with port channels ordered by
-      peer rank (so kernel-side indexing by `peer_rank` is consistent).
-- [x] Validated on 2×H100×8 with `test_internode_multirank.py`.
-- [x] Validated on 16×GB200 NVL72 (64 ranks, Azure CX-7 RoCE) — see
-      Phase 5.
+### NCCL EP LL vs DeepEP elastic dispatch
 
-### Phase 3 — Low-Latency (RDMA + CUDA-IPC) — DONE
+NCCL EP LL dispatch uses multiple SMs to process tokens. Most warps stage
+or quantize token payloads, top-k lanes write the per-token routing header,
+and a final warp computes rank counts. Sends are deduplicated by destination
+rank: if multiple top-k experts for the same token live on the same rank, the
+token is sent to that rank only once. After the token payloads for a rank are
+issued, NCCL EP sends a count signal, and the receiver waits for that count
+before unpacking the rank buffer into the output layout.
 
-Port `DeepEP/csrc/kernels/internode_ll.cu` as `kernels/low_latency.cu` and cross-reference
-`nccl/contrib/nccl_ep/device/low_latency.cu`. The nccl_ep reference is
-modular (see `device_primitives.cuh`, `hybrid_ep.cuh`) and uses NCCL
-Device API; the translation table is:
+The NCCL EP dispatch wire layout depends on the transport. RDMA uses one
+interleaved message per compact slot:
 
-| nccl_ep / DeepEP primitive              | MSCCL++ replacement                             |
-|-----------------------------------------|-------------------------------------------------|
-| `nvshmemi_ibgda_put_nbi_warp`           | `PortChannelDeviceHandle::put` + `signal`       |
-| `nvshmem_signal_wait_until`             | `PortChannelDeviceHandle::wait`                 |
-| `ncclGinPutSignal`                      | same as above                                   |
-| `ncclGinWaitSignal`                     | `PortChannelDeviceHandle::wait`                 |
-| `ncclGetPeerPointer` / IPC              | offset into `buffer_ptrs_gpu[peer]`             |
-| `ncclTeamLsa` locality check            | per-rank `rank / NUM_MAX_NVL_PEERS` comparison  |
-| NVSHMEM symmetric heap                  | `cudaMalloc` + `ProxyService::addMemory`        |
-| NVSHMEM barrier                         | `bootstrap->barrier()` or `intranode::barrier`  |
+```text
+[DispatchHdr][hidden payload][optional FP8 scales]
 
-Low-latency dispatch/combine are validated
-intra-node (8 ranks, CUDA IPC fast path) and cross-node (16 ranks on
-2×H100×8, IPC + IB). Functional correctness is bit-exact against the
-reference dispatch/combine.
+DispatchHdr(EXPERT_MAJOR) = [token_id][expert_id[0] ... expert_id[num_topk-1]]
+DispatchHdr(RANK_MAJOR)   = [token_id][(topk_weight, expert_id)[0] ...
+                                      (topk_weight, expert_id)[num_topk-1]]
+```
 
-### Phase 4 — Validation
+NVLink/P2P uses a split layout inside the same per-source-rank receive region:
 
-- [x] `test_intranode_multirank.py` — NVLink HT round-trip validated.
-- [x] `test_internode_multirank.py` — HT round-trip validated on 2×H100×8.
-- [x] `test_low_latency_multirank.py` — LL round-trip validated intra-node (8 ranks) and cross-node (2×H100×8).
-- [x] In-tree micro-benchmark harness (`MSCCLPP_EP_BENCH=1`) reporting min/avg/max + BW@avg, aligned with NCCL-EP `ep_bench`.
-- [ ] Throughput benchmarks against DeepEP upstream.
+```text
+[hdr0][hdr1]...[hdrN][payload0][payload1]...[payloadN]
+hdr_i = DispatchHdr(EXPERT_MAJOR or RANK_MAJOR)
+payload_i = [hidden payload_i][optional FP8 scales_i]
+```
 
-### Phase 5 — Azure GB200 NVL72 port — DONE
+The header carries `token_id` and one routing entry per top-k choice. In
+rank-major layout, each routing entry also carries `topk_weight`; in
+expert-major layout it only carries `expert_id`. The final warp sends only the
+per-rank token count signal, not token payload or routing metadata.
 
-GB200 (4 GPUs / NUMA host, CX-7 RoCE) needed three independent fixes
-on top of the H100 baseline:
+DeepEP elastic dispatch uses a different notify/data pipeline. Notify warps
+first compute rank and expert counts, with rank-level deduplication, exchange
+the counts, and build prefix sums. Dispatch warps then send compact token
+buffers with a single token layout:
 
-- [x] `NUM_MAX_NVL_PEERS` made CMake-configurable
-      (`-DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4`); runtime
-      `MSCCLPP_EP_LOCAL_WORLD_SIZE` defaults to the compile-time value.
-- [x] Portability fixes for older toolchains/arches: multimem PTX
-      guarded by `__CUDA_ARCH__ >= 900`, `cuCtxCreate` 4-arg form
-      version-guarded, `NUM_TIMEOUT_CYCLES` restored, CMake install
-      destination dual-mode.
-- [x] **LL bypass for broken CX-7 IB atomics** (Proposal A):
-      runtime RDMA buffer allocated via
-      `mscclpp::detail::gpuCallocPhysical` (POSIX_FD | FABRIC handles);
-      LL IPC fast-path gate lifted from `num_rdma_ranks==1` to
-      `low_latency_mode`; peer bases resolved through
-      `RegisteredMemory::data()` so mscclpp `CudaIpc` transport imports
-      cross-node cuMem fabric handles via `nvidia-imex`.
-- [x] **NVLS multimem fast path for HT atomics** (Proposal B):
-      runtime-gated by `mscclpp::isNvlsSupported()`. Cross-node
-      `port_channel.signal/wait` + `putWithSignal` replaced by
-      `multimem.red.add.u64` on NVL72 multicast counters; legacy IB
-      path retained as fallback.
-- [x] Validated on 16 × Azure GB200 NVL72 (64 ranks), HIDDEN=7168,
-      tokens=4096, experts=256, top-k=8:
-      - HT: dispatch ~2 006 GB/s agg, combine ~2 011 GB/s agg
-        (`NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32`).
-      - LL: dispatch ~16 817 GB/s agg (~262 GB/s/rank),
-        combine ~21 148 GB/s agg (defaults).
+```text
+[hidden payload][optional scale-factor packs][metadata]
+metadata = [topk_idx[num_topk]][optional topk_weights[num_topk]][src_token_global_idx]
+```
+
+The common DeepEP token layout reserves additional linked-list metadata slots,
+but non-hybrid dispatch does not use them. After a GPU barrier guarantees data
+arrival, the copy epilogue waits on the programmatic launch dependency and
+copies data into `recv_x`, `recv_sf`, `recv_topk_idx`, `recv_topk_weights`,
+and source metadata.
+
+DeepEP elastic combine replays the dispatch metadata to send expert outputs
+back to owner ranks. It uses barriers and per-channel tail signals, followed
+by a reduce epilogue, rather than a single per-rank finish flag. Top-k weights
+are stored as token-buffer metadata for non-expanded layouts and are used by
+the final reduction.
