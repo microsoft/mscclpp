@@ -27,16 +27,17 @@ internode dispatch path:
 The cached fast path skips the notify phase (``cached_mode=True``) by reusing a
 previous dispatch's prefix matrices and recv count.
 
-The low-latency path is served by :class:`mscclpp.ext.ep.MoERuntime`; this
+The low-latency path is served by :class:`mscclpp.ep.MoERuntime`; this
 runtime exposes only the HT dispatch/combine methods.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+import pickle
+from typing import Any, List, Optional, Tuple
 
+import numpy as np
 import torch
-import torch.distributed as dist
 
 try:
     import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
@@ -47,6 +48,74 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 Config = _cpp.Config
+
+
+def _send_bytes(comm: Any, payload: bytes, peer: int, tag: int) -> None:
+    comm.send(np.frombuffer(payload, dtype=np.uint8), peer, tag)
+
+
+def _recv_bytes(comm: Any, size: int, peer: int, tag: int) -> bytes:
+    payload = np.empty(size, dtype=np.uint8)
+    comm.recv(payload, peer, tag)
+    return payload.tobytes()
+
+
+def _all_gather_object(comm: Any, obj: Any, tag_base: int) -> List[Any]:
+    payload = pickle.dumps(obj)
+    rank = comm.my_rank
+    group_size = comm.nranks
+
+    local_size = np.array([len(payload)], dtype=np.int64)
+    sizes = np.empty(group_size, dtype=np.int64)
+    if rank == 0:
+        sizes[0] = local_size[0]
+        for peer in range(1, group_size):
+            comm.recv(sizes[peer : peer + 1], peer, tag_base)
+        for peer in range(1, group_size):
+            comm.send(sizes, peer, tag_base + 1)
+    else:
+        comm.send(local_size, 0, tag_base)
+        comm.recv(sizes, 0, tag_base + 1)
+
+    offsets = np.concatenate(([0], np.cumsum(sizes, dtype=np.int64)))
+    total_size = int(offsets[-1])
+    gathered = np.empty(total_size, dtype=np.uint8)
+    start = int(offsets[rank])
+    end = int(offsets[rank + 1])
+    if rank == 0:
+        gathered[start:end] = np.frombuffer(payload, dtype=np.uint8)
+        for peer in range(1, group_size):
+            peer_start = int(offsets[peer])
+            peer_end = int(offsets[peer + 1])
+            comm.recv(gathered[peer_start:peer_end], peer, tag_base + 2)
+        for peer in range(1, group_size):
+            comm.send(gathered, peer, tag_base + 3)
+    else:
+        _send_bytes(comm, payload, 0, tag_base + 2)
+        comm.recv(gathered, 0, tag_base + 3)
+
+    return [pickle.loads(gathered[int(offsets[i]) : int(offsets[i + 1])].tobytes()) for i in range(group_size)]
+
+
+def _broadcast_object(comm: Any, obj: Any, root: int, tag_base: int) -> Any:
+    rank = comm.my_rank
+    group_size = comm.nranks
+    if rank == root:
+        payload = pickle.dumps(obj)
+        payload_size = np.array([len(payload)], dtype=np.int64)
+        for peer in range(group_size):
+            if peer == root:
+                continue
+            comm.send(payload_size, peer, tag_base)
+        for peer in range(group_size):
+            if peer == root:
+                continue
+            _send_bytes(comm, payload, peer, tag_base + 1)
+        return obj
+
+    payload_size = np.empty(1, dtype=np.int64)
+    comm.recv(payload_size, root, tag_base)
+    return pickle.loads(_recv_bytes(comm, int(payload_size[0]), root, tag_base + 1))
 
 
 # ----------------------------------------------------------------------------
@@ -95,7 +164,7 @@ def _bf16_view(ptr: int, num_tokens: int, hidden: int, owner) -> torch.Tensor:
 class ExpertParallelRuntime:
     """Core high-throughput expert-parallel (EP) communication runtime.
 
-    ``group`` is the ``torch.distributed`` process group used only for the
+    ``comm`` is the ``mscclpp.CommGroup`` used for rank information and
     out-of-band exchange of device ids, CUDA-IPC handles, and the MSCCL++ unique
     id. All dispatch/combine data movement happens through the MSCCL++ runtime.
     """
@@ -105,7 +174,7 @@ class ExpertParallelRuntime:
 
     def __init__(
         self,
-        group: dist.ProcessGroup,
+        comm: Any,
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
         low_latency_mode: bool = False,
@@ -118,9 +187,9 @@ class ExpertParallelRuntime:
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
 
-        self.rank: int = group.rank()
-        self.group_size: int = group.size()
-        self.group = group
+        self.rank: int = comm.my_rank
+        self.group_size: int = comm.nranks
+        self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
         self.num_qps_per_rank = num_qps_per_rank
@@ -128,20 +197,16 @@ class ExpertParallelRuntime:
         self.runtime = _cpp.ExpertParallelRuntime(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes)
 
         # Exchange device ids + CUDA-IPC handles + (for RDMA) the MSCCL++ unique id.
-        device_ids: List[Optional[int]] = [None] * self.group_size
         local_device_id = self.runtime.get_local_device_id()
-        dist.all_gather_object(device_ids, local_device_id, group)
+        device_ids = _all_gather_object(comm, local_device_id, 0xE000)
 
-        ipc_handles: List[Optional[bytes]] = [None] * self.group_size
         local_ipc_handle = self.runtime.get_local_ipc_handle()
-        dist.all_gather_object(ipc_handles, local_ipc_handle, group)
+        ipc_handles = _all_gather_object(comm, local_ipc_handle, 0xE100)
 
         root_unique_id: Optional[bytes] = None
         if self.rank == 0:
             root_unique_id = self.runtime.create_unique_id()
-        broadcast_list = [root_unique_id]
-        dist.broadcast_object_list(broadcast_list, src=0, group=group)
-        root_unique_id = broadcast_list[0]
+        root_unique_id = _broadcast_object(comm, root_unique_id, 0, 0xE200)
         assert root_unique_id is not None
         self.runtime.connect(root_unique_id)
 

@@ -12,13 +12,12 @@
   CUDA-IPC PortChannel). Output layout ``DispatchLayout.EXPERT_MAJOR``; the
   caller pre-allocates the recv buffer.
 * ``MoEMode.HIGH_THROUGHPUT`` — prefill path. Wraps the DeepEP-style
-  :class:`mscclpp.ext.ep.Buffer` (NVLink intranode + RDMA internode HT kernels,
+  :class:`mscclpp.ep.Buffer` (NVLink intranode + RDMA internode HT kernels,
   with the GB200 TMA direct-gather combine + all-sender dispatch). Output layout
   ``DispatchLayout.FLAT`` grouped by local expert id; intranode vs internode is
   selected internally from the RDMA buffer-size hint.
 
-The two backends are independent C++ runtimes. LL takes an ``mscclpp.CommGroup``
-via ``comm=``; HT takes a ``torch.distributed`` process group via ``group=``.
+Both backends take an ``mscclpp.CommGroup`` via ``comm=``.
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
-import torch.distributed as dist
 
 try:
     import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
@@ -47,10 +45,8 @@ MoEMode = _cpp.MoEMode
 class MoECommunicatorConfig:
     """Configuration for the high-level MoE dispatch/combine API."""
 
-    # Communication. ``comm`` (mscclpp.CommGroup) drives the LL backend; ``group``
-    # (torch.distributed ProcessGroup) drives the HT backend.
+    # Communication. ``comm`` (mscclpp.CommGroup) drives both LL and HT backends.
     comm: Optional[Any] = None
-    group: Optional[dist.ProcessGroup] = None
     device: Optional[Union[torch.device, int]] = None
 
     # Expert topology
@@ -258,13 +254,9 @@ class MoECommunicator:
             self.local_expert_start = self.rank * self.num_local_experts
 
     def _init_ll(self, config: MoECommunicatorConfig) -> None:
-        from mscclpp._core import CommGroup  # local import: only LL needs it
-
         comm = config.comm
         if comm is None:
-            if config.group is None:
-                raise ValueError("mode=LOW_LATENCY requires an mscclpp.CommGroup via comm= (or a torch group=)")
-            comm = CommGroup(torch_group=config.group)
+            raise ValueError("mode=LOW_LATENCY requires an mscclpp.CommGroup via comm=")
         self.comm = comm
         self.rank = comm.my_rank
         self.world_size = comm.nranks
@@ -312,12 +304,12 @@ class MoECommunicator:
         self._is_internode = self._runtime.get_num_rdma_ranks() > 1
 
     def _init_ht(self, config: MoECommunicatorConfig) -> None:
-        group = config.group
-        if group is None:
-            raise ValueError("mode=HIGH_THROUGHPUT requires a torch.distributed ProcessGroup via group=")
-        self.group = group
-        self.rank = group.rank()
-        self.world_size = group.size()
+        comm = config.comm
+        if comm is None:
+            raise ValueError("mode=HIGH_THROUGHPUT requires an mscclpp.CommGroup via comm=")
+        self.comm = comm
+        self.rank = comm.my_rank
+        self.world_size = comm.nranks
         self.local_rank = torch.cuda.current_device()
         self.device = torch.device("cuda", self.local_rank)
 
@@ -352,7 +344,7 @@ class MoECommunicator:
         self._is_internode = num_rdma_bytes > 0
 
         self._buffer = ExpertParallelRuntime(
-            group,
+            comm,
             num_nvl_bytes=num_nvl_bytes,
             num_rdma_bytes=num_rdma_bytes,
             low_latency_mode=False,

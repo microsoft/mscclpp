@@ -8,13 +8,13 @@ Launch on each node with (example: 2 nodes x 8 GPUs = 16 ranks):
     MASTER_ADDR=<master_ip> MASTER_PORT=29600 NODE_RANK=0 \
         torchrun --nnodes=2 --nproc_per_node=8 \
             --rdzv-backend=c10d --rdzv-endpoint=<master_ip>:29600 \
-            test/python/ext/ep/test_internode_multirank.py
+            test/python/ep/test_internode_multirank.py
 
     # on worker (NODE_RANK=1):
     MASTER_ADDR=<master_ip> MASTER_PORT=29600 NODE_RANK=1 \
         torchrun --nnodes=2 --nproc_per_node=8 \
             --rdzv-backend=c10d --rdzv-endpoint=<master_ip>:29600 \
-            test/python/ext/ep/test_internode_multirank.py
+            test/python/ep/test_internode_multirank.py
 
 Round-trip dispatch + combine using internode HT kernels across nodes.
 
@@ -86,7 +86,7 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 def main():
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
-    from mscclpp.ext import ep
+    import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
 
@@ -369,7 +369,7 @@ def main():
     # via previous_handle, skipping the host-side layout computation. This
     # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
     moe = ep.MoECommunicator(
-        group=group,
+        comm=ep_group,
         num_experts=bench_num_experts,
         hidden_size=bench_hidden,
         topk=bench_num_topk,

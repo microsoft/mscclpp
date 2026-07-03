@@ -30,7 +30,7 @@ The dispatch output should make the local MLP contract explicit:
 Use `MoECommunicator` as the public class name:
 
 ```python
-from mscclpp.ext.ep import MoECommunicator
+from mscclpp.ep import MoECommunicator
 
 moe_comm = MoECommunicator(...)
 ```

@@ -3,7 +3,7 @@
 """MSCCL++ Expert-Parallel (MoE dispatch/combine) extension.
 
 See ``src/ext/ep/README.md`` for migration status and
-``python/mscclpp/ext/ep/README.md`` for the high-level API design.
+``python/mscclpp/ep/README.md`` for the high-level API design.
 
 ``MoECommunicator`` is the high-level public API. ``mode=MoEMode.LOW_LATENCY``
 runs on the ``MoERuntime`` LL backend; ``mode=MoEMode.HIGH_THROUGHPUT`` runs on

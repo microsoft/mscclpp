@@ -3,7 +3,7 @@
 """Multi-rank intranode functional validation for mscclpp_ep.
 
 Launch with:
-    torchrun --nproc_per_node=<N> test/python/ext/ep/test_intranode_multirank.py
+    torchrun --nproc_per_node=<N> test/python/ep/test_intranode_multirank.py
 
 Tests that ExpertParallelRuntime sync succeeds across N GPUs on a single node and that
 a round-trip dispatch + combine preserves data (sum of top-k weighted copies).
@@ -66,7 +66,7 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 def main():
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
-    from mscclpp.ext import ep
+    import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
 
@@ -125,7 +125,7 @@ def main():
         )
 
     print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
-    buf = ep.ExpertParallelRuntime(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
+    buf = ep.ExpertParallelRuntime(ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
     print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
     assert buf.is_available()
 
@@ -284,7 +284,7 @@ def main():
     # previous_handle, skipping notify_dispatch's host-side counter wait. This
     # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
     moe = ep.MoECommunicator(
-        group=group,
+        comm=ep_group,
         num_experts=bench_num_experts,
         hidden_size=bench_hidden,
         topk=bench_num_topk,
