@@ -362,18 +362,29 @@ class BarrierOperation(BaseOperation):
     __current_barriers = []
 
     def __init__(self, rank: int, tb_list: List[int]):
-        for _ in range(len(BarrierOperation.__current_barriers), rank + 1):
-            BarrierOperation.__current_barriers.append({})
         barrier_info = BarrierOperation.BarrierInfo(tb_list)
-
-        if barrier_info not in BarrierOperation.__current_barriers[rank]:
-            self.barrier_id = len(BarrierOperation.__current_barriers[rank])
-            BarrierOperation.__current_barriers[rank][barrier_info] = self.barrier_id
-        else:
-            self.barrier_id = BarrierOperation.__current_barriers[rank][barrier_info]
+        self.barrier_id = BarrierOperation.reserve_barrier_id(rank, barrier_info)
 
         super().__init__(Instruction.barrier)
         self.barrier_info = barrier_info
+
+    @classmethod
+    def reserve_barrier_id(cls, rank: int, barrier_info):
+        """Allocate a per-rank DeviceSyncer id, shared across all barrier kinds.
+
+        Both intra-block barriers and switch (NVLS) barriers draw from this single
+        per-rank sequence. Because ``BarrierInfo`` includes a ``kind`` discriminator,
+        different barrier kinds with the same ``tb_list`` receive distinct ids and
+        therefore never alias to the same ``deviceSyncers[]`` slot after instancing.
+        """
+        for _ in range(len(cls.__current_barriers), rank + 1):
+            cls.__current_barriers.append({})
+        if barrier_info not in cls.__current_barriers[rank]:
+            barrier_id = len(cls.__current_barriers[rank])
+            cls.__current_barriers[rank][barrier_info] = barrier_id
+        else:
+            barrier_id = cls.__current_barriers[rank][barrier_info]
+        return barrier_id
 
     def shift_ids(self, instance, num_instances, replication_function):
         self.barrier_id = replication_function(self.barrier_id, instance, num_instances)
@@ -395,14 +406,52 @@ class BarrierOperation(BaseOperation):
         return result
 
     class BarrierInfo:
-        def __init__(self, tb_list):
+        def __init__(self, tb_list, kind="sync"):
             self.tb_list = tb_list
+            self.kind = kind
 
         def __eq__(self, other):
-            return self.tb_list == other.tb_list
+            return self.tb_list == other.tb_list and self.kind == other.kind
 
         def __hash__(self):
-            return hash(tuple(self.tb_list))
+            return hash((tuple(self.tb_list), self.kind))
+
+
+class GroupBarrier(BaseOperation):
+    """Grid-wide cross-rank barrier over an NVLS SwitchChannel.
+
+    Replaces the O(n^2) MemoryChannel signal/wait mesh with a single switch-native
+    barrier. All threadblocks participating on a rank converge via a shared
+    DeviceSyncer, one thread issues the single cross-rank ``multimem`` arrival, and
+    all blocks are then released.
+
+    Instancing semantics (grid-wide collapse): every instance copy maps to the SAME
+    DeviceSyncer slot (leader instance 0), and ``num_threadblocks`` folds in the
+    instance count so the syncer converges every physical block on the rank. Only
+    physical ``blockIdx.x == 0`` issues the arrival, so ``tb_list`` must include tb 0.
+    """
+
+    def __init__(self, rank: int, tb_list: List[int], switch_channel_id: int):
+        super().__init__(Instruction.group_barrier)
+        self.barrier_info = BarrierOperation.BarrierInfo(tb_list, kind="switch")
+        self.barrier_id = BarrierOperation.reserve_barrier_id(rank, self.barrier_info)
+        self.switch_channel_id = switch_channel_id
+        self.tb_count = len(tb_list)
+        self.num_threadblocks = self.tb_count
+
+    def shift_ids(self, instance, num_instances, replication_function):
+        # Collapse all instances onto the leader (instance 0) slot so every physical
+        # block shares one DeviceSyncer, and grow num_threadblocks to cover them all.
+        self.barrier_id = replication_function(self.barrier_id, 0, num_instances)
+        self.num_threadblocks = self.tb_count * num_instances
+
+    def to_dict(self):
+        result = {"name": self.name.value}
+        result["switch_channel_id"] = self.switch_channel_id
+        result["barrier_id"] = self.barrier_id
+        result["num_threadblocks"] = self.num_threadblocks
+
+        return result
 
 
 class FlushOperation(BaseOperation):

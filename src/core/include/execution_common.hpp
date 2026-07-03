@@ -68,6 +68,7 @@ enum class OperationType : uint8_t {
   SEM_ACQUIRE,
   MULTI_STORE,
   MULTI_STORE_PKT,
+  MULTI_BARRIER,
 };
 
 struct Channels {
