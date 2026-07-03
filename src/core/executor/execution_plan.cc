@@ -69,6 +69,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_COPY_SEND_PACKETS;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
+  } else if (str == "gstore") {
+    return mscclpp::OperationType::MULTI_STORE;
+  } else if (str == "gstorepkt") {
+    return mscclpp::OperationType::MULTI_STORE_PKT;
   } else if (str == "rlxsignal") {
     return mscclpp::OperationType::RELAXED_SIGNAL;
   } else if (str == "rlxwait") {
