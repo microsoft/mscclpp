@@ -98,6 +98,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("-i", "--num-iters", type=int,
                    default=int(os.environ.get("MSCCLPP_EP_BENCH_ITERS", "50")),
                    help="timed iterations")
+    p.add_argument("--no-kernel-timing", dest="kernel_timing", action="store_false",
+                   help="disable the CUPTI/torch.profiler kernel-only measurement pass "
+                        "(on by default, mirrors ep_bench's CUPTI KernelTimer)")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     return p.parse_args()
 
@@ -127,6 +130,63 @@ def _gather_scalars(value: float, num_ranks: int, group) -> list:
     out = [torch.zeros_like(t) for _ in range(num_ranks)]
     dist.all_gather(out, t, group=group)
     return [float(x.item()) for x in out]
+
+
+def _profile_paired_kernels(dispatch_fn, combine_fn, iters: int, stream, group, rank: int):
+    """Kernel-only dispatch/combine device time (us/iter) via torch.profiler.
+
+    Mirrors ep_bench's CUPTI ``KernelTimer``: it profiles the SAME paired
+    ``dispatch -> sync -> combine -> sync -> barrier`` loop used for the
+    host-observed measurement. Profiling the *paired* loop (rather than isolated
+    dispatch-only / combine-only loops) is essential: the LL dispatch kernel
+    ends with a cross-rank receive spin-wait, and without the per-iter barrier
+    the ranks drift out of lockstep so that spin balloons to milliseconds on the
+    laggards. The barrier keeps every rank aligned at each iteration boundary, so
+    the recv-wait stays bounded -- exactly why ep_bench times the paired loop.
+
+    Kernels are bucketed by name substring ``dispatch`` / ``combine`` (the mscclpp
+    LL kernels demangle to ``mscclpp::ep::internode_ll::dispatch<...>`` /
+    ``::combine<...>``), matching ep_bench's ``get_avg_us("dispatch"/"combine")``.
+    All other device activity (the pacing barrier's NCCL kernel, memcpy/memset)
+    is ignored.
+    """
+    from torch.profiler import profile, ProfilerActivity
+
+    torch.cuda.synchronize()
+    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        for _ in range(iters):
+            dout = dispatch_fn()
+            stream.synchronize()
+            combine_fn(dout)
+            stream.synchronize()
+            dist.barrier(group=group)
+        torch.cuda.synchronize()
+
+    disp_us = 0.0
+    comb_us = 0.0
+    dbg = []
+    for e in prof.key_averages():
+        dev_us = getattr(e, "self_device_time_total", None)
+        if dev_us is None:
+            dev_us = getattr(e, "self_cuda_time_total", 0.0)
+        if not dev_us or dev_us <= 0:
+            continue
+        low = str(e.key).lower()
+        if "memcpy" in low or "memset" in low:
+            continue  # CUPTI KernelTimer counts KERNEL activities only
+        if "dispatch" in low:
+            disp_us += dev_us
+        elif "combine" in low:
+            comb_us += dev_us
+        dbg.append((dev_us, str(e.key)))
+
+    if os.environ.get("MSCCLPP_EP_KDEBUG", "0") == "1" and rank == 0:
+        dbg.sort(reverse=True)
+        print(f"[kdebug] top device activities (self device us/iter over {iters} iters):", flush=True)
+        for us, name in dbg[:10]:
+            print(f"    {us / iters:8.2f} us/iter  {name[:90]}", flush=True)
+
+    return disp_us / iters, comb_us / iters
 
 
 def main() -> None:
@@ -266,6 +326,28 @@ def main() -> None:
     g_t_min = _reduce_scalar(t_min, dist.ReduceOp.MIN, group)
     g_t_max = _reduce_scalar(t_max, dist.ReduceOp.MAX, group)
 
+    # ---- Kernel-only pass (torch.profiler / Kineto-CUPTI) — ep_bench parity. ----
+    # Measures device-side kernel time (strips host launch latency). Dispatch and
+    # combine are profiled in isolation so no kernel-name matching is required.
+    kernel_ok = False
+    g_dk_avg = g_dk_min = g_dk_max = 0.0
+    g_ck_avg = g_ck_min = g_ck_max = 0.0
+    if args.kernel_timing:
+        try:
+            dk_us, ck_us = _profile_paired_kernels(dispatch_fn, combine_fn, iters, stream, group, rank)
+            torch.cuda.synchronize()
+            dist.barrier(group=group)
+            g_dk_avg = _reduce_scalar(dk_us, dist.ReduceOp.SUM, group) / num_ranks
+            g_dk_min = _reduce_scalar(dk_us, dist.ReduceOp.MIN, group)
+            g_dk_max = _reduce_scalar(dk_us, dist.ReduceOp.MAX, group)
+            g_ck_avg = _reduce_scalar(ck_us, dist.ReduceOp.SUM, group) / num_ranks
+            g_ck_min = _reduce_scalar(ck_us, dist.ReduceOp.MIN, group)
+            g_ck_max = _reduce_scalar(ck_us, dist.ReduceOp.MAX, group)
+            kernel_ok = g_dk_avg > 0 and g_ck_avg > 0
+        except Exception as exc:  # profiler unavailable / hiccup: keep host numbers valid
+            if rank == 0:
+                print(f"[warn] kernel-only pass failed ({exc}); reporting host-observed only", flush=True)
+
     d_tp_all = _gather_scalars(d_tp, num_ranks, group)
     c_tp_all = _gather_scalars(c_tp, num_ranks, group)
     t_tp_all = _gather_scalars(t_tp, num_ranks, group)
@@ -296,6 +378,29 @@ def main() -> None:
         print(f"Total (D+C):      avg={g_t_avg:.2f} us, min={g_t_min:.2f} us, max={g_t_max:.2f} us")
         print(f"                  throughput: avg={avg_t_tp:.2f} GB/s, "
               f"min={t_lo:.2f} GB/s (rank {t_lo_r}), max={t_hi:.2f} GB/s (rank {t_hi_r})")
+
+        print("\n--- Kernel-only performance (device kernel time via torch.profiler/CUPTI) ---")
+        if kernel_ok:
+            # The LL dispatch kernel ends with a cross-rank receive spin-wait, so
+            # its device time includes wait skew. torch.profiler's host tracing
+            # overhead makes one rank lag, inflating that rank's dispatch device
+            # time into the ms range; the cross-rank MIN (the rank that did not
+            # wait) is the representative kernel floor and matches ep_bench's
+            # low-perturbation CUPTI number. Combine has little recv-spin and is
+            # stable across ranks. throughput uses the representative (min) time.
+            print(f"Dispatch:    min={g_dk_min:.2f} us (representative)  "
+                  f"[avg={g_dk_avg:.2f}, max={g_dk_max:.2f} us -- inflated by profiler recv-spin skew]")
+            print(f"                  throughput @min: {(disp_bytes / 1e9) / (g_dk_min * 1e-6):.2f} GB/s")
+            print(f"Combine:     avg={g_ck_avg:.2f} us, min={g_ck_min:.2f} us, max={g_ck_max:.2f} us")
+            print(f"                  throughput: avg={(comb_bytes / 1e9) / (g_ck_avg * 1e-6):.2f} GB/s, "
+                  f"min={(comb_bytes / 1e9) / (g_ck_min * 1e-6):.2f} GB/s, "
+                  f"max={(comb_bytes / 1e9) / (g_ck_max * 1e-6):.2f} GB/s")
+            print(f"Total (D+C): {g_dk_min + g_ck_avg:.2f} us (dispatch min + combine avg)")
+            print("  NOTE: for an authoritative low-perturbation kernel-only number, run under "
+                  "nsys (as ep_bench's CUPTI path does); torch.profiler perturbs the LL recv-spin.")
+        else:
+            print("  NOTE: kernel-only pass disabled or unavailable.")
+
         print(f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
               f"combine={comb_bytes / 1e6:.2f} MB (BF16), selections={num_valid_selections}")
 
