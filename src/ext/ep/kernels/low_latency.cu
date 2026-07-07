@@ -351,8 +351,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     const auto dstExpertLocalIdx = responsibleExpertIdx % numLocalExperts;
     const auto numTokensSent = sharedNumTokensSentPerExpert[responsibleExpertIdx - smId * kNumWarpGroups];
 
-    while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2)
-      ;
+    while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
     auto* counterPtr = stagedRecvCountBuffer + dstExpertLocalIdx * numRanks + rank;
     auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + dstExpertLocalIdx * numRanks + dstRank;
     publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
@@ -679,8 +678,7 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
     static_assert(kNumWarpsPerGroup > 1, "Requires more than one warp per group");
     asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 1), "r"(kNumWarpsPerGroup * WARP_SIZE));
     if (subWarpId == 1 and laneId == 0) {
-      while (ld_acquire_global(atomicCleanFlag) == 0)
-        ;
+      while (ld_acquire_global(atomicCleanFlag) == 0);
       auto* flagPtr = stagedRecvFlagBuffer + globalExpertIdx;
       auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + localExpertIdx * numRanks + dstRank;
       publishSingleWriterSignal(flagPtr, static_cast<int64_t>(1), rank, dstRank, rdmaBufferPtr, portChannelHandle,
