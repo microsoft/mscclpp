@@ -5,6 +5,10 @@
 Launch with (intra-node, 8 GPUs):
     torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
+    # Optional CUDA graph smoke/benchmark:
+    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
+        --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
+        --cuda-graph --bench
 
 Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
     # node 0:
@@ -55,6 +59,11 @@ def parse_args():
     parser.add_argument("--num-topk", type=int, default=8)
     parser.add_argument("--num-experts", type=int, default=256)
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
+    parser.add_argument(
+        "--cuda-graph",
+        action="store_true",
+        help="Capture dispatch/combine in CUDA graphs; correctness captures both in one graph",
+    )
     parser.add_argument("--bench-warmup", type=int, default=5)
     parser.add_argument("--bench-iters", type=int, default=20)
     parser.add_argument("--local-rank", "--local_rank", type=int, default=None, help=argparse.SUPPRESS)
@@ -215,10 +224,41 @@ def main():
     if rank == 0:
         print("PASS", flush=True)
 
+    def _graph_capture(dispatch_buffer, combine_out):
+        graph = torch.cuda.CUDAGraph()
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
+        with torch.cuda.graph(graph):
+            graph_dout = moe_comm.dispatch(
+                x,
+                topk_idx,
+                topk_weights,
+                output_buffer=dispatch_buffer,
+            )
+            graph_combined_x = moe_comm.combine(graph_dout[0].tokens, graph_dout[1], out=combine_out)
+        return graph, graph_dout, graph_combined_x
+
+    def _run_cuda_graph_correctness():
+        graph_dispatch_output_buffer = torch.empty_like(dispatch_output_buffer)
+        graph_out = torch.empty_like(out)
+        graph, _, graph_combined_x = _graph_capture(graph_dispatch_output_buffer, graph_out)
+        graph.replay()
+        torch.cuda.synchronize()
+
+        graph_diff = (graph_combined_x.float() - expected.float()).abs().max().item()
+        assert torch.isnan(graph_combined_x).any().item() is False
+        assert graph_diff < 1e-2, f"rank{rank}: LL CUDA graph combine mismatch diff={graph_diff}"
+        dist.barrier(group=group)
+        if rank == 0:
+            print(f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}", flush=True)
+
+    if args.cuda_graph:
+        _run_cuda_graph_correctness()
+
     # ------------------------------------------------------------------
-    # Optional benchmark. Times dispatch and combine separately, reporting
-    # per-iter latency (max across ranks) and aggregate effective bandwidth
-    # (sum across ranks).
+    # Optional benchmark. In CUDA graph mode, captures dispatch+combine in one
+    # graph; otherwise times dispatch and combine separately. Reports per-iter
+    # latency (max across ranks) and aggregate effective bandwidth.
     # ------------------------------------------------------------------
     if not args.bench:
         return
@@ -245,30 +285,48 @@ def main():
         dispatch_out_, handle_ = dout
         moe_comm.combine(dispatch_out_.tokens, handle_, out=out_)
 
-    for _ in range(warmup):
-        _combine(_dispatch(), bench_out)
-    torch.cuda.synchronize()
-    dist.barrier(group=group)
+    if args.cuda_graph:
+        e2e_graph, e2e_dout, _ = _graph_capture(bench_dispatch_output_buffer, bench_out)
+        for _ in range(warmup):
+            e2e_graph.replay()
+        torch.cuda.synchronize()
+        assert e2e_dout[0].layout.num_tokens_per_expert is not None
+        recv_tokens = int(e2e_dout[0].layout.num_tokens_per_expert.sum().item())
 
-    start_ev = torch.cuda.Event(enable_timing=True)
-    end_ev = torch.cuda.Event(enable_timing=True)
-    start_ev.record()
-    dout = None
-    for _ in range(iters):
-        dout = _dispatch()
-    end_ev.record()
-    torch.cuda.synchronize()
-    disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
-    assert dout[0].layout.num_tokens_per_expert is not None
-    recv_tokens = int(dout[0].layout.num_tokens_per_expert.sum().item())
+        dist.barrier(group=group)
+        start_ev = torch.cuda.Event(enable_timing=True)
+        end_ev = torch.cuda.Event(enable_timing=True)
+        start_ev.record()
+        for _ in range(iters):
+            e2e_graph.replay()
+        end_ev.record()
+        torch.cuda.synchronize()
+        e2e_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+    else:
+        for _ in range(warmup):
+            _combine(_dispatch(), bench_out)
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
 
-    dist.barrier(group=group)
-    start_ev.record()
-    for _ in range(iters):
-        _combine(dout, bench_out)
-    end_ev.record()
-    torch.cuda.synchronize()
-    comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+        start_ev = torch.cuda.Event(enable_timing=True)
+        end_ev = torch.cuda.Event(enable_timing=True)
+        start_ev.record()
+        dout = None
+        for _ in range(iters):
+            dout = _dispatch()
+        end_ev.record()
+        torch.cuda.synchronize()
+        disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
+        assert dout[0].layout.num_tokens_per_expert is not None
+        recv_tokens = int(dout[0].layout.num_tokens_per_expert.sum().item())
+
+        dist.barrier(group=group)
+        start_ev.record()
+        for _ in range(iters):
+            _combine(dout, bench_out)
+        end_ev.record()
+        torch.cuda.synchronize()
+        comb_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
 
     # Dispatch payload: recv_tokens × hidden × bf16 (received on this rank).
     # Combine payload: recv_tokens × hidden × bf16 as well -- each local expert
@@ -277,6 +335,30 @@ def main():
     # the actual send payload by ~num_topk×.
     disp_bytes = recv_tokens * hidden * 2
     comb_bytes = recv_tokens * hidden * 2
+
+    if args.cuda_graph:
+        e2e_min_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        e2e_avg_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        e2e_max_t = torch.tensor([e2e_us], dtype=torch.float64, device="cuda")
+        dist.all_reduce(e2e_min_t, op=dist.ReduceOp.MIN, group=group)
+        dist.all_reduce(e2e_avg_t, op=dist.ReduceOp.SUM, group=group)
+        dist.all_reduce(e2e_max_t, op=dist.ReduceOp.MAX, group=group)
+        e2e_avg_us = e2e_avg_t.item() / num_ranks
+        e2e_bw_per_rank = (disp_bytes + comb_bytes) / (e2e_avg_us * 1e-6) / 1e9
+        if rank == 0:
+            print(
+                f"[bench LL cuda_graph] num_ranks={num_ranks} tokens={num_tokens} hidden={hidden} "
+                f"num_experts={num_experts} num_topk={num_topk} warmup={warmup} iters={iters}",
+                flush=True,
+            )
+            print(
+                f"  dispatch+combine graph: avg={e2e_avg_us:.1f}us "
+                f"min={e2e_min_t.item():.1f}us max={e2e_max_t.item():.1f}us  "
+                f"per_rank_bw={e2e_bw_per_rank:.2f} GB/s  "
+                f"agg_bw={e2e_bw_per_rank * num_ranks:.2f} GB/s  (BW @ avg time)",
+                flush=True,
+            )
+        return
 
     # Reduce timings: report min/avg/max and base BW on AVG to match NCCL-EP's
     # `ep_bench.cu` convention.

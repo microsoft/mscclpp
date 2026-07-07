@@ -407,8 +407,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
       // consistent ep_combine_recv_idx map. The lock path (high channel count or
       // non-flat 2-hop, whose coordinator forwards a MONOTONIC rdma_send_channel_tail
       // to peers) is UNCHANGED -- keeps the spin-wait + plain ++.
-      while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
-        ;
+      while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx);
       __syncwarp();
 
       // Acquire next tail (atomic when lock removed: 6 sender warps race; plain ++
@@ -719,8 +718,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 
     // Epilogue
     // Acquire sequential lock (lock path only; atomic-route removed the lock)
-    while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx)
-      ;
+    while (!ep_use_atomic_route and lane_id == 0 and rdma_send_next_token_idx != token_idx);
     __syncwarp();
 
     // Update last token tail (epilogue). Dead under kEpFlat (coordinator returns
