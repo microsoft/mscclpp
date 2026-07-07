@@ -62,20 +62,20 @@ void register_core(nb::module_& m) {
             void* data = reinterpret_cast<void*>(ptr);
             self->send(data, size, peer, tag);
           },
-          nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
+          nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
       .def(
           "recv",
           [](Bootstrap* self, uintptr_t ptr, size_t size, int peer, int tag) {
             void* data = reinterpret_cast<void*>(ptr);
             self->recv(data, size, peer, tag);
           },
-          nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"))
+          nb::arg("data"), nb::arg("size"), nb::arg("peer"), nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
       .def("all_gather", &Bootstrap::allGather, nb::arg("allData"), nb::arg("size"))
       .def("barrier", &Bootstrap::barrier)
       .def("send", static_cast<void (Bootstrap::*)(const std::vector<char>&, int, int)>(&Bootstrap::send),
-           nb::arg("data"), nb::arg("peer"), nb::arg("tag"))
+           nb::arg("data"), nb::arg("peer"), nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>())
       .def("recv", static_cast<void (Bootstrap::*)(std::vector<char>&, int, int)>(&Bootstrap::recv), nb::arg("data"),
-           nb::arg("peer"), nb::arg("tag"));
+           nb::arg("peer"), nb::arg("tag"), nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<UniqueId>(m, "CppUniqueId")
       .def(nb::init<>())

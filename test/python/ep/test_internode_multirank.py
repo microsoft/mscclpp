@@ -142,138 +142,59 @@ def main():
 
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Runtime config for internode HT: needs num_rdma_bytes > 0. Size buffers
-    # using max(hidden, bench_hidden) so the optional bench phase fits.
-    cfg = ep.Config(
-        int(os.environ.get("MSCCLPP_EP_NSM", "152")),
-        int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
-        int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
-        int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
-        int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
+    moe = ep.MoECommunicator(
+        comm=ep_group,
+        num_experts=num_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        num_sms=int(os.environ.get("MSCCLPP_EP_NSM", "152")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+        rdma_chunked_send=int(os.environ.get("MSCCLPP_EP_RDMA_SEND", "16")),
+        rdma_chunked_recv=int(os.environ.get("MSCCLPP_EP_RDMA_RECV", "128")),
     )
-    _bench_on = os.environ.get("MSCCLPP_EP_BENCH", "0") == "1"
-    _buf_hidden = max(hidden, int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "0"))) if _bench_on else hidden
-    num_nvl_bytes = cfg.get_nvl_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
-    num_rdma_bytes = cfg.get_rdma_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
     if rank == 0:
         print(
             f"[cfg] num_nodes={num_nodes} num_ranks={num_ranks} num_tokens={num_tokens} "
-            f"hidden={hidden} num_experts={num_experts} num_topk={num_topk} "
-            f"num_nvl_bytes={num_nvl_bytes} num_rdma_bytes={num_rdma_bytes}",
+            f"hidden={hidden} num_experts={num_experts} num_topk={num_topk}",
             flush=True,
         )
 
-    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
-    buf = ep.ExpertParallelRuntime(
-        ep_group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=num_rdma_bytes, low_latency_mode=False
-    )
     print(
-        f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()} "
-        f"is_internode={buf.is_internode_available()}",
+        f"[rank {rank}] MoECommunicator created is_available={moe.is_available()} "
+        f"is_internode={moe.is_internode_available()}",
         flush=True,
     )
-    assert buf.is_available() and buf.is_internode_available()
+    assert moe.is_available() and moe.is_internode_available()
+    assert moe.is_internode(), "expected the communicator to select the internode HT transport"
 
-    ref_rank, ref_rdma_rank, ref_exp, ref_in_rank, _ = buf.get_dispatch_layout(
-        topk_idx, num_experts, None, False, False
-    )
-    assert torch.allclose(ref_rank, num_tokens_per_rank)
-    assert torch.allclose(ref_rdma_rank, num_tokens_per_rdma_rank)
-    assert torch.allclose(ref_exp, num_tokens_per_expert)
-    assert torch.allclose(ref_in_rank, is_token_in_rank)
-    if rank == 0:
-        print("[layout] OK", flush=True)
-    dist.barrier(group=group)
-
-    # internode_dispatch signature (non-cached mode):
-    # (x, x_scales, topk_idx, topk_weights,
-    #  num_tokens_per_rank, num_tokens_per_rdma_rank, is_token_in_rank, num_tokens_per_expert,
-    #  cached_num_recv_tokens=0, cached_num_rdma_recv_tokens=0,
-    #  cached_rdma_channel_prefix_matrix=None, cached_recv_rdma_rank_prefix_sum=None,
-    #  cached_gbl_channel_prefix_matrix=None, cached_recv_gbl_rank_prefix_sum=None,
-    #  expert_alignment, config)
-    (
-        recv_x,
-        recv_x_scales,
-        recv_topk_idx,
-        recv_topk_weights,
-        num_recv_tokens_per_expert_list,
-        rdma_channel_prefix_matrix,
-        gbl_channel_prefix_matrix,
-        recv_rdma_channel_prefix_matrix,
-        recv_rdma_rank_prefix_sum,
-        recv_gbl_channel_prefix_matrix,
-        recv_gbl_rank_prefix_sum,
-        recv_src_meta,
-        send_rdma_head,
-        send_nvl_head,
-    ) = buf.internode_dispatch(
+    dispatch_out, handle = moe.dispatch(
         x,
-        None,
         topk_idx,
         topk_weights,
-        num_tokens_per_rank,
-        num_tokens_per_rdma_rank,
-        is_token_in_rank,
-        num_tokens_per_expert,
-        0,
-        0,
-        None,
-        None,
-        None,
-        None,
-        1,
-        cfg,
     )
+    recv_x = dispatch_out.tokens
     dist.barrier(group=group)
 
-    _skip_verify = os.environ.get("MSCCLPP_EP_SKIP_VERIFY", "0") in ("1", "true", "True")
-    # Validate recv buffer: for each source rank i, the block carries value i.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
-    start = 0
-    for src in range(num_ranks):
-        end = recv_gbl_rank_prefix_sum[src].item()
-        block = recv_x[start:end]
-        if block.numel():
-            lo = block.float().amin().item()
-            hi = block.float().amax().item()
-            assert _skip_verify or (
-                abs(lo - src) < 1e-3 and abs(hi - src) < 1e-3
-            ), f"rank{rank}: block from src={src} has range=[{lo}, {hi}], expected {src}"
-        start = end
+    local_experts = num_experts // num_ranks
+    all_expert_counts = torch.empty((num_ranks, num_experts), dtype=num_tokens_per_expert.dtype, device="cuda")
+    dist.all_gather_into_tensor(all_expert_counts, num_tokens_per_expert, group=group)
+    expected_counts = all_expert_counts[:, rank * local_experts : (rank + 1) * local_experts].sum(dim=0).cpu().tolist()
+    assert dispatch_out.layout.num_tokens_per_expert is not None
+    actual_counts = [int(count) for count in dispatch_out.layout.num_tokens_per_expert]
+    assert actual_counts == [int(count) for count in expected_counts]
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
 
-    # XXX: forcing a device+group sync here is currently required for combine
-    # to see consistent dispatch outputs. Without this both send_nvl_head and
-    # the various *_channel_prefix_matrix tensors can still be in flight on
-    # the comm stream when combine launches, producing a deadlock inside the
-    # combine forwarder (NVL check never advances). Investigate proper
-    # stream-dependency hand-off in ExpertParallelRuntime.internode_dispatch.
+    # Keep the existing dispatch/combine phase guard for internode HT until the
+    # backend wires a proper stream-dependency hand-off.
     torch.cuda.synchronize()
     dist.barrier(group=group)
 
-    # internode_combine signature:
-    # (x, topk_weights,
-    #  src_meta, is_combined_token_in_rank,
-    #  rdma_channel_prefix_matrix, rdma_rank_prefix_sum, gbl_channel_prefix_matrix,
-    #  combined_rdma_head, combined_nvl_head, config)
-    # NOTE: combine goes in the reverse direction of dispatch, so the prefix
-    # matrices passed here must be the RECEIVER-side ones returned by dispatch
-    # (`recv_rdma_channel_prefix_matrix`, `recv_rdma_rank_prefix_sum`,
-    # `recv_gbl_channel_prefix_matrix`) — not the sender-side ones.
-    combined_x, combined_topk_weights = buf.internode_combine(
-        recv_x,
-        recv_topk_weights,
-        recv_src_meta,
-        is_token_in_rank,
-        recv_rdma_channel_prefix_matrix,
-        recv_rdma_rank_prefix_sum,
-        recv_gbl_channel_prefix_matrix,
-        send_rdma_head,
-        send_nvl_head,
-        cfg,
-    )
+    combined_x = moe.combine(recv_x, handle)
 
     num_dst = is_token_in_rank.sum(dim=1).to(torch.float32)
     expected = num_dst * float(rank)
@@ -284,7 +205,7 @@ def main():
     # bf16 accumulator has 7-bit mantissa; intermediate partial sums can
     # round at ulp = max_exp * 2**-7. Use a tolerance that scales with magnitude.
     tol = max(1e-2, max_exp * (1.0 / 64))
-    assert _skip_verify or diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
+    assert diff <= tol, f"rank{rank}: combine mismatch max diff {diff} > tol {tol} (max_exp={max_exp})"
 
     dist.barrier(group=group)
     if rank == 0:
@@ -317,19 +238,6 @@ def main():
             print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
-    # Respect the runtime's pre-sized num_nvl_bytes / num_rdma_bytes budget.
-    per_peer_nvl = num_nvl_bytes // max(1, num_ranks)
-    per_peer_rdma = num_rdma_bytes // max(1, num_ranks)
-    if bench_hidden * x.element_size() > min(per_peer_nvl, per_peer_rdma):
-        if rank == 0:
-            print(
-                f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
-                f">= min(per-peer NVL {per_peer_nvl}, RDMA {per_peer_rdma}). "
-                f"Rerun with a larger runtime or smaller hidden.",
-                flush=True,
-            )
-        return
-
     scores_b = torch.randn((bench_tokens, bench_num_experts), device="cuda", dtype=torch.float32).abs() + 1
     topk_idx_b = torch.topk(scores_b, bench_num_topk, dim=-1, sorted=False).indices
     topk_weights_b = torch.ones((bench_tokens, bench_num_topk), dtype=torch.float32, device="cuda")
@@ -359,15 +267,12 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Drive the benchmark through the high-level MoECommunicator (the public
-    # #818 API), mode=HIGH_THROUGHPUT. With world_size > NUM_MAX_NVL_PEERS the
-    # RDMA size hint is non-zero, so the communicator auto-selects the internode
-    # transport (internode_dispatch / internode_combine) internally. It owns its
-    # own ExpertParallelRuntime sized for the bench shape and runs
-    # get_dispatch_layout internally on the first (uncached) dispatch, recording
-    # the routing layout on the returned handle; subsequent dispatches reuse it
-    # via previous_handle, skipping the host-side layout computation. This
-    # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
+    # Drive the benchmark through the public high-level API. The communicator
+    # auto-selects internode HT when the RDMA size hint is non-zero. The first
+    # (uncached) dispatch records routing layout on the returned handle;
+    # subsequent dispatches reuse it via previous_handle, skipping host-side
+    # layout computation. This isolates the on-GPU dispatch-kernel cost
+    # (NCCL-EP ep_bench convention).
     moe = ep.MoECommunicator(
         comm=ep_group,
         num_experts=bench_num_experts,
