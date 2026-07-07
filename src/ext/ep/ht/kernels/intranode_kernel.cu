@@ -379,10 +379,8 @@ __global__ void __launch_bounds__(kNumThreads, 1)
 
     // Receive channel offset
     int total_offset, num_tokens_to_recv;
-    while (recv_lane_id == 0 and (total_offset = ld_volatile_global(channel_start_offset.buffer())) == 0)
-      ;
-    while (recv_lane_id == 0 and (num_tokens_to_recv = ld_volatile_global(channel_end_offset.buffer())) == 0)
-      ;
+    while (recv_lane_id == 0 and (total_offset = ld_volatile_global(channel_start_offset.buffer())) == 0);
+    while (recv_lane_id == 0 and (num_tokens_to_recv = ld_volatile_global(channel_end_offset.buffer())) == 0);
     if (recv_lane_id == 0) {
       total_offset = -total_offset - 1, num_tokens_to_recv = -num_tokens_to_recv - 1;
       if (recv_warp_id_in_rank == 0)
@@ -1172,12 +1170,12 @@ bool combine_tma(cudaDataType_t type, void* combined_x, float* combined_topk_wei
 #define COMBINE_INTRANODE_TMA_LAUNCH(ranks, WARPS)                                                                   \
   {                                                                                                                  \
     auto tma_func = combine_intranode_gather_tma<nv_bfloat16, ranks, WARPS>;                                         \
-    const size_t tma_smem = static_cast<size_t>(WARPS) * kStages * (ranks)*kChunkInt4 * sizeof(int4) +               \
+    const size_t tma_smem = static_cast<size_t>(WARPS) * kStages * (ranks) * kChunkInt4 * sizeof(int4) +             \
                             static_cast<size_t>(WARPS) * kStages * sizeof(uint64_t);                                 \
     CUDA_CHECK(                                                                                                      \
         cudaFuncSetAttribute(tma_func, cudaFuncAttributeMaxDynamicSharedMemorySize, static_cast<int>(tma_smem)));    \
     cudaLaunchConfig_t cfg = {                                                                                       \
-        static_cast<unsigned>(num_blocks), static_cast<unsigned>((WARPS)*32), tma_smem, stream, nullptr, 0};         \
+        static_cast<unsigned>(num_blocks), static_cast<unsigned>((WARPS) * 32), tma_smem, stream, nullptr, 0};       \
     LAUNCH_KERNEL(&cfg, tma_func, reinterpret_cast<int4*>(combined_x), combined_topk_weights, send_head, num_tokens, \
                   hidden, num_topk, num_ranks, recv_pool_ptrs, ep_combine_recv_idx, recv_pool_header_bytes);         \
   }                                                                                                                  \
