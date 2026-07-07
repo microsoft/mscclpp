@@ -143,8 +143,9 @@ jobs:
     matrix:
       rocm6_2:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2
-      rocm7_2:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm7.2
+      # Disable rocm7_2 as there is a known issue with the ROCm 7.2 image.
+      # rocm7_2:
+      #   containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm7.2
 
   container:
     image: $(containerImage)

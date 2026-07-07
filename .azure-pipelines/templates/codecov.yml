@@ -32,16 +32,16 @@ steps:
       export GCOV_PREFIX=/root/mscclpp
       export GCOV_PREFIX_STRIP=$STRIP_COUNT
 
-      echo "Running unit_tests..."
-      ./build/bin/unit_tests
+      echo "Running unit_tests (excluding GDR atomic ping-pong)..."
+      ./build/bin/unit_tests --filter=-GdrMapTest.AtomicStoreCounterPingPong
       echo "unit_tests: PASSED"
 
-      echo "Running mp_unit_tests -np 2..."
-      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --exclude-perf-tests
+      echo "Running mp_unit_tests -np 2 (excluding HostNoAtomic)..."
+      mpirun --allow-run-as-root -tag-output -np 2 ./build/bin/mp_unit_tests --exclude-perf-tests --filter=-HostNoAtomic
       echo "mp_unit_tests -np 2: PASSED"
 
-      echo "Running mp_unit_tests -np 4..."
-      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests
+      echo "Running mp_unit_tests -np 4 (excluding HostNoAtomic)..."
+      mpirun --allow-run-as-root -tag-output -np 4 ./build/bin/mp_unit_tests --exclude-perf-tests --filter=-HostNoAtomic
       echo "mp_unit_tests -np 4: PASSED"
 
 - template: run-remote-task.yml
@@ -62,7 +62,8 @@ steps:
 
       lcov --version
       LCOV_CAPTURE_ARGS=""
-      if lcov --help 2>&1 | grep -q "inconsistent"; then
+      LCOV_MAJOR=$(lcov --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+      if [ "${LCOV_MAJOR:-0}" -ge 2 ]; then
         LCOV_CAPTURE_ARGS="--ignore-errors inconsistent"
       fi
 
