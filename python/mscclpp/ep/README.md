@@ -30,7 +30,7 @@ The dispatch output should make the local MLP contract explicit:
 Use `MoECommunicator` as the public class name:
 
 ```python
-from mscclpp.ext.ep import MoECommunicator
+from mscclpp.ep import MoECommunicator
 
 moe_comm = MoECommunicator(...)
 ```
@@ -67,8 +67,7 @@ class MoECommunicatorConfig:
     output_layout: Optional[DispatchLayout] = None  # default is derived from mode
 
     # Quantization defaults
-    input_dtype: Optional[torch.dtype] = None
-    quant_format: Optional[str] = None
+    quant: Optional[QuantConfig] = None
 
     # Transport resources
     num_rdma_qps_per_rank: int = 12  # RDMA QPs per peer rank; advanced tuning
@@ -137,7 +136,7 @@ a later version can add an explicit `expert_map` for arbitrary placement.
 
 | Field | Purpose |
 |---|---|
-| `mode` | Backend selection (`"ll"` active; `"ht"` archived/not compiled) |
+| `mode` | Backend selection (`MoEMode.LOW_LATENCY` or `MoEMode.HIGH_THROUGHPUT`) |
 | `output_layout` | MLP input layout returned by dispatch |
 | `max_tokens_per_rank` | dispatch capacity |
 | `max_recv_tokens_per_rank` | recv buffer capacity |
@@ -151,10 +150,10 @@ specialized advanced path.
 
 ### Mode selection
 
-The active implementation supports `mode=MoEMode.LOW_LATENCY`. `mode` must be a
-`MoEMode` enum value, not a string. `MoEMode.HIGH_THROUGHPUT` raises
-`NotImplementedError` because the HT implementation is archived under
-`src/ext/ep/ht/` and is not compiled into `mscclpp_ep_cpp`.
+The active implementation supports `mode=MoEMode.LOW_LATENCY` and
+`mode=MoEMode.HIGH_THROUGHPUT`. `mode` must be a `MoEMode` enum value, not a
+string. LL uses an expert-major output layout; HT uses a flat output layout and
+selects intranode vs internode transport from the runtime size hints.
 
 ```python
 moe_comm = MoECommunicator(..., mode=MoEMode.LOW_LATENCY)
@@ -190,7 +189,7 @@ class MoECommunicator:
         input: torch.Tensor,
         topk_ids: torch.Tensor,
         weights: Optional[torch.Tensor] = None,
-        scales: Optional[QuantScales] = None,
+        quant: Optional[QuantConfig] = None,
         *,
         output_buffer: torch.Tensor,
         stream: Optional[torch.cuda.Stream] = None,
@@ -235,14 +234,14 @@ dispatch_out, handle = moe_comm.dispatch(
     input,
     topk_ids,
     weights=None,
-    scales=None,
+    quant=None,
     output_buffer=output_buffer,
 )
 
 expert_output = mlp(
     dispatch_out.tokens,
-    dispatch_out.num_tokens_per_expert,
-    dispatch_out.scales,
+    dispatch_out.layout,
+    dispatch_out.quant,
 )
 
 output = moe_comm.combine(expert_output, handle)
@@ -251,14 +250,20 @@ output = moe_comm.combine(expert_output, handle)
 `dispatch_out` is for the local MLP. `handle` is for `combine`. The MLP should
 not need to inspect the opaque handle.
 
+`DispatchOutput.layout` carries both the layout kind (`FLAT` or `EXPERT_MAJOR`)
+and layout-specific metadata.
+Expert-grouped layouts populate
+`num_tokens_per_expert`; future layouts that do not expose per-expert grouping
+can leave those fields as `None`.
+
 ## Proposed types
 
 ```python
 @dataclass
-class QuantScales:
-    local: Optional[torch.Tensor] = None
+class QuantConfig:
+    dtype: Optional[torch.dtype] = None
+    block_scales: Optional[torch.Tensor] = None
     global_scale: Optional[torch.Tensor] = None
-    format: Optional[str] = None
     block_size: Optional[int] = None
 
 
@@ -268,33 +273,98 @@ class DispatchLayout(str, Enum):
 
 
 @dataclass
+class DispatchLayoutInfo:
+    kind: DispatchLayout
+    num_tokens_per_expert: Optional[torch.Tensor | list[int]] = None
+    offsets: Optional[torch.Tensor] = None
+
+
+@dataclass
+class DispatchOutputInfo:
+    layout: DispatchLayoutInfo
+    quant: Optional[QuantConfig] = None
+
+
+@dataclass
 class DispatchOutput:
     tokens: torch.Tensor
-    scales: Optional[QuantScales]
-    num_tokens_per_expert: torch.Tensor | list[int]
-    expert_offsets: Optional[torch.Tensor] = None
-    layout: DispatchLayout = DispatchLayout.FLAT
+    quant: Optional[QuantConfig]
+    layout: DispatchLayoutInfo
+
+
+@dataclass
+class ExpertMajorCombineContext:
+    topk_ids: torch.Tensor
+    weights: torch.Tensor
+    num_experts: int
+    num_tokens: int
+    hidden_size: int
+    src_info: torch.Tensor
+    layout_range: torch.Tensor
+    num_max_dispatch_tokens_per_rank: int
+
+
+@dataclass
+class RowMajorIntranodeCombineContext:
+    ...
+
+
+@dataclass
+class RowMajorInternodeCombineContext:
+    ...
+
+
+CombineContext = ExpertMajorCombineContext | RowMajorIntranodeCombineContext | RowMajorInternodeCombineContext
 
 
 class DispatchHandle:
-    """Opaque handle returned by dispatch and consumed by combine."""
+    """Base opaque handle returned by dispatch and consumed by combine."""
+
+    output_info: DispatchOutputInfo
+
+
+class ExpertMajorDispatchHandle(DispatchHandle):
+    combine_context: ExpertMajorCombineContext
+
+
+class RowMajorIntranodeDispatchHandle(DispatchHandle):
+    combine_context: RowMajorIntranodeCombineContext
+
+
+class RowMajorInternodeDispatchHandle(DispatchHandle):
+    combine_context: RowMajorInternodeCombineContext
+
+
+@dataclass
+class OperationOverlapConfig:
+    stream: Optional[torch.cuda.Stream] = None
+    wait_event: Optional[torch.cuda.Event] = None
+    num_comm_sms: Optional[int] = None
+
+
+@dataclass
+class BlockOverlapConfig:
+    block_size_m: int
+    ready_signal: torch.Tensor
+    ready_value: int = 1
+    stream: Optional[torch.cuda.Stream] = None
+    wait_event: Optional[torch.cuda.Event] = None
+    num_comm_sms: Optional[int] = None
 
 
 @dataclass
 class CommOverlapConfig:
-    op: str  # "dispatch" or "combine"
-    level: str = "op"  # "op" or "block"
-    stream: Optional[torch.cuda.Stream] = None
-    wait_event: Optional[torch.cuda.Event] = None
-    signal: Optional[torch.Tensor] = None
-    num_comm_sms: Optional[int] = None
-    block_m: Optional[int] = None
-    block_ready_value: Optional[int] = None
+    operation: Optional[OperationOverlapConfig] = None
+    block: Optional[BlockOverlapConfig] = None
+
+    @property
+    def level(self) -> str: ...
 
 ```
 
 `create_overlap_config` creates optional overlap configuration for async
-dispatch/combine calls.
+dispatch/combine calls. The `op` argument is used only to validate construction;
+the returned config describes how to overlap, not which operation will consume it.
 
 ```python
 dispatch_overlap_config = moe_comm.create_overlap_config(op="dispatch")
@@ -320,27 +390,38 @@ combine_overlap_config = moe_comm.create_overlap_config(
 `op="dispatch", level="block"` is not part of the first version. Dispatch
 overlap is operation-level only.
 
-`CommOverlapConfig` fields:
+`CommOverlapConfig` contains exactly one overlap mode:
 
 | Field | Purpose |
 |---|---|
-| `op` | `"dispatch"` or `"combine"` |
-| `level` | `"op"` or `"block"` |
+| `operation` | Operation-level stream/event/SM config |
+| `block` | Block-level ready-signal config |
+
+`OperationOverlapConfig` fields:
+
+| Field | Purpose |
+|---|---|
 | `stream` | Optional communication stream |
 | `wait_event` | Optional event the communication op waits on before starting |
-| `signal` | Device tensor written by MLP and waited on by combine for block overlap |
 | `num_comm_sms` | Optional SM budget for communication |
-| `block_m` | Rows per block for block overlap |
-| `block_ready_value` | Signal value that marks one block as ready for combine |
 
-`DispatchHandle` should store the metadata needed to reverse dispatch:
+`BlockOverlapConfig` fields:
 
-- source rank and source token index,
-- top-k slot or equivalent routing metadata,
-- top-k ids and routing weights, or stable references/copies,
-- dispatch layout/range/count metadata,
-- capacity, local expert placement, and launch parameters needed by kernels,
-- optional cached metadata for repeated routing.
+| Field | Purpose |
+|---|---|
+| `block_size_m` | Rows/tokens per ready block |
+| `ready_signal` | Device tensor written by MLP and waited on by combine |
+| `ready_value` | Signal value that marks one block as ready for combine |
+| `stream` | Optional communication stream |
+| `wait_event` | Optional event the communication op waits on before starting |
+| `num_comm_sms` | Optional SM budget for communication |
+
+Each concrete `DispatchHandle` stores a layout-specific `combine_context` used
+to reverse dispatch and finish combine. `ExpertMajorDispatchHandle` uses
+`ExpertMajorCombineContext` (`topk_ids`, `weights`, source info, layout ranges,
+shape, and capacity). Row-major handles use intranode or internode combine contexts with
+receive-side weights, source indices, prefix matrices, and send-head tensors.
+The MLP should treat the handle as opaque and pass it back to `combine`.
 
 ## Dispatch inputs
 
@@ -389,19 +470,20 @@ weights: Optional[torch.Tensor]  # [T, K], usually float32
 These are MoE routing weights, not quantization scales. They are used by
 combine to reduce the `K` expert results for each token back to `[T, H]`.
 
-### `scales`
+### `quant`
 
-`scales` contains activation quantization metadata for `input`. It should be
-`None` for BF16/FP16 input.
+`quant` contains activation quantization metadata for `input`. It should be
+`None` for BF16/FP16 input. The quantized tensor dtype is stored in
+`quant.dtype`.
 
 Examples:
 
-| Format | `input` | `scales.local` | `scales.global_scale` |
-|---|---|---|---|
-| BF16/FP16 | `[T, H]` | `None` | `None` |
-| FP8 E4M3 | `[T, H]` FP8 | `[T, H / block_size]`, often block size 128 | usually `None` |
-| NVFP4 | backend-defined packed/logical `[T, H]` | block scale tensor | optional global scale |
-| MXFP8 | backend-defined `[T, H]` | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
+| Format | `input` | `quant.dtype` | `quant.block_scales` | `quant.global_scale` |
+|---|---|---|---|---|
+| BF16/FP16 | `[T, H]` | `None` | `None` | `None` |
+| FP8 E4M3 | `[T, H]` FP8 | `torch.float8_e4m3fn` | `[T, H / block_size]`, often block size 128 | usually `None` |
+| NVFP4 | backend-defined packed/logical `[T, H]` | backend-defined | block scale tensor | optional global scale |
+| MXFP8 | backend-defined `[T, H]` | backend-defined | micro-scale tensor, e.g. E8M0 blocks | optional/global if required |
 
 The API should not assume quantization scale is a scalar. For FP8 paths in
 DeepEP/SGLang, scales are usually per token and per hidden block.
@@ -421,8 +503,8 @@ output_buffer: [num_local_experts, world_size * max_tokens_per_rank, hidden]
 ```
 
 The dtype must match the dispatch output dtype. For BF16 dispatch it is BF16.
-For FP8 dispatch it is FP8 and the returned `DispatchOutput.scales` carries the
-matching scale tensor.
+For FP8 dispatch it is FP8 and the returned `DispatchOutput.quant` carries the
+matching dtype and scale tensor.
 
 `output_buffer` is required for LL because the MLP runner often owns or reuses
 workspace memory. `MoECommunicator` writes dispatch output into the provided
@@ -450,17 +532,17 @@ expert2 tokens
 ...
 ```
 
-`dispatch_out.num_tokens_per_expert` is ordered by local expert id:
+`dispatch_out.layout.num_tokens_per_expert` is ordered by local expert id:
 
 ```python
 num_tokens_per_expert[i] = valid token count for local expert i
 ```
 
-For flat layout, `expert_offsets` may be provided or derived by cumulative sum:
+For flat layout, `dispatch_out.layout.offsets` may be provided or derived by cumulative sum:
 
 ```python
-expert_offsets = cumsum([0] + num_tokens_per_expert)
-tokens[expert_offsets[i] : expert_offsets[i + 1]]
+offsets = cumsum([0] + num_tokens_per_expert)
+tokens[offsets[i] : offsets[i + 1]]
 ```
 
 This layout is efficient for Triton or grouped GEMM kernels because it avoids
@@ -481,11 +563,11 @@ local-expert-major storage viewed as 2D:
 dispatch_out.tokens  # [num_local_experts * max_slots_per_expert, H]
 ```
 
-For expert `i`, only the first `num_tokens_per_expert[i]` slots are valid:
+For expert `i`, only the first `dispatch_out.layout.num_tokens_per_expert[i]` slots are valid:
 
 ```python
 expert_major_tokens = dispatch_out.tokens.view(num_local_experts, max_slots_per_expert, H)
-expert_major_tokens[i, :num_tokens_per_expert[i], :]
+expert_major_tokens[i, : dispatch_out.layout.num_tokens_per_expert[i], :]
 ```
 
 The remaining slots are padding or scratch space. The MLP output must keep the
@@ -493,7 +575,7 @@ same layout and slot order.
 
 ### Scale output layout
 
-If `dispatch_out.scales` is not `None`, its local scale tensor should follow
+If `dispatch_out.quant` is not `None`, its block scale tensor should follow
 the same packed/expert-major layout as `dispatch_out.tokens`, with the hidden
 dimension replaced by the scale dimension.
 
@@ -516,8 +598,8 @@ For flat expert-major output:
 ```python
 expert_output = triton_mlp(
     dispatch_out.tokens,
-    dispatch_out.num_tokens_per_expert,
-    dispatch_out.scales,
+    dispatch_out.layout,
+    dispatch_out.quant,
 )
 ```
 
@@ -526,8 +608,8 @@ For padded expert-major output:
 ```python
 expert_output = expert_major_mlp(
     dispatch_out.tokens,
-    dispatch_out.num_tokens_per_expert,
-    dispatch_out.scales,
+    dispatch_out.layout,
+    dispatch_out.quant,
 )
 ```
 
@@ -577,10 +659,10 @@ dispatch_out, handle = moe_comm.dispatch(
     input,
     topk_ids,
     weights,
-    scales,
+    quant,
     output_buffer=output_buffer,
 )
-expert_output = mlp(dispatch_out.tokens, dispatch_out.num_tokens_per_expert)
+expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 output = moe_comm.combine(expert_output, handle)
 ```
 
@@ -603,7 +685,7 @@ dispatch_req = moe_comm.dispatch_async(
     input,
     topk_ids,
     weights,
-    scales,
+    quant,
     output_buffer=output_buffer,
     overlap_config=dispatch_overlap_config,
 )
@@ -611,7 +693,7 @@ dispatch_req = moe_comm.dispatch_async(
 # Run unrelated work while dispatch metadata/payload communication is in flight.
 
 dispatch_out, handle = dispatch_req.wait()
-expert_output = mlp(dispatch_out.tokens, dispatch_out.num_tokens_per_expert)
+expert_output = mlp(dispatch_out.tokens, dispatch_out.layout)
 
 combine_overlap_config = moe_comm.create_overlap_config(op="combine", handle=handle)
 combine_req = moe_comm.combine_async(
@@ -646,7 +728,7 @@ combine_overlap_config = moe_comm.create_overlap_config(
 config = combine_overlap_config
 expert_output = mlp(
     dispatch_out.tokens,
-    dispatch_out.num_tokens_per_expert,
+    dispatch_out.layout,
     config=config,
 )
 
@@ -667,8 +749,8 @@ The MLP backend must follow these rules when using notify:
 
 - write `expert_output` in the same row/slot order as `dispatch_out.tokens`,
 - publish data before signaling readiness,
-- signal at the block granularity defined by `overlap_config`,
-- use the signal value/protocol provided by `overlap_config`.
+- signal at the block granularity defined by `overlap_config.block.block_size_m`,
+- use the ready value/protocol provided by `overlap_config.block`.
 
 If the MLP backend does not support notify, it can still use the blocking API or
 coarse-grained `combine_async` after the full `expert_output` tensor is ready.
@@ -682,8 +764,8 @@ SGLang follows this model for its DeepEP low-latency path. It computes overlap
 arguments after dispatch, passes combine-side arguments to the DeepEP dispatcher,
 and passes down-GEMM arguments to the MoE runner. Backend support is selective:
 
-- DeepGEMM FP8 masked down-GEMM can return block metadata such as `block_m` and
-  `block_ready_value` and signal combine readiness.
+- DeepGEMM FP8 masked down-GEMM can return block metadata such as `block_size_m`
+  and `ready_value` and signal combine readiness.
 - FlashInfer CuteDSL can receive down-GEMM signal/start-event arguments.
 - Some paths, such as BF16 masked DeepGEMM and generic Triton runners, do not
   support this block overlap protocol.
@@ -719,13 +801,13 @@ recv, handle = moe_comm.dispatch(
     input=hidden_states,          # [T, H]
     topk_ids=topk_ids,            # [T, K]
     weights=topk_weights,         # [T, K]
-    scales=None,                  # BF16 path
+    quant=None,                   # BF16 path
     output_buffer=recv_buffer,
 )
 
 expert_output = triton_grouped_mlp(
     recv.tokens,
-    recv.num_tokens_per_expert,
+    recv.layout,
 )
 
 output = moe_comm.combine(expert_output, handle)
@@ -738,9 +820,9 @@ recv, handle = moe_comm.dispatch(
     input=x_fp8,
     topk_ids=topk_ids,
     weights=topk_weights,
-    scales=QuantScales(
-        local=x_scales,
-        format="fp8_e4m3",
+    quant=QuantConfig(
+        dtype=torch.float8_e4m3fn,
+        block_scales=x_scales,
         block_size=128,
     ),
     output_buffer=recv_buffer,
@@ -748,8 +830,8 @@ recv, handle = moe_comm.dispatch(
 
 expert_output = fp8_grouped_mlp(
     recv.tokens,
-    recv.scales,
-    recv.num_tokens_per_expert,
+    recv.quant,
+    recv.layout,
 )
 
 output = moe_comm.combine(expert_output, handle)

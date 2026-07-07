@@ -3,10 +3,11 @@
 """Multi-rank intranode functional validation for mscclpp_ep.
 
 Launch with:
-    torchrun --nproc_per_node=<N> test/python/ext/ep/test_intranode_multirank.py
+    torchrun --nproc_per_node=<N> test/python/ep/test_intranode_multirank.py
 
-Tests that ExpertParallelRuntime sync succeeds across N GPUs on a single node and that
-a round-trip dispatch + combine preserves data (sum of top-k weighted copies).
+Tests that the high-level ``MoECommunicator`` succeeds across N GPUs on a single
+node and that a round-trip dispatch + combine preserves data (sum of top-k
+weighted copies).
 
 Set ``MSCCLPP_EP_BENCH=1`` to also run a post-correctness benchmark pass
 that times dispatch and combine **separately** with CUDA events and
@@ -66,7 +67,7 @@ def inplace_unique(x: torch.Tensor, num_slots: int):
 def main():
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
-    from mscclpp.ext import ep
+    import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
 
@@ -107,95 +108,46 @@ def main():
     # Token payload = rank id (cast to bf16) so we can check correctness
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Allocate runtime (intranode only: num_rdma_bytes=0). Size the NVL buffer
-    # using max(hidden, bench_hidden) so the optional bench phase fits.
-    cfg = ep.Config(
-        int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
-        int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
-        int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
+    moe = ep.MoECommunicator(
+        comm=ep_group,
+        num_experts=num_experts,
+        hidden_size=hidden,
+        topk=num_topk,
+        max_tokens_per_rank=num_tokens,
+        mode=ep.MoEMode.HIGH_THROUGHPUT,
+        num_sms=int(os.environ.get("MSCCLPP_EP_NUM_SMS", "20")),
+        nvl_chunked_send=int(os.environ.get("MSCCLPP_EP_NVL_SEND", "8")),
+        nvl_chunked_recv=int(os.environ.get("MSCCLPP_EP_NVL_RECV", "256")),
     )
-    _bench_on = os.environ.get("MSCCLPP_EP_BENCH", "0") == "1"
-    _buf_hidden = max(hidden, int(os.environ.get("MSCCLPP_EP_BENCH_HIDDEN", "0"))) if _bench_on else hidden
-    num_nvl_bytes = cfg.get_nvl_buffer_size_hint(_buf_hidden * x.element_size(), num_ranks)
     if rank == 0:
         print(
             f"[cfg] num_ranks={num_ranks} num_tokens={num_tokens} hidden={hidden} "
-            f"num_experts={num_experts} num_topk={num_topk} num_nvl_bytes={num_nvl_bytes}",
+            f"num_experts={num_experts} num_topk={num_topk}",
             flush=True,
         )
+    print(f"[rank {rank}] MoECommunicator created is_available={moe.is_available()}", flush=True)
+    assert moe.is_available()
 
-    print(f"[rank {rank}] creating ExpertParallelRuntime", flush=True)
-    buf = ep.ExpertParallelRuntime(group, num_nvl_bytes=num_nvl_bytes, num_rdma_bytes=0, low_latency_mode=False)
-    print(f"[rank {rank}] ExpertParallelRuntime created is_available={buf.is_available()}", flush=True)
-    assert buf.is_available()
-
-    # get_dispatch_layout sanity
-    ref_rank, _, ref_exp, ref_in_rank = buf.get_dispatch_layout(topk_idx, num_experts)
-    assert torch.allclose(ref_rank, num_tokens_per_rank)
-    assert torch.allclose(ref_exp, num_tokens_per_expert)
-    assert torch.allclose(ref_in_rank, is_token_in_rank)
-    if rank == 0:
-        print("[layout] OK", flush=True)
-
-    # Dispatch
-    (
-        recv_x,
-        recv_x_scales,
-        recv_topk_idx,
-        recv_topk_weights,
-        num_recv_tokens_per_expert_list,
-        rank_prefix_matrix,
-        channel_prefix_matrix,
-        recv_channel_prefix_matrix,
-        recv_src_idx,
-        send_head,
-    ) = buf.intranode_dispatch(
+    dispatch_out, handle = moe.dispatch(
         x,
-        None,
         topk_idx,
         topk_weights,
-        num_tokens_per_rank,
-        is_token_in_rank,
-        num_tokens_per_expert,
-        0,
-        None,
-        None,
-        1,
-        cfg,
     )
+    recv_x = dispatch_out.tokens
     dist.barrier(group=group)
 
-    # Validate received payloads: for each source rank i, the block of tokens
-    # we received from it should be filled with `i`.
     assert recv_x.dim() == 2 and recv_x.size(1) == hidden
-    start = 0
-    for src in range(num_ranks):
-        end = rank_prefix_matrix[src][rank].item()
-        block = recv_x[start:end]
-        if block.numel():
-            actual = block.float().amin().item()
-            assert abs(actual - src) < 1e-3, f"rank{rank}: block from src={src} has min={actual}, expected {src}"
-            assert abs(block.float().amax().item() - src) < 1e-3
-        start = end
+    local_experts = num_experts // num_ranks
+    all_expert_counts = torch.empty((num_ranks, num_experts), dtype=num_tokens_per_expert.dtype, device="cuda")
+    dist.all_gather_into_tensor(all_expert_counts, num_tokens_per_expert, group=group)
+    expected_counts = all_expert_counts[:, rank * local_experts : (rank + 1) * local_experts].sum(dim=0).cpu().tolist()
+    assert dispatch_out.layout.num_tokens_per_expert is not None
+    actual_counts = [int(count) for count in dispatch_out.layout.num_tokens_per_expert]
+    assert actual_counts == [int(count) for count in expected_counts]
     if rank == 0:
         print(f"[dispatch] OK (recv {recv_x.size(0)} tokens)", flush=True)
 
-    # Combine (scatter-reduce back). Using recv_topk_weights=None path with
-    # dispatched tokens unchanged => every source rank should receive its
-    # contribution back, unweighted sum across topk copies.
-    handle_recv_src_idx = recv_src_idx
-    handle_rank_prefix_matrix = rank_prefix_matrix
-    handle_channel_prefix_matrix = recv_channel_prefix_matrix
-
-    combined_x, combined_topk_weights = buf.intranode_combine(
-        recv_x,
-        recv_topk_weights,
-        handle_recv_src_idx,
-        handle_rank_prefix_matrix,
-        handle_channel_prefix_matrix,
-        send_head,
-        cfg,
-    )
+    combined_x = moe.combine(recv_x, handle)
 
     # Expected: we dispatched with x = rank * ones, so every destination r
     # received the value `rank` for our token. On combine the destinations
@@ -241,19 +193,8 @@ def main():
             print(f"[bench] skip: topk={bench_num_topk} > experts={bench_num_experts}", flush=True)
         return
 
-    # Rebuild inputs at bench size. Keep same layout recipe as above but at
-    # larger (num_tokens, hidden); runtime is sized off the original cfg+hidden,
-    # so bench must fit within num_nvl_bytes. If it doesn't, we skip.
-    if bench_hidden * x.element_size() > (num_nvl_bytes // max(1, num_ranks)):
-        if rank == 0:
-            print(
-                f"[bench] skip: hidden={bench_hidden} bytes/row={bench_hidden * x.element_size()} "
-                f"> per-peer budget {num_nvl_bytes // num_ranks}. "
-                f"Rerun with a larger runtime or smaller hidden.",
-                flush=True,
-            )
-        return
-
+    # Rebuild inputs at bench size. The benchmark creates its own communicator
+    # below so its internal buffers are sized for the benchmark shape.
     scores_b = torch.randn((bench_tokens, bench_num_experts), device="cuda", dtype=torch.float32).abs() + 1
     topk_idx_b = torch.topk(scores_b, bench_num_topk, dim=-1, sorted=False).indices
     topk_weights_b = torch.ones((bench_tokens, bench_num_topk), dtype=torch.float32, device="cuda")
@@ -276,15 +217,13 @@ def main():
     is_token_in_rank_b = token_idx_in_rank_b >= 0
     x_b = torch.ones((bench_tokens, bench_hidden), dtype=torch.bfloat16, device="cuda") * float(rank)
 
-    # Drive the benchmark through the high-level MoECommunicator (the public
-    # #818 API), mode=HIGH_THROUGHPUT. It owns its own ExpertParallelRuntime
-    # sized for the bench shape and runs get_dispatch_layout + intranode
-    # dispatch/combine internally. The first (uncached) dispatch records the
-    # routing layout on the returned handle; subsequent dispatches reuse it via
-    # previous_handle, skipping notify_dispatch's host-side counter wait. This
-    # isolates the on-GPU dispatch-kernel cost (NCCL-EP ep_bench convention).
+    # Drive the benchmark through the public high-level API. The first
+    # (uncached) dispatch records the routing layout on the returned handle;
+    # subsequent dispatches reuse it via previous_handle, skipping notify's
+    # host-side counter wait. This isolates the on-GPU dispatch-kernel cost
+    # (NCCL-EP ep_bench convention).
     moe = ep.MoECommunicator(
-        group=group,
+        comm=ep_group,
         num_experts=bench_num_experts,
         hidden_size=bench_hidden,
         topk=bench_num_topk,
