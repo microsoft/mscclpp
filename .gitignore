@@ -7,3 +7,4 @@ __pycache__
 .pytest_cache/
 _codeql_detected_source_root
 docs/_static/versions.js
+test/python/ext/ep/libcupti_kernel_timer.so

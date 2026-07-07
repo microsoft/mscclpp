@@ -107,6 +107,14 @@ def parse_args() -> argparse.Namespace:
                         "exactly the post-warmup dispatch/combine kernels, like ep_bench's "
                         "KernelTimer.start()-after-warmup. Skips the in-process torch.profiler "
                         "pass; kernel numbers come from nsys.")
+    p.add_argument("--cupti-inproc", action="store_true",
+                   help="use the in-process CUPTI collector (libcupti_kernel_timer.so, a faithful "
+                        "port of ep_bench's KernelTimer): CUPTI Activity API records per-kernel GPU "
+                        "time over the post-warmup timed loop, near-zero host perturbation. "
+                        "LIMITATION: mscclpp's LL dispatch/combine use cudaLaunchCooperativeKernel, "
+                        "which CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL does NOT report on this CUDA 13 "
+                        "driver, so this mode captures 0 LL kernels -- use --cupti-region + nsys "
+                        "instead (nsys traces cooperative launches). Kept for non-coop kernels / ref.")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     return p.parse_args()
 
@@ -193,6 +201,44 @@ def _profile_paired_kernels(dispatch_fn, combine_fn, iters: int, stream, group, 
             print(f"    {us / iters:8.2f} us/iter  {name[:90]}", flush=True)
 
     return disp_us / iters, comb_us / iters
+
+
+class _InProcCupti:
+    """In-process CUPTI kernel timer, a faithful analog of ep_bench's KernelTimer.
+
+    Loads ``libcupti_kernel_timer.so`` (built from cupti_kernel_timer.cpp, sitting
+    next to this file) via ctypes and drives the CUPTI Activity API directly:
+    ``start()`` after warmup, ``stop()`` after the timed loop, then
+    ``avg_us("dispatch"/"combine")`` buckets recorded kernels by mangled-name
+    substring -- exactly ep_bench's methodology, with near-zero host perturbation
+    (out-of-band buffer callbacks), so the LL dispatch recv-spin is measured
+    cleanly rather than being serialized by an in-process tracer.
+    """
+
+    def __init__(self):
+        import ctypes
+        import os as _os
+
+        so = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "libcupti_kernel_timer.so")
+        self.lib = ctypes.CDLL(so)
+        self.lib.kt_start.restype = ctypes.c_int
+        self.lib.kt_stop.restype = ctypes.c_int
+        self.lib.kt_get_avg_us.restype = ctypes.c_double
+        self.lib.kt_get_avg_us.argtypes = [ctypes.c_char_p]
+        self.lib.kt_get_count.restype = ctypes.c_long
+        self.lib.kt_get_count.argtypes = [ctypes.c_char_p]
+
+    def start(self) -> int:
+        return int(self.lib.kt_start())
+
+    def stop(self) -> int:
+        return int(self.lib.kt_stop())
+
+    def avg_us(self, substr: str) -> float:
+        return float(self.lib.kt_get_avg_us(substr.encode()))
+
+    def count(self, substr: str) -> int:
+        return int(self.lib.kt_get_count(substr.encode()))
 
 
 def main() -> None:
@@ -294,6 +340,24 @@ def main() -> None:
         dist.barrier(group=group)
         torch.cuda.cudart().cudaProfilerStart()
 
+    # In-process CUPTI collector (ep_bench KernelTimer analog). start() after
+    # warmup, stop() after the timed loop -- same window as the CUDA events.
+    _inproc = None
+    if bool(getattr(args, "cupti_inproc", False)):
+        try:
+            _inproc = _InProcCupti()
+            torch.cuda.synchronize()
+            dist.barrier(group=group)
+            _rc = _inproc.start()
+            if _rc != 0:
+                if rank == 0:
+                    print(f"[warn] in-proc CUPTI kt_start rc={_rc}; disabling", flush=True)
+                _inproc = None
+        except Exception as exc:
+            if rank == 0:
+                print(f"[warn] in-proc CUPTI unavailable ({exc}); host-observed only", flush=True)
+            _inproc = None
+
     d_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     d_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     c_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -313,6 +377,19 @@ def main() -> None:
     torch.cuda.synchronize()
     if _cupti:
         torch.cuda.cudart().cudaProfilerStop()
+    ck_disp_us = ck_comb_us = 0.0
+    inproc_ok = False
+    if _inproc is not None:
+        _inproc.stop()
+        dist.barrier(group=group)
+        ck_disp_us = _inproc.avg_us("internode_ll::dispatch")
+        ck_comb_us = _inproc.avg_us("internode_ll::combine")
+        n_disp = _inproc.count("internode_ll::dispatch")
+        n_comb = _inproc.count("internode_ll::combine")
+        inproc_ok = ck_disp_us > 0 and ck_comb_us > 0
+        if os.environ.get("MSCCLPP_EP_KDEBUG", "0") == "1" and rank == 0:
+            print(f"[kdebug inproc] dispatch: {ck_disp_us:.1f}us x{n_disp}  "
+                  f"combine: {ck_comb_us:.1f}us x{n_comb}", flush=True)
 
     # ---- Collect per-iter times (ms->us) and trim the first (warmup outlier). --
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 for i in range(iters)]
@@ -350,7 +427,7 @@ def main() -> None:
     kernel_ok = False
     g_dk_avg = g_dk_min = g_dk_max = 0.0
     g_ck_avg = g_ck_min = g_ck_max = 0.0
-    if args.kernel_timing and not _cupti:
+    if args.kernel_timing and not _cupti and not bool(getattr(args, "cupti_inproc", False)):
         try:
             dk_us, ck_us = _profile_paired_kernels(dispatch_fn, combine_fn, iters, stream, group, rank)
             torch.cuda.synchronize()
@@ -365,6 +442,19 @@ def main() -> None:
         except Exception as exc:  # profiler unavailable / hiccup: keep host numbers valid
             if rank == 0:
                 print(f"[warn] kernel-only pass failed ({exc}); reporting host-observed only", flush=True)
+
+    # ---- In-process CUPTI reduction (ep_bench KernelTimer analog). ----
+    g_ik_d_avg = g_ik_d_min = g_ik_d_max = 0.0
+    g_ik_c_avg = g_ik_c_min = g_ik_c_max = 0.0
+    g_inproc_ok = 0
+    if bool(getattr(args, "cupti_inproc", False)):
+        g_ik_d_avg = _reduce_scalar(ck_disp_us, dist.ReduceOp.SUM, group) / num_ranks
+        g_ik_d_min = _reduce_scalar(ck_disp_us if inproc_ok else 1e18, dist.ReduceOp.MIN, group)
+        g_ik_d_max = _reduce_scalar(ck_disp_us, dist.ReduceOp.MAX, group)
+        g_ik_c_avg = _reduce_scalar(ck_comb_us, dist.ReduceOp.SUM, group) / num_ranks
+        g_ik_c_min = _reduce_scalar(ck_comb_us if inproc_ok else 1e18, dist.ReduceOp.MIN, group)
+        g_ik_c_max = _reduce_scalar(ck_comb_us, dist.ReduceOp.MAX, group)
+        g_inproc_ok = int(_reduce_scalar(1.0 if inproc_ok else 0.0, dist.ReduceOp.MIN, group))
 
     d_tp_all = _gather_scalars(d_tp, num_ranks, group)
     c_tp_all = _gather_scalars(c_tp, num_ranks, group)
@@ -418,6 +508,21 @@ def main() -> None:
                   "nsys (as ep_bench's CUPTI path does); torch.profiler perturbs the LL recv-spin.")
         else:
             print("  NOTE: kernel-only pass disabled or unavailable.")
+
+        if bool(getattr(args, "cupti_inproc", False)):
+            print("\n--- Kernel-only performance (in-process CUPTI Activity API, ep_bench KernelTimer analog) ---")
+            if g_inproc_ok:
+                print(f"Dispatch:    avg={g_ik_d_avg:.2f} us, min={g_ik_d_min:.2f} us, max={g_ik_d_max:.2f} us")
+                print(f"                  throughput: avg={(disp_bytes / 1e9) / (g_ik_d_avg * 1e-6):.2f} GB/s, "
+                      f"min={(disp_bytes / 1e9) / (g_ik_d_max * 1e-6):.2f} GB/s, "
+                      f"max={(disp_bytes / 1e9) / (g_ik_d_min * 1e-6):.2f} GB/s")
+                print(f"Combine:     avg={g_ik_c_avg:.2f} us, min={g_ik_c_min:.2f} us, max={g_ik_c_max:.2f} us")
+                print(f"                  throughput: avg={(comb_bytes / 1e9) / (g_ik_c_avg * 1e-6):.2f} GB/s, "
+                      f"min={(comb_bytes / 1e9) / (g_ik_c_max * 1e-6):.2f} GB/s, "
+                      f"max={(comb_bytes / 1e9) / (g_ik_c_min * 1e-6):.2f} GB/s")
+                print(f"Total (D+C): avg={g_ik_d_avg + g_ik_c_avg:.2f} us")
+            else:
+                print("  NOTE: in-process CUPTI collector unavailable (see [warn] above).")
 
         print(f"\nByte counts: dispatch={disp_bytes / 1e6:.2f} MB (BF16), "
               f"combine={comb_bytes / 1e6:.2f} MB (BF16), selections={num_valid_selections}")
