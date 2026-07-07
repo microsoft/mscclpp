@@ -101,6 +101,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-kernel-timing", dest="kernel_timing", action="store_false",
                    help="disable the CUPTI/torch.profiler kernel-only measurement pass "
                         "(on by default, mirrors ep_bench's CUPTI KernelTimer)")
+    p.add_argument("--cupti-region", action="store_true",
+                   help="bracket ONLY the timed loop with cudaProfilerStart/Stop (for nsys "
+                        "--capture-range=cudaProfilerApi) so an external CUPTI collector times "
+                        "exactly the post-warmup dispatch/combine kernels, like ep_bench's "
+                        "KernelTimer.start()-after-warmup. Skips the in-process torch.profiler "
+                        "pass; kernel numbers come from nsys.")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     return p.parse_args()
 
@@ -278,6 +284,16 @@ def main() -> None:
         stream.synchronize()
         dist.barrier(group=group)
 
+    # CUPTI/nsys region: capture ONLY the post-warmup timed kernels, matching
+    # ep_bench's KernelTimer.start() (called after warmup). An external nsys run
+    # with --capture-range=cudaProfilerApi records exactly the dispatch/combine
+    # kernels between these two calls.
+    _cupti = bool(getattr(args, "cupti_region", False))
+    if _cupti:
+        torch.cuda.synchronize()
+        dist.barrier(group=group)
+        torch.cuda.cudart().cudaProfilerStart()
+
     d_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     d_end = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
     c_start = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
@@ -295,6 +311,8 @@ def main() -> None:
         dist.barrier(group=group)        # keep ranks in lockstep, outside timing
 
     torch.cuda.synchronize()
+    if _cupti:
+        torch.cuda.cudart().cudaProfilerStop()
 
     # ---- Collect per-iter times (ms->us) and trim the first (warmup outlier). --
     disp_us = [d_start[i].elapsed_time(d_end[i]) * 1e3 for i in range(iters)]
@@ -332,7 +350,7 @@ def main() -> None:
     kernel_ok = False
     g_dk_avg = g_dk_min = g_dk_max = 0.0
     g_ck_avg = g_ck_min = g_ck_max = 0.0
-    if args.kernel_timing:
+    if args.kernel_timing and not _cupti:
         try:
             dk_us, ck_us = _profile_paired_kernels(dispatch_fn, combine_fn, iters, stream, group, rank)
             torch.cuda.synchronize()
