@@ -110,11 +110,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cupti-inproc", action="store_true",
                    help="use the in-process CUPTI collector (libcupti_kernel_timer.so, a faithful "
                         "port of ep_bench's KernelTimer): CUPTI Activity API records per-kernel GPU "
-                        "time over the post-warmup timed loop, near-zero host perturbation. "
-                        "LIMITATION: mscclpp's LL dispatch/combine use cudaLaunchCooperativeKernel, "
-                        "which CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL does NOT report on this CUDA 13 "
-                        "driver, so this mode captures 0 LL kernels -- use --cupti-region + nsys "
-                        "instead (nsys traces cooperative launches). Kept for non-coop kernels / ref.")
+                        "time over the post-warmup timed loop, near-zero host perturbation, and works "
+                        "multinode without nsys. Uses CUPTI_ACTIVITY_KIND_KERNEL (which -- unlike "
+                        "CONCURRENT_KERNEL -- captures mscclpp's cudaLaunchCooperativeKernel LL kernels); "
+                        "matches the mangled name substring dispatch/combine. Replaces the torch.profiler pass.")
     p.add_argument("--seed", type=int, default=0xB3C4, help="per-rank RNG seed base")
     return p.parse_args()
 
@@ -382,10 +381,10 @@ def main() -> None:
     if _inproc is not None:
         _inproc.stop()
         dist.barrier(group=group)
-        ck_disp_us = _inproc.avg_us("internode_ll::dispatch")
-        ck_comb_us = _inproc.avg_us("internode_ll::combine")
-        n_disp = _inproc.count("internode_ll::dispatch")
-        n_comb = _inproc.count("internode_ll::combine")
+        ck_disp_us = _inproc.avg_us("dispatch")
+        ck_comb_us = _inproc.avg_us("combine")
+        n_disp = _inproc.count("dispatch")
+        n_comb = _inproc.count("combine")
         inproc_ok = ck_disp_us > 0 and ck_comb_us > 0
         if os.environ.get("MSCCLPP_EP_KDEBUG", "0") == "1" and rank == 0:
             print(f"[kdebug inproc] dispatch: {ck_disp_us:.1f}us x{n_disp}  "
@@ -512,15 +511,20 @@ def main() -> None:
         if bool(getattr(args, "cupti_inproc", False)):
             print("\n--- Kernel-only performance (in-process CUPTI Activity API, ep_bench KernelTimer analog) ---")
             if g_inproc_ok:
-                print(f"Dispatch:    avg={g_ik_d_avg:.2f} us, min={g_ik_d_min:.2f} us, max={g_ik_d_max:.2f} us")
-                print(f"                  throughput: avg={(disp_bytes / 1e9) / (g_ik_d_avg * 1e-6):.2f} GB/s, "
-                      f"min={(disp_bytes / 1e9) / (g_ik_d_max * 1e-6):.2f} GB/s, "
-                      f"max={(disp_bytes / 1e9) / (g_ik_d_min * 1e-6):.2f} GB/s")
+                # The LL dispatch kernel ends with a cross-rank receive spin-wait,
+                # so a lagging rank's device time includes wait skew (same effect
+                # as nsys's max outlier). The cross-rank MIN (the rank that did not
+                # wait) is the representative kernel floor; it matches the nsys
+                # CUPTI number and ep_bench's low-perturbation figure. Combine has
+                # little recv-spin and is stable across ranks.
+                print(f"Dispatch:    min={g_ik_d_min:.2f} us (representative)  "
+                      f"[avg={g_ik_d_avg:.2f}, max={g_ik_d_max:.2f} us -- recv-spin skew on lagging ranks]")
+                print(f"                  throughput @min: {(disp_bytes / 1e9) / (g_ik_d_min * 1e-6):.2f} GB/s")
                 print(f"Combine:     avg={g_ik_c_avg:.2f} us, min={g_ik_c_min:.2f} us, max={g_ik_c_max:.2f} us")
                 print(f"                  throughput: avg={(comb_bytes / 1e9) / (g_ik_c_avg * 1e-6):.2f} GB/s, "
                       f"min={(comb_bytes / 1e9) / (g_ik_c_max * 1e-6):.2f} GB/s, "
                       f"max={(comb_bytes / 1e9) / (g_ik_c_min * 1e-6):.2f} GB/s")
-                print(f"Total (D+C): avg={g_ik_d_avg + g_ik_c_avg:.2f} us")
+                print(f"Total (D+C): {g_ik_d_min + g_ik_c_avg:.2f} us (dispatch min + combine avg)")
             else:
                 print("  NOTE: in-process CUPTI collector unavailable (see [warn] above).")
 

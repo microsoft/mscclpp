@@ -10,14 +10,16 @@
 // ep_bench's methodology exactly: start() after warmup, stop() after the timed
 // loop, get_avg_us("dispatch"/"combine") buckets by mangled-name substring.
 //
-// KNOWN LIMITATION (GB200 / CUDA 13): the mscclpp LL dispatch/combine kernels are
-// launched with cudaLaunchCooperativeKernel. CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL
-// does NOT report cooperative-launch kernels on this driver, so this in-process
-// collector records 0 LL kernels (verified: nsys, which traces the driver-level
-// cooperative launch + a broader activity set, DOES capture them -- 200 dispatch
-// + 200 combine instances). For mscclpp's cooperative LL kernels, use the
-// --cupti-region + nsys path instead. This collector is faithful to ep_bench and
-// works for ordinary (non-cooperative) kernels; kept for reference / that case.
+// COOPERATIVE-LAUNCH NOTE (GB200 / CUDA 13): the mscclpp LL dispatch/combine
+// kernels are launched with cudaLaunchCooperativeKernel. Those are NOT reported
+// by CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL on this driver, but they ARE reported
+// by CUPTI_ACTIVITY_KIND_KERNEL (the serialized-kernel activity), which is what
+// we subscribe to below. KIND_KERNEL only serializes *inter*-kernel concurrency;
+// in this dispatch->sync->combine->sync paired loop the kernels already run one
+// at a time, so the measured per-kernel GPU duration is unaffected. The activity
+// record carries the RAW MANGLED name (e.g. ...internode_ll8dispatch...), so the
+// caller matches the substring "dispatch"/"combine" (present in the mangled form)
+// rather than the demangled "internode_ll::dispatch".
 //
 // Build (host-only C++, links libcupti):
 //   g++ -O2 -fPIC -shared cupti_kernel_timer.cpp -o libcupti_kernel_timer.so \
@@ -54,7 +56,7 @@ void CUPTIAPI bufferCompleted(CUcontext, uint32_t, uint8_t* buffer, size_t, size
   CUpti_Activity* record = nullptr;
   std::lock_guard<std::mutex> lock(g_mutex);
   while (cuptiActivityGetNextRecord(buffer, validSize, &record) == CUPTI_SUCCESS) {
-    if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL) {
+    if (record->kind == CUPTI_ACTIVITY_KIND_KERNEL) {
       // CUpti_ActivityKernel10 is the record layout for CUDA 13 CUPTI. start/end
       // (GPU HW timestamps, ns) and name have been stable across versions.
       auto* k = reinterpret_cast<CUpti_ActivityKernel10*>(record);
@@ -81,14 +83,14 @@ int kt_start() {
   }
   CUptiResult r = cuptiActivityRegisterCallbacks(bufferRequested, bufferCompleted);
   if (r != CUPTI_SUCCESS) return static_cast<int>(r);
-  r = cuptiActivityEnable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
+  r = cuptiActivityEnable(CUPTI_ACTIVITY_KIND_KERNEL);
   return static_cast<int>(r);
 }
 
 // Flush pending buffers and disable recording. Returns CUPTI result code (0=ok).
 int kt_stop() {
   cuptiActivityFlushAll(0);
-  CUptiResult r = cuptiActivityDisable(CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL);
+  CUptiResult r = cuptiActivityDisable(CUPTI_ACTIVITY_KIND_KERNEL);
   return static_cast<int>(r);
 }
 
