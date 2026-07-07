@@ -50,6 +50,13 @@ struct SwitchChannelDeviceHandle {
   /// writes issued by any rank before its barrier() call are guaranteed visible to all ranks after
   /// their barrier() call returns.
   ///
+  /// Ordering is carried by scoped release/acquire on the counter itself -- the arrival is a
+  /// `.release` multimem add and the wait is an `.acquire` load -- rather than by a pair of
+  /// `__threadfence_system()` calls. The release/acquire pair still publishes each rank's prior
+  /// writes before its arrival and makes peers' writes visible after the wait, but at `.sys` scope
+  /// only on the counter, which is much cheaper than a full system fence (this matches NCCL's LSA
+  /// switch barrier in `lsa_barrier__funcs.h`).
+  ///
   /// The protocol: every rank advances its private target by nRanks, performs one multimem add of 1
   /// on the shared counter (which the switch applies to every rank's copy), then spins on its own
   /// local copy until the counter reaches the target. Because every rank calls barrier() the same
@@ -66,19 +73,16 @@ struct SwitchChannelDeviceHandle {
     // a debug-only diagnostic; in release builds a null pointer here dereferences and crashes, which
     // is intentionally preferred over a silent no-op barrier (that would hide a cross-rank race).
     MSCCLPP_ASSERT_DEVICE(barrierGen != nullptr, "SwitchChannel::barrier() called without barrier support");
-    // Make our prior writes (e.g. the broadcast data) visible system-wide before we signal arrival,
-    // so a peer that observes our arrival also observes that data.
-    __threadfence_system();
     // Advance this rank's private target. All ranks advance identically, so targets stay in lock-step.
     const uint32_t target = (*barrierGen += static_cast<uint32_t>(nRanks));
-    // Signal arrival: one multimem add increments every rank's copy of the counter through the switch.
-    asm volatile("multimem.red.relaxed.sys.global.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
-    // Wait until every rank has arrived. The signed (wrap-safe) compare means "counter is behind target".
+    // Signal arrival with release ordering: one multimem add increments every rank's copy of the
+    // counter through the switch, publishing this rank's prior writes before the arrival is observed.
+    asm volatile("multimem.red.release.sys.global.add.u32 [%0], %1;" ::"l"(mcBarrierFlag), "r"(1U) : "memory");
+    // Wait (acquire) until every rank has arrived. The signed (wrap-safe) compare means "counter is
+    // behind target"; the acquire pairs with peers' release so their pre-barrier writes are visible.
     POLL_MAYBE_JAILBREAK(
         (static_cast<int32_t>(atomicLoad<uint32_t, scopeSystem>(localBarrierFlag, memoryOrderAcquire) - target) < 0),
         maxSpinCount);
-    // Ensure peers' pre-barrier writes are visible to our post-barrier reads.
-    __threadfence_system();
   }
 
   template <typename T>

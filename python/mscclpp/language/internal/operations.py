@@ -429,6 +429,9 @@ class GroupBarrier(BaseOperation):
     DeviceSyncer slot (leader instance 0), and ``num_threadblocks`` folds in the
     instance count so the syncer converges every physical block on the rank. Only
     physical ``blockIdx.x == 0`` issues the arrival, so ``tb_list`` must include tb 0.
+
+    The barrier is fence-free: ordering is carried by scoped release/acquire on the
+    switch counter itself (see ``SwitchChannel::barrier()``), not by system fences.
     """
 
     def __init__(self, rank: int, tb_list: List[int], switch_channel_id: int):
