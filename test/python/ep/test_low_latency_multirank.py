@@ -3,18 +3,18 @@
 """Multi-rank low-latency functional test for mscclpp_ep.
 
 Launch with (intra-node, 8 GPUs):
-    torchrun --nproc_per_node=8 test/python/ext/ep/test_low_latency_multirank.py \
+    torchrun --nproc_per_node=8 test/python/ep/test_low_latency_multirank.py \
         --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256
 
 Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
     # node 0:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=0 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ext/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
     # node 1:
     MASTER_ADDR=<master> MASTER_PORT=29600 NODE_RANK=1 \
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
-            --rdzv-endpoint=<master>:29600 test/python/ext/ep/test_low_latency_multirank.py
+            --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
 
 Exercises the LL dispatch + combine round-trip on a single node. The
 minimal correctness check:
@@ -79,7 +79,7 @@ def main():
     args = parse_args()
     rank, num_ranks, local_rank, group = init_dist()
     from mscclpp import CommGroup
-    from mscclpp.ext import ep
+    import mscclpp.ep as ep
 
     ep_group = CommGroup(torch_group=group)
 
@@ -149,8 +149,9 @@ def main():
         output_buffer=dispatch_output_buffer,
     )
     packed_recv_x = dispatch_out.tokens
-    packed_recv_count = dispatch_out.num_tokens_per_expert
-    packed_recv_layout_range = handle.layout_range
+    assert dispatch_out.layout.num_tokens_per_expert is not None
+    packed_recv_count = dispatch_out.layout.num_tokens_per_expert
+    packed_recv_layout_range = handle.combine_context.layout_range
     torch.cuda.synchronize()
     print(f"[rank {rank}] post-dispatch", flush=True)
     # packed_recv_x: [num_local_experts, num_ranks * num_max_dispatch_tokens_per_rank, hidden]
@@ -258,7 +259,8 @@ def main():
     end_ev.record()
     torch.cuda.synchronize()
     disp_us = start_ev.elapsed_time(end_ev) * 1e3 / iters
-    recv_tokens = int(dout[0].num_tokens_per_expert.sum().item())
+    assert dout[0].layout.num_tokens_per_expert is not None
+    recv_tokens = int(dout[0].layout.num_tokens_per_expert.sum().item())
 
     dist.barrier(group=group)
     start_ev.record()
