@@ -3,9 +3,10 @@
 #
 # Portions adapted from DeepEP (https://github.com/deepseek-ai/DeepEP),
 # branch ``chhwang/dev-atomic-add-cleanup``. Licensed under the MIT License.
-"""Low-level HT (high-throughput) runtime wrapper for the MSCCL++ EP extension.
+"""High-throughput backend for the high-level MoE communicator.
 
-This is a thin wrapper around the nanobind extension
+This module contains both the high-level HT backend used by
+``MoECommunicator`` and the raw-pointer wrapper around the nanobind extension
 ``mscclpp_ep_cpp.ExpertParallelRuntime`` (the DeepEP-style high-throughput
 runtime). The extension exposes a **torch-free, raw-pointer** boundary identical
 in spirit to the low-latency ``MoERuntime``: every device tensor crosses the
@@ -27,75 +28,43 @@ internode dispatch path:
 The cached fast path skips the notify phase (``cached_mode=True``) by reusing a
 previous dispatch's prefix matrices and recv count.
 
-The low-latency path is served by :class:`mscclpp.ext.ep.MoERuntime`; this
-runtime exposes only the HT dispatch/combine methods.
+The low-latency path is served by ``low_latency.py``.
 """
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional
 
 import torch
-import torch.distributed as dist
 
-try:
-    import mscclpp_ep_cpp as _cpp  # type: ignore[import-not-found]
-except ImportError as exc:  # pragma: no cover
-    raise ImportError(
-        "mscclpp_ep_cpp is not available. Build mscclpp with "
-        "-DMSCCLPP_BUILD_EXT_EP=ON or install via `pip install` after the build."
-    ) from exc
-
-Config = _cpp.Config
-
-
-# ----------------------------------------------------------------------------
-# Raw-pointer helpers (the boundary is now data_ptr()-based, like MoERuntime).
-# ----------------------------------------------------------------------------
-
-
-def _ptr(t: Optional[torch.Tensor]) -> int:
-    """``tensor.data_ptr()`` for a tensor, or 0 (== nullptr) for ``None``."""
-    return 0 if t is None else t.data_ptr()
-
-
-def _stream_ptr() -> int:
-    """Raw pointer of the current CUDA stream (matches the C++ ``cudaStream_t``)."""
-    return torch.cuda.current_stream().cuda_stream
+from ._cpp import Config, DispatchLayout, MoEMode, _cpp
+from .types import (
+    DispatchHandle,
+    DispatchLayoutInfo,
+    DispatchOutput,
+    DispatchOutputInfo,
+    RowMajorInternodeDispatchHandle,
+    RowMajorInternodeCombineContext,
+    RowMajorIntranodeDispatchHandle,
+    RowMajorIntranodeCombineContext,
+    MoECommunicatorConfig,
+    QuantConfig,
+)
+from .utils import (
+    all_gather_object as _all_gather_object,
+    bf16_view as _bf16_view,
+    broadcast_object as _broadcast_object,
+    current_stream_ptr as _stream_ptr,
+    exclusive_cumsum,
+    ptr as _ptr,
+    resolve_expert_placement,
+)
 
 
-class _DevicePointerArray:
-    """Minimal ``__cuda_array_interface__`` holder wrapping an existing device
-    pointer (no allocation, no ownership). Used to view this rank's recv pool as
-    a tensor for the zero-copy direct dispatch path, mirroring the old
-    ``torch::from_blob`` on ``recv_pool_local_ptr_``."""
-
-    def __init__(self, ptr: int, shape: Tuple[int, ...], typestr: str, owner) -> None:
-        # ``owner`` keeps the runtime (and therefore the pool allocation) alive
-        # for as long as the resulting tensor is referenced.
-        self._owner = owner
-        self.__cuda_array_interface__ = {
-            "data": (ptr, False),
-            "shape": shape,
-            "typestr": typestr,
-            "version": 3,
-            "strides": None,
-        }
-
-
-def _bf16_view(ptr: int, num_tokens: int, hidden: int, owner) -> torch.Tensor:
-    """View a raw device pointer as a ``[num_tokens, hidden]`` bfloat16 tensor.
-
-    bfloat16 has no ``__cuda_array_interface__`` typestr, so the memory is
-    imported as uint16 and reinterpreted with ``.view(torch.bfloat16)``."""
-    u16 = torch.as_tensor(_DevicePointerArray(ptr, (num_tokens, hidden), "<u2", owner), device="cuda")
-    return u16.view(torch.bfloat16)
-
-
-class ExpertParallelRuntime:
+class HighThroughputRuntime:
     """Core high-throughput expert-parallel (EP) communication runtime.
 
-    ``group`` is the ``torch.distributed`` process group used only for the
+    ``comm`` is the ``mscclpp.CommGroup`` used for rank information and
     out-of-band exchange of device ids, CUDA-IPC handles, and the MSCCL++ unique
     id. All dispatch/combine data movement happens through the MSCCL++ runtime.
     """
@@ -105,7 +74,7 @@ class ExpertParallelRuntime:
 
     def __init__(
         self,
-        group: dist.ProcessGroup,
+        comm: Any,
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
         low_latency_mode: bool = False,
@@ -113,14 +82,14 @@ class ExpertParallelRuntime:
     ) -> None:
         if low_latency_mode:
             raise NotImplementedError(
-                "ExpertParallelRuntime serves the high-throughput path only; use MoERuntime for low latency."
+                "HighThroughputRuntime serves the high-throughput path only; use MoERuntime for low latency."
             )
         if num_qps_per_rank <= 0:
             raise ValueError("num_qps_per_rank must be > 0")
 
-        self.rank: int = group.rank()
-        self.group_size: int = group.size()
-        self.group = group
+        self.rank: int = comm.my_rank
+        self.group_size: int = comm.nranks
+        self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
         self.num_qps_per_rank = num_qps_per_rank
@@ -128,20 +97,16 @@ class ExpertParallelRuntime:
         self.runtime = _cpp.ExpertParallelRuntime(self.rank, self.group_size, num_nvl_bytes, num_rdma_bytes)
 
         # Exchange device ids + CUDA-IPC handles + (for RDMA) the MSCCL++ unique id.
-        device_ids: List[Optional[int]] = [None] * self.group_size
         local_device_id = self.runtime.get_local_device_id()
-        dist.all_gather_object(device_ids, local_device_id, group)
+        device_ids = _all_gather_object(comm, local_device_id, 0xE000)
 
-        ipc_handles: List[Optional[bytes]] = [None] * self.group_size
         local_ipc_handle = self.runtime.get_local_ipc_handle()
-        dist.all_gather_object(ipc_handles, local_ipc_handle, group)
+        ipc_handles = _all_gather_object(comm, local_ipc_handle, 0xE100)
 
         root_unique_id: Optional[bytes] = None
         if self.rank == 0:
             root_unique_id = self.runtime.create_unique_id()
-        broadcast_list = [root_unique_id]
-        dist.broadcast_object_list(broadcast_list, src=0, group=group)
-        root_unique_id = broadcast_list[0]
+        root_unique_id = _broadcast_object(comm, root_unique_id, 0, 0xE200)
         assert root_unique_id is not None
         self.runtime.connect(root_unique_id)
 
@@ -614,16 +579,357 @@ class ExpertParallelRuntime:
         )
         return combined_x, combined_topk_weights
 
-    # ------------------------------------------------------------------
-    # Static helpers
-    # ------------------------------------------------------------------
 
-    @staticmethod
-    def get_low_latency_rdma_size_hint(
-        num_max_dispatch_tokens_per_rank: int, hidden: int, num_ranks: int, num_experts: int
-    ) -> int:
-        return _cpp.get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
+class HighThroughputBackend:
+    """Backend implementation for ``MoEMode.HIGH_THROUGHPUT``."""
 
+    def __init__(self, config: MoECommunicatorConfig, output_layout: DispatchLayout) -> None:
+        comm = config.comm
+        if comm is None:
+            raise ValueError("mode=HIGH_THROUGHPUT requires an mscclpp.CommGroup via comm=")
+        if Config is None or not hasattr(_cpp, "ExpertParallelRuntime"):
+            raise ImportError(
+                "mscclpp_ep_cpp was built without the high-throughput EP backend. "
+                "Rebuild with -DMSCCLPP_BUILD_EXT_EP=ON and ensure Config/ExpertParallelRuntime are exported."
+            )
 
-# Backward-compatible alias for the former DeepEP-style name.
-Buffer = ExpertParallelRuntime
+        self.comm = comm
+        self.rank = comm.my_rank
+        self.world_size = comm.nranks
+        self.local_rank = torch.cuda.current_device()
+        self.device = torch.device("cuda", self.local_rank)
+        self.mode = MoEMode.HIGH_THROUGHPUT
+        self.output_layout = output_layout
+
+        self.num_experts = config.num_experts
+        self.hidden_size = config.hidden_size
+        self.topk = config.topk
+        self.max_tokens_per_rank = config.max_tokens_per_rank
+        self.num_sms = config.num_sms
+        self.enable_overlap = config.enable_overlap
+
+        if self.output_layout != DispatchLayout.FLAT:
+            raise NotImplementedError("HT mode currently supports only DispatchLayout.FLAT")
+
+        self.num_local_experts, self.local_expert_start = resolve_expert_placement(
+            num_experts=self.num_experts,
+            world_size=self.world_size,
+            rank=self.rank,
+            num_local_experts=config.num_local_experts,
+            local_expert_start=config.local_expert_start,
+        )
+
+        if config.quant is not None:
+            raise NotImplementedError("HT quantized dispatch (scales) is not implemented yet")
+
+        self.expert_alignment = config.expert_alignment
+        self._cfg = Config(
+            self.num_sms,
+            config.nvl_chunked_send,
+            config.nvl_chunked_recv,
+            config.rdma_chunked_send,
+            config.rdma_chunked_recv,
+        )
+        hidden_bytes = self.hidden_size * torch.tensor([], dtype=torch.bfloat16).element_size()
+        num_nvl_bytes = self._cfg.get_nvl_buffer_size_hint(hidden_bytes, self.world_size)
+        num_rdma_bytes = self._cfg.get_rdma_buffer_size_hint(hidden_bytes, self.world_size)
+        self._is_internode = num_rdma_bytes > 0
+        self._runtime = HighThroughputRuntime(
+            comm,
+            num_nvl_bytes=num_nvl_bytes,
+            num_rdma_bytes=num_rdma_bytes,
+            low_latency_mode=False,
+            num_qps_per_rank=config.num_rdma_qps_per_rank,
+        )
+
+    def is_available(self) -> bool:
+        return self._runtime.is_available()
+
+    def is_internode_available(self) -> bool:
+        return self._runtime.is_internode_available()
+
+    def is_internode(self) -> bool:
+        return self._is_internode
+
+    def dispatch(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor],
+        quant: Optional[QuantConfig],
+        *,
+        output_buffer: Optional[torch.Tensor],
+        stream: Optional[torch.cuda.Stream],
+        previous_handle: Optional[DispatchHandle],
+    ) -> tuple[DispatchOutput, DispatchHandle]:
+        del output_buffer
+        if stream is not None:
+            with torch.cuda.stream(stream):
+                return self._dispatch(input, topk_ids, weights, quant, previous_handle)
+        return self._dispatch(input, topk_ids, weights, quant, previous_handle)
+
+    def _dispatch(
+        self,
+        input: torch.Tensor,
+        topk_ids: torch.Tensor,
+        weights: Optional[torch.Tensor],
+        quant: Optional[QuantConfig],
+        previous_handle: Optional[DispatchHandle],
+    ) -> tuple[DispatchOutput, DispatchHandle]:
+        self._validate_dispatch_inputs(input, topk_ids, weights, quant)
+        if weights is None:
+            weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
+
+        cache = getattr(previous_handle, "_dispatch_cache", None) if previous_handle is not None else None
+        if cache is not None:
+            num_tokens_per_rank = cache["num_tokens_per_rank"]
+            num_tokens_per_rdma_rank = cache["num_tokens_per_rdma_rank"]
+            num_tokens_per_expert = cache["num_tokens_per_expert"]
+            is_token_in_rank = cache["is_token_in_rank"]
+        else:
+            (
+                num_tokens_per_rank,
+                num_tokens_per_rdma_rank,
+                num_tokens_per_expert,
+                is_token_in_rank,
+            ) = self._runtime.get_dispatch_layout(topk_ids, self.num_experts)
+
+        if self._is_internode:
+            (
+                recv_x,
+                _recv_x_scales,
+                _recv_topk_idx,
+                recv_topk_weights,
+                num_recv_tokens_per_expert_list,
+                _rdma_channel_prefix_matrix,
+                _gbl_channel_prefix_matrix,
+                recv_rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum,
+                recv_gbl_channel_prefix_matrix,
+                _recv_gbl_rank_prefix_sum,
+                recv_src_meta,
+                send_rdma_head,
+                send_nvl_head,
+            ) = self._runtime.internode_dispatch(
+                input,
+                None,
+                topk_ids,
+                weights,
+                num_tokens_per_rank,
+                num_tokens_per_rdma_rank,
+                is_token_in_rank,
+                num_tokens_per_expert,
+                0,
+                0,
+                None,
+                None,
+                None,
+                None,
+                self.expert_alignment,
+                self._cfg,
+            )
+            combine_context = RowMajorInternodeCombineContext(
+                recv_topk_weights=recv_topk_weights,
+                src_meta=recv_src_meta,
+                is_token_in_rank=is_token_in_rank,
+                recv_rdma_channel_prefix_matrix=recv_rdma_channel_prefix_matrix,
+                recv_rdma_rank_prefix_sum=recv_rdma_rank_prefix_sum,
+                recv_gbl_channel_prefix_matrix=recv_gbl_channel_prefix_matrix,
+                send_rdma_head=send_rdma_head,
+                send_nvl_head=send_nvl_head,
+            )
+            dispatch_cache = (
+                cache
+                if cache is not None
+                else {
+                    "num_tokens_per_rank": num_tokens_per_rank,
+                    "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
+                    "num_tokens_per_expert": num_tokens_per_expert,
+                    "is_token_in_rank": is_token_in_rank,
+                }
+            )
+        elif cache is not None:
+            (
+                recv_x,
+                _recv_x_scales,
+                _recv_topk_idx,
+                recv_topk_weights,
+                num_recv_tokens_per_expert_list,
+                rank_prefix_matrix,
+                _channel_prefix_matrix,
+                recv_channel_prefix_matrix,
+                recv_src_idx,
+                send_head,
+            ) = self._runtime.intranode_dispatch(
+                input,
+                None,
+                None,
+                None,
+                None,
+                is_token_in_rank,
+                None,
+                cache["num_recv_tokens"],
+                cache["rank_prefix_matrix"],
+                cache["channel_prefix_matrix"],
+                self.expert_alignment,
+                self._cfg,
+            )
+            combine_context = RowMajorIntranodeCombineContext(
+                recv_topk_weights=recv_topk_weights,
+                src_idx=recv_src_idx,
+                rank_prefix_matrix=rank_prefix_matrix,
+                recv_channel_prefix_matrix=recv_channel_prefix_matrix,
+                send_head=send_head,
+            )
+            dispatch_cache = cache
+        else:
+            (
+                recv_x,
+                _recv_x_scales,
+                _recv_topk_idx,
+                recv_topk_weights,
+                num_recv_tokens_per_expert_list,
+                rank_prefix_matrix,
+                channel_prefix_matrix,
+                recv_channel_prefix_matrix,
+                recv_src_idx,
+                send_head,
+            ) = self._runtime.intranode_dispatch(
+                input,
+                None,
+                topk_ids,
+                weights,
+                num_tokens_per_rank,
+                is_token_in_rank,
+                num_tokens_per_expert,
+                0,
+                None,
+                None,
+                self.expert_alignment,
+                self._cfg,
+            )
+            combine_context = RowMajorIntranodeCombineContext(
+                recv_topk_weights=recv_topk_weights,
+                src_idx=recv_src_idx,
+                rank_prefix_matrix=rank_prefix_matrix,
+                recv_channel_prefix_matrix=recv_channel_prefix_matrix,
+                send_head=send_head,
+            )
+            dispatch_cache = {
+                "num_tokens_per_rank": num_tokens_per_rank,
+                "num_tokens_per_rdma_rank": num_tokens_per_rdma_rank,
+                "num_tokens_per_expert": num_tokens_per_expert,
+                "is_token_in_rank": is_token_in_rank,
+                "rank_prefix_matrix": rank_prefix_matrix,
+                "channel_prefix_matrix": channel_prefix_matrix,
+                "num_recv_tokens": int(recv_x.size(0)),
+            }
+
+        output_info = DispatchOutputInfo(
+            layout=DispatchLayoutInfo(
+                kind=DispatchLayout.FLAT,
+                num_tokens_per_expert=num_recv_tokens_per_expert_list,
+                offsets=exclusive_cumsum(num_recv_tokens_per_expert_list),
+            ),
+            quant=None,
+        )
+        dispatch_out = DispatchOutput(
+            tokens=recv_x,
+            quant=output_info.quant,
+            layout=output_info.layout,
+        )
+        handle_cls = (
+            RowMajorInternodeDispatchHandle
+            if isinstance(combine_context, RowMajorInternodeCombineContext)
+            else RowMajorIntranodeDispatchHandle
+        )
+        handle = handle_cls(output_info=output_info, combine_context=combine_context)
+        # The torch-free HT runtime orders its work on the caller's CUDA stream
+        # (no separate event handle), so there is nothing to attach here.
+        handle._event = None  # type: ignore[attr-defined]
+        handle._dispatch_cache = dispatch_cache  # type: ignore[attr-defined]
+        return dispatch_out, handle
+
+    def combine(
+        self,
+        expert_output: torch.Tensor,
+        handle: DispatchHandle,
+        *,
+        out: Optional[torch.Tensor],
+        stream: Optional[torch.cuda.Stream],
+    ) -> torch.Tensor:
+        if stream is not None:
+            with torch.cuda.stream(stream):
+                return self._combine(expert_output, handle, out)
+        return self._combine(expert_output, handle, out)
+
+    def _combine(
+        self, expert_output: torch.Tensor, handle: DispatchHandle, out: Optional[torch.Tensor]
+    ) -> torch.Tensor:
+        self._validate_combine_inputs(expert_output, handle)
+        if isinstance(handle, RowMajorInternodeDispatchHandle):
+            context = handle.combine_context
+            combined_x, _combined_w = self._runtime.internode_combine(
+                expert_output,
+                context.recv_topk_weights,
+                context.src_meta,
+                context.is_token_in_rank,
+                context.recv_rdma_channel_prefix_matrix,
+                context.recv_rdma_rank_prefix_sum,
+                context.recv_gbl_channel_prefix_matrix,
+                context.send_rdma_head,
+                context.send_nvl_head,
+                self._cfg,
+            )
+        elif isinstance(handle, RowMajorIntranodeDispatchHandle):
+            context = handle.combine_context
+            combined_x, _combined_w = self._runtime.intranode_combine(
+                expert_output,
+                context.recv_topk_weights,
+                context.src_idx,
+                context.rank_prefix_matrix,
+                context.recv_channel_prefix_matrix,
+                context.send_head,
+                self._cfg,
+            )
+        else:
+            raise ValueError("DispatchHandle does not contain row-major combine context")
+        if out is not None:
+            out.copy_(combined_x)
+            return out
+        return combined_x
+
+    def _validate_dispatch_inputs(self, input, topk_ids, weights, quant) -> None:
+        if quant is not None:
+            raise NotImplementedError("HT dispatch does not support quantized input scales yet")
+        if input.dim() != 2 or not input.is_contiguous():
+            raise ValueError("input must be a contiguous [num_tokens, hidden] tensor")
+        if input.device.type != "cuda" or input.dtype != torch.bfloat16:
+            raise ValueError("HT dispatch input must be a CUDA BF16 tensor")
+        if input.size(1) != self.hidden_size:
+            raise ValueError(f"input hidden size {input.size(1)} != configured {self.hidden_size}")
+        if input.size(0) > self.max_tokens_per_rank:
+            raise ValueError("input token count exceeds max_tokens_per_rank")
+        if topk_ids.dim() != 2 or not topk_ids.is_contiguous():
+            raise ValueError("topk_ids must be a contiguous [num_tokens, topk] tensor")
+        if topk_ids.device != input.device or topk_ids.dtype != torch.int64:
+            raise ValueError("topk_ids must be an int64 CUDA tensor on the same device as input")
+        if topk_ids.shape != (input.size(0), self.topk):
+            raise ValueError("topk_ids shape must be [input.size(0), topk]")
+        if weights is not None:
+            if weights.dim() != 2 or not weights.is_contiguous():
+                raise ValueError("weights must be a contiguous [num_tokens, topk] tensor")
+            if weights.device != input.device or weights.dtype != torch.float32:
+                raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
+            if weights.shape != topk_ids.shape:
+                raise ValueError("weights shape must match topk_ids")
+
+    def _validate_combine_inputs(self, expert_output, handle) -> None:
+        if not isinstance(handle, (RowMajorIntranodeDispatchHandle, RowMajorInternodeDispatchHandle)):
+            raise TypeError("handle must be a DispatchHandle returned by dispatch")
+        if expert_output.dim() != 2 or not expert_output.is_contiguous():
+            raise ValueError("expert_output must be a contiguous [total_recv_tokens, hidden] tensor")
+        if expert_output.size(1) != self.hidden_size:
+            raise ValueError(f"expert_output hidden size {expert_output.size(1)} != configured {self.hidden_size}")
+        if self._is_internode != isinstance(handle, RowMajorInternodeDispatchHandle):
+            raise ValueError("handle transport does not match this communicator")

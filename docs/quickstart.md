@@ -118,7 +118,7 @@ $ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
 Optional extras can be installed by specifying them in brackets. Available extras:
 - **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
 - **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
-- **`ep`**: Build and install the Expert Parallel extension (`mscclpp.ext.ep`). The extension itself does
+- **`ep`**: Build and install the Expert Parallel extension (`mscclpp.ep`). The extension itself does
   not add a PyTorch dependency, but the high-level Python API expects user-provided `torch.Tensor` inputs.
   CUDA architectures 90 or newer are required for EP kernels.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).

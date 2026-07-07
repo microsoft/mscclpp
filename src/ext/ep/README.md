@@ -18,7 +18,7 @@ MSCCL++. The module builds two active backends:
 | HT dispatch/combine              | ✅ active DeepEP-style backend with intranode and internode paths |
 | HT GB200 direct/flat fast paths  | ✅ runtime-gated by `MSCCLPP_EP_DIRECT`, `MSCCLPP_EP_INTRA_DIRECT`, and `MSCCLPP_EP_FLAT` |
 | GB200 LL NVLS multimem fast path | ✅ runtime-gated by `mscclpp::isNvlsSupported()` |
-| Python frontend `mscclpp.ext.ep` | ✅ `MoECommunicator` selects LL or HT by `MoEMode` |
+| Python frontend `mscclpp.ep` | ✅ `MoECommunicator` selects LL or HT by `MoEMode` |
 
 On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), LL was validated at
 16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168, tokens=4096,
@@ -102,7 +102,7 @@ This produces `mscclpp_ep_cpp.so` — a nanobind extension module.
 The Python frontend picks it up automatically:
 
 ```python
-from mscclpp.ext import ep
+import mscclpp.ep as ep
 moe_comm = ep.MoECommunicator(...)
 ```
 
@@ -324,11 +324,11 @@ src/ext/ep/
     ├── utils.cuh               — device inline helpers
     └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
 
-python/mscclpp/ext/ep/
+python/mscclpp/ep/
 ├── __init__.py                 — reexports the public MoECommunicator API
 └── communicator.py             — torch.Tensor frontend over raw-pointer runtime calls
 
-test/python/ext/ep/
+test/python/ep/
 ├── test_intranode_multirank.py        — intranode HT dispatch+combine
 ├── test_internode_multirank.py        — internode HT dispatch+combine
 └── test_low_latency_multirank.py      — LL dispatch+combine
@@ -364,7 +364,7 @@ pip install scikit-build-core nanobind setuptools_scm
 
 Then build the EP extension (see [Build](#build)) — `pip install .` from
 the repo root installs `mscclpp_ep_cpp.so` into the active env so the
-test scripts can `from mscclpp.ext import ep`.
+test scripts can `import mscclpp.ep as ep`.
 
 Intranode (single node, 8 GPUs) — HT:
 
@@ -373,7 +373,7 @@ MSCCLPP_EP_BENCH=1 \
 MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
 MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=1 --nproc_per_node=8 \
-    test/python/ext/ep/test_intranode_multirank.py
+    test/python/ep/test_intranode_multirank.py
 ```
 
 Intranode LL (single node, 8 GPUs):
@@ -383,7 +383,7 @@ MSCCLPP_EP_BENCH=1 \
 MSCCLPP_EP_BENCH_TOKENS=128 MSCCLPP_EP_BENCH_HIDDEN=7168 \
 MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=1 --nproc_per_node=8 \
-    test/python/ext/ep/test_low_latency_multirank.py
+    test/python/ep/test_low_latency_multirank.py
 ```
 
 Internode HT (2 nodes × 8 GPUs), torchrun:
@@ -395,7 +395,7 @@ MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
 MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=0 \
     --master_addr=<master_ip> --master_port=29600 \
-    test/python/ext/ep/test_internode_multirank.py
+    test/python/ep/test_internode_multirank.py
 
 # node 1 (worker)
 MSCCLPP_EP_BENCH=1 \
@@ -403,7 +403,7 @@ MSCCLPP_EP_BENCH_TOKENS=4096 MSCCLPP_EP_BENCH_HIDDEN=7168 \
 MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
 torchrun --nnodes=2 --nproc_per_node=8 --node_rank=1 \
     --master_addr=<master_ip> --master_port=29600 \
-    test/python/ext/ep/test_internode_multirank.py
+    test/python/ep/test_internode_multirank.py
 ```
 
 If the bootstrap NIC is mis-detected (e.g. multi-homed hosts), pin
@@ -427,7 +427,7 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
              LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
-             exec python3 test/python/ext/ep/test_internode_multirank.py'
+             exec python3 test/python/ep/test_internode_multirank.py'
 ```
 
 Internode LL via mpirun — same launch wrapper, swap the test script:
@@ -442,7 +442,7 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
              LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
-             exec python3 test/python/ext/ep/test_low_latency_multirank.py'
+             exec python3 test/python/ep/test_low_latency_multirank.py'
 ```
 
 Add `-x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface>
