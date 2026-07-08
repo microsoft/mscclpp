@@ -494,58 +494,82 @@ Env knobs:
 The `ht/` directory is active source code for the HT backend in the current
 build.
 
-### NCCL EP LL vs DeepEP elastic dispatch
+### MSCCL++ EP LL vs NCCL EP LL vs DeepEP elastic dispatch payloads
 
-NCCL EP LL dispatch uses multiple SMs to process tokens. Most warps stage
-or quantize token payloads, top-k lanes write the per-token routing header,
-and a final warp computes rank counts. Sends are deduplicated by destination
-rank: if multiple top-k experts for the same token live on the same rank, the
-token is sent to that rank only once. After the token payloads for a rank are
-issued, NCCL EP sends a count signal, and the receiver waits for that count
-before unpacking the rank buffer into the output layout.
-
-The NCCL EP dispatch wire layout depends on the transport. RDMA uses one
-interleaved message per compact slot:
+MSCCL++ EP LL dispatch sends one message per routed expert. The destination
+receive buffer is partitioned by local expert, source rank, and slot, so the
+buffer position encodes the destination expert and source rank. The inline
+header only carries the source token's local row index:
 
 ```text
+BF16 dispatch message:
+[int4 header: src_token_idx][BF16 hidden payload]
+
+FP8 dispatch message:
+[int4 header: src_token_idx][FP8 hidden payload][FP32 scale per 128 elements]
+```
+
+`topk_ids` and `topk_weights` are not sent in the LL dispatch payload. They are
+kept in the dispatch handle on the source rank and are used by `combine` to
+weight the returned expert outputs. Dispatch sends a small per-expert count
+signal separately so the receiver knows how many token messages arrived.
+
+NCCL EP LL sends one message per destination rank after rank-level
+deduplication. Its RDMA path stores each slot as an interleaved message, while
+its NVLink/P2P path stores headers and payloads in split sections inside the
+same per-source-rank receive region:
+
+```text
+RDMA:
 [DispatchHdr][hidden payload][optional FP8 scales]
 
-DispatchHdr(EXPERT_MAJOR) = [token_id][expert_id[0] ... expert_id[num_topk-1]]
-DispatchHdr(RANK_MAJOR)   = [token_id][(topk_weight, expert_id)[0] ...
-                                      (topk_weight, expert_id)[num_topk-1]]
+NVLink/P2P:
+[hdr0][hdr1]...[hdrN][payload0][payload1]...[payloadN]
 ```
 
-NVLink/P2P uses a split layout inside the same per-source-rank receive region:
+The header carries `token_id` plus one routing entry per top-k choice:
 
 ```text
-[hdr0][hdr1]...[hdrN][payload0][payload1]...[payloadN]
-hdr_i = DispatchHdr(EXPERT_MAJOR or RANK_MAJOR)
-payload_i = [hidden payload_i][optional FP8 scales_i]
+DispatchHdr(EXPERT_MAJOR) = [token_id][expert_id[num_topk]]
+DispatchHdr(RANK_MAJOR)   = [token_id][(topk_weight, expert_id)[num_topk]]
 ```
 
-The header carries `token_id` and one routing entry per top-k choice. In
-rank-major layout, each routing entry also carries `topk_weight`; in
-expert-major layout it only carries `expert_id`. The final warp sends only the
-per-rank token count signal, not token payload or routing metadata.
+The NCCL EP expert-major header is `align16(4 + num_topk * 2)` bytes because
+`expert_id` is `uint16_t`. The rank-major header is
+`align16(4 + num_topk * 8)` bytes because each routing entry stores an FP32
+weight and a `uint16_t` expert ID plus padding.
 
-DeepEP elastic dispatch uses a different notify/data pipeline. Notify warps
-first compute rank and expert counts, with rank-level deduplication, exchange
-the counts, and build prefix sums. Dispatch warps then send compact token
-buffers with a single token layout:
+DeepEP elastic dispatch uses a different notify/data pipeline. It deduplicates
+by destination rank: if multiple top-k experts for the same token live on the
+same rank, the hidden payload is sent to that rank only once. Because the
+receiver must recover all local expert hits from that single token copy, the
+token buffer carries the full top-k metadata:
 
 ```text
 [hidden payload][optional scale-factor packs][metadata]
-metadata = [topk_idx[num_topk]][optional topk_weights[num_topk]][src_token_global_idx]
+metadata = [topk_idx[num_topk]][optional topk_weights[num_topk]][src_token_global_idx][linked_list_idx[num_topk]]
 ```
 
-The common DeepEP token layout reserves additional linked-list metadata slots,
-but non-hybrid dispatch does not use them. After a GPU barrier guarantees data
-arrival, the copy epilogue waits on the programmatic launch dependency and
-copies data into `recv_x`, `recv_sf`, `recv_topk_idx`, `recv_topk_weights`,
-and source metadata.
+`topk_idx` entries are 32-bit expert IDs, `topk_weights` entries are FP32 routing
+weights, and `src_token_global_idx = src_rank * num_max_tokens_per_rank +
+src_local_token_idx`. The common DeepEP token layout reserves the linked-list
+slots even when the non-hybrid path does not use them. After a GPU barrier
+guarantees data arrival, the copy epilogue copies data into `recv_x`, `recv_sf`,
+`recv_topk_idx`, `recv_topk_weights`, and source metadata.
 
-DeepEP elastic combine replays the dispatch metadata to send expert outputs
-back to owner ranks. It uses barriers and per-channel tail signals, followed
-by a reduce epilogue, rather than a single per-rank finish flag. Top-k weights
-are stored as token-buffer metadata for non-expanded layouts and are used by
-the final reduction.
+For BF16 dispatch with `num_tokens = 128`, `hidden = 7168`, and
+`num_experts = 256`, the expected per-source-rank dispatch payload is:
+
+| Case | Sends per token | Bytes per send | Expected dispatch bytes |
+|------|-----------------|----------------|-------------------------|
+| MSCCL++ LL, `topk=8` | `8` | `16 + 7168 * 2 = 14,352 B` | `128 * 8 * 14,352 = 14,696,448 B` (`14.70 MB`, `14.02 MiB`) |
+| NCCL EP LL expert-major, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `align16(4 + 8*2) + 7168 * 2 = 14,368 B` | `128 * 6.523 * 14,368 ~= 11,996,989 B` (`12.00 MB`, `11.44 MiB`) |
+| NCCL EP LL rank-major, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `align16(4 + 8*8) + 7168 * 2 = 14,416 B` | `128 * 6.523 * 14,416 ~= 12,037,069 B` (`12.04 MB`, `11.48 MiB`) |
+| DeepEP elastic, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `7168 * 2 + align32(8*4 + 8*4 + 4 + 8*4) = 14,464 B` | `128 * 6.523 * 14,464 ~= 12,077,148 B` (`12.08 MB`, `11.52 MiB`) |
+| MSCCL++ LL, `topk=4` | `4` | `16 + 7168 * 2 = 14,352 B` | `128 * 4 * 14,352 = 7,348,224 B` (`7.35 MB`, `7.01 MiB`) |
+| NCCL EP LL expert-major, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `align16(4 + 4*2) + 7168 * 2 = 14,352 B` | `128 * 3.838 * 14,352 ~= 7,050,391 B` (`7.05 MB`, `6.72 MiB`) |
+| NCCL EP LL rank-major, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `align16(4 + 4*8) + 7168 * 2 = 14,384 B` | `128 * 3.838 * 14,384 ~= 7,066,111 B` (`7.07 MB`, `6.74 MiB`) |
+| DeepEP elastic, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `7168 * 2 + align32(4*4 + 4*4 + 4 + 4*4) = 14,400 B` | `128 * 3.838 * 14,400 ~= 7,073,971 B` (`7.07 MB`, `6.75 MiB`) |
+
+The table counts token data plus inline per-token metadata. It excludes the
+small count, tail, barrier, and completion signals.

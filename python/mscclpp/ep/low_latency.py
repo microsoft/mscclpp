@@ -117,7 +117,7 @@ class LowLatencyBackend:
         self.dispatch_requires_quantization = self.quant_dtype is not None
 
         num_rdma_bytes = get_low_latency_rdma_size_hint(
-            self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts
+            self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts, self.topk
         )
         self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
@@ -131,9 +131,9 @@ class LowLatencyBackend:
             mode=self.mode,
             num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
-        # LL always uses the RDMA transport, but a single-node LL job is not
-        # internode topology-wise. num_rdma_ranks > 1 iff world_size spans more
-        # than one local NVLink domain.
+        # LL uses the registered symmetric buffer for both IPC/NVLink and RDMA-backed
+        # modes. A single-node LL job is not internode topology-wise.
+        # num_rdma_ranks > 1 iff world_size spans more than one local NVLink domain.
         self._is_internode = self._runtime.get_num_rdma_ranks() > 1
 
     def is_available(self) -> bool:
@@ -165,6 +165,7 @@ class LowLatencyBackend:
         self._runtime.cpp_runtime.dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
+            weights.data_ptr(),
             out_buf.data_ptr(),
             0 if packed_scales is None else packed_scales.data_ptr(),
             src_info.data_ptr(),

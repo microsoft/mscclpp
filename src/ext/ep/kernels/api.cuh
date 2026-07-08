@@ -302,6 +302,7 @@ void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, 
 /// @param outputCount Total count per expert.
 /// @param input Input tokens [num_tokens, hidden].
 /// @param topkIdx Expert indices [num_tokens, num_topk].
+/// @param topkWeights Routing weights [num_tokens, num_topk].
 /// @param config Dispatch configuration.
 /// @param currentBuffer Current iteration buffer set.
 /// @param nextBuffer Next iteration buffer set (for cleanup).
@@ -310,9 +311,9 @@ void cleanBuffers(int64_t* buffer0, int numInt0, int64_t* buffer1, int numInt1, 
 /// @param stream CUDA stream to launch the kernel on.
 /// @param phase Phase control (default: SEND_AND_RECV).
 void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-              const void* input, const int64_t* topkIdx, const DispatchConfig& config, const BufferSet& currentBuffer,
-              const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
-              Phase phase = SEND_AND_RECV);
+              const void* input, const int64_t* topkIdx, const float* topkWeights, const DispatchConfig& config,
+              const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
+              void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
 
 /// Low-latency combine kernel that aggregates expert outputs back to tokens.
 /// @param output Combined output [num_combined_tokens, hidden].

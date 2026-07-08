@@ -26,6 +26,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
+#include "../config.hpp"
 #include "api.cuh"
 #include "common.cuh"
 #include "configs.cuh"
@@ -106,6 +107,11 @@ struct DispatchOutputVec {
 template <DType kInputDType, DType kOutputDType>
 constexpr bool kDispatchNeedsScales = kInputDType != kOutputDType;
 
+template <DType kOutputDType>
+using LowLatencyDispatchPayloadView =
+    LowLatencyPackedPayloadView<typename DispatchDTypeTraits<kOutputDType>::Type,
+                                std::conditional_t<kOutputDType == DType::F8E4M3, float, void>>;
+
 template <DType kInputDType, DType kOutputDType, int kNumPerChannels>
 MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Type dispatchConvert(
     const int4& inputValue, float* scaleOut, int laneId) {
@@ -149,25 +155,29 @@ template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWar
 MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* outputSrcInfo,
                                         int64_t* outputLayoutRange, int* outputCount, void* stagedRecv,
                                         int64_t* stagedRecvCountBuffer, int numMaxDispatchTokensPerRank, int numExperts,
-                                        int numRanks, int numLocalExperts, int rank, size_t numBytesPerMsg,
+                                        int numRanks, int numLocalExperts, int rank, int numTopk, size_t numBytesPerMsg,
                                         size_t hiddenInt4, size_t hiddenBytes, int numScales,
                                         DispatchLayout dispatchLayout, int warpGroupId, int subWarpId, int laneId,
                                         int responsibleExpertIdx) {
   if (responsibleExpertIdx >= numExperts) return;
 
+  using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
   const auto sourceRank = responsibleExpertIdx / numLocalExperts;
   const auto localExpertIdx = responsibleExpertIdx % numLocalExperts;
+  const auto globalExpertIdx = rank * numLocalExperts + localExpertIdx;
   (void)dispatchLayout;  // EXPERT_MAJOR and FLAT share the same physical order.
-  const auto stagedMsgBase = reinterpret_cast<uint8_t*>(stagedRecv) +
-                             localExpertIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
-                             sourceRank * numMaxDispatchTokensPerRank * numBytesPerMsg;
+  const auto stagedMsgBase =
+      reinterpret_cast<uint8_t*>(stagedRecv) + sourceRank * numMaxDispatchTokensPerRank * numBytesPerMsg;
   const auto outputPayload =
       reinterpret_cast<int4*>(output) + localExpertIdx * numRanks * numMaxDispatchTokensPerRank * hiddenInt4;
   const auto packedSrcInfo = outputSrcInfo + localExpertIdx * numRanks * numMaxDispatchTokensPerRank;
   const auto outputLayout = outputLayoutRange + localExpertIdx * numRanks;
+  const LowLatencyDispatchPayloadView<kOutputDType> payload(hiddenBytes / sizeof(OutputType), numTopk);
 
   __shared__ int sharedNumRecvTokens[kNumWarpGroups];
+  __shared__ int sharedNumExpertTokens[kNumWarpGroups];
   __shared__ int sharedRecvTokenBeginIdx[kNumWarpGroups];
+  __shared__ int sharedCopyCounter[kNumWarpGroups];
 
   int numRecvTokens;
   int recvTokenBeginIdx;
@@ -175,39 +185,74 @@ MSCCLPP_DEVICE_INLINE void dispatchRecv(void* output, float* outputScales, int* 
   if (subWarpId == 0 and laneId == 0) {
     const auto raw = waitSignalNonZero(stagedRecvCountBuffer + localExpertIdx * numRanks + sourceRank);
     numRecvTokens = static_cast<int>(-raw - 1);
-    recvTokenBeginIdx = atomicAdd(outputCount + localExpertIdx, numRecvTokens);
     sharedNumRecvTokens[warpGroupId] = numRecvTokens;
-    sharedRecvTokenBeginIdx[warpGroupId] = recvTokenBeginIdx;
-    outputLayout[sourceRank] = pack2<int, int64_t>(numRecvTokens, recvTokenBeginIdx);
   }
   asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 2), "r"(kNumWarpsPerGroup * WARP_SIZE));
   numRecvTokens = sharedNumRecvTokens[warpGroupId];
+
+  if (subWarpId == 0) {
+    int localCount = 0;
+    for (int i = laneId; i < numRecvTokens; i += WARP_SIZE) {
+      const auto stagedMsg = stagedMsgBase + i * numBytesPerMsg;
+      const auto stagedTopkIdx = payload.topKIndices(stagedMsg);
+      bool tokenHitsExpert = false;
+      for (int topkId = 0; topkId < numTopk; ++topkId) {
+        tokenHitsExpert |= ld_nc_global(stagedTopkIdx + topkId) == globalExpertIdx;
+      }
+      localCount += tokenHitsExpert ? 1 : 0;
+    }
+    const auto numExpertTokens = warp_reduce_sum(localCount);
+    if (laneId == 0) {
+      recvTokenBeginIdx = atomicAdd(outputCount + localExpertIdx, numExpertTokens);
+      sharedNumExpertTokens[warpGroupId] = numExpertTokens;
+      sharedRecvTokenBeginIdx[warpGroupId] = recvTokenBeginIdx;
+      sharedCopyCounter[warpGroupId] = 0;
+      outputLayout[sourceRank] = pack2<int, int64_t>(numExpertTokens, recvTokenBeginIdx);
+    }
+  }
+  asm volatile("bar.sync %0, %1;" ::"r"(warpGroupId + 2), "r"(kNumWarpsPerGroup * WARP_SIZE));
+  if (sharedNumExpertTokens[warpGroupId] == 0) return;
   recvTokenBeginIdx = sharedRecvTokenBeginIdx[warpGroupId];
 
   EP_DEVICE_ASSERT(numScales <= 64);
   for (int i = subWarpId; i < numRecvTokens; i += kNumWarpsPerGroup) {
-    const auto stagedMsg = reinterpret_cast<int*>(stagedMsgBase + i * numBytesPerMsg);
-    if (laneId == 0) packedSrcInfo[recvTokenBeginIdx + i] = ld_nc_global(stagedMsg);
+    const auto stagedMsg = stagedMsgBase + i * numBytesPerMsg;
+    const auto stagedTopkIdx = payload.topKIndices(stagedMsg);
+    const auto stagedSrcTokenGlobalIdx = payload.srcTokenGlobalIdx(stagedMsg);
+    bool tokenHitsExpert = false;
+    for (int topkId = 0; topkId < numTopk; ++topkId) {
+      tokenHitsExpert |= ld_nc_global(stagedTopkIdx + topkId) == globalExpertIdx;
+    }
+    if (!tokenHitsExpert) continue;
+
+    int outputTokenIdx = laneId == 0 ? atomicAdd(sharedCopyCounter + warpGroupId, 1) : 0;
+    outputTokenIdx = __shfl_sync(0xffffffff, outputTokenIdx, 0);
+    outputTokenIdx += recvTokenBeginIdx;
+    if (laneId == 0) {
+      const auto srcTokenGlobalIdx = ld_nc_global(stagedSrcTokenGlobalIdx);
+      packedSrcInfo[outputTokenIdx] = srcTokenGlobalIdx % numMaxDispatchTokensPerRank;
+    }
     __syncwarp();
 
-    const auto stagedPayload = reinterpret_cast<int4*>(reinterpret_cast<uint8_t*>(stagedMsg) + sizeof(int4));
-    const auto outputPayloadRow = outputPayload + (recvTokenBeginIdx + i) * hiddenInt4;
+    const auto stagedPayload = payload.template data<int4>(stagedMsg);
+    const auto outputPayloadRow = outputPayload + outputTokenIdx * hiddenInt4;
     UNROLLED_WARP_COPY(7, laneId, hiddenInt4, outputPayloadRow, stagedPayload, ld_nc_global, st_na_global);
 
-    copyScales<kInputDType, kOutputDType>(outputScales, stagedPayload, localExpertIdx, recvTokenBeginIdx + i, numRanks,
+    copyScales<kInputDType, kOutputDType>(outputScales, stagedPayload, localExpertIdx, outputTokenIdx, numRanks,
                                           numMaxDispatchTokensPerRank, hiddenBytes, numScales, laneId);
   }
 }
 
 template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
-MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* outputCount, void* stagedRecv,
+MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerRank, int* outputCount, void* stagedRecv,
                                         int64_t* stagedRecvCountBuffer, void* stagedSend, const void* input,
-                                        const int64_t* topkIdx, int* atomicCounterPerExpert,
-                                        int* atomicFinishCounterPerExpert, int64_t* nextClean, int numNextCleanInt,
+                                        const int64_t* topkIdx, const float* topkWeights, int* atomicCounterPerRank,
+                                        int* atomicFinishCounterPerRank, int64_t* nextClean, int numNextCleanInt,
                                         int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden,
                                         int numExperts, int rank, int numRanks, void* rdmaBufferPtr,
                                         mscclpp::PortChannelDeviceHandle* portChannelHandles,
                                         void* const* peerRdmaBases, int ranksPerIpcDomain) {
+  (void)portChannelHandles;
   const auto smId = static_cast<int>(blockIdx.x);
   const auto threadId = static_cast<int>(threadIdx.x);
   const auto warpId = threadId / WARP_SIZE;
@@ -220,13 +265,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
   const auto responsibleExpertIdx = smId * kNumWarpGroups + warpGroupId;
 
   using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
-  using OutputType = typename DispatchDTypeTraits<kOutputDType>::Type;
   constexpr int kNumPerChannels = 128;
-  const int numScales = hidden / kNumPerChannels;
-  const size_t hiddenBytes = hidden * sizeof(OutputType);
   using VecType = typename DispatchOutputVec<kInputDType, kOutputDType>::Type;
-  const size_t numBytesPerMsg =
-      sizeof(int4) + hiddenBytes + (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(float) : 0);
+  const LowLatencyDispatchPayloadView<kOutputDType> payload(hidden, numTopk);
+  const size_t numBytesPerMsg = payload.numBytes;
   const size_t numInt4PerMsg = numBytesPerMsg / sizeof(int4);
 
   if (warpId < numWarps - 1) {
@@ -247,20 +289,34 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
         const auto tokenIdx = tokenBase + tokenGroupId * numSms;
         if (tokenIdx >= numTokens) continue;
         const auto inputVec = reinterpret_cast<const int4*>(input) + tokenIdx * hiddenSourceInt4;
-        const auto stagedSendMsg =
-            reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(stagedSend) + tokenIdx * numBytesPerMsg);
-        const auto stagedSendPayload =
-            reinterpret_cast<VecType*>(reinterpret_cast<uint8_t*>(stagedSendMsg) + sizeof(int4));
-        const auto stagedSendScales =
-            reinterpret_cast<float*>(reinterpret_cast<uint8_t*>(stagedSendPayload) + hiddenBytes);
+        const auto stagedSendMsg = reinterpret_cast<uint8_t*>(stagedSend) + tokenIdx * numBytesPerMsg;
+        const auto stagedSendPayload = payload.template data<VecType>(stagedSendMsg);
+        float* stagedSendScales = nullptr;
+        if constexpr (kDispatchNeedsScales<kInputDType, kOutputDType>) {
+          stagedSendScales = payload.scaleFactors(stagedSendMsg);
+        }
+        const auto stagedSendTopkIdx = payload.topKIndices(stagedSendMsg);
+        const auto stagedSendTopkWeights = payload.topKValues(stagedSendMsg);
+        const auto stagedSendSrcTokenGlobalIdx = payload.srcTokenGlobalIdx(stagedSendMsg);
 
-        threadId == 0 ? (*stagedSendMsg = tokenIdx) : 0;
+        const bool isMetadataWarp = warpId == tokenGroupId * numTopk;
+        if (isMetadataWarp && laneId < numTopk) {
+          stagedSendTopkIdx[laneId] = static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + laneId));
+          stagedSendTopkWeights[laneId] =
+              topkWeights == nullptr ? 1.0f : __ldg(topkWeights + tokenIdx * numTopk + laneId);
+        }
+        (isMetadataWarp && laneId == 0) ? (*stagedSendSrcTokenGlobalIdx = rank * numMaxDispatchTokensPerRank + tokenIdx)
+                                        : 0;
 
         for (int i = threadId; i < hiddenSourceInt4; i += numPayloadThreads) {
           auto int4Value = __ldg(inputVec + i);
+          float* scaleOut = nullptr;
+          if constexpr (kDispatchNeedsScales<kInputDType, kOutputDType>) {
+            scaleOut = &stagedSendScales[i * kNumElemsPerRead / kNumPerChannels];
+          }
 
-          stagedSendPayload[i] = dispatchConvert<kInputDType, kOutputDType, kNumPerChannels>(
-              int4Value, &stagedSendScales[i * kNumElemsPerRead / kNumPerChannels], laneId);
+          stagedSendPayload[i] =
+              dispatchConvert<kInputDType, kOutputDType, kNumPerChannels>(int4Value, scaleOut, laneId);
         }
       }
       asm volatile("bar.sync 1, %0;" ::"r"(numPayloadThreads));
@@ -276,32 +332,26 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
         const auto dstExpertIdx =
             tokenIdx < numTokens ? static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + topkId)) : -1;
         if (dstExpertIdx < 0) continue;
-        const auto stagedSendMsg =
-            reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(stagedSend) + tokenIdx * numBytesPerMsg);
-        int slotIdx = laneId == 0 ? atomicAdd(atomicCounterPerExpert + dstExpertIdx, 1) : 0;
-        slotIdx = __shfl_sync(0xffffffff, slotIdx, 0);
         const auto dstRank = dstExpertIdx / numLocalExperts;
-        const auto dstExpertLocalIdx = dstExpertIdx % numLocalExperts;
+        bool firstForRank = true;
+        for (int i = 0; i < topkId; ++i) {
+          const auto prevExpertIdx = static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + i));
+          if (prevExpertIdx >= 0 && prevExpertIdx / numLocalExperts == dstRank) firstForRank = false;
+        }
+        if (!firstForRank) continue;
+
+        const auto stagedSendMsg = reinterpret_cast<uint8_t*>(stagedSend) + tokenIdx * numBytesPerMsg;
+        int slotIdx = laneId == 0 ? atomicAdd(atomicCounterPerRank + dstRank, 1) : 0;
+        slotIdx = __shfl_sync(0xffffffff, slotIdx, 0);
         const auto srcPtr = reinterpret_cast<uint64_t>(stagedSendMsg);
         const auto dstPtr = reinterpret_cast<uint64_t>(stagedRecv) +
-                            dstExpertLocalIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
                             rank * numMaxDispatchTokensPerRank * numBytesPerMsg + slotIdx * numBytesPerMsg;
         if (dstRank != rank) {
-          if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
-            // Peer-mapped warp copy over NVLink (CUDA IPC).
-            const auto peerDst = peerMappedPtrOf(dstPtr, peerRdmaBases, rdmaBufferPtr, dstRank);
-            const auto* srcInt4Ptr = reinterpret_cast<const int4*>(srcPtr);
-            const auto* dstInt4Ptr = reinterpret_cast<int4*>(peerDst);
-            UNROLLED_WARP_COPY(8, laneId, numInt4PerMsg, dstInt4Ptr, srcInt4Ptr, ld_nc_global, st_na_global);
-          } else {
-            // MSCCL++ port-channel PUT (lane 0 issues one request).
-            if (laneId == 0) {
-              const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
-              const auto srcOff = portChannelOffsetOf(srcPtr, rdmaBufferPtr);
-              portChannelHandles[dstExpertLocalIdx * numRanks + dstRank].put(dstOff, srcOff, numBytesPerMsg);
-            }
-            __syncwarp();
-          }
+          EP_DEVICE_ASSERT(peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain));
+          const auto peerDst = peerMappedPtrOf(dstPtr, peerRdmaBases, rdmaBufferPtr, dstRank);
+          const auto* srcInt4Ptr = reinterpret_cast<const int4*>(srcPtr);
+          const auto* dstInt4Ptr = reinterpret_cast<int4*>(peerDst);
+          UNROLLED_WARP_COPY(8, laneId, numInt4PerMsg, dstInt4Ptr, srcInt4Ptr, ld_nc_global, st_na_global);
         } else {
           const auto* srcInt4Ptr = reinterpret_cast<const int4*>(srcPtr);
           const auto* dstInt4Ptr = reinterpret_cast<int4*>(dstPtr);
@@ -309,7 +359,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
         }
 
         __syncwarp();
-        if (laneId == 0) atomicAddReleaseDevice(atomicFinishCounterPerExpert + dstExpertIdx, 1);
+        if (laneId == 0) atomicAddReleaseDevice(atomicFinishCounterPerRank + dstRank, 1);
       }
     }
   } else if (warpId == numWarps - 1) {
@@ -319,48 +369,53 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
     EP_DEVICE_ASSERT(numSms > 1);
     if (smId == 0) {
       for (int i = laneId; i < numNextCleanInt; i += WARP_SIZE) nextClean[i] = 0;
+      for (int i = laneId; i < numLocalExperts; i += WARP_SIZE) outputCount[i] = 0;
 
       __syncwarp();
-      for (int i = laneId; i < numExperts; i += WARP_SIZE)
-        atomicAddReleaseDevice(atomicFinishCounterPerExpert + i, FINISHED_SUM_TAG);
+      for (int i = laneId; i < numRanks; i += WARP_SIZE)
+        atomicAddReleaseDevice(atomicFinishCounterPerRank + i, FINISHED_SUM_TAG);
     }
 
-    int expertCount[kNumWarpGroups] = {0};
-    const auto expertBeginIdx = smId * kNumWarpGroups;
-    const auto expertEndIdx = min(expertBeginIdx + kNumWarpGroups, numExperts);
-
-    for (int i = laneId; i < numTokens * numTopk; i += WARP_SIZE) {
-      auto idx = static_cast<int>(__ldg(topkIdx + i));
-      if (idx >= expertBeginIdx and idx < expertEndIdx) expertCount[idx - expertBeginIdx]++;
-    }
-
-#pragma unroll
-    for (int i = expertBeginIdx; i < expertEndIdx; ++i) {
-      auto sum = warp_reduce_sum(expertCount[i - expertBeginIdx]);
+    const auto responsibleRank = responsibleExpertIdx;
+    if (responsibleRank < numRanks) {
+      int rankCount = 0;
+      for (int tokenIdx = laneId; tokenIdx < numTokens; tokenIdx += WARP_SIZE) {
+        bool tokenHitsRank = false;
+        for (int topkId = 0; topkId < numTopk; ++topkId) {
+          const auto expertIdx = static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + topkId));
+          if (expertIdx >= 0 && expertIdx / numLocalExperts == responsibleRank) tokenHitsRank = true;
+        }
+        rankCount += tokenHitsRank ? 1 : 0;
+      }
+      auto sum = warp_reduce_sum(rankCount);
       if (laneId == 0) {
-        sharedNumTokensSentPerExpert[i - expertBeginIdx] = sum;
-        atomicAddReleaseDevice(atomicFinishCounterPerExpert + i, FINISHED_SUM_TAG - sum);
+        sharedNumTokensSentPerRank[warpGroupId] = sum;
+        atomicAddReleaseDevice(atomicFinishCounterPerRank + responsibleRank, FINISHED_SUM_TAG - sum);
       }
     }
   }
   __syncthreads();
 
   // Issue count sends
-  if (responsibleExpertIdx < numExperts and subWarpId == 0 and laneId == 0) {
-    const auto dstRank = responsibleExpertIdx / numLocalExperts;
-    const auto dstExpertLocalIdx = responsibleExpertIdx % numLocalExperts;
-    const auto numTokensSent = sharedNumTokensSentPerExpert[responsibleExpertIdx - smId * kNumWarpGroups];
+  if (responsibleExpertIdx < numRanks and subWarpId == 0 and laneId == 0) {
+    const auto dstRank = responsibleExpertIdx;
+    const auto numTokensSent = sharedNumTokensSentPerRank[warpGroupId];
 
-    while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
-    auto* counterPtr = stagedRecvCountBuffer + dstExpertLocalIdx * numRanks + rank;
-    auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + dstExpertLocalIdx * numRanks + dstRank;
-    publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
-                              portChannelHandle, peerRdmaBases, ranksPerIpcDomain);
+    while (ld_acquire_global(atomicFinishCounterPerRank + dstRank) != FINISHED_SUM_TAG * 2);
+    for (int localExpertIdx = 0; localExpertIdx < numLocalExperts; ++localExpertIdx) {
+      auto* counterPtr = stagedRecvCountBuffer + localExpertIdx * numRanks + rank;
+      if (dstRank == rank) {
+        publishSignalDirect(counterPtr, static_cast<int64_t>(-numTokensSent - 1));
+      } else {
+        EP_DEVICE_ASSERT(peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain));
+        auto* peerCounterPtr = reinterpret_cast<int64_t*>(
+            peerMappedPtrOf(reinterpret_cast<uint64_t>(counterPtr), peerRdmaBases, rdmaBufferPtr, dstRank));
+        publishSignalDirect(peerCounterPtr, static_cast<int64_t>(-numTokensSent - 1));
+      }
+    }
 
-    atomicCounterPerExpert[responsibleExpertIdx] = 0;
-    atomicFinishCounterPerExpert[responsibleExpertIdx] = 0;
-
-    if (dstRank == 0) outputCount[dstExpertLocalIdx] = 0;
+    atomicCounterPerRank[dstRank] = 0;
+    atomicFinishCounterPerRank[dstRank] = 0;
   }
   __syncwarp();
 }
@@ -369,10 +424,10 @@ template <DType kInputDType, DType kOutputDType, int kNumWarpGroups, int kNumWar
 __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) void dispatch(
     void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayoutRange, int* outputCount,
     void* stagedRecv, int64_t* stagedRecvCountBuffer, void* stagedSend, const void* input, const int64_t* topkIdx,
-    int* atomicCounterPerExpert, int* atomicFinishCounterPerExpert, int64_t* nextClean, int numNextCleanInt,
-    int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden, int numExperts, int rank, int numRanks,
-    int phases, void* rdmaBufferPtr, mscclpp::PortChannelDeviceHandle* portChannelHandles, void* const* peerRdmaBases,
-    int ranksPerIpcDomain, DispatchLayout dispatchLayout) {
+    const float* topkWeights, int* atomicCounterPerExpert, int* atomicFinishCounterPerExpert, int64_t* nextClean,
+    int numNextCleanInt, int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden, int numExperts,
+    int rank, int numRanks, int phases, void* rdmaBufferPtr, mscclpp::PortChannelDeviceHandle* portChannelHandles,
+    void* const* peerRdmaBases, int ranksPerIpcDomain, DispatchLayout dispatchLayout) {
   const auto smId = static_cast<int>(blockIdx.x);
   const auto threadId = static_cast<int>(threadIdx.x);
   const auto warpId = threadId / WARP_SIZE, laneId = get_lane_id();
@@ -388,15 +443,15 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) vo
   const size_t hiddenInt4 = hiddenBytes / sizeof(int4);
 
   // Message package: hidden data, optional quantization scales, index at source
-  const size_t numBytesPerMsg =
-      sizeof(int4) + hiddenBytes + (kDispatchNeedsScales<kInputDType, kOutputDType> ? numScales * sizeof(float) : 0);
+  const LowLatencyDispatchPayloadView<kOutputDType> payload(hidden, numTopk);
+  const size_t numBytesPerMsg = payload.numBytes;
   EP_DEVICE_ASSERT(numBytesPerMsg % sizeof(int4) == 0);
 
   if (phases & LOW_LATENCY_SEND_PHASE) {
     __shared__ int sharedNumTokensSentPerExpert[kNumWarpGroups];
     dispatchSend<kInputDType, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
         sharedNumTokensSentPerExpert, outputCount, stagedRecv, stagedRecvCountBuffer, stagedSend, input, topkIdx,
-        atomicCounterPerExpert, atomicFinishCounterPerExpert, nextClean, numNextCleanInt, numTokens,
+        topkWeights, atomicCounterPerExpert, atomicFinishCounterPerExpert, nextClean, numNextCleanInt, numTokens,
         numMaxDispatchTokensPerRank, numTopk, hidden, numExperts, rank, numRanks, rdmaBufferPtr, portChannelHandles,
         peerRdmaBases, ranksPerIpcDomain);
   }
@@ -409,8 +464,8 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) vo
 
   dispatchRecv<kInputDType, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>(
       output, outputScales, outputSrcInfo, outputLayoutRange, outputCount, stagedRecv, stagedRecvCountBuffer,
-      numMaxDispatchTokensPerRank, numExperts, numRanks, numLocalExperts, rank, numBytesPerMsg, hiddenInt4, hiddenBytes,
-      numScales, dispatchLayout, warpGroupId, subWarpId, laneId, responsibleExpertIdx);
+      numMaxDispatchTokensPerRank, numExperts, numRanks, numLocalExperts, rank, numTopk, numBytesPerMsg, hiddenInt4,
+      hiddenBytes, numScales, dispatchLayout, warpGroupId, subWarpId, laneId, responsibleExpertIdx);
 }
 
 constexpr int kDispatchNumMaxTopK = 9;
@@ -429,6 +484,7 @@ struct DispatchLaunchArgs {
   void* stagedSend;
   const void* input;
   const int64_t* topkIdx;
+  const float* topkWeights;
   int* atomicCounterPerExpert;
   int* atomicFinishCounterPerExpert;
   int64_t* nextClean;
@@ -451,13 +507,13 @@ struct DispatchLaunchArgs {
 template <DType kOutputDType, int kNumWarpGroups, int kNumWarpsPerGroup>
 void launchDispatchKernel(const DispatchLaunchArgs& args) {
   auto dispatchFunc = dispatch<DType::BF16, kOutputDType, kNumWarpGroups, kNumWarpsPerGroup>;
-  CUDA_CHECK(cudaLaunchKernelEx(args.launchConfig, dispatchFunc, args.output, args.outputScales, args.outputSrcInfo,
-                                args.outputLayoutRange, args.outputCount, args.stagedRecv, args.stagedRecvCountBuffer,
-                                args.stagedSend, args.input, args.topkIdx, args.atomicCounterPerExpert,
-                                args.atomicFinishCounterPerExpert, args.nextClean, args.numNextCleanInt, args.numTokens,
-                                args.numMaxDispatchTokensPerRank, args.numTopk, args.hidden, args.numExperts, args.rank,
-                                args.numRanks, args.phases, args.rdmaBufferPtr, args.portChannelHandles,
-                                args.peerRdmaBases, args.ranksPerIpcDomain, args.dispatchLayout));
+  CUDA_CHECK(cudaLaunchKernelEx(
+      args.launchConfig, dispatchFunc, args.output, args.outputScales, args.outputSrcInfo, args.outputLayoutRange,
+      args.outputCount, args.stagedRecv, args.stagedRecvCountBuffer, args.stagedSend, args.input, args.topkIdx,
+      args.topkWeights, args.atomicCounterPerExpert, args.atomicFinishCounterPerExpert, args.nextClean,
+      args.numNextCleanInt, args.numTokens, args.numMaxDispatchTokensPerRank, args.numTopk, args.hidden,
+      args.numExperts, args.rank, args.numRanks, args.phases, args.rdmaBufferPtr, args.portChannelHandles,
+      args.peerRdmaBases, args.ranksPerIpcDomain, args.dispatchLayout));
 }
 
 template <DType kOutputDType>
@@ -479,9 +535,9 @@ void launchDispatchForOutputDType(const DispatchLaunchArgs& args, DType outputDT
 }
 
 void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-              const void* input, const int64_t* topkIdx, const DispatchConfig& config, const BufferSet& currentBuffer,
-              const BufferSet& nextBuffer, const TransportContext& transport, void* workspace, cudaStream_t stream,
-              Phase phase) {
+              const void* input, const int64_t* topkIdx, const float* topkWeights, const DispatchConfig& config,
+              const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
+              void* workspace, cudaStream_t stream, Phase phase) {
   // Unpack configuration
   auto stagedRecv = currentBuffer.recvDataBuffer_;
   auto stagedRecvCountBuffer = currentBuffer.recvCountBuffer_;
@@ -512,6 +568,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
   EP_HOST_ASSERT(numTopk > 0);
   EP_HOST_ASSERT(numTopk <= kDispatchNumMaxTopK);
   EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
+  EP_HOST_ASSERT(transport.ipcReady_ && "low-latency rank-dedup dispatch requires IPC/NVLink");
 
   auto atomicCounterPerExpert = reinterpret_cast<int*>(workspace);
   auto atomicFinishCounterPerExpert = atomicCounterPerExpert + numExperts;
@@ -537,6 +594,7 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
                           .stagedSend = stagedSend,
                           .input = input,
                           .topkIdx = topkIdx,
+                          .topkWeights = topkWeights,
                           .atomicCounterPerExpert = atomicCounterPerExpert,
                           .atomicFinishCounterPerExpert = atomicFinishCounterPerExpert,
                           .nextClean = nextClean,

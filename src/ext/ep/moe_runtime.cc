@@ -266,16 +266,17 @@ void MoERuntime::setup() {
 }
 
 void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
-                          int* outputCount, const void* input, const int64_t* topkIdx, int numTokens, int hidden,
-                          int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresQuantization,
-                          DispatchLayout dispatchLayout, cudaStream_t stream) {
+                          int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                          int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
+                          bool requiresQuantization, DispatchLayout dispatchLayout, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
+  EP_HOST_ASSERT(llIpcReady_ && "low-latency rank-dedup dispatch currently requires IPC/NVLink reachability");
 
-  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
+  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
   auto buffer = layout.buffers[lowLatencyBufferIdx_];
   auto nextBuffer = layout.buffers[lowLatencyBufferIdx_ ^= 1];
@@ -311,8 +312,9 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
       .rank_ = rank_,
       .numRanks_ = numRanks_,
       .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, config,
-                        currentBuffer, nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
+  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                        config, currentBuffer, nextBufferSet, transport, workspace_, stream,
+                        low_latency::SEND_AND_RECV);
 }
 
 void MoERuntime::combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
@@ -322,8 +324,9 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
+  EP_HOST_ASSERT(llIpcReady_ && "low-latency combine currently requires IPC/NVLink reachability");
 
-  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts);
+  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
   auto buffer = layout.buffers[lowLatencyBufferIdx_];
   auto nextBuffer = layout.buffers[lowLatencyBufferIdx_ ^= 1];
