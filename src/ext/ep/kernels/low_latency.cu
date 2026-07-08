@@ -811,7 +811,22 @@ void combine(void* output, const void* input, const float* inputScales, const in
 
   const auto numWarps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto numSmsBase = cell_div(numExperts, kNumWarpGroups);
-  const auto numSms = numSmsBase;
+  // combineRecv's per-token weighted-reduction loop strides by smId over
+  // numCombinedTokens, so extra blocks parallelize it ~linearly. Grow the grid
+  // to numCombinedTokens (capped by the device SM count) rather than leaving it
+  // at ceil(numExperts / kNumWarpGroups); the send-side expert work is guarded
+  // by responsibleExpertIdx < numExperts, so the extra blocks run recv-only and
+  // stay correct. (The feature/ep restructure capped the grid at numSmsBase,
+  // which regressed the LL combine on the intranode/IPC path.)
+  int deviceNumSms = numSmsBase;
+  {
+    int curDev = 0;
+    cudaGetDevice(&curDev);
+    cudaDeviceGetAttribute(&deviceNumSms, cudaDevAttrMultiProcessorCount, curDev);
+  }
+  int numSmsWanted = numCombinedTokens > numSmsBase ? numCombinedTokens : numSmsBase;
+  if (numSmsWanted > deviceNumSms) numSmsWanted = deviceNumSms;
+  const auto numSms = numSmsWanted;
 
   auto atomicCleanFlag = reinterpret_cast<int*>(workspace);
   EP_HOST_ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);
