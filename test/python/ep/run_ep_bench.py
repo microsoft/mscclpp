@@ -94,6 +94,11 @@ def parse_args() -> argparse.Namespace:
                    help="mscclpp: also collect in-process CUPTI kernel-only timing")
     p.add_argument("--torch-profiler", action="store_true",
                    help="mscclpp: run the torch.profiler kernel pass (default: host-observed only)")
+    p.add_argument("--kernel-only", action="store_true",
+                   help="compare KERNEL execution time only, stripping host/Python launch overhead "
+                        "(what ep_bench's CUPTI reports). mscclpp uses in-process CUPTI; nccl-ep uses "
+                        "ep_bench's built-in CUPTI KernelTimer. The unified table then leads with the "
+                        "kernel dispatch/combine times and a kernel D+C ratio.")
 
     # nccl-ep backend.
     p.add_argument("--nccl-lib-path", default=os.environ.get("NCCL_LIB_PATH", ""),
@@ -138,8 +143,13 @@ _HOST_RE = {
     "total": re.compile(r"^Total \(D\+C\):\s+avg=([\d.]+)\s*us,\s*min=([\d.]+)\s*us,\s*max=([\d.]+)\s*us"),
 }
 _RANKS_RE = re.compile(r"=== Summary \(Low Latency, across (\d+) ranks\) ===")
-# Kernel-only representative dispatch line (mscclpp in-process CUPTI / torch.profiler block).
-_KDISP_RE = re.compile(r"^Dispatch:\s+min=([\d.]+)\s*us \(representative\)")
+# Kernel-only Dispatch line. mscclpp's in-process CUPTI prints
+# ``Dispatch: min=X us (representative) [...]``; ep_bench prints
+# ``Dispatch: avg=A us, min=M us, max=X us``. Take the min (the cross-rank
+# recv-spin floor) either way -- that is the comparable kernel cost.
+_KDISP_REP_RE = re.compile(r"^Dispatch:\s+min=([\d.]+)\s*us \(representative\)")
+_KDISP_AMM_RE = re.compile(r"^Dispatch:\s+avg=[\d.]+\s*us,\s*min=([\d.]+)\s*us,\s*max=[\d.]+\s*us")
+# Kernel-only Combine line (both backends): ``Combine: avg=A us, ...`` (no ``(BF16)``).
 _KCOMB_RE = re.compile(r"^Combine:\s+avg=([\d.]+)\s*us")
 
 
@@ -156,12 +166,17 @@ def parse_ll_summary(text: str, ep_lib: str) -> LLResult:
             if m:
                 ph = Phase(float(m.group(1)), float(m.group(2)), float(m.group(3)))
                 setattr(res, name, ph)
-        m = _KDISP_RE.match(line)
-        if m:
-            res.kdispatch = float(m.group(1))
-        elif _KCOMB_RE.match(line) and res.kdispatch is not None and res.kcombine is None:
-            # Only the kernel-only Combine line (immediately follows the representative Dispatch line).
-            res.kcombine = float(_KCOMB_RE.match(line).group(1))
+        # Kernel-only dispatch floor (min), first occurrence only. The host lines
+        # carry ``(BF16)`` so they never match these bare ``Dispatch:``/``Combine:`` forms.
+        if res.kdispatch is None:
+            m = _KDISP_REP_RE.match(line) or _KDISP_AMM_RE.match(line)
+            if m:
+                res.kdispatch = float(m.group(1))
+                continue
+        if res.kcombine is None and res.kdispatch is not None:
+            m = _KCOMB_RE.match(line)
+            if m:
+                res.kcombine = float(m.group(1))
     res.ok = res.dispatch.avg == res.dispatch.avg  # not NaN
     return res
 
@@ -181,7 +196,7 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
         f"-e {args.num_experts} -w {args.num_warmup} -i {args.num_iters}"
     )
     cupti_build = ""
-    if args.cupti_inproc:
+    if args.cupti_inproc or args.kernel_only:
         # In-process CUPTI kernel-only timing (near-zero perturbation, matches
         # ep_bench's KernelTimer). Builds the collector next to the bench if missing.
         bench_flags += " --cupti-inproc"
@@ -264,33 +279,39 @@ def run_backend(ep_lib: str, cmd: str, dry_run: bool) -> Optional[LLResult]:
     return res
 
 
-def print_unified(results: list) -> None:
+def print_unified(results: list, kernel_only: bool = False) -> None:
     results = [r for r in results if r is not None]
     if not results:
         return
-    print("\n=== Unified EP Low-Latency Summary (host-observed, us) ===")
-    hdr = f"{'metric':<18}" + "".join(f"{r.ep_lib:>14}" for r in results)
+    has_kernel = all(r.kdispatch is not None and r.kcombine is not None for r in results)
+    title = "kernel-only" if (kernel_only and has_kernel) else "host-observed"
+    print(f"\n=== Unified EP Low-Latency Summary ({title}, us) ===")
+    hdr = f"{'metric':<22}" + "".join(f"{r.ep_lib:>14}" for r in results)
     print(hdr)
     print("-" * len(hdr))
-    rows = [
-        ("Dispatch avg", lambda r: r.dispatch.avg),
-        ("Combine avg", lambda r: r.combine.avg),
-        ("Total D+C avg", lambda r: r.total.avg),
-        ("Dispatch min", lambda r: r.dispatch.min),
-        ("Combine min", lambda r: r.combine.min),
-    ]
-    for label, fn in rows:
-        print(f"{label:<18}" + "".join(f"{fn(r):>14.2f}" for r in results))
-    if any(r.kdispatch is not None for r in results):
-        print(f"{'Kernel disp(min)':<18}" +
-              "".join(f"{(r.kdispatch if r.kdispatch is not None else float('nan')):>14.2f}" for r in results))
-        print(f"{'Kernel comb(avg)':<18}" +
-              "".join(f"{(r.kcombine if r.kcombine is not None else float('nan')):>14.2f}" for r in results))
+    if not (kernel_only and has_kernel):
+        for label, fn in [
+            ("Host Dispatch avg", lambda r: r.dispatch.avg),
+            ("Host Combine avg", lambda r: r.combine.avg),
+            ("Host D+C avg", lambda r: r.total.avg),
+        ]:
+            print(f"{label:<22}" + "".join(f"{fn(r):>14.2f}" for r in results))
+    if has_kernel:
+        # Kernel dispatch = cross-rank recv-spin floor (min); combine = avg (no spin).
+        print(f"{'Kernel Dispatch(min)':<22}" + "".join(f"{r.kdispatch:>14.2f}" for r in results))
+        print(f"{'Kernel Combine(avg)':<22}" + "".join(f"{r.kcombine:>14.2f}" for r in results))
+        print(f"{'Kernel D+C':<22}" + "".join(f"{(r.kdispatch + r.kcombine):>14.2f}" for r in results))
+    elif kernel_only:
+        print("  NOTE: kernel-only requested but kernel timing missing for a backend "
+              "(mscclpp needs --cupti-inproc / libcupti; nccl-ep needs CUPTI-enabled ep_bench).")
     if len(results) == 2:
         a, b = results
-        if a.total.avg == a.total.avg and b.total.avg == b.total.avg and b.total.avg:
-            ratio = a.total.avg / b.total.avg
-            print(f"\nD+C ratio {a.ep_lib}/{b.ep_lib} = {ratio:.2f}x")
+        if kernel_only and has_kernel:
+            ka, kb = a.kdispatch + a.kcombine, b.kdispatch + b.kcombine
+            if kb:
+                print(f"\nKernel D+C ratio {a.ep_lib}/{b.ep_lib} = {ka / kb:.2f}x")
+        elif a.total.avg == a.total.avg and b.total.avg == b.total.avg and b.total.avg:
+            print(f"\nHost D+C ratio {a.ep_lib}/{b.ep_lib} = {a.total.avg / b.total.avg:.2f}x")
 
 
 def main() -> None:
@@ -301,7 +322,7 @@ def main() -> None:
         cmd = build_mscclpp_cmd(args) if lib == "mscclpp" else build_nccl_ep_cmd(args)
         results.append(run_backend(lib, cmd, args.dry_run))
     if not args.dry_run:
-        print_unified(results)
+        print_unified(results, kernel_only=args.kernel_only)
 
 
 if __name__ == "__main__":
