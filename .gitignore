@@ -7,6 +7,3 @@ __pycache__
 .pytest_cache/
 _codeql_detected_source_root
 docs/_static/versions.js
-test/python/ep/libcupti_kernel_timer.so
-test/python/ep/mscclpp_ep_bench
-test/python/ep/build/

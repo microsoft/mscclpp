@@ -22,8 +22,9 @@ reads either one.
 
 NCCL-EP dynamically links its shared libraries (``libnccl.so``, ``libnccl_ep.so``).
 Point the driver at the correct build with ``--nccl-lib-path`` (falls back to the
-``NCCL_LIB_PATH`` environment variable); that directory is prepended to
-``LD_LIBRARY_PATH`` for the ``ep_bench`` process so the intended NCCL is loaded.
+``NCCL_LIB_PATH`` environment variable, else the ``lib`` directory beside the
+``--nccl-ep-bench`` build tree); that directory is prepended to ``LD_LIBRARY_PATH``
+for the ``ep_bench`` process so the intended NCCL is loaded.
 
 Scope: single node (``--nproc-per-node`` GPUs). Multi-node runs use the existing
 per-backend launchers (mscclpp: run_ep_bench_ll_multinode.sh; nccl-ep: mpirun with
@@ -131,7 +132,7 @@ def parse_args() -> argparse.Namespace:
         "--nccl-lib-path",
         default=os.environ.get("NCCL_LIB_PATH", ""),
         help="directory with libnccl.so / libnccl_ep.so; prepended to LD_LIBRARY_PATH "
-        "for ep_bench (falls back to $NCCL_LIB_PATH)",
+        "for ep_bench (falls back to $NCCL_LIB_PATH, else derived from --nccl-ep-bench)",
     )
     p.add_argument(
         "--nccl-ep-bench",
@@ -314,7 +315,13 @@ def _mpi_launch(args, np_total):
 
 
 def build_nccl_ep_cmd(args: argparse.Namespace) -> str:
-    nccl_lib = args.nccl_lib_path or "/opt/microsoft/mrc/ep/nccl/build/lib"
+    nccl_lib = args.nccl_lib_path
+    if not nccl_lib:
+        # Derive the libnccl / libnccl_ep directory from the ep_bench binary
+        # instead of hard-coding it: <nccl>/build/test/nccl_ep/ep_bench ->
+        # <nccl>/build/lib.
+        bench_dir = os.path.dirname(os.path.abspath(args.nccl_ep_bench))
+        nccl_lib = os.path.join(os.path.dirname(os.path.dirname(bench_dir)), "lib")
     hpcx = args.hpcx or _autodetect_hpcx()
     if not hpcx:
         raise SystemExit("nccl-ep: no HPCX found under /opt; pass --hpcx")
