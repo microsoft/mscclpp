@@ -66,11 +66,20 @@ def parse_args() -> argparse.Namespace:
         description="Unified EP low-latency benchmark driver (mscclpp EP vs NCCL-EP)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--ep-lib", required=True, choices=["mscclpp", "mscclpp-cpp", "nccl-ep", "both", "all"],
-                   help="which expert-parallel library to benchmark. mscclpp=MoECommunicator (Python), "
-                        "mscclpp-cpp=MoERuntime (pure C++), nccl-ep=ep_bench. both=mscclpp+nccl-ep; all=the three.")
-    p.add_argument("-a", "--algorithm", default="ll", choices=["ll", "low-latency"],
-                   help="algorithm mode (only low-latency is wired up here)")
+    p.add_argument(
+        "--ep-lib",
+        required=True,
+        choices=["mscclpp", "mscclpp-cpp", "nccl-ep", "both", "all"],
+        help="which expert-parallel library to benchmark. mscclpp=MoECommunicator (Python), "
+        "mscclpp-cpp=MoERuntime (pure C++), nccl-ep=ep_bench. both=mscclpp+nccl-ep; all=the three.",
+    )
+    p.add_argument(
+        "-a",
+        "--algorithm",
+        default="ll",
+        choices=["ll", "low-latency"],
+        help="algorithm mode (only low-latency is wired up here)",
+    )
 
     # Shared problem shape -- passed to whichever backend is selected.
     p.add_argument("-t", "--num-tokens", type=int, default=128, help="tokens per rank")
@@ -82,42 +91,67 @@ def parse_args() -> argparse.Namespace:
 
     # Launch / fabric.
     p.add_argument("--nproc-per-node", type=int, default=4, help="GPUs (ranks) on this node")
-    p.add_argument("--nodes", default="",
-                   help="space-separated node IPs for a multi-node run (first = master). Empty = single "
-                        "local node. Applies to the mpirun backends (nccl-ep, mscclpp-cpp); the Python "
-                        "mscclpp backend is single-node only (torchrun --standalone).")
+    p.add_argument(
+        "--nodes",
+        default="",
+        help="space-separated node IPs for a multi-node run (first = master). Empty = single "
+        "local node. Applies to the mpirun backends (nccl-ep, mscclpp-cpp); the Python "
+        "mscclpp backend is single-node only (torchrun --standalone).",
+    )
     p.add_argument("--iface", default="enP22p1s0f1", help="socket interface name (NCCL/GLOO/UCX)")
     p.add_argument("--hca", default="mlx5_0,mlx5_1,mlx5_2,mlx5_3", help="mscclpp HCA devices")
 
     # mscclpp backend.
-    p.add_argument("--mscclpp-bench", default=os.path.join(_HERE, "ep_bench_ll.py"),
-                   help="path to ep_bench_ll.py")
-    p.add_argument("--conda-prefix", default=os.path.join(os.path.expanduser("~"), "miniconda3"),
-                   help="conda installation prefix for the mscclpp torch env")
+    p.add_argument("--mscclpp-bench", default=os.path.join(_HERE, "ep_bench_ll.py"), help="path to ep_bench_ll.py")
+    p.add_argument(
+        "--conda-prefix",
+        default=os.path.join(os.path.expanduser("~"), "miniconda3"),
+        help="conda installation prefix for the mscclpp torch env",
+    )
     p.add_argument("--conda-env", default="torch", help="conda env name with torch + mscclpp")
-    p.add_argument("--cupti-inproc", action="store_true",
-                   help="mscclpp: also collect in-process CUPTI kernel-only timing")
-    p.add_argument("--torch-profiler", action="store_true",
-                   help="mscclpp: run the torch.profiler kernel pass (default: host-observed only)")
-    p.add_argument("--kernel-only", action="store_true",
-                   help="compare KERNEL execution time only, stripping host/Python launch overhead "
-                        "(what ep_bench's CUPTI reports). mscclpp uses in-process CUPTI; nccl-ep uses "
-                        "ep_bench's built-in CUPTI KernelTimer. The unified table then leads with the "
-                        "kernel dispatch/combine times and a kernel D+C ratio.")
+    p.add_argument(
+        "--cupti-inproc", action="store_true", help="mscclpp: also collect in-process CUPTI kernel-only timing"
+    )
+    p.add_argument(
+        "--torch-profiler",
+        action="store_true",
+        help="mscclpp: run the torch.profiler kernel pass (default: host-observed only)",
+    )
+    p.add_argument(
+        "--kernel-only",
+        action="store_true",
+        help="compare KERNEL execution time only, stripping host/Python launch overhead "
+        "(what ep_bench's CUPTI reports). mscclpp uses in-process CUPTI; nccl-ep uses "
+        "ep_bench's built-in CUPTI KernelTimer. The unified table then leads with the "
+        "kernel dispatch/combine times and a kernel D+C ratio.",
+    )
 
     # nccl-ep backend.
-    p.add_argument("--nccl-lib-path", default=os.environ.get("NCCL_LIB_PATH", ""),
-                   help="directory with libnccl.so / libnccl_ep.so; prepended to LD_LIBRARY_PATH "
-                        "for ep_bench (falls back to $NCCL_LIB_PATH)")
-    p.add_argument("--nccl-ep-bench", default="/opt/microsoft/mrc/ep/nccl/build/test/nccl_ep/ep_bench",
-                   help="path to the NCCL-EP ep_bench binary")
+    p.add_argument(
+        "--nccl-lib-path",
+        default=os.environ.get("NCCL_LIB_PATH", ""),
+        help="directory with libnccl.so / libnccl_ep.so; prepended to LD_LIBRARY_PATH "
+        "for ep_bench (falls back to $NCCL_LIB_PATH)",
+    )
+    p.add_argument(
+        "--nccl-ep-bench",
+        default="/opt/microsoft/mrc/ep/nccl/build/test/nccl_ep/ep_bench",
+        help="path to the NCCL-EP ep_bench binary",
+    )
     p.add_argument("--hpcx", default="", help="HPCX install dir (for mpirun); autodetected under /opt if empty")
-    p.add_argument("--layout", default="em", choices=["em", "rm", "fl"],
-                   help="nccl-ep dispatch layout (em=expert-major, matches mscclpp LL)")
+    p.add_argument(
+        "--layout",
+        default="em",
+        choices=["em", "rm", "fl"],
+        help="nccl-ep dispatch layout (em=expert-major, matches mscclpp LL)",
+    )
 
     # mscclpp-cpp backend (pure C++ MoERuntime binary).
-    p.add_argument("--mscclpp-cpp-bench", default="/opt/microsoft/mrc/ep/mscclpp/test/python/ep/build/mscclpp_ep_bench",
-                   help="path to the mscclpp_ep_bench C++ binary (built via test/python/ep/CMakeLists.txt)")
+    p.add_argument(
+        "--mscclpp-cpp-bench",
+        default="/opt/microsoft/mrc/ep/mscclpp/test/python/ep/build/mscclpp_ep_bench",
+        help="path to the mscclpp_ep_bench C++ binary (built via test/python/ep/CMakeLists.txt)",
+    )
 
     p.add_argument("--dry-run", action="store_true", help="print the backend command(s) and exit")
     return p.parse_args()
@@ -156,10 +190,8 @@ _RANKS_RE = re.compile(r"=== Summary \(Low Latency, across (\d+) ranks\) ===")
 # Kernel-only Dispatch line, two formats (both carry avg/min/max):
 #   mscclpp in-process CUPTI: ``Dispatch: min=M us (representative)  [avg=A, max=X us -- ...]``
 #   ep_bench CUPTI:           ``Dispatch: avg=A us, min=M us, max=X us``
-_KDISP_REP_RE = re.compile(
-    r"^Dispatch:\s+min=([\d.]+)\s*us \(representative\)\s*\[avg=([\d.]+),\s*max=([\d.]+)")
-_KDISP_AMM_RE = re.compile(
-    r"^Dispatch:\s+avg=([\d.]+)\s*us,\s*min=([\d.]+)\s*us,\s*max=([\d.]+)\s*us")
+_KDISP_REP_RE = re.compile(r"^Dispatch:\s+min=([\d.]+)\s*us \(representative\)\s*\[avg=([\d.]+),\s*max=([\d.]+)")
+_KDISP_AMM_RE = re.compile(r"^Dispatch:\s+avg=([\d.]+)\s*us,\s*min=([\d.]+)\s*us,\s*max=([\d.]+)\s*us")
 # Kernel-only Combine line (both backends): ``Combine: avg=A us, min=M us, max=X us`` (no ``(BF16)``).
 _KCOMB_RE = re.compile(r"^Combine:\s+avg=([\d.]+)\s*us,\s*min=([\d.]+)\s*us,\s*max=([\d.]+)\s*us")
 
@@ -219,9 +251,9 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
         so = os.path.join(os.path.dirname(bench), "libcupti_kernel_timer.so")
         src = os.path.join(os.path.dirname(bench), "cupti_kernel_timer.cpp")
         cupti_build = (
-            f'if [ ! -f {shlex.quote(so)} ]; then '
-            f'g++ -O2 -fPIC -shared {shlex.quote(src)} -o {shlex.quote(so)} '
-            f'-I{CUDA_INC} -L{CUDA_LIB} -lcupti; fi && '
+            f"if [ ! -f {shlex.quote(so)} ]; then "
+            f"g++ -O2 -fPIC -shared {shlex.quote(src)} -o {shlex.quote(so)} "
+            f"-I{CUDA_INC} -L{CUDA_LIB} -lcupti; fi && "
         )
     elif args.torch_profiler:
         # Opt-in torch.profiler kernel pass (perturbs the LL recv-spin; the
@@ -243,6 +275,7 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
 
 def _autodetect_hpcx() -> str:
     import glob
+
     cands = sorted(glob.glob("/opt/hpcx-*"))
     return cands[0] if cands else ""
 
@@ -258,8 +291,9 @@ def _mpi_launch(args, np_total):
         lines = "\\n".join(f"{ip} slots={slots}" for ip in nodes)
         hf = "/tmp/ep_unified_hostfile"
         setup = f"printf '{lines}\\n' > {hf} && "
-        hostfile = (f"--hostfile {hf} "
-                    f"-mca plm_rsh_args \"-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null\" ")
+        hostfile = (
+            f"--hostfile {hf} " f'-mca plm_rsh_args "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" '
+        )
     return setup, (
         f"mpirun -np {np_total} {hostfile}--map-by ppr:{args.nproc_per_node}:node --bind-to none "
         f"-mca pml ob1 -mca btl self,vader,tcp -mca btl_tcp_if_include {args.iface} "
@@ -380,16 +414,20 @@ def print_unified(results: list, kernel_only: bool = False) -> None:
         row("Kernel D+C (avg)", lambda r: r.kdispatch.avg + r.kcombine.avg)
         row("Kernel D+C (min)", lambda r: r.kdispatch.min + r.kcombine.min)
     elif kernel_only:
-        print("  NOTE: kernel-only requested but kernel timing missing for a backend "
-              "(mscclpp needs --cupti-inproc / libcupti; nccl-ep needs CUPTI-enabled ep_bench).")
+        print(
+            "  NOTE: kernel-only requested but kernel timing missing for a backend "
+            "(mscclpp needs --cupti-inproc / libcupti; nccl-ep needs CUPTI-enabled ep_bench)."
+        )
     if len(results) == 2:
         a, b = results
         if kernel_only and has_kernel:
             ka_avg, kb_avg = a.kdispatch.avg + a.kcombine.avg, b.kdispatch.avg + b.kcombine.avg
             ka_min, kb_min = a.kdispatch.min + a.kcombine.min, b.kdispatch.min + b.kcombine.min
             if kb_avg:
-                print(f"\nKernel D+C ratio {a.ep_lib}/{b.ep_lib}: avg={ka_avg / kb_avg:.2f}x, "
-                      f"min={ka_min / kb_min:.2f}x")
+                print(
+                    f"\nKernel D+C ratio {a.ep_lib}/{b.ep_lib}: avg={ka_avg / kb_avg:.2f}x, "
+                    f"min={ka_min / kb_min:.2f}x"
+                )
         elif a.total.avg == a.total.avg and b.total.avg == b.total.avg and b.total.avg:
             print(f"\nHost D+C ratio {a.ep_lib}/{b.ep_lib} = {a.total.avg / b.total.avg:.2f}x")
 
@@ -409,8 +447,11 @@ def main() -> None:
         "nccl-ep": build_nccl_ep_cmd,
     }
     if len(args.nodes.split()) > 1 and "mscclpp" in libs:
-        print("[warn] --nodes multi-node ignored for the Python 'mscclpp' backend "
-              "(torchrun --standalone is single-node); use mscclpp-cpp for multi-node.", flush=True)
+        print(
+            "[warn] --nodes multi-node ignored for the Python 'mscclpp' backend "
+            "(torchrun --standalone is single-node); use mscclpp-cpp for multi-node.",
+            flush=True,
+        )
     results = []
     for lib in libs:
         cmd = builders[lib](args)

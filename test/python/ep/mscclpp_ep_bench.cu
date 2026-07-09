@@ -15,12 +15,11 @@
 // Scope: low-latency (LL), BF16, EXPERT_MAJOR layout. Single- or multi-node
 // (the bootstrap uses an MPI_Bcast of a TcpBootstrap UniqueId).
 
-#include <mpi.h>
-
 #include <cuda.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <cupti.h>
+#include <mpi.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -28,32 +27,31 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <mscclpp/core.hpp>
 #include <string>
 #include <vector>
 
-#include <mscclpp/core.hpp>
+#include "config.hpp"       // mscclpp::ep::getLowLatencyRdmaSizeHint
+#include "kernels/api.cuh"  // mscclpp::ep::MoEMode, DispatchLayout
+#include "moe_runtime.hpp"  // mscclpp::ep::MoERuntime
 
-#include "config.hpp"        // mscclpp::ep::getLowLatencyRdmaSizeHint
-#include "kernels/api.cuh"   // mscclpp::ep::MoEMode, DispatchLayout
-#include "moe_runtime.hpp"   // mscclpp::ep::MoERuntime
-
-#define CUDA_CHECK(x)                                                                     \
-  do {                                                                                    \
-    cudaError_t _e = (x);                                                                 \
-    if (_e != cudaSuccess) {                                                              \
+#define CUDA_CHECK(x)                                                                          \
+  do {                                                                                         \
+    cudaError_t _e = (x);                                                                      \
+    if (_e != cudaSuccess) {                                                                   \
       fprintf(stderr, "CUDA error %s at %s:%d\n", cudaGetErrorString(_e), __FILE__, __LINE__); \
-      MPI_Abort(MPI_COMM_WORLD, 1);                                                       \
-    }                                                                                     \
+      MPI_Abort(MPI_COMM_WORLD, 1);                                                            \
+    }                                                                                          \
   } while (0)
 
-#define CUPTI_CHECK(x)                                                                    \
-  do {                                                                                    \
-    CUptiResult _e = (x);                                                                 \
-    if (_e != CUPTI_SUCCESS) {                                                            \
-      const char* _s = nullptr;                                                           \
-      cuptiGetResultString(_e, &_s);                                                      \
-      fprintf(stderr, "CUPTI error %s at %s:%d\n", _s ? _s : "?", __FILE__, __LINE__);    \
-    }                                                                                     \
+#define CUPTI_CHECK(x)                                                                 \
+  do {                                                                                 \
+    CUptiResult _e = (x);                                                              \
+    if (_e != CUPTI_SUCCESS) {                                                         \
+      const char* _s = nullptr;                                                        \
+      cuptiGetResultString(_e, &_s);                                                   \
+      fprintf(stderr, "CUPTI error %s at %s:%d\n", _s ? _s : "?", __FILE__, __LINE__); \
+    }                                                                                  \
   } while (0)
 
 // ---------------------------------------------------------------------------
@@ -80,8 +78,7 @@ void CUPTIAPI bufferRequested(uint8_t** buffer, size_t* size, size_t* maxNumReco
 void CUPTIAPI bufferCompleted(CUcontext, uint32_t, uint8_t* buffer, size_t, size_t validSize) {
   CUpti_Activity* record = nullptr;
   while (cuptiActivityGetNextRecord(buffer, validSize, &record) == CUPTI_SUCCESS) {
-    if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL ||
-        record->kind == CUPTI_ACTIVITY_KIND_KERNEL) {
+    if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL || record->kind == CUPTI_ACTIVITY_KIND_KERNEL) {
       auto* k = reinterpret_cast<CUpti_ActivityKernel10*>(record);
       if (k->name) {
         auto& e = g_kernel_stats[k->name];
@@ -142,13 +139,20 @@ Args parse_args(int argc, char** argv) {
   for (int i = 1; i < argc; ++i) {
     std::string s = argv[i];
     auto next = [&]() -> int { return (i + 1 < argc) ? std::atoi(argv[++i]) : 0; };
-    if (s == "-a" || s == "--algorithm") { ++i; /* ll only */ }
-    else if (s == "-t" || s == "--num-tokens") a.num_tokens = next();
-    else if (s == "-d" || s == "--hidden") a.hidden = next();
-    else if (s == "-k" || s == "--num-topk") a.num_topk = next();
-    else if (s == "-e" || s == "--num-experts") a.num_experts = next();
-    else if (s == "-w" || s == "--num-warmup") a.num_warmup = next();
-    else if (s == "-i" || s == "--num-iters") a.num_iters = next();
+    if (s == "-a" || s == "--algorithm") {
+      ++i; /* ll only */
+    } else if (s == "-t" || s == "--num-tokens")
+      a.num_tokens = next();
+    else if (s == "-d" || s == "--hidden")
+      a.hidden = next();
+    else if (s == "-k" || s == "--num-topk")
+      a.num_topk = next();
+    else if (s == "-e" || s == "--num-experts")
+      a.num_experts = next();
+    else if (s == "-w" || s == "--num-warmup")
+      a.num_warmup = next();
+    else if (s == "-i" || s == "--num-iters")
+      a.num_iters = next();
   }
   return a;
 }
@@ -158,7 +162,11 @@ struct Stat {
 };
 Stat stats(const std::vector<double>& v) {
   double s = 0, mn = 1e30, mx = -1e30;
-  for (double x : v) { s += x; mn = std::min(mn, x); mx = std::max(mx, x); }
+  for (double x : v) {
+    s += x;
+    mn = std::min(mn, x);
+    mx = std::max(mx, x);
+  }
   return {v.empty() ? 0.0 : s / v.size(), mn, mx};
 }
 
@@ -191,17 +199,17 @@ int main(int argc, char** argv) {
   bootstrap->initialize(uid);
   mscclpp::Communicator comm(bootstrap);
 
-  const int64_t numRdmaBytes =
-      static_cast<int64_t>(mscclpp::ep::getLowLatencyRdmaSizeHint(T, H, W, E));
+  const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::getLowLatencyRdmaSizeHint(T, H, W, E));
   mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   if (rank == 0) {
-    printf("[cfg] algorithm=LOW_LATENCY num_ranks=%d tokens/rank=%d hidden=%d num_experts=%d "
-           "top_k=%d warmup=%d iters=%d num_rdma_bytes=%lld is_internode=%d\n",
-           W, T, H, E, K, warmup, iters, (long long)numRdmaBytes, (int)rt.isInternodeAvailable());
+    printf(
+        "[cfg] algorithm=LOW_LATENCY num_ranks=%d tokens/rank=%d hidden=%d num_experts=%d "
+        "top_k=%d warmup=%d iters=%d num_rdma_bytes=%lld is_internode=%d\n",
+        W, T, H, E, K, warmup, iters, (long long)numRdmaBytes, (int)rt.isInternodeAvailable());
     fflush(stdout);
   }
 
@@ -316,9 +324,8 @@ int main(int argc, char** argv) {
   bool kernel_ok = (kt_rc == CUPTI_SUCCESS) && (kd > 0.0) && (kc > 0.0);
 
   if (std::getenv("MSCCLPP_EP_KDEBUG") && rank == 0) {
-    printf("[kdebug] kt_start rc=%d dispatch=%.1fus x%llu combine=%.1fus x%llu (kind=%s)\n", kt_rc,
-           kd, (unsigned long long)ktimer.get_count("dispatch"), kc,
-           (unsigned long long)ktimer.get_count("combine"),
+    printf("[kdebug] kt_start rc=%d dispatch=%.1fus x%llu combine=%.1fus x%llu (kind=%s)\n", kt_rc, kd,
+           (unsigned long long)ktimer.get_count("dispatch"), kc, (unsigned long long)ktimer.get_count("combine"),
            g_activity_kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL ? "CONCURRENT_KERNEL" : "KERNEL");
   }
 
@@ -330,8 +337,7 @@ int main(int argc, char** argv) {
     printf("Combine (BF16):   avg=%.2f us, min=%.2f us, max=%.2f us\n", gca, gcmn, gcmx);
     printf("                  throughput: avg=%.2f GB/s\n", (comb_bytes / 1e9) / (gca * 1e-6));
     printf("Total (D+C):      avg=%.2f us, min=%.2f us, max=%.2f us\n", gta, gtmn, gtmx);
-    printf("                  throughput: avg=%.2f GB/s\n",
-           ((disp_bytes + comb_bytes) / 1e9) / (gta * 1e-6));
+    printf("                  throughput: avg=%.2f GB/s\n", ((disp_bytes + comb_bytes) / 1e9) / (gta * 1e-6));
 
     printf("\n--- Kernel-only performance ---\n");
     if (kernel_ok) {
@@ -344,8 +350,8 @@ int main(int argc, char** argv) {
       printf("  NOTE: CUPTI kernel timing unavailable (rc=%d) or captured 0 LL kernels.\n", kt_rc);
     }
 
-    printf("\nByte counts: dispatch=%.2f MB (BF16), combine=%.2f MB (BF16), selections=%lld\n",
-           disp_bytes / 1e6, comb_bytes / 1e6, num_valid_selections);
+    printf("\nByte counts: dispatch=%.2f MB (BF16), combine=%.2f MB (BF16), selections=%lld\n", disp_bytes / 1e6,
+           comb_bytes / 1e6, num_valid_selections);
     fflush(stdout);
   }
 
@@ -356,8 +362,14 @@ int main(int argc, char** argv) {
     cudaEventDestroy(ce[i]);
   }
   cudaStreamDestroy(stream);
-  cudaFree(d_x); cudaFree(d_out); cudaFree(d_recv); cudaFree(d_topk);
-  cudaFree(d_weights); cudaFree(d_srcinfo); cudaFree(d_layout); cudaFree(d_count);
+  cudaFree(d_x);
+  cudaFree(d_out);
+  cudaFree(d_recv);
+  cudaFree(d_topk);
+  cudaFree(d_weights);
+  cudaFree(d_srcinfo);
+  cudaFree(d_layout);
+  cudaFree(d_count);
 
   MPI_Barrier(MPI_COMM_WORLD);
   MPI_Finalize();
