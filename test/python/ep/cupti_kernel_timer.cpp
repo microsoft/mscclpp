@@ -1,6 +1,7 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // In-process CUPTI kernel timer for the mscclpp LL benchmark.
-// Faithful port of NCCL-EP ep_bench.cu's KernelTimer: uses the CUPTI Activity
-// API to record per-kernel GPU execution windows (end-start), keyed by kernel
 // name, and exposes an extern "C" ABI so it can be driven from Python via ctypes
 // (no cuda-python CUPTI bindings exist in this env, but libcupti.so is loadable).
 //
