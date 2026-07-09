@@ -154,7 +154,19 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument("--dry-run", action="store_true", help="print the backend command(s) and exit")
-    return p.parse_args()
+    args = p.parse_args()
+
+    # These free-form values are interpolated into shell command strings that are
+    # executed via bash; constrain them to safe characters to prevent injection
+    # and to fail fast on values that would break the launch (spaces, quotes, ...).
+    if args.nodes and not re.fullmatch(r"[0-9A-Za-z._:-]+( [0-9A-Za-z._:-]+)*", args.nodes):
+        raise SystemExit("--nodes must be space-separated hostnames/IPs")
+    if not re.fullmatch(r"[0-9A-Za-z._:-]+", args.iface):
+        raise SystemExit("--iface must be a valid network interface name")
+    if not re.fullmatch(r"[0-9A-Za-z._,-]+", args.hca):
+        raise SystemExit("--hca must be comma-separated HCA device names")
+
+    return args
 
 
 # ----------------------------------------------------------------------------

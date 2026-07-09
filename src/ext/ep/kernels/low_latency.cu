@@ -821,8 +821,8 @@ void combine(void* output, const void* input, const float* inputScales, const in
   int deviceNumSms = numSmsBase;
   {
     int curDev = 0;
-    cudaGetDevice(&curDev);
-    cudaDeviceGetAttribute(&deviceNumSms, cudaDevAttrMultiProcessorCount, curDev);
+    CUDA_CHECK(cudaGetDevice(&curDev));
+    CUDA_CHECK(cudaDeviceGetAttribute(&deviceNumSms, cudaDevAttrMultiProcessorCount, curDev));
   }
   int numSmsWanted = numCombinedTokens > numSmsBase ? numCombinedTokens : numSmsBase;
   if (numSmsWanted > deviceNumSms) numSmsWanted = deviceNumSms;
