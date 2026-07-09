@@ -90,7 +90,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
     // bridge that reorders posted writes (e.g., Grace/GB200 NVLink-C2C), the PCIe mapping flag
     // routes DMA through the Data Direct engine for correct ordering and higher throughput.
     // Fall back to the default (non-PCIe) mapping if the flag is unsupported.
-#if (CUDA_VERSION >= 12030)
+#if (CUDA_VERSION >= 12080)
     CUresult cuRes = cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD,
                                                    CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE);
     if (cuRes != CUDA_SUCCESS || fd < 0) {
@@ -98,7 +98,7 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
       fd = -1;
     }
     bool usedPcieFlag = (fd >= 0);
-#endif  // CUDA_VERSION >= 12030
+#endif  // CUDA_VERSION >= 12080
     if (fd < 0) {
       MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
     }
@@ -119,13 +119,13 @@ IbMr::IbMr(ibv_pd* pd, void* buff, std::size_t size, bool isDataDirect) : mr_(nu
     }
 
     // If MR registration failed with a PCIe-mapped fd, retry with the default mapping.
-#if (CUDA_VERSION >= 12030)
+#if (CUDA_VERSION >= 12080)
     if (mr_ == nullptr && usedPcieFlag) {
       ::close(fd);
       MSCCLPP_CUTHROW(cuMemGetHandleForAddressRange(&fd, addr, rangeSize, CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0));
       mr_ = IBVerbs::ibv_reg_dmabuf_mr(pd, offsetInDmaBuf, size, buffIntPtr, fd, accessFlags);
     }
-#endif  // CUDA_VERSION >= 12030
+#endif  // CUDA_VERSION >= 12080
 
     ::close(fd);
     if (mr_ == nullptr) {
