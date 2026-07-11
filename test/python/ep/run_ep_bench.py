@@ -101,6 +101,12 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--iface", default="enP22p1s0f1", help="socket interface name (NCCL/GLOO/UCX)")
     p.add_argument("--hca", default="mlx5_0,mlx5_1,mlx5_2,mlx5_3", help="mscclpp HCA devices")
+    p.add_argument(
+        "--mscclpp-fabric-ipc",
+        default="1",
+        choices=["0", "1", "auto"],
+        help="mscclpp EP fabric IPC setting: 1 for NVL72/nvidia-imex path, 0 for CUDA-IPC local + IB cross-node fallback, auto to leave unset",
+    )
 
     # mscclpp backend.
     p.add_argument("--mscclpp-bench", default=os.path.join(_HERE, "ep_bench_ll.py"), help="path to ep_bench_ll.py")
@@ -245,10 +251,11 @@ def parse_ll_summary(text: str, ep_lib: str) -> LLResult:
 # Backend command construction.
 # ----------------------------------------------------------------------------
 def build_mscclpp_cmd(args: argparse.Namespace) -> str:
+    fabric_ipc = "" if args.mscclpp_fabric_ipc == "auto" else f" MSCCLPP_EP_FABRIC_IPC={args.mscclpp_fabric_ipc}"
     env = (
         f"MSCCLPP_EP_LOCAL_WORLD_SIZE={args.nproc_per_node} "
         f"NCCL_SOCKET_IFNAME={args.iface} GLOO_SOCKET_IFNAME={args.iface} MSCCLPP_SOCKET_IFNAME={args.iface} "
-        f"MSCCLPP_HCA_DEVICES={args.hca} NCCL_IB_DISABLE=1 NCCL_MNNVL_ENABLE=0 MSCCLPP_EP_FABRIC_IPC=1"
+        f"MSCCLPP_HCA_DEVICES={args.hca} NCCL_IB_DISABLE=1 NCCL_MNNVL_ENABLE=0{fabric_ipc}"
     )
     bench = args.mscclpp_bench
     bench_flags = (
@@ -361,12 +368,13 @@ def build_mscclpp_cpp_cmd(args: argparse.Namespace) -> str:
         f"-a ll -t {args.num_tokens} -d {args.hidden} -k {args.num_topk} "
         f"-e {args.num_experts} -w {args.num_warmup} -i {args.num_iters}"
     )
+    fabric_ipc = "" if args.mscclpp_fabric_ipc == "auto" else f"-x MSCCLPP_EP_FABRIC_IPC={args.mscclpp_fabric_ipc} "
     setup, mpi_prefix = _mpi_launch(args, np_total)
     mpi = (
         f"{mpi_prefix}"
         f"-x LD_LIBRARY_PATH -x PATH "
         f"-x MSCCLPP_EP_LOCAL_WORLD_SIZE={args.nproc_per_node} -x MSCCLPP_HCA_DEVICES={args.hca} "
-        f"-x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 -x MSCCLPP_EP_FABRIC_IPC=1 "
+        f"-x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 {fabric_ipc}"
         f"-x NCCL_SOCKET_IFNAME={args.iface} -x MSCCLPP_SOCKET_IFNAME={args.iface} "
         f"{shlex.quote(args.mscclpp_cpp_bench)} {bench_flags}"
     )

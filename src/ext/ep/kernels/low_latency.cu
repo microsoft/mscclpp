@@ -18,8 +18,8 @@
 //     local pointer. PortChannel needs offsets, so the kernels derive them as
 //     `ptr - rdmaBufferPtr`; CUDA-IPC paths add the same offset to
 //     `peerRdmaBases[peerRank]`.
-//   - `portChannelHandles[localExpertIdx * numRanks + peerRank]` is the
-//     PortChannel used for that local expert / peer-rank transfer.
+//   - `portChannelHandles[channelLane * numRanks + peerRank]` is the
+//     PortChannel used for that lane / peer-rank transfer.
 
 #include <cooperative_groups.h>
 
@@ -287,7 +287,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
                             dstExpertLocalIdx * numRanks * numMaxDispatchTokensPerRank * numBytesPerMsg +
                             rank * numMaxDispatchTokensPerRank * numBytesPerMsg + slotIdx * numBytesPerMsg;
         if (dstRank != rank) {
-          if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
+          if (peerRdmaBases != nullptr && peerRdmaBases[dstRank] != nullptr &&
+              isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
             // Peer-mapped warp copy over NVLink (CUDA IPC).
             const auto peerDst = peerMappedPtrOf(dstPtr, peerRdmaBases, rdmaBufferPtr, dstRank);
             const auto* srcInt4Ptr = reinterpret_cast<const int4*>(srcPtr);
@@ -298,7 +299,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
             if (laneId == 0) {
               const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
               const auto srcOff = portChannelOffsetOf(srcPtr, rdmaBufferPtr);
-              portChannelHandles[dstExpertLocalIdx * numRanks + dstRank].put(dstOff, srcOff, numBytesPerMsg);
+              const int channelIdx = (dstExpertLocalIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+              portChannelHandles[channelIdx].put(dstOff, srcOff, numBytesPerMsg);
             }
             __syncwarp();
           }
@@ -353,7 +355,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerExpert, int* 
 
     while (ld_acquire_global(atomicFinishCounterPerExpert + responsibleExpertIdx) != FINISHED_SUM_TAG * 2);
     auto* counterPtr = stagedRecvCountBuffer + dstExpertLocalIdx * numRanks + rank;
-    auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + dstExpertLocalIdx * numRanks + dstRank;
+    const int channelIdx = (dstExpertLocalIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+    auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + channelIdx;
     publishSingleWriterSignal(counterPtr, static_cast<int64_t>(-numTokensSent - 1), rank, dstRank, rdmaBufferPtr,
                               portChannelHandle, peerRdmaBases, ranksPerIpcDomain);
 
@@ -647,7 +650,8 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
         const auto dstInt4Ptr = reinterpret_cast<int4*>(dstPtr);
         copyCombineInputToBf16<kInputDType>(dstInt4Ptr, inputRow, inputScaleRow, scaleStride, hiddenBf16Int4, laneId);
       } else {
-        if (peerRdmaBases != nullptr && isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
+        if (peerRdmaBases != nullptr && peerRdmaBases[dstRank] != nullptr &&
+            isIpcPeer(rank, dstRank, ranksPerIpcDomain)) {
           // Peer-mapped warp copy over NVLink. `zeroCopy` is irrelevant
           // on this path because we skip the rdma_send staging buffer.
           const auto peerDst = peerMappedPtrOf(dstPtr, peerRdmaBases, rdmaBufferPtr, dstRank);
@@ -668,7 +672,8 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
           if (laneId == 0) {
             const auto dstOff = portChannelOffsetOf(dstPtr, rdmaBufferPtr);
             const auto srcOff = portChannelOffsetOf(static_cast<uint64_t>(stagedSendPtr), rdmaBufferPtr);
-            portChannelHandles[localExpertIdx * numRanks + dstRank].put(dstOff, srcOff, hidden * sizeof(OutputType));
+            const int channelIdx = (localExpertIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+            portChannelHandles[channelIdx].put(dstOff, srcOff, hidden * sizeof(OutputType));
           }
           __syncwarp();
         }
@@ -680,7 +685,8 @@ MSCCLPP_DEVICE_INLINE void combineSend(void* stagedRecv, int64_t* stagedRecvFlag
     if (subWarpId == 1 and laneId == 0) {
       while (ld_acquire_global(atomicCleanFlag) == 0);
       auto* flagPtr = stagedRecvFlagBuffer + globalExpertIdx;
-      auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + localExpertIdx * numRanks + dstRank;
+      const int channelIdx = (localExpertIdx % NUM_PORT_CHANNELS_PER_RANK) * numRanks + dstRank;
+      auto* portChannelHandle = dstRank == rank ? nullptr : portChannelHandles + channelIdx;
       publishSingleWriterSignal(flagPtr, static_cast<int64_t>(1), rank, dstRank, rdmaBufferPtr, portChannelHandle,
                                 peerRdmaBases, ranksPerIpcDomain);
       atomicAddReleaseDevice(atomicCleanFlag, -1);

@@ -72,7 +72,7 @@ MSCCLPP_DEVICE_INLINE void publishSingleWriterSignal(int64_t* localSlot, int64_t
     return;
   }
 
-  if (peerBases != nullptr && isIpcPeer(rank, peerRank, ranksPerIpcDomain)) {
+  if (peerBases != nullptr && peerBases[peerRank] != nullptr && isIpcPeer(rank, peerRank, ranksPerIpcDomain)) {
     auto* peerSlot = reinterpret_cast<int64_t*>(
         peerMappedPtrOf(reinterpret_cast<uint64_t>(localSlot), peerBases, rdmaBufferPtr, peerRank));
     publishSignalDirect(peerSlot, value);

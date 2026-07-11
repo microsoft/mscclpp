@@ -185,7 +185,7 @@ void MoERuntime::setup() {
   }
 
   std::unordered_map<int, std::vector<std::pair<int, mscclpp::SemaphoreId>>> semaphoreIds;
-  constexpr int kNumSemaphoresPerRank = 16;
+  constexpr int kNumSemaphoresPerRank = NUM_PORT_CHANNELS_PER_RANK;
   for (int i = 0; i < kNumSemaphoresPerRank; ++i) {
     for (int r = 0; r < numRanks_; ++r) {
       auto& conns = connections[r];
