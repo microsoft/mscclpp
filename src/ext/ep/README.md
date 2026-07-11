@@ -38,6 +38,25 @@ On GB200 NVL72, cross-node peers are also reached through imported cuMem
 fabric handles over `nvidia-imex`, and kernels emit NVLink-SHARP
 `multimem.*` atomics directly on the NVL72 fabric. The LL primitive mapping is:
 
+#### Multi-rack jobs (`MSCCLPP_EP_FABRIC_DOMAIN_SIZE`)
+
+The NVLink (cuMem fabric IPC) fast path only reaches peers on the **same**
+MNNVL fabric domain -- i.e. one NVL72 rack. By default the runtime treats the
+**entire job** as a single fabric domain, which is correct for a job that fits
+in one rack. When a job spans **multiple racks** connected by IB, set
+
+```bash
+export MSCCLPP_EP_FABRIC_DOMAIN_SIZE=<ranks per rack>
+```
+
+so the LL transport routes intra-rack peers over NVLink and inter-rack peers
+over IB `PortChannel`. The value must divide the world size evenly and be a
+multiple of the per-node size (`MSCCLPP_EP_LOCAL_WORLD_SIZE`); ranks are assumed
+contiguous per rack (rank `d*D .. d*D+D-1` form rack `d`), which matches the
+usual node-major rank assignment. Leave it unset (or equal to the world size)
+for a single-rack job. This is independent of `MSCCLPP_EP_FABRIC_IPC`, which
+still controls whether fabric allocation is used at all.
+
 | DeepEP / IBGDA                           | MSCCL++ replacement                                              |
 |------------------------------------------|------------------------------------------------------------------|
 | `nvshmemx_barrier_all_block()`           | signal + wait ring across per-peer channel handles               |

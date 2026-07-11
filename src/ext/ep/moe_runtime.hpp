@@ -52,6 +52,7 @@ class MoERuntime {
   int numRanks_;
   int numRdmaRanks_;
   int numNvlRanks_;
+  int fabricDomainSize_ = 0;
   int deviceId_;
   int64_t numNvlBytes_;
   int64_t numRdmaBytes_;

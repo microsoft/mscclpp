@@ -68,6 +68,31 @@ bool resolveFabricIpcSupported() {
   return prop.major >= 10;
 }
 
+// Number of contiguous ranks that share one NVLink (MNNVL) fabric domain -- i.e.
+// one NVL72 rack. Within a fabric domain, LL routes peer traffic over NVLink
+// (cuMem fabric IPC); across domains it falls back to IB PortChannel. Ranks are
+// assumed contiguous per domain (rank d*D .. d*D+D-1 form domain d), which holds
+// for the usual node-major MPI/torchrun rank assignment.
+//
+// Default is the whole job (numRanks) -- the historical single-rack behavior, so
+// existing NVL72 jobs are unchanged. Set MSCCLPP_EP_FABRIC_DOMAIN_SIZE to the
+// per-rack rank count when a job spans multiple racks connected by IB, so that
+// only intra-rack peers use NVLink and inter-rack peers use IB.
+int resolveFabricDomainSize(int numRanks, int nvlRanks) {
+  int domain = numRanks;
+  if (const char* env = std::getenv("MSCCLPP_EP_FABRIC_DOMAIN_SIZE")) {
+    int v = std::atoi(env);
+    if (v > 0) domain = v;
+  }
+  // A fabric domain contains at least one node and at most the whole job.
+  if (domain < nvlRanks) domain = nvlRanks;
+  if (domain > numRanks) domain = numRanks;
+  // Fall back to a single domain if the size does not evenly partition the job;
+  // the contiguous rank/ipcDomainSize grouping requires an exact division.
+  if (numRanks % domain != 0) domain = numRanks;
+  return domain;
+}
+
 }  // namespace
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode)
@@ -89,6 +114,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes,
   nvlRank_ = rank_ % lws;
   numRdmaRanks_ = std::max(1, numRanks_ / lws);
   numNvlRanks_ = std::min(numRanks_, lws);
+  fabricDomainSize_ = resolveFabricDomainSize(numRanks_, numNvlRanks_);
 
   numProxyServices_ = resolveNumProxyServices(numRanks_, lws);
   proxyServices_.reserve(numProxyServices_);
@@ -210,7 +236,10 @@ void MoERuntime::setup() {
   mscclpp::gpuMemcpy<mscclpp::PortChannelDeviceHandle>(portChannelHandlesDevicePtr_.get(), portChannelHandles.data(),
                                                        portChannelHandles.size(), cudaMemcpyHostToDevice);
 
-  const int ipcDomainSize = useFabricIpcAlloc ? numRanks_ : numNvlRanks_;
+  // Fabric IPC (NVLink) reaches every rank in the local fabric domain (rack);
+  // ranks outside it are reached over IB. When the job is a single rack,
+  // fabricDomainSize_ == numRanks_ and this is the historical all-NVLink path.
+  const int ipcDomainSize = useFabricIpcAlloc ? fabricDomainSize_ : numNvlRanks_;
   auto isIpcPeer = [&](int peer) {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
   };
