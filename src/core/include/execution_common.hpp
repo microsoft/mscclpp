@@ -66,6 +66,8 @@ enum class OperationType : uint8_t {
   PIPELINE,
   SEM_RELEASE,
   SEM_ACQUIRE,
+  MULTI_STORE,
+  MULTI_STORE_PKT,
 };
 
 struct Channels {

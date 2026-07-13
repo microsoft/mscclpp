@@ -14,6 +14,7 @@ from mscclpp import CommGroup, GpuBuffer
 from mscclpp.utils import KernelBuilder, pack
 import os
 import struct
+from typing import Callable
 
 import cupy as cp
 from mpi4py import MPI
@@ -34,13 +35,13 @@ def parse_dtype(dtype_str):
         raise ValueError(f"Unknown data type: {dtype_str}")
 
 
-def bench_time(n_iters: int, n_graph_iters: int, func):
-    # capture cuda graph for n_iters of the kernel launch
+def bench_time(n_iters: int, n_graph_iters: int, funcs: list[Callable]):
+    """Benchmark execution time. `funcs` is a list of callables; iteration i runs funcs[i % len(funcs)]."""
     stream = cp.cuda.Stream(non_blocking=True)
     with stream:
         stream.begin_capture()
         for i in range(n_iters):
-            func(stream)
+            funcs[i % len(funcs)](stream)
         graph = stream.end_capture()
 
     # now run a warm up round
@@ -61,15 +62,17 @@ def bench_time(n_iters: int, n_graph_iters: int, func):
 
 def bench_correctness(
     collective: str,
-    input_buf: cp.ndarray,
-    result_buf: cp.ndarray,
-    test_buf: cp.ndarray,
+    input_bufs: list[cp.ndarray],
+    result_bufs: list[cp.ndarray],
+    test_bufs: list[cp.ndarray],
     dtype_str: str,
     rank: int,
     num_ranks: int,
     n_iters: int,
-    func,
+    funcs: list[Callable],
+    split_mask: int = 0,
 ):
+    """Validate correctness. Buffers and funcs are parallel lists; iteration i uses index i % len(funcs)."""
     type_size = cp.dtype(parse_dtype(dtype_str)).itemsize
 
     fill_data_kernel_name = "fill_data_%s" % dtype_str
@@ -79,8 +82,12 @@ def bench_correctness(
         coll = "reduce_scatter"
     elif "allreduce" in collective:
         coll = "all_reduce"
-    else:
+    elif "alltoall" in collective:
         coll = "all_to_all"
+    elif "sendrecv" in collective:
+        coll = "send_recv"
+    else:
+        raise ValueError(f"Unknown collective: {collective}")
     test_data_kernel_name = "test_data_%s_%s" % (coll, dtype_str)
 
     file_dir = os.path.dirname(os.path.abspath(__file__))
@@ -97,11 +104,20 @@ def bench_correctness(
     with stream:
         stream.begin_capture()
         for i in range(n_iters):
-            fill_data_params = pack(input_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(rank, i)
+            idx = i % len(funcs)
+            cur_input = input_bufs[idx]
+            cur_result = result_bufs[idx]
+            cur_test = test_bufs[idx]
+
+            fill_data_params = (
+                pack(cur_input) + struct.pack("Q", cur_input.nbytes // type_size) + pack(rank, i, split_mask)
+            )
             fill_data_kernel.launch_kernel(fill_data_params, nblocks, nthreads, 0, stream)
-            func(stream)
+            funcs[idx](stream)
             test_data_params = (
-                pack(result_buf, test_buf) + struct.pack("Q", input_buf.nbytes // type_size) + pack(num_ranks, rank, i)
+                pack(cur_result, cur_test)
+                + struct.pack("Q", cur_input.nbytes // type_size)
+                + pack(num_ranks, rank, i, split_mask)
             )
             test_data_kernel.launch_kernel(test_data_params, nblocks, nthreads, 0, stream)
         graph = stream.end_capture()
@@ -143,9 +159,19 @@ def build_bufs(
     rank: int,
     num_ranks: int,
 ):
+    """Allocate input/result/test buffers. Returns parallel lists (length 2 for sendrecv double-buffering,
+    length 1 otherwise) so callers can iterate uniformly."""
     type_size = cp.dtype(dtype).itemsize
     assert (size % type_size) == 0, "size %d not multiple of type size %d" % (size, type_size)
     nelems = size // type_size
+
+    # Sendrecv uses double buffering: build two parallel buffer slots.
+    if "sendrecv" in collective:
+        n_slots = 2
+        input_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
+        result_bufs = [GpuBuffer(nelems, dtype=dtype) for _ in range(n_slots)]
+        test_bufs = [cp.zeros(nelems, dtype=dtype) for _ in range(n_slots)]
+        return input_bufs, result_bufs, test_bufs, nelems
 
     if "allgather" in collective:
         assert (nelems % num_ranks) == 0, "nelems %d not multiple of num_ranks %d" % (nelems, num_ranks)
@@ -173,7 +199,7 @@ def build_bufs(
 
     test_buf = cp.zeros(nelems, dtype=dtype)
 
-    return input_buf, result_buf, test_buf
+    return [input_buf], [result_buf], [test_buf], nelems
 
 
 def main(
@@ -184,8 +210,14 @@ def main(
     packet_type: PacketType = PacketType.LL16,
     n_iters: int = 10,
     n_graph_iters: int = 10,
+    split_mask: int = 0,
 ):
     mscclpp_group = CommGroup(MPI.COMM_WORLD)
+    if split_mask < 0 or (split_mask & (split_mask + 1)) != 0 or mscclpp_group.nranks % (split_mask + 1) != 0:
+        raise ValueError(
+            f"split_mask must be of the form 2^k - 1 and nranks ({mscclpp_group.nranks}) must be divisible "
+            f"by group_size ({split_mask + 1}), got split_mask={hex(split_mask)}"
+        )
     cp.cuda.Device(mscclpp_group.my_rank % mscclpp_group.nranks_per_node).use()
     executor = Executor(mscclpp_group.communicator)
     npkit_dump_dir = env().npkit_dump_dir
@@ -195,7 +227,7 @@ def main(
     collective = execution_plan.collective
 
     dtype = parse_dtype(dtype_str)
-    input_buf, result_buf, test_buf = build_bufs(
+    input_bufs, result_bufs, test_bufs, nelem = build_bufs(
         collective,
         size,
         in_place,
@@ -204,39 +236,48 @@ def main(
         mscclpp_group.nranks,
     )
 
-    executor_func = lambda stream: executor.execute(
-        mscclpp_group.my_rank,
-        input_buf.data.ptr,
-        result_buf.data.ptr,
-        input_buf.nbytes,
-        result_buf.nbytes,
-        dtype_to_mscclpp_dtype(dtype_str),
-        execution_plan,
-        stream.ptr,
-        packet_type,
-    )
+    executor_funcs = [
+        (
+            lambda stream, inp=inp, res=res: executor.execute(
+                mscclpp_group.my_rank,
+                inp.data.ptr,
+                res.data.ptr,
+                inp.nbytes,
+                res.nbytes,
+                dtype_to_mscclpp_dtype(dtype_str),
+                execution_plan,
+                stream.ptr,
+                packet_type,
+            )
+        )
+        for inp, res in zip(input_bufs, result_bufs)
+    ]
 
     mscclpp_group.barrier()
     bench_correctness(
         collective,
-        input_buf,
-        result_buf,
-        test_buf,
+        input_bufs,
+        result_bufs,
+        test_bufs,
         dtype_str,
         mscclpp_group.my_rank,
         mscclpp_group.nranks,
         n_iters,
-        executor_func,
+        executor_funcs,
+        split_mask=split_mask,
     )
 
     mscclpp_group.barrier()
-    execution_time = bench_time(n_iters, n_graph_iters, executor_func)
+    execution_time = bench_time(n_iters, n_graph_iters, executor_funcs)
     if npkit_dump_dir is not None:
         npkit.dump(npkit_dump_dir)
         npkit.shutdown()
+
+    result_nbytes = result_bufs[0].nbytes
     print(
         f"Rank: {mscclpp_group.my_rank} Execution time: {execution_time} us, "
-        f"data size: {result_buf.nbytes} bytes data type: {dtype_str} "
+        f"data size: {result_nbytes} bytes data type: {dtype_str} "
+        f"bandwidth: {result_nbytes / (execution_time * 1e-6) / (1024**3):.2f} GB/s, "
         f"packet type: {packet_type}"
     )
     executor = None
@@ -252,6 +293,9 @@ if __name__ == "__main__":
     parser.add_argument("--packet_type", type=str, default="LL16", help="Choose from LL8, LL16")
     parser.add_argument("--n_iters", type=int, default=10)
     parser.add_argument("--n_graph_iters", type=int, default=10)
+    parser.add_argument(
+        "--split_mask", type=lambda x: int(x, 0), default=0x0, help="split mask for sendrecv (e.g. 0x3)"
+    )
     args = parser.parse_args()
 
     packet_type = PacketType.LL16
@@ -267,4 +311,5 @@ if __name__ == "__main__":
         packet_type,
         args.n_iters,
         args.n_graph_iters,
+        args.split_mask,
     )

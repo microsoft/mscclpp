@@ -70,7 +70,7 @@ RUN if echo "$TARGET" | grep -q "^cuda"; then \
 # Install ROCm-specific packages if building for ROCm
 RUN if echo "$TARGET" | grep -q "^rocm"; then \
         apt-get update -y && \
-        apt-get install -y hipblas hipsparse rocsparse rocrand hiprand rocthrust rocsolver rocfft hipfft hipcub rocprim rccl roctracer-dev && \
+        apt-get install -y hipblas hipsparse rocsparse rocrand hiprand rocthrust-dev rocsolver rocfft hipfft hipcub-dev rocprim-dev rccl roctracer-dev && \
         apt-get autoremove -y && \
         apt-get clean && \
         rm -rf /var/lib/apt/lists/* /tmp/*; \
@@ -84,7 +84,7 @@ ENV PATH="/root/venv/bin:${PATH}"
 # Install Python dependencies
 ADD . /tmp/mscclpp
 WORKDIR /tmp/mscclpp
-RUN target_type=$(echo $TARGET | sed 's/\.[0-9]*$//') && \
+RUN target_type=$(echo "$TARGET" | sed -E 's/^([[:alpha:]]+[0-9]+).*/\1/') && \
     if echo "$TARGET" | grep -q "^rocm"; then \
         export CUPY_INSTALL_USE_HIP=1 && export ROCM_HOME=/opt/rocm; \
     fi && \

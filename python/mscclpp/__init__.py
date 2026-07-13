@@ -100,6 +100,7 @@ __all__ = [
     "AlgorithmCollection",
     "CommGroup",
     "GpuBuffer",
+    "GpuBufferGranularity",
 ]
 
 
