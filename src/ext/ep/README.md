@@ -14,52 +14,41 @@ MSCCL++. The module builds two active backends:
 | Feature                          | Status |
 |----------------------------------|--------|
 | `mscclpp_ep_cpp` module          | ✅ builds LL + HT backends when `MSCCLPP_BUILD_EXT_EP=ON` |
-| LL dispatch/combine              | ✅ validated on 8-rank H100, 16-rank 2×H100×8, and 64-rank GB200 NVL72 |
+| LL dispatch/combine              | ✅ validated on 8-rank H100; cross-node requires one detected GPU IPC fabric domain |
 | HT dispatch/combine              | ✅ active DeepEP-style backend with intranode and internode paths |
 | HT GB200 direct/flat fast paths  | ✅ runtime-gated by `MSCCLPP_EP_DIRECT`, `MSCCLPP_EP_INTRA_DIRECT`, and `MSCCLPP_EP_FLAT` |
-| GB200 LL NVLS multimem fast path | ✅ runtime-gated by `mscclpp::isNvlsSupported()` |
+| LL topology discovery            | ✅ automatic node + NVML fabric-domain detection through `Bootstrap` |
 | Python frontend `mscclpp.ep` | ✅ `MoECommunicator` selects LL or HT by `MoEMode` |
 
-On Azure GB200 NVL72 (4 GPUs / NUMA host, CX-7 RoCE), LL was validated at
-16 nodes × 4 GPUs = **64 ranks** with HIDDEN=7168, tokens=4096,
-experts=256, top-k=8: dispatch ~**16 817 GB/s** agg (~262 GB/s per rank),
-combine ~**21 148 GB/s** agg (defaults).
+### LL topology and transport
 
-The GB200 LL path bypasses Azure CX-7 RoCE's broken `IBV_ATOMIC_*` by
-routing peer pointers through cuMem fabric IPC over the NVL72 fabric
-(`nvidia-imex`) and emitting NVLink-SHARP `multimem.*` atomics from the
-kernels. The legacy RDMA-atomic PortChannel path is retained as a
-fallback when `mscclpp::isNvlsSupported()` returns `false`.
+The optimized LL backend uses direct peer mappings:
 
-The LL backend is a DeepEP legacy low-latency-style port, not a port of
-DeepEP elastic. It uses a mixed transport: `MemoryChannel` (CUDA IPC) for
-same-node peers and `PortChannel` (CPU proxy + IB verbs) for remote peers.
-On GB200 NVL72, cross-node peers are also reached through imported cuMem
-fabric handles over `nvidia-imex`, and kernels emit NVLink-SHARP
-`multimem.*` atomics directly on the NVL72 fabric. The LL primitive mapping is:
+- Same-host peers use regular CUDA IPC mappings.
+- Cross-host peers use CUDA fabric handles when all ranks belong to one
+  NVML-reported GPU fabric domain, such as GB200 NVL72 with `nvidia-imex`.
+- `BaseMemoryChannel` handles are used only for signal/wait synchronization;
+  LL payload data does not flow through `MemoryChannel` or `PortChannel`.
+- There is no CPU-proxy/IB fallback in the optimized LL backend. If the full
+  communicator is not one GPU IPC domain, `MoERuntime::isAvailable()` is false.
 
-| DeepEP / IBGDA                           | MSCCL++ replacement                                              |
-|------------------------------------------|------------------------------------------------------------------|
-| `nvshmemx_barrier_all_block()`           | signal + wait ring across per-peer channel handles               |
-| `nvshmemi_ibgda_put_nbi_warp(...)` (intra-node) | `MemoryChannelDeviceHandle::put` (CUDA IPC, no proxy)     |
-| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node, NVLS) | direct `st.global` on imported cuMem-fabric peer base (GB200) |
-| `nvshmemi_ibgda_put_nbi_warp(...)` (inter-node, fallback) | lane-0 `PortChannelDeviceHandle::put(dst_off, src_off, n)` |
-| `nvshmemi_ibgda_amo_nonfetch_add(...)` (NVLS) | `multimem.red.add.u64` on NVL72 multicast counter (GB200) |
-| `nvshmemi_ibgda_amo_nonfetch_add(...)` (fallback) | lane-0 `atomicAdd` on the corresponding channel handle           |
+Topology is automatic. `TcpBootstrap` detects:
 
-LL was validated on:
-- 8 ranks × 1 H100 node (NVLink + CUDA-IPC fast path).
-- 16 ranks × 2 H100×8 nodes (mixed CUDA-IPC intra-node + IB inter-node).
-- 4 ranks × 1 Azure GB200 NVL72 node (NVLink + CUDA-IPC).
-- 64 ranks × 16 Azure GB200 NVL72 nodes (intra-node CUDA-IPC + cross-node
-  cuMem fabric IPC via `nvidia-imex` + NVLS `multimem.*` atomics);
-  dispatch ~16.8 TB/s agg, combine ~21.1 TB/s agg.
+1. ranks per host from bootstrap peer addresses;
+2. ranks per GPU IPC domain from NVML fabric `clusterUuid + cliqueId`;
+3. host-local IPC domains as a safe fallback when NVML fabric information is
+   unavailable or incomplete.
 
-### `num_proxy_services` / proxy sharding
+LL therefore does **not** require topology environment variables such as
+`MSCCLPP_EP_LOCAL_WORLD_SIZE`, `MSCCLPP_EP_FABRIC_IPC`, an NVML-domain ID, or
+`NCCL_MNNVL_ENABLE`. Socket/HCA variables are only optional launch overrides
+when the generic bootstrap or an HT/IB test selects the wrong interface.
+
+### HT / legacy proxy sharding
 
 A single `mscclpp::ProxyService` is one CPU host thread driving one
 FIFO. With 8 GPUs / node sharing one proxy, the host thread becomes the
-bottleneck for cross-node LL traffic. The EP runtime therefore allocates `N`
+bottleneck for cross-node proxy traffic. The HT runtime therefore allocates `N`
 ProxyServices and shards `PortChannel`s across them by `(qp_idx,
 dst_rank)`.
 
@@ -76,17 +65,19 @@ dst_rank)`.
   `DispatchLayout.EXPERT_MAJOR`.
 - HT currently supports BF16 input and `DispatchLayout.FLAT`; quantized HT
   dispatch is not implemented.
-- LL fallback cross-node traffic uses `PortChannel` and a CPU proxy. GB200 NVL72
-  uses the fabric-IPC/NVLS path instead when it is available.
+- Optimized LL requires all participating ranks to share one detected CUDA IPC
+  domain; ordinary multi-node H100 jobs should use HT.
 - HT direct and flat paths are GB200/NVL72 optimizations. Leave the env vars
   unset for the baseline DeepEP-style HT path.
 
 ## Build
 
-For Python installs, use the `ep` extra:
+Python installs build the EP extension by default:
 
 ```bash
-python -m pip install ".[cuda12,ep]"
+python -m pip install .
+# Optional CuPy dependency:
+python -m pip install ".[cuda12]"
 ```
 
 The EP extension targets CUDA architectures **90 or newer**. Plain CMake builds
@@ -111,28 +102,24 @@ moe_comm = ep.MoECommunicator(...)
 | Variable                              | Default | Meaning                                                       |
 |---------------------------------------|---------|---------------------------------------------------------------|
 | `MSCCLPP_BUILD_EXT_EP`                | `ON` in Python wheels | Build the EP extension at all                |
-| `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | Compile-time `NUM_MAX_NVL_PEERS` — set to `4` for GB200 NVL72 |
+| `MSCCLPP_EP_NUM_MAX_NVL_PEERS`        | `8`     | HT compile-time NVLink peer capacity; optimized LL topology is detected at runtime |
 | `MSCCLPP_EP_KERNEL_DEBUG_TIMEOUT`     | `OFF`   | Use a short ~10s kernel spin timeout (default is ~100s)       |
 
 ### Azure GB200 (NVL72, 4 GPUs / NUMA host)
 
 GB200 NVL72 nodes expose **4 GPUs per NUMA host** (not 8 like HGX
-H100), and the cross-node atomic fast-path uses NVLink-SHARP
-multicast (`multimem.*` PTX) routed over the NVL72 fabric via
-nvidia-imex instead of broken IB atomics on Azure CX-7 RoCE. Two
-build-time settings are required:
+H100). The optimized LL backend discovers this topology from bootstrap/NVML
+and needs no GB200-specific build option. HT kernels still use the compile-time
+NVLink peer capacity and should be built with:
 
 ```bash
-# Option 1: plain CMake.
 cmake -S . -B build \
       -DMSCCLPP_BUILD_EXT_EP=ON \
       -DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4
-cmake --build build -j
+cmake --build build -j 64
 
-# Option 2: wheel-based install.
-python3 -m pip install ".[cuda12,ep]" \
-    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4 \
-    .
+python3 -m pip install . \
+    --config-settings=cmake.define.MSCCLPP_EP_NUM_MAX_NVL_PEERS=4
 ```
 
 Add `-DMSCCLPP_EP_KERNEL_DEBUG_TIMEOUT=ON` only when triaging hangs (it
@@ -145,18 +132,13 @@ Runtime prerequisites on GB200:
   3-arg fallback automatically).
 - Driver ≥ 555 with nvidia-imex configured so cuMem fabric handles
   (`POSIX_FD | FABRIC`) can be exchanged across nodes.
-- NVLink-SHARP / multicast support enabled (`nvidia-smi mig … --imex`
-  reachable). `mscclpp::isNvlsSupported()` must return `true` at
-  runtime construction; otherwise the kernels fall back to the legacy
-  PortChannel + RDMA path (and on Azure CX-7 RoCE the broken IB
-  atomics will hang).
-- `MSCCLPP_EP_LOCAL_WORLD_SIZE` partitions ranks into NUMA hosts; it
-  defaults to the build-time `NUM_MAX_NVL_PEERS`, so a GB200 build
-  (`-DMSCCLPP_EP_NUM_MAX_NVL_PEERS=4`) auto-uses 4 and **does not
-  require** setting this env var. Only set `MSCCLPP_EP_LOCAL_WORLD_SIZE=4`
-  if you are running on GB200 against a stock build that still has
-  `NUM_MAX_NVL_PEERS=8` (otherwise host code mis-classifies cross-node
-  peers as local and `cudaIpcOpenMemHandle` fails).
+- NVML must report a completed fabric state with a common cluster UUID and
+  clique ID for all participating ranks. Bootstrap uses this information to
+  form the IPC domain automatically.
+- The LL runtime verifies CUDA fabric-handle allocation and NVLS-backed
+  semaphore-token support. If either capability is unavailable on any rank,
+  all ranks consistently fall back to host-local IPC and LL reports unavailable
+  rather than attempting an IB fallback.
 - RT priority is required by NCCL/glibc. On each node:
 
   ```bash
@@ -175,17 +157,20 @@ Runtime prerequisites on GB200:
   ls /dev/nvidia-caps-imex-channels/   # channel0 must exist
   ```
 
-GB200 runtime env (export on every node before launching the tests):
+No LL-specific runtime environment variables are required. Optional overrides
+are only needed when generic launch components choose the wrong interface:
 
 ```bash
-export NCCL_IB_DISABLE=1                              # avoid NCCL's own IB probe on Azure CX-7
-export NCCL_MNNVL_ENABLE=0                            # Azure GB200 is NOT one MNNVL fabric across nodes
-export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3  # avoid mlx5_bond_0 (PORT_DOWN)
-# Bootstrap NIC (only if auto-detect picks wrong) — on Azure GB200:
 export NCCL_SOCKET_IFNAME=enP22p1s0f1
 export MSCCLPP_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
 export GLOO_SOCKET_IFNAME=$NCCL_SOCKET_IFNAME
+# HT/IB only, if automatic HCA selection chooses a down/bond device:
+export MSCCLPP_HCA_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3
 ```
+
+`NCCL_IB_DISABLE` and `NCCL_MNNVL_ENABLE` configure NCCL, not the MSCCL++ LL
+runtime. Set them only when the surrounding PyTorch/NCCL test launcher needs
+those overrides.
 
 HT runtime knobs (env vars exposed by `test_intranode_multirank.py` /
 `test_internode_multirank.py` — defaults below are the test-script defaults,
@@ -211,8 +196,6 @@ tokens=4096, experts=256, topk=8):
 
 - HT internode: `NVL_SEND=8 NVL_RECV=256 RDMA_SEND=8 RDMA_RECV=32` →
   dispatch ~**2 006 GB/s** agg, combine ~**2 011 GB/s** agg.
-- LL internode: defaults → dispatch ~**16 817 GB/s** agg
-  (262 GB/s per rank), combine ~**21 148 GB/s** agg.
 
 ### GB200 direct-path optimization (`MSCCLPP_EP_DIRECT` / `MSCCLPP_EP_INTRA_DIRECT`)
 
@@ -316,22 +299,27 @@ src/ext/ep/
 │       ├── intranode_kernel.cu
 │       ├── internode.cu
 │       └── internode_ncclep.cuh
-└── kernels/
-    ├── api.cuh                 — host-callable kernel prototypes
-    ├── configs.cuh             — compile-time constants (GPU-only)
-    ├── exception.cuh           — EP_HOST/DEVICE_ASSERT + CUDA_CHECK
-    ├── launch.cuh              — SETUP_LAUNCH_CONFIG / SWITCH_* macros
-    ├── utils.cuh               — device inline helpers
-    └── low_latency.cu          — LL dispatch/combine (RDMA + IPC paths)
+├── include/                    — shared EP headers and quantization helpers
+├── low_latency/
+│   ├── dispatch.cu             — optimized LL dispatch
+│   ├── combine.cu              — optimized LL combine
+│   └── config.cuh              — LL launch/workspace configuration
+└── legacy/
+    └── low_latency.cu          — reference-only previous LL implementation
 
 python/mscclpp/ep/
-├── __init__.py                 — reexports the public MoECommunicator API
-└── communicator.py             — torch.Tensor frontend over raw-pointer runtime calls
+├── __init__.py                 — public exports
+├── communicator.py             — backend-selecting public API
+├── low_latency.py              — LL torch.Tensor frontend
+└── high_throughput.py          — HT torch.Tensor frontend
 
 test/python/ep/
 ├── test_intranode_multirank.py        — intranode HT dispatch+combine
 ├── test_internode_multirank.py        — internode HT dispatch+combine
-└── test_low_latency_multirank.py      — LL dispatch+combine
+├── test_low_latency_multirank.py      — LL correctness + CUDA Graph
+├── ep_bench_ll.py                     — Python NCCL-style LL benchmark
+├── mscclpp_ep_bench.cu                — pure-C++ NCCL-style LL benchmark
+└── run_ep_bench.py                    — unified MSCCL++ / NCCL-EP driver
 ```
 
 ## Running the tests
@@ -376,14 +364,13 @@ torchrun --nnodes=1 --nproc_per_node=8 \
     test/python/ep/test_intranode_multirank.py
 ```
 
-Intranode LL (single node, 8 GPUs):
+Intranode LL (single node, 8 GPUs), with no topology env:
 
 ```bash
-MSCCLPP_EP_BENCH=1 \
-MSCCLPP_EP_BENCH_TOKENS=128 MSCCLPP_EP_BENCH_HIDDEN=7168 \
-MSCCLPP_EP_BENCH_EXPERTS=256 MSCCLPP_EP_BENCH_TOPK=8 \
-torchrun --nnodes=1 --nproc_per_node=8 \
-    test/python/ep/test_low_latency_multirank.py
+torchrun --standalone --nproc_per_node=8 \
+    test/python/ep/test_low_latency_multirank.py \
+    --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256 \
+    --cuda-graph
 ```
 
 Internode HT (2 nodes × 8 GPUs), torchrun:
@@ -430,26 +417,24 @@ mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
              exec python3 test/python/ep/test_internode_multirank.py'
 ```
 
-Internode LL via mpirun — same launch wrapper, swap the test script:
+Cross-node LL is supported only when bootstrap reports one GPU IPC domain
+(for example GB200 NVL72 with IMEX). The launch does not pass a domain size:
 
 ```bash
 mpirun -np 16 --allow-run-as-root --hostfile <hostfile> \
     --bind-to numa \
-    -x MSCCLPP_EP_BENCH=1 \
-    -x MSCCLPP_EP_BENCH_TOKENS=128 -x MSCCLPP_EP_BENCH_HIDDEN=7168 \
-    -x MSCCLPP_EP_BENCH_EXPERTS=256 -x MSCCLPP_EP_BENCH_TOPK=8 \
     -x MASTER_ADDR=<master_ip> -x MASTER_PORT=29600 \
     bash -c 'export RANK=$OMPI_COMM_WORLD_RANK \
              WORLD_SIZE=$OMPI_COMM_WORLD_SIZE \
              LOCAL_RANK=$OMPI_COMM_WORLD_LOCAL_RANK; \
-             exec python3 test/python/ep/test_low_latency_multirank.py'
+             exec python3 test/python/ep/test_low_latency_multirank.py \
+               --num-tokens 128 --hidden 7168 --num-topk 8 --num-experts 256'
 ```
 
 Add `-x NCCL_SOCKET_IFNAME=<iface> -x MSCCLPP_SOCKET_IFNAME=<iface>
 -x GLOO_SOCKET_IFNAME=<iface>` to the `mpirun` lines above only if the
-default bootstrap NIC is wrong. Generic H100/HGX runs do not require
-`NCCL_IB_DISABLE` or `NCCL_TOPO_FILE`; the GB200 reference env above sets
-`NCCL_IB_DISABLE=1` only to avoid NCCL's own IB probing on Azure CX-7.
+default bootstrap NIC is wrong. These variables affect the launcher/bootstrap,
+not LL topology detection.
 
 If Open MPI's own bootstrap misbehaves (e.g. UCX is mis-configured or
 the host is multi-homed), force its control channel onto plain TCP
@@ -461,13 +446,31 @@ GB200.
 
 ### Benchmark mode
 
-All three multirank tests double as micro-benchmarks when
-`MSCCLPP_EP_BENCH=1` is set. Dispatch and combine are timed separately
-with CUDA events; per-rank times are reduced across ranks and reported
-as `min` / `avg` / `max`, with bandwidth computed from the average time
-(matching NCCL-EP's `ep_bench` convention).
+Use the unified driver for NCCL-EP-style LL measurements:
 
-Env knobs:
+```bash
+# Build the pure-C++ benchmark.
+cmake -S test/python/ep -B test/python/ep/build \
+    -DCMAKE_CUDA_ARCHITECTURES=90
+cmake --build test/python/ep/build -j 64
+
+# BF16 rank-local.
+python3 test/python/ep/run_ep_bench.py \
+    --ep-lib mscclpp-cpp --nproc-per-node 8 \
+    -t 128 -d 7168 -k 8 -e 256 -w 50 -i 100 \
+    --dispatch-dtype bf16 --combine-mode rank_local_reduce
+
+# FP8 direct-send.
+python3 test/python/ep/run_ep_bench.py \
+    --ep-lib mscclpp-cpp --nproc-per-node 8 \
+    -t 128 -d 7168 -k 8 -e 256 -w 50 -i 100 \
+    --dispatch-dtype fp8_e4m3 --combine-mode direct_send
+```
+
+`ep_bench_ll.py` provides the high-level Python equivalent. The existing
+multirank HT tests also expose their older env-controlled benchmark pass.
+
+HT multirank test benchmark env knobs:
 
 | Variable                      | Meaning                                | Default |
 |-------------------------------|----------------------------------------|---------|
@@ -478,7 +481,6 @@ Env knobs:
 | `MSCCLPP_EP_BENCH_HIDDEN`     | Hidden dim                             | `7168`  |
 | `MSCCLPP_EP_BENCH_EXPERTS`    | Total experts                          | test-specific |
 | `MSCCLPP_EP_BENCH_TOPK`       | top-k routing                          | `8`     |
-| `MSCCLPP_EP_NUM_PROXIES`      | Number of runtime `ProxyService`s      | 8 (Hopper) / 1 (Blackwell) |
 
 ## Implementation notes
 
@@ -499,87 +501,63 @@ dispatch launches 128 workers plus scheduler/notify blocks, while combine
 launches 128 workers. `RANK_LOCAL_REDUCE` is the default combine mode;
 `DIRECT_SEND` preserves bit-exact top-k reduction order.
 
-The LL payload layout reserves optional scale storage for future quantization,
-but the active LL kernels currently accept BF16 inputs and expert outputs only.
+LL accepts BF16 input and can produce BF16 or FP8 E4M3 dispatch output. FP8
+uses one FP32 scale per 128 hidden elements. Expert output passed to combine is
+always BF16.
 
-### MSCCL++ EP LL vs NCCL EP LL vs DeepEP elastic dispatch payloads
+### LL dispatch payload
 
-MSCCL++ EP LL dispatch sends one message per routed expert. The destination
-receive buffer is partitioned by local expert, source rank, and slot, so the
-buffer position encodes the destination expert and source rank. The inline
-header only carries the source token's local row index:
-
-```text
-BF16 dispatch message:
-[int4 header: src_token_idx][BF16 hidden payload]
-
-FP8 dispatch message:
-[int4 header: src_token_idx][FP8 hidden payload][FP32 scale per 128 elements]
-```
-
-`topk_ids` and `topk_weights` are not sent in the LL dispatch payload. They are
-kept in the dispatch handle on the source rank and are used by `combine` to
-weight the returned expert outputs. Dispatch sends a small per-expert count
-signal separately so the receiver knows how many token messages arrived.
-
-NCCL EP LL sends one message per destination rank after rank-level
-deduplication. Its RDMA path stores each slot as an interleaved message, while
-its NVLink/P2P path stores headers and payloads in split sections inside the
-same per-source-rank receive region:
+Dispatch deduplicates routing by destination rank: a token routed to multiple
+experts on the same rank sends its hidden data only once. The receiver expands
+that payload into all matching local-expert rows. Each 128-byte-aligned payload
+contains:
 
 ```text
-RDMA:
-[DispatchHdr][hidden payload][optional FP8 scales]
-
-NVLink/P2P:
-[hdr0][hdr1]...[hdrN][payload0][payload1]...[payloadN]
+[data: BF16[hidden] or FP8_E4M3[hidden]]
+[optional scales: FP32[hidden / 128]]
+[topk expert ids: int32[num_topk]]
+[topk weights: FP32[num_topk]]
+[source token global index: int32]
 ```
 
-The header carries `token_id` plus one routing entry per top-k choice:
+Small rank/expert counts are sent as LL8 packets. After every payload TMA store
+has completed, the sender publishes readiness through a lightweight
+`BaseMemoryChannel` signal; the receiver waits on that signal before copying
+data into expert-major output.
 
-```text
-DispatchHdr(EXPERT_MAJOR) = [token_id][expert_id[num_topk]]
-DispatchHdr(RANK_MAJOR)   = [token_id][(topk_weight, expert_id)[num_topk]]
-```
+The optimized kernels are instantiated for hidden sizes `4096`, `7168`,
+`8192`, and `9216`; other hidden sizes are rejected. FP8 E4M3 currently fixes
+the scale block at 128. A future scale layout must use a distinct
+`DispatchDataType`.
 
-The NCCL EP expert-major header is `align16(4 + num_topk * 2)` bytes because
-`expert_id` is `uint16_t`. The rank-major header is
-`align16(4 + num_topk * 8)` bytes because each routing entry stores an FP32
-weight and a `uint16_t` expert ID plus padding.
+### Current H100 performance
 
-DeepEP elastic dispatch uses a different notify/data pipeline. It deduplicates
-by destination rank: if multiple top-k experts for the same token live on the
-same rank, the hidden payload is sent to that rank only once. Because the
-receiver must recover all local expert hits from that single token copy, the
-token buffer carries the full top-k metadata:
+Measured on 8×H100 with 128 tokens/rank, hidden 7168, top-k 8, 256 experts,
+50 warmup iterations, and NCCL-EP-style random routing with masked entries.
+No LL topology environment variables were set.
 
-```text
-[hidden payload][optional scale-factor packs][metadata]
-metadata = [topk_idx[num_topk]][optional topk_weights[num_topk]][src_token_global_idx][linked_list_idx[num_topk]]
-```
+CUDA Graph dispatch+combine E2E:
 
-`topk_idx` entries are 32-bit expert IDs, `topk_weights` entries are FP32 routing
-weights, and `src_token_global_idx = src_rank * num_max_tokens_per_rank +
-src_local_token_idx`. The common DeepEP token layout reserves the linked-list
-slots even when the non-hybrid path does not use them. After a GPU barrier
-guarantees data arrival, the copy epilogue copies data into `recv_x`, `recv_sf`,
-`recv_topk_idx`, `recv_topk_weights`, and source metadata.
+| Dispatch format | Combine mode | E2E |
+|---|---|---:|
+| BF16 | rank-local reduce | 81.5 µs |
+| BF16 | direct send | 101.3 µs |
+| FP8 E4M3 | rank-local reduce | 71.8 µs |
+| FP8 E4M3 | direct send | 94.5 µs |
 
-The optimized BF16 low-latency dispatch/combine kernels are instantiated for
-`hidden = 4096`, `7168`, `8192`, and `9216`; other hidden sizes are rejected.
-For BF16 dispatch with `num_tokens = 128`, `hidden = 7168`, and
-`num_experts = 256`, the expected per-source-rank dispatch payload is:
+Pure-C++ paired benchmark (`dispatch → synchronize → combine → synchronize`):
 
-| Case | Sends per token | Bytes per send | Expected dispatch bytes |
-|------|-----------------|----------------|-------------------------|
-| MSCCL++ LL, `topk=8` | `8` | `16 + 7168 * 2 = 14,352 B` | `128 * 8 * 14,352 = 14,696,448 B` (`14.70 MB`, `14.02 MiB`) |
-| NCCL EP LL expert-major, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `align16(4 + 8*2) + 7168 * 2 = 14,368 B` | `128 * 6.523 * 14,368 ~= 11,996,989 B` (`12.00 MB`, `11.44 MiB`) |
-| NCCL EP LL rank-major, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `align16(4 + 8*8) + 7168 * 2 = 14,416 B` | `128 * 6.523 * 14,416 ~= 12,037,069 B` (`12.04 MB`, `11.48 MiB`) |
-| DeepEP elastic, 16 GPUs, `topk=8` | `16 * (1 - C(240, 8) / C(256, 8)) = 6.523` | `7168 * 2 + align32(8*4 + 8*4 + 4 + 8*4) = 14,464 B` | `128 * 6.523 * 14,464 ~= 12,077,148 B` (`12.08 MB`, `11.52 MiB`) |
-| MSCCL++ LL, `topk=4` | `4` | `16 + 7168 * 2 = 14,352 B` | `128 * 4 * 14,352 = 7,348,224 B` (`7.35 MB`, `7.01 MiB`) |
-| NCCL EP LL expert-major, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `align16(4 + 4*2) + 7168 * 2 = 14,352 B` | `128 * 3.838 * 14,352 ~= 7,050,391 B` (`7.05 MB`, `6.72 MiB`) |
-| NCCL EP LL rank-major, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `align16(4 + 4*8) + 7168 * 2 = 14,384 B` | `128 * 3.838 * 14,384 ~= 7,066,111 B` (`7.07 MB`, `6.74 MiB`) |
-| DeepEP elastic, 32 GPUs, `topk=4` | `32 * (1 - C(248, 4) / C(256, 4)) = 3.838` | `7168 * 2 + align32(4*4 + 4*4 + 4 + 4*4) = 14,400 B` | `128 * 3.838 * 14,400 ~= 7,073,971 B` (`7.07 MB`, `6.75 MiB`) |
+| Dispatch format | Combine mode | Dispatch | Combine | D+C |
+|---|---|---:|---:|---:|
+| BF16 | rank-local reduce | 45.38 µs | 45.66 µs | 99.33 µs |
+| BF16 | direct send | 45.18 µs | 64.39 µs | 117.83 µs |
+| FP8 E4M3 | rank-local reduce | 35.59 µs | 45.98 µs | 89.67 µs |
+| FP8 E4M3 | direct send | 35.76 µs | 66.68 µs | 110.55 µs |
 
-The table counts token data plus inline per-token metadata. It excludes the
-small count, tail, barrier, and completion signals.
+With the same BF16 expert-major workload, NCCL-EP measured 57.99 µs dispatch,
+75.19 µs combine, and 141.26 µs D+C. MSCCL++ rank-local measured 45.49 µs,
+45.30 µs, and 98.74 µs respectively in that comparison run.
+
+Rank-local combine reduces expert rows on each destination rank before sending
+one BF16 partial per source rank/token. It may differ by one BF16 ULP because
+the reduction order changes. `DIRECT_SEND` preserves bit-exact top-k order.

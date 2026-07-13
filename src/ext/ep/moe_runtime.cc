@@ -6,11 +6,9 @@
 #include <cuda.h>
 
 #include <algorithm>
-#include <cctype>
-#include <cstdlib>
 #include <future>
 #include <mscclpp/concurrency_device.hpp>
-#include <string>
+#include <mscclpp/utils.hpp>
 
 #include "api.cuh"
 #include "constants.cuh"
@@ -18,40 +16,6 @@
 
 namespace mscclpp {
 namespace ep {
-
-namespace {
-
-int localWorldSize() {
-  int localWorldSize = NUM_MAX_NVL_PEERS;
-  if (const char* env = std::getenv("MSCCLPP_EP_LOCAL_WORLD_SIZE")) {
-    int v = std::atoi(env);
-    if (v > 0 && v <= NUM_MAX_NVL_PEERS) localWorldSize = v;
-  }
-  return localWorldSize;
-}
-
-bool resolveFabricIpcSupported() {
-  if (const char* env = std::getenv("MSCCLPP_EP_FABRIC_IPC")) {
-    std::string v(env);
-    for (auto& c : v) c = std::tolower(static_cast<unsigned char>(c));
-    if (v == "0" || v == "off" || v == "false" || v == "no") return false;
-    if (v == "1" || v == "on" || v == "true" || v == "yes" || v == "force") return true;
-  }
-  int dev = 0;
-  if (cudaGetDevice(&dev) != cudaSuccess) return false;
-  CUdevice cu_dev;
-  if (cuDeviceGet(&cu_dev, dev) != CUDA_SUCCESS) return false;
-  int supported = 0;
-  if (cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED, cu_dev) != CUDA_SUCCESS) {
-    return false;
-  }
-  if (!supported) return false;
-  cudaDeviceProp prop{};
-  if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return false;
-  return prop.major >= 10;
-}
-
-}  // namespace
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode)
     : rank_(communicator.bootstrap()->getRank()),
@@ -67,11 +31,14 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes,
   EP_HOST_ASSERT(rank_ >= 0 && rank_ < numRanks_);
 
   CUDA_CHECK(cudaGetDevice(&deviceId_));
-  int lws = localWorldSize();
-  rdmaRank_ = rank_ / lws;
-  nvlRank_ = rank_ % lws;
-  numRdmaRanks_ = std::max(1, numRanks_ / lws);
-  numNvlRanks_ = std::min(numRanks_, lws);
+  numNvlRanks_ = std::min(numRanks_, communicator.bootstrap()->getNranksPerNode());
+  numRanksPerIpcDomain_ =
+      std::max(numNvlRanks_, std::min(numRanks_, communicator.bootstrap()->getNranksPerIpcDomain()));
+  EP_HOST_ASSERT(numNvlRanks_ > 0 && numRanks_ % numNvlRanks_ == 0);
+  EP_HOST_ASSERT(numRanks_ % numRanksPerIpcDomain_ == 0);
+  rdmaRank_ = rank_ / numNvlRanks_;
+  nvlRank_ = rank_ % numNvlRanks_;
+  numRdmaRanks_ = numRanks_ / numNvlRanks_;
 
   CUDA_CHECK(cudaMalloc(&workspace_, NUM_WORKSPACE_BYTES));
   CUDA_CHECK(cudaMemset(workspace_, 0, NUM_WORKSPACE_BYTES));
@@ -91,7 +58,7 @@ MoERuntime::~MoERuntime() noexcept(false) {
 }
 
 bool MoERuntime::isAvailable() const { return available_; }
-bool MoERuntime::isInternodeAvailable() const { return isAvailable() && numRanks_ > NUM_MAX_NVL_PEERS; }
+bool MoERuntime::isInternodeAvailable() const { return isAvailable() && numRdmaRanks_ > 1; }
 int MoERuntime::getNumRdmaRanks() const { return numRdmaRanks_; }
 int MoERuntime::getRdmaRank() const { return rdmaRank_; }
 int MoERuntime::getRootRdmaRank(bool global) const { return global ? nvlRank_ : 0; }
@@ -103,8 +70,12 @@ void MoERuntime::setup() {
   EP_HOST_ASSERT(communicator_ != nullptr);
 
   const auto ipcTransport = mscclpp::Transport::CudaIpc;
-  const bool fabricIpcSupported = resolveFabricIpcSupported();
-  const bool useFabricIpcAlloc = mscclpp::isNvlsSupported() && fabricIpcSupported;
+  const bool spansHosts = numRanksPerIpcDomain_ > numNvlRanks_;
+  std::vector<int> fabricCapabilities(numRanks_, 0);
+  fabricCapabilities[rank_] = spansHosts && mscclpp::isFabricMemHandleAvailable() && mscclpp::isNvlsSupported();
+  communicator_->bootstrap()->allGather(fabricCapabilities.data(), sizeof(int));
+  const bool useFabricIpcAlloc =
+      spansHosts && std::all_of(fabricCapabilities.begin(), fabricCapabilities.end(), [](int value) { return value; });
   if (useFabricIpcAlloc) {
     rdmaBufferPtr_ = mscclpp::detail::gpuCallocPhysical(numRdmaBytes_);
   } else {
@@ -115,7 +86,7 @@ void MoERuntime::setup() {
   CUDA_CHECK(cudaDeviceSynchronize());
 
   const mscclpp::EndpointConfig ipcConfig(ipcTransport);
-  const int ipcDomainSize = useFabricIpcAlloc ? numRanks_ : numNvlRanks_;
+  const int ipcDomainSize = useFabricIpcAlloc ? numRanksPerIpcDomain_ : numNvlRanks_;
   auto isIpcPeer = [&](int peer) {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
   };

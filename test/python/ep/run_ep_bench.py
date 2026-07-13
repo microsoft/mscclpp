@@ -309,11 +309,7 @@ def parse_ll_summary(text: str, ep_lib: str) -> LLResult:
 # Backend command construction.
 # ----------------------------------------------------------------------------
 def build_mscclpp_cmd(args: argparse.Namespace) -> str:
-    env_vars = {
-        "MSCCLPP_EP_LOCAL_WORLD_SIZE": str(args.nproc_per_node),
-        "NCCL_IB_DISABLE": "1",
-        "NCCL_MNNVL_ENABLE": "0",
-    }
+    env_vars = {}
     if args.iface:
         env_vars.update(
             {
@@ -367,10 +363,11 @@ def build_mscclpp_cmd(args: argparse.Namespace) -> str:
         )
         python = "python"
     exports = " ".join(f"{name}={shlex.quote(value)}" for name, value in env_vars.items())
+    env_export = f"export {exports} && " if exports else ""
     return (
         f"{activation}"
         f"{cupti_build}"
-        f"export {exports} && "
+        f"{env_export}"
         f"{extra_exports}"
         f"{python} -m torch.distributed.run --standalone --nnodes=1 --nproc_per_node={args.nproc_per_node} "
         f"{shlex.quote(bench)} {bench_flags}"
@@ -457,9 +454,7 @@ def build_mscclpp_cpp_cmd(args: argparse.Namespace) -> str:
     if args.kernel_only or args.cupti_inproc:
         bench_flags += " --kernel-timing"
     setup, mpi_prefix = _mpi_launch(args, np_total)
-    env_exports = (
-        f"-x MSCCLPP_EP_LOCAL_WORLD_SIZE={args.nproc_per_node} " f"-x NCCL_IB_DISABLE=1 -x NCCL_MNNVL_ENABLE=0 "
-    )
+    env_exports = ""
     if args.hca:
         env_exports += f"-x MSCCLPP_HCA_DEVICES={shlex.quote(args.hca)} "
     if args.iface:

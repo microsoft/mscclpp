@@ -143,7 +143,7 @@ class LowLatencyBackend:
             num_rdma_bytes=num_rdma_bytes,
             mode=self.mode,
         )
-        # LL uses direct peer mappings, including fabric IPC when available.
+        # Bootstrap automatically detects physical-node and GPU IPC-domain topology.
         self._is_internode = self._runtime.get_num_rdma_ranks() > 1
 
     def is_available(self) -> bool:
