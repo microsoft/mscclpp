@@ -6,7 +6,7 @@
 #include <cuda_fp8.h>
 #include <cuda_runtime.h>
 
-#include "utils.cuh"
+#include "device_helpers.cuh"
 
 namespace mscclpp {
 namespace ep {

@@ -5,7 +5,8 @@
 #include <cstdlib>
 
 #include "../config.hpp"
-#include "../kernels/api.cuh"
+#include "api.cuh"
+#include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {

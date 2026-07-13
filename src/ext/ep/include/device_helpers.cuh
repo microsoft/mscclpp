@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mscclpp/packet_device.hpp>
 #include <type_traits>
 
 #include "exception.cuh"
@@ -17,24 +18,24 @@
 
 #define UNROLLED_WARP_COPY(UNROLL_FACTOR, LANE_ID, N, DST, SRC, LD_FUNC, ST_FUNC)                        \
   {                                                                                                      \
-    constexpr int kLoopStride = WARP_SIZE * (UNROLL_FACTOR);                                             \
+    constexpr int LoopStride = WARP_SIZE * (UNROLL_FACTOR);                                              \
     typename std::remove_reference<decltype(LD_FUNC((SRC) + 0))>::type unrolled_values[(UNROLL_FACTOR)]; \
     auto __src = (SRC);                                                                                  \
     auto __dst = (DST);                                                                                  \
-    for (int __i = (LANE_ID); __i < ((N) / kLoopStride) * kLoopStride; __i += kLoopStride) {             \
+    for (int __i = (LANE_ID); __i < ((N) / LoopStride) * LoopStride; __i += LoopStride) {                \
       _Pragma("unroll") for (int __j = 0; __j < (UNROLL_FACTOR); ++__j) unrolled_values[__j] =           \
           LD_FUNC(__src + __i + __j * WARP_SIZE);                                                        \
       _Pragma("unroll") for (int __j = 0; __j < (UNROLL_FACTOR); ++__j)                                  \
           ST_FUNC(__dst + __i + __j * WARP_SIZE, unrolled_values[__j]);                                  \
     }                                                                                                    \
-    for (int __i = ((N) / kLoopStride) * kLoopStride + (LANE_ID); __i < (N); __i += WARP_SIZE)           \
+    for (int __i = ((N) / LoopStride) * LoopStride + (LANE_ID); __i < (N); __i += WARP_SIZE)             \
       ST_FUNC(__dst + __i, LD_FUNC(__src + __i));                                                        \
   }
 
 namespace mscclpp {
 namespace ep {
 
-template <int kBytes>
+template <int Bytes>
 struct VecInt {};
 template <>
 struct VecInt<1> {
@@ -65,6 +66,17 @@ __device__ __forceinline__ void memory_fence_gpu() { asm volatile("fence.acq_rel
 
 __device__ __forceinline__ void memory_fence_cta() { asm volatile("fence.acq_rel.cta;" ::: "memory"); }
 
+MSCCLPP_DEVICE_INLINE void publishLl8Packet(mscclpp::LL8Packet *packet, uint32_t value, uint32_t flag) {
+  memory_fence();
+  packet->write(value, flag);
+}
+
+MSCCLPP_DEVICE_INLINE uint32_t waitLl8Packet(const mscclpp::LL8Packet *packet, uint32_t flag) {
+  const uint32_t value = packet->read(flag, -1);
+  memory_fence();
+  return value;
+}
+
 __device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBufferBase, void *peerBufferBase) {
   if (localBufferBase == nullptr) return peerBufferBase;
   const auto offset = reinterpret_cast<uint8_t *>(localBuffer) - reinterpret_cast<uint8_t *>(localBufferBase);
@@ -72,14 +84,18 @@ __device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBuf
 }
 
 #if defined(__CUDACC__)
-__device__ __forceinline__ void initTmaBarrier(uint64_t *sharedBarrier) {
-  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
-  asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));
+__device__ __forceinline__ void fenceProxyAsyncSharedCta() {
   asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
 }
 
-__device__ __forceinline__ void issueTmaG2S(const void *source, void *sharedTile, uint64_t *sharedBarrier,
-                                            uint32_t nBytes) {
+__device__ __forceinline__ void initTmaLoadBarrier(uint64_t *sharedBarrier) {
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
+  asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));
+  fenceProxyAsyncSharedCta();
+}
+
+__device__ __forceinline__ void issueTmaLoad(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                             uint32_t nBytes) {
   const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
   const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   asm volatile(
@@ -93,7 +109,7 @@ __device__ __forceinline__ void issueTmaG2S(const void *source, void *sharedTile
                : "r"(barrierAddress), "r"(nBytes));
 }
 
-__device__ __forceinline__ void waitTmaG2S(uint64_t *sharedBarrier, uint32_t &phase) {
+__device__ __forceinline__ void waitTmaLoad(uint64_t *sharedBarrier, uint32_t &phase) {
   const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
   uint32_t done = 0;
   while (!done) {
@@ -106,7 +122,7 @@ __device__ __forceinline__ void waitTmaG2S(uint64_t *sharedBarrier, uint32_t &ph
   phase ^= 1;
 }
 
-__device__ __forceinline__ void issueTmaS2G(void *destination, void *sharedTile, uint32_t nBytes) {
+__device__ __forceinline__ void issueTmaStore(void *destination, void *sharedTile, uint32_t nBytes) {
   const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
   asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(destination), "r"(tileAddress),
                "r"(nBytes)
@@ -114,12 +130,16 @@ __device__ __forceinline__ void issueTmaS2G(void *destination, void *sharedTile,
   asm volatile("cp.async.bulk.commit_group;");
 }
 
-template <int kNumPendingGroups = 0>
-__device__ __forceinline__ void waitTmaS2GRead() {
-  asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(kNumPendingGroups) : "memory");
+template <int NumPendingGroups = 0>
+__device__ __forceinline__ void waitBulkGroupRead() {
+  // Wait until at most NumPendingGroups committed bulk groups may still read shared memory.
+  asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(NumPendingGroups) : "memory");
 }
 
-__device__ __forceinline__ void waitTmaS2G() { asm volatile("cp.async.bulk.wait_group 0;" ::: "memory"); }
+__device__ __forceinline__ void waitBulkGroup() {
+  // Wait for every committed bulk group to complete.
+  asm volatile("cp.async.bulk.wait_group 0;" ::: "memory");
+}
 #endif
 
 __device__ __forceinline__ void st_relaxed_sys_global(const int *ptr, int val) {
@@ -388,15 +408,17 @@ __device__ __forceinline__ void unpack2(const dtype_b_t &packed, dtype_a_t &x, d
   x = unpacked_ptr[0], y = unpacked_ptr[1];
 }
 
-template <typename dtype_t>
-__device__ __forceinline__ dtype_t broadcast(dtype_t &ptr, int src_lane_idx) {
-  EP_STATIC_ASSERT(sizeof(dtype_t) % sizeof(int) == 0, "");
-  auto send_int_values = reinterpret_cast<int *>(&ptr);
-  int recv_int_values[sizeof(dtype_t) / sizeof(int)];
+template <typename T>
+__device__ __forceinline__ T warpBroadcast(T value, int sourceLane) {
+  EP_STATIC_ASSERT(sizeof(T) % sizeof(int) == 0, "");
+  const auto *sourceValues = reinterpret_cast<const int *>(&value);
+  T result;
+  auto *resultValues = reinterpret_cast<int *>(&result);
 #pragma unroll
-  for (int i = 0; i < sizeof(dtype_t) / sizeof(int); ++i)
-    recv_int_values[i] = __shfl_sync(0xffffffff, send_int_values[i], src_lane_idx);
-  return *reinterpret_cast<dtype_t *>(recv_int_values);
+  for (int i = 0; i < sizeof(T) / sizeof(int); ++i) {
+    resultValues[i] = __shfl_sync(0xffffffff, sourceValues[i], sourceLane);
+  }
+  return result;
 }
 
 __forceinline__ __device__ int warp_reduce_sum(int value) {
@@ -438,23 +460,23 @@ __forceinline__ __device__ int get_lane_id() {
   return lane_id;
 }
 
-template <int kNumRanks>
+template <int NumRanks>
 __forceinline__ __device__ void move_fifo_slots(int &head) {
-  head = (head + kNumRanks) % NUM_MAX_FIFO_SLOTS;
+  head = (head + NumRanks) % NUM_MAX_FIFO_SLOTS;
 }
 
-template <int kNumRanks>
+template <int NumRanks>
 __device__ __forceinline__ bool not_finished(int *task, int expected) {
   auto result = false;
   auto lane_id = threadIdx.x % WARP_SIZE;
-  if (lane_id < kNumRanks) result = ld_volatile_global(task + lane_id) != expected;
+  if (lane_id < NumRanks) result = ld_volatile_global(task + lane_id) != expected;
   return __any_sync(0xffffffff, result);
 }
 
-template <int kNumRanks>
+template <int NumRanks>
 __forceinline__ __device__ void timeout_check(int **task_fifo_ptrs, int head, int rank, int expected, int tag = 0) {
   auto start_time = clock64();
-  while (not_finished<kNumRanks>(task_fifo_ptrs[rank] + head, expected)) {
+  while (not_finished<NumRanks>(task_fifo_ptrs[rank] + head, expected)) {
     if (clock64() - start_time > NUM_TIMEOUT_CYCLES and threadIdx.x == 0) {
       printf("DeepEP timeout check failed: %d (rank = %d)\n", tag, rank);
       trap();
@@ -462,17 +484,17 @@ __forceinline__ __device__ void timeout_check(int **task_fifo_ptrs, int head, in
   }
 }
 
-template <int kNumRanks>
+template <int NumRanks>
 __forceinline__ __device__ void barrier_device(int **task_fifo_ptrs, int head, int rank, int tag = 0) {
   auto thread_id = static_cast<int>(threadIdx.x);
-  EP_DEVICE_ASSERT(kNumRanks <= WARP_SIZE);
+  EP_DEVICE_ASSERT(NumRanks <= WARP_SIZE);
 
-  if (thread_id < kNumRanks) {
+  if (thread_id < NumRanks) {
     atomicAdd_system(task_fifo_ptrs[rank] + head + thread_id, FINISHED_SUM_TAG);
     memory_fence();
     atomicSub_system(task_fifo_ptrs[thread_id] + head + rank, FINISHED_SUM_TAG);
   }
-  timeout_check<kNumRanks>(task_fifo_ptrs, head, rank, 0, tag);
+  timeout_check<NumRanks>(task_fifo_ptrs, head, rank, 0, tag);
 }
 
 }  // namespace ep

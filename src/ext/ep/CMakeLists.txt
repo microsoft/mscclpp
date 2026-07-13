@@ -40,7 +40,6 @@ endif()
 set(EP_SOURCES
     moe_runtime.cc
     bindings.cpp
-    kernels/low_latency.cu
     low_latency/dispatch.cu
     low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
@@ -53,7 +52,7 @@ set(EP_SOURCES
 if(MSCCLPP_USE_ROCM)
     # ROCm port of the EP kernels is not supported yet; see src/ext/ep/README.md.
     message(WARNING "mscclpp_ep: ROCm build path not implemented, falling back to CXX compile.")
-    file(GLOB_RECURSE EP_CU_SOURCES kernels/*.cu ht/kernels/*.cu)
+    file(GLOB_RECURSE EP_CU_SOURCES low_latency/*.cu ht/kernels/*.cu)
     set_source_files_properties(${EP_CU_SOURCES} PROPERTIES LANGUAGE CXX)
 endif()
 
@@ -65,6 +64,7 @@ endif()
 
 target_include_directories(mscclpp_ep_cpp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/ht
     ${PROJECT_SOURCE_DIR}/include
     ${PROJECT_SOURCE_DIR}/src/core/include

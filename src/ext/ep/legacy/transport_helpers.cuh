@@ -8,7 +8,7 @@
 #include <mscclpp/memory_channel_device.hpp>
 #include <mscclpp/port_channel_device.hpp>
 
-#include "utils.cuh"
+#include "device_helpers.cuh"
 
 namespace mscclpp {
 namespace ep {

@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import DispatchLayout, MoEMode, OptimizedCombineMode
+from ._cpp import CombineMode, DispatchLayout, MoEMode
 
 # Quantization metadata.
 
@@ -56,9 +56,8 @@ class MoECommunicatorConfig:
     # Transport / launch tuning
     num_rdma_qps_per_rank: int = 12
     num_sms: int = 20
-    low_latency_dispatch_num_sms: int = 64
-    low_latency_combine_num_sms: int = 64
-    low_latency_combine_mode: OptimizedCombineMode = OptimizedCombineMode.DISABLED
+    low_latency_num_blocks: int = 130
+    low_latency_combine_mode: CombineMode = CombineMode.RANK_LOCAL_REDUCE
     enable_overlap: bool = False
 
     # HT-only buffer/launch tuning (advanced)

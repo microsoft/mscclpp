@@ -499,11 +499,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         if ((slot_idx = __shfl_sync(0xffffffff, rdma_tail_idx, i)) >= 0) {
           slot_idx = slot_idx % num_max_rdma_chunked_recv_tokens;
           topk_ranks[num_topk_ranks] = i;
-          auto recv_is_token_in_rank_uint64 = broadcast(is_token_in_rank_uint64, i);
+          auto recv_is_token_in_rank_uint64 = warpBroadcast(is_token_in_rank_uint64, i);
           auto recv_is_token_in_rank_values = reinterpret_cast<const bool*>(&recv_is_token_in_rank_uint64);
           if (lane_id == num_topk_ranks) src_meta = SourceMeta(rdma_rank, recv_is_token_in_rank_values);
           dst_send_buffers[num_topk_ranks++] =
-              reinterpret_cast<uint8_t*>(broadcast(send_buffer, i)) + slot_idx * num_bytes_per_rdma_token;
+              reinterpret_cast<uint8_t*>(warpBroadcast(send_buffer, i)) + slot_idx * num_bytes_per_rdma_token;
         }
       EP_DEVICE_ASSERT(num_topk_ranks <= kNumTopkRDMARanks);
 
@@ -521,7 +521,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #pragma unroll
         for (int j = 0; j < num_topk_ranks; ++j) {
           const int node = topk_ranks[j];
-          NvlPackT bools_j = broadcast(is_token_in_rank_uint64, node);
+          NvlPackT bools_j = warpBroadcast(is_token_in_rank_uint64, node);
           const bool* bvals_j = reinterpret_cast<const bool*>(&bools_j);
 #pragma unroll
           for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g) {
@@ -562,7 +562,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
             const uint32_t smem_mbar =
                 static_cast<uint32_t>(__cvta_generic_to_shared(&ep_tma_mbar_snd[warp_id][stage]));
             asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
-            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            fenceProxyAsyncSharedCta();
             asm volatile(
                 "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
                 "[%0], [%1], %2, [%3];" ::"r"(smem_tile),
@@ -603,7 +603,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                   : "=r"(done)
                   : "r"(smem_mbar));
             }
-            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+            fenceProxyAsyncSharedCta();
             // S2G: lane-striped fan-out -- one destination pool per lane.
             bool issued = false;
             for (int j = lane_id; j < ep_num_pools; j += 32) {
@@ -652,8 +652,8 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
 #pragma unroll
           for (int j = 0; j < num_topk_ranks; ++j) {
             const int node = topk_ranks[j];
-            SourceMeta sm_j = broadcast(src_meta, j);
-            NvlPackT bools_j = broadcast(is_token_in_rank_uint64, node);
+            SourceMeta sm_j = warpBroadcast(src_meta, j);
+            NvlPackT bools_j = warpBroadcast(is_token_in_rank_uint64, node);
             const bool* bvals_j = reinterpret_cast<const bool*>(&bools_j);
 #pragma unroll
             for (int g = 0; g < NUM_MAX_NVL_PEERS; ++g) {
@@ -1174,7 +1174,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
               // G2S bulk (mbarrier complete_tx) -> arrive.expect_tx -> wait ->
               // fence -> S2G bulk -> commit -> wait.
               asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(smem_mbar));
-              asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+              fenceProxyAsyncSharedCta();
               asm volatile(
                   "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
                   "[%0], [%1], %2, [%3];" ::"r"(smem_tile),
@@ -1192,7 +1192,7 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
                     : "=r"(done)
                     : "r"(smem_mbar));
               }
-              asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+              fenceProxyAsyncSharedCta();
               asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(dst_b + off),
                            "r"(smem_tile), "r"(chunk)
                            : "memory");

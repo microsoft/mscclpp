@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode, OptimizedCombineMode, _cpp, get_low_latency_rdma_size_hint
+from ._cpp import CombineMode, DispatchLayout, MoEMode, _cpp, get_low_latency_rdma_size_hint
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -19,13 +19,13 @@ from .types import (
     MoECommunicatorConfig,
     QuantConfig,
 )
-from .utils import cuda_stream_ptr, requires_dequantization, resolve_expert_placement
+from .utils import cuda_stream_ptr, resolve_expert_placement
 
 
 class LowLatencyRuntime:
     """Private low-level low-latency runtime wrapper (wraps ``_cpp.MoERuntime``)."""
 
-    num_sms: int = 64
+    num_sms: int = 128
 
     def __init__(
         self,
@@ -33,22 +33,17 @@ class LowLatencyRuntime:
         num_nvl_bytes: int = 0,
         num_rdma_bytes: int = 0,
         mode: MoEMode = MoEMode.LOW_LATENCY,
-        num_qps_per_rank: int = 12,
     ) -> None:
         if not isinstance(mode, MoEMode):
             raise TypeError("mode must be a MoEMode")
         if mode != MoEMode.LOW_LATENCY:
             raise NotImplementedError("LowLatencyRuntime supports only MoEMode.LOW_LATENCY")
-        if num_qps_per_rank <= 0:
-            raise ValueError("num_qps_per_rank must be > 0")
-
         self.mode = mode
         self.rank: int = comm.my_rank
         self.group_size: int = comm.nranks
         self.comm = comm
         self.num_nvl_bytes = num_nvl_bytes
         self.num_rdma_bytes = num_rdma_bytes
-        self.num_qps_per_rank = num_qps_per_rank
         self.cpp_runtime = _cpp.MoERuntime(comm.communicator, num_nvl_bytes, num_rdma_bytes, mode)
 
     def is_available(self) -> bool:
@@ -90,8 +85,8 @@ class LowLatencyBackend:
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_sms = config.low_latency_dispatch_num_sms
-        self.combine_num_sms = config.low_latency_combine_num_sms
+        self.num_blocks = config.low_latency_num_blocks
+        self.num_sms = self.num_blocks - 2
         self.combine_mode = config.low_latency_combine_mode
         self.enable_overlap = config.enable_overlap
 
@@ -99,12 +94,10 @@ class LowLatencyBackend:
             raise NotImplementedError("low-latency mode currently supports only DispatchLayout.EXPERT_MAJOR")
         if self.num_experts % self.world_size != 0:
             raise ValueError("low-latency mode requires num_experts divisible by world_size")
-        if not self.world_size <= self.num_sms <= 128:
-            raise ValueError("low_latency_dispatch_num_sms must be between world_size and 128")
-        if not 1 <= self.combine_num_sms <= 128:
-            raise ValueError("low_latency_combine_num_sms must be between 1 and 128")
-        if not isinstance(self.combine_mode, OptimizedCombineMode):
-            raise TypeError("low_latency_combine_mode must be an OptimizedCombineMode")
+        if not self.world_size + 2 <= self.num_blocks <= 130:
+            raise ValueError("low_latency_num_blocks must be between world_size + 2 and 130")
+        if not isinstance(self.combine_mode, CombineMode):
+            raise TypeError("low_latency_combine_mode must be a CombineMode")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -116,18 +109,12 @@ class LowLatencyBackend:
 
         if config.max_recv_tokens_per_rank not in (None, self.max_tokens_per_rank):
             raise NotImplementedError("low-latency mode currently uses max_tokens_per_rank as recv capacity")
-        self.quant = config.quant
-        self.quant_dtype = None if self.quant is None else self.quant.dtype
-        if self.quant is not None and self.quant_dtype is None:
-            raise ValueError("quant.dtype is required when quant is provided")
-        if self.quant_dtype not in (None, torch.float8_e4m3fn):
-            raise NotImplementedError(f"unsupported low-latency quant dtype: {self.quant_dtype}")
-        self.dispatch_requires_quantization = self.quant_dtype is not None
+        if config.quant is not None:
+            raise NotImplementedError("low-latency quantization is not implemented yet")
 
         num_rdma_bytes = get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts, self.topk
         )
-        self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
@@ -137,11 +124,8 @@ class LowLatencyBackend:
             num_nvl_bytes=0,
             num_rdma_bytes=num_rdma_bytes,
             mode=self.mode,
-            num_qps_per_rank=config.num_rdma_qps_per_rank,
         )
-        # LL uses the registered symmetric buffer for both IPC/NVLink and RDMA-backed
-        # modes. A single-node LL job is not internode topology-wise.
-        # num_rdma_ranks > 1 iff world_size spans more than one local NVLink domain.
+        # LL uses direct peer mappings, including fabric IPC when available.
         self._is_internode = self._runtime.get_num_rdma_ranks() > 1
 
     def is_available(self) -> bool:
@@ -167,13 +151,12 @@ class LowLatencyBackend:
         del previous_handle
         self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer)
 
-        out_buf, packed_scales, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
+        out_buf, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
         self._runtime.cpp_runtime.dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
             out_buf.data_ptr(),
-            0 if packed_scales is None else packed_scales.data_ptr(),
             src_info.data_ptr(),
             layout_range.data_ptr(),
             count.data_ptr(),
@@ -182,17 +165,12 @@ class LowLatencyBackend:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
-            self.dispatch_requires_quantization,
-            self.output_layout,
-            self.num_sms,
+            self.num_blocks,
             cuda_stream_ptr(stream),
         )
-        dispatched_quant = None
-        if packed_scales is not None:
-            dispatched_quant = QuantConfig(dtype=self.quant_dtype, block_scales=packed_scales, block_size=128)
         output_info = DispatchOutputInfo(
             layout=DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_expert=count),
-            quant=dispatched_quant,
+            quant=None,
         )
         dispatch_out = DispatchOutput(
             tokens=out_buf,
@@ -226,17 +204,10 @@ class LowLatencyBackend:
         if not isinstance(handle, ExpertMajorDispatchHandle):
             raise ValueError("DispatchHandle does not contain expert-major combine context")
         context = handle.combine_context
-        combine_requires_dequantization = requires_dequantization(expert_output)
-        x_scales = None
-        if combine_requires_dequantization:
-            if handle.output_info.quant is None or handle.output_info.quant.block_scales is None:
-                raise ValueError("FP8 expert_output requires scales captured in the dispatch handle")
-            x_scales = handle.output_info.quant.block_scales
         if out is None:
             out = torch.empty((context.num_tokens, self.hidden_size), dtype=torch.bfloat16, device=expert_output.device)
         self._runtime.cpp_runtime.combine(
             expert_output.data_ptr(),
-            0 if x_scales is None else x_scales.data_ptr(),
             context.topk_ids.data_ptr(),
             0 if context.weights is None else context.weights.data_ptr(),
             context.src_info.data_ptr(),
@@ -247,9 +218,8 @@ class LowLatencyBackend:
             self.topk,
             context.num_max_dispatch_tokens_per_rank,
             context.num_experts,
-            combine_requires_dequantization,
             self.combine_mode,
-            self.combine_num_sms,
+            self.num_blocks - 2,
             cuda_stream_ptr(stream),
         )
         return out
@@ -265,16 +235,8 @@ class LowLatencyBackend:
                 (self.num_local_experts, self.world_size), dtype=torch.int64, device=device
             )
             self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
-            self._dispatch_scales = None
-            if self.dispatch_requires_quantization:
-                num_scales = self.hidden_size // 128
-                scales_storage = torch.empty(
-                    (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
-                )
-                self._dispatch_scales = scales_storage.transpose(1, 2)
         return (
             output_buffer,
-            self._dispatch_scales,
             self._dispatch_src_info,
             self._dispatch_layout_range,
             self._dispatch_count,
@@ -283,8 +245,8 @@ class LowLatencyBackend:
     def _validate_dispatch_inputs(self, input, topk_ids, weights, quant, output_buffer) -> None:
         if output_buffer is None:
             raise ValueError("output_buffer is required for low-latency dispatch")
-        if quant is not None and (quant.block_scales is not None or quant.global_scale is not None):
-            raise NotImplementedError("low-latency dispatch does not support quantized input scales yet")
+        if quant is not None:
+            raise NotImplementedError("low-latency quantization is not implemented yet")
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
         if input.device.type != "cuda" or input.dtype != torch.bfloat16:
@@ -306,7 +268,6 @@ class LowLatencyBackend:
                 raise ValueError("weights must be a float32 CUDA tensor on the same device as input")
             if weights.shape != topk_ids.shape:
                 raise ValueError("weights shape must match topk_ids")
-        expected_dtype = torch.float8_e4m3fn if self.dispatch_requires_quantization else torch.bfloat16
         slots_per_expert = self.world_size * self.max_tokens_per_rank
         if self.output_layout == DispatchLayout.EXPERT_MAJOR:
             expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)
@@ -314,8 +275,8 @@ class LowLatencyBackend:
             expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
-        if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
-            raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
+        if output_buffer.device != input.device or output_buffer.dtype != torch.bfloat16:
+            raise ValueError("output_buffer must be a BF16 CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
@@ -334,8 +295,8 @@ class LowLatencyBackend:
             raise ValueError("expert_output must keep dispatch output's contiguous layout")
         if tuple(expert_output.shape) != expected_shape:
             raise ValueError(f"expert_output shape must be {expected_shape}")
-        if expert_output.dtype not in (torch.bfloat16, getattr(torch, "float8_e4m3fn", None)):
-            raise ValueError("expert_output must be BF16 or FP8 E4M3")
+        if expert_output.dtype != torch.bfloat16:
+            raise ValueError("expert_output must be BF16")
         if out is not None:
             expected_out_shape = (context.num_tokens, self.hidden_size)
             if tuple(out.shape) != expected_out_shape or out.dtype != torch.bfloat16 or not out.is_contiguous():

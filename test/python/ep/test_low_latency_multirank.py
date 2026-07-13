@@ -62,12 +62,12 @@ def parse_args():
     parser.add_argument("--num-experts", type=int, default=256)
     parser.add_argument("--num-active-ranks", type=int, default=0, help="Limit routing to the first N ranks")
     parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
-    parser.add_argument("--dispatch-num-sms", type=int, default=64)
-    parser.add_argument("--combine-num-sms", type=int, default=64)
+    parser.add_argument("--num-blocks", type=int, default=130)
     parser.add_argument(
+        "--combine-mode",
         "--optimized-combine-mode",
-        choices=("disabled", "rank_local_reduce", "direct_send"),
-        default="disabled",
+        choices=("rank_local_reduce", "direct_send"),
+        default="rank_local_reduce",
     )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
@@ -114,10 +114,9 @@ def main():
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
     combine_mode = {
-        "disabled": ep.OptimizedCombineMode.DISABLED,
-        "rank_local_reduce": ep.OptimizedCombineMode.RANK_LOCAL_REDUCE,
-        "direct_send": ep.OptimizedCombineMode.DIRECT_SEND,
-    }[args.optimized_combine_mode]
+        "rank_local_reduce": ep.CombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.CombineMode.DIRECT_SEND,
+    }[args.combine_mode]
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -148,8 +147,7 @@ def main():
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
-        low_latency_dispatch_num_sms=args.dispatch_num_sms,
-        low_latency_combine_num_sms=args.combine_num_sms,
+        low_latency_num_blocks=args.num_blocks,
         low_latency_combine_mode=combine_mode,
     )
     if rank == 0:
@@ -246,7 +244,7 @@ def main():
         flush=True,
     )
     assert torch.isnan(combined_x).any().item() is False
-    combine_tolerance = 8.0 if combine_mode == ep.OptimizedCombineMode.RANK_LOCAL_REDUCE else 1e-2
+    combine_tolerance = 8.0 if combine_mode == ep.CombineMode.RANK_LOCAL_REDUCE else 1e-2
     assert diff <= combine_tolerance, f"rank{rank}: LL combine mismatch diff={diff}"
 
     dist.barrier(group=group)

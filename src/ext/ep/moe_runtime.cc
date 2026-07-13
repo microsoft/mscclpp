@@ -9,22 +9,17 @@
 #include <cctype>
 #include <cstdlib>
 #include <future>
-#include <map>
 #include <mscclpp/concurrency_device.hpp>
 #include <string>
 
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
-#include "kernels/exception.cuh"
+#include "api.cuh"
+#include "constants.cuh"
+#include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {
 
 namespace {
-
-using EPProxyService = mscclpp::ProxyService;
-
-constexpr size_t kLowLatencyOptWorkspaceOffset = NUM_WORKSPACE_BYTES / 2;
 
 int localWorldSize() {
   int localWorldSize = NUM_MAX_NVL_PEERS;
@@ -33,21 +28,6 @@ int localWorldSize() {
     if (v > 0 && v <= NUM_MAX_NVL_PEERS) localWorldSize = v;
   }
   return localWorldSize;
-}
-
-int resolveNumProxyServices(int numRanks, int localWorldSize) {
-  if (const char* env = std::getenv("MSCCLPP_EP_NUM_PROXIES")) {
-    int v = std::atoi(env);
-    return v > 0 ? v : 1;
-  }
-  int dev = 0;
-  if (cudaGetDevice(&dev) != cudaSuccess) return 8;
-  cudaDeviceProp prop{};
-  if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return 8;
-  int lws = localWorldSize > 0 ? localWorldSize : 1;
-  int numRdmaRanksLocal = std::max(1, numRanks / lws);
-  if (prop.major >= 10) return numRdmaRanksLocal > 1 ? lws : 1;
-  return 8;
 }
 
 bool resolveFabricIpcSupported() {
@@ -69,21 +49,6 @@ bool resolveFabricIpcSupported() {
   cudaDeviceProp prop{};
   if (cudaGetDeviceProperties(&prop, dev) != cudaSuccess) return false;
   return prop.major >= 10;
-}
-
-low_latency::OptimizedCombineMode resolveOptimizedCombineMode() {
-  const char* env = std::getenv("MSCCLPP_EP_OPTIMIZED_COMBINE");
-  if (env == nullptr) return low_latency::OptimizedCombineMode::DISABLED;
-  std::string value(env);
-  for (auto& c : value) c = std::tolower(static_cast<unsigned char>(c));
-  if (value == "1" || value == "on" || value == "true" || value == "yes" || value == "rank_local_reduce" ||
-      value == "local_reduce") {
-    return low_latency::OptimizedCombineMode::RANK_LOCAL_REDUCE;
-  }
-  if (value == "direct_send" || value == "direct" || value == "no_local_reduce") {
-    return low_latency::OptimizedCombineMode::DIRECT_SEND;
-  }
-  return low_latency::OptimizedCombineMode::DISABLED;
 }
 
 }  // namespace
@@ -108,22 +73,14 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes,
   numRdmaRanks_ = std::max(1, numRanks_ / lws);
   numNvlRanks_ = std::min(numRanks_, lws);
 
-  numProxyServices_ = resolveNumProxyServices(numRanks_, lws);
-  optimizedCombineMode_ = resolveOptimizedCombineMode();
-  proxyServices_.reserve(numProxyServices_);
-  for (int i = 0; i < numProxyServices_; ++i) proxyServices_.emplace_back(std::make_shared<EPProxyService>());
-
-  CUDA_CHECK(cudaStreamCreateWithFlags(&commStream_, cudaStreamNonBlocking));
   CUDA_CHECK(cudaMalloc(&workspace_, NUM_WORKSPACE_BYTES));
-  CUDA_CHECK(cudaMemsetAsync(workspace_, 0, NUM_WORKSPACE_BYTES, commStream_));
-  for (auto& ps : proxyServices_) ps->startProxy();
+  CUDA_CHECK(cudaMemset(workspace_, 0, NUM_WORKSPACE_BYTES));
   setup();
 }
 
 MoERuntime::~MoERuntime() noexcept(false) {
   CUDA_CHECK(cudaDeviceSynchronize());
   if (peerRdmaBasesGpu_ != nullptr) CUDA_CHECK(cudaFree(peerRdmaBasesGpu_));
-  for (auto& ps : proxyServices_) ps->stopProxy();
   if (workspace_ != nullptr) CUDA_CHECK(cudaFree(workspace_));
   if (rdmaBufferPtr_ != nullptr) {
     // gpuCallocPhysical allocations are intentionally process-lifetime in the
@@ -131,7 +88,6 @@ MoERuntime::~MoERuntime() noexcept(false) {
     // Ignore failures from fabric allocations during process teardown.
     cudaFree(rdmaBufferPtr_);
   }
-  if (commStream_ != nullptr) CUDA_CHECK(cudaStreamDestroy(commStream_));
 }
 
 bool MoERuntime::isAvailable() const { return available_; }
@@ -146,13 +102,7 @@ void MoERuntime::setup() {
   EP_HOST_ASSERT(!available_);
   EP_HOST_ASSERT(communicator_ != nullptr);
 
-  const std::vector<mscclpp::Transport> ibTransports = {
-      mscclpp::Transport::IB0, mscclpp::Transport::IB1, mscclpp::Transport::IB2, mscclpp::Transport::IB3,
-      mscclpp::Transport::IB4, mscclpp::Transport::IB5, mscclpp::Transport::IB6, mscclpp::Transport::IB7};
   const auto ipcTransport = mscclpp::Transport::CudaIpc;
-  const auto ibTransport = ibTransports[deviceId_];
-  const mscclpp::TransportFlags allTransport = ipcTransport | ibTransport;
-
   const bool fabricIpcSupported = resolveFabricIpcSupported();
   const bool useFabricIpcAlloc = mscclpp::isNvlsSupported() && fabricIpcSupported;
   if (useFabricIpcAlloc) {
@@ -164,254 +114,97 @@ void MoERuntime::setup() {
   communicator_->bootstrap()->barrier();
   CUDA_CHECK(cudaDeviceSynchronize());
 
-  std::map<int, mscclpp::MemoryId> memoryIds;
-  auto addMemoryToAll = [&](mscclpp::RegisteredMemory mem) -> mscclpp::MemoryId {
-    mscclpp::MemoryId id = static_cast<mscclpp::MemoryId>(-1);
-    for (auto& ps : proxyServices_) {
-      auto cur = ps->addMemory(mem);
-      if (id == static_cast<mscclpp::MemoryId>(-1)) id = cur;
-      EP_HOST_ASSERT(cur == id);
-    }
-    return id;
-  };
-
-  auto localRdmaBufferMem = communicator_->registerMemory(rdmaBufferPtr_, numRdmaBytes_, allTransport);
-  memoryIds[rank_] = addMemoryToAll(localRdmaBufferMem);
-
-  constexpr int kRdmaTag = 1;
-  for (int r = 0; r < numRanks_; ++r) {
-    if (r != rank_) communicator_->sendMemory(localRdmaBufferMem, r, kRdmaTag);
-  }
-  for (int r = 0; r < numRanks_; ++r) {
-    if (r == rank_) continue;
-    auto mem = communicator_->recvMemory(r, kRdmaTag).get();
-    memoryIds[r] = addMemoryToAll(std::move(mem));
-  }
-
-  std::unordered_map<int, std::vector<mscclpp::Connection>> connections;
-  const mscclpp::EndpointConfig ipcConfig(ipcTransport);
-  const mscclpp::EndpointConfig ibConfig(ibTransport);
-  connections[rank_].emplace_back(communicator_->connect(ipcConfig, rank_, kRdmaTag).get());
-
-  constexpr int kNumIbConnectionsPerRank = 12;
-  for (int r = 0; r < numRanks_; ++r) {
-    if (r == rank_) continue;
-    std::vector<std::shared_future<mscclpp::Connection>> futures;
-    futures.reserve(kNumIbConnectionsPerRank);
-    for (int i = 0; i < kNumIbConnectionsPerRank; ++i)
-      futures.emplace_back(communicator_->connect(ibConfig, r, kRdmaTag));
-    for (auto& f : futures) connections[r].emplace_back(f.get());
-  }
-
-  std::unordered_map<int, std::vector<std::pair<int, mscclpp::SemaphoreId>>> semaphoreIds;
-  constexpr int kNumSemaphoresPerRank = 16;
-  for (int i = 0; i < kNumSemaphoresPerRank; ++i) {
-    for (int r = 0; r < numRanks_; ++r) {
-      auto& conns = connections[r];
-      auto& conn = conns[i % conns.size()];
-      int proxyIdx = (i * numRanks_ + r) % numProxyServices_;
-      auto semaphoreId = proxyServices_[proxyIdx]->buildAndAddSemaphore(*communicator_, conn);
-      semaphoreIds[r].emplace_back(proxyIdx, semaphoreId);
-    }
-  }
-
-  std::vector<mscclpp::PortChannelDeviceHandle> portChannelHandles;
-  for (int i = 0; i < kNumSemaphoresPerRank; ++i) {
-    for (int r = 0; r < numRanks_; ++r) {
-      auto [proxyIdx, semaphoreId] = semaphoreIds[r][i % semaphoreIds[r].size()];
-      auto portChannel = proxyServices_[proxyIdx]->portChannel(semaphoreId, memoryIds[r], memoryIds[rank_]);
-      portChannels_.emplace_back(std::move(portChannel));
-      portChannelHandles.emplace_back(portChannels_.rbegin()->deviceHandle());
-    }
-  }
-  portChannelHandlesDevicePtr_ =
-      mscclpp::detail::gpuCallocShared<mscclpp::PortChannelDeviceHandle>(portChannelHandles.size());
-  mscclpp::gpuMemcpy<mscclpp::PortChannelDeviceHandle>(portChannelHandlesDevicePtr_.get(), portChannelHandles.data(),
-                                                       portChannelHandles.size(), cudaMemcpyHostToDevice);
-
   const int ipcDomainSize = useFabricIpcAlloc ? numRanks_ : numNvlRanks_;
   auto isIpcPeer = [&](int peer) {
     return peer != rank_ && ipcDomainSize > 1 && rank_ / ipcDomainSize == peer / ipcDomainSize;
   };
-  const bool wantPeerIpc = useFabricIpcAlloc || (mode_ == MoEMode::LOW_LATENCY && ipcDomainSize > 1);
-  if (wantPeerIpc) {
-    constexpr int kLlIpcTag = 2;
-    auto rdmaMemIpc = communicator_->registerMemory(rdmaBufferPtr_, numRdmaBytes_, ipcTransport);
-    std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
-    for (int r = 0; r < numRanks_; ++r) {
-      if (r == rank_ || !isIpcPeer(r)) continue;
-      communicator_->sendMemory(rdmaMemIpc, r, kLlIpcTag);
-      remoteFutures[r] = communicator_->recvMemory(r, kLlIpcTag);
-    }
 
-    std::vector<mscclpp::Connection> llIpcConnections(numRanks_);
-    std::vector<std::shared_future<mscclpp::Connection>> connectionFutures(numRanks_);
-    for (int r = 0; r < numRanks_; ++r) {
-      if (r == rank_ || !isIpcPeer(r)) continue;
-      connectionFutures[r] = communicator_->connect(ipcConfig, r, kLlIpcTag);
-    }
-    for (int r = 0; r < numRanks_; ++r) {
-      if (r == rank_ || !isIpcPeer(r)) continue;
-      llIpcConnections[r] = connectionFutures[r].get();
-    }
-
-    peerRdmaBases_.assign(numRanks_, nullptr);
-    peerRdmaBases_[rank_] = rdmaBufferPtr_;
-    std::vector<mscclpp::RegisteredMemory> remoteMemories(numRanks_);
-    for (int r = 0; r < numRanks_; ++r) {
-      if (r == rank_ || !isIpcPeer(r)) continue;
-      remoteMemories[r] = remoteFutures[r].get();
-      peerRdmaBases_[r] = remoteMemories[r].data();
-    }
-    CUDA_CHECK(cudaMalloc(&peerRdmaBasesGpu_, sizeof(void*) * numRanks_));
-    CUDA_CHECK(cudaMemcpy(peerRdmaBasesGpu_, peerRdmaBases_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
-
-    std::vector<mscclpp::BaseMemoryChannelDeviceHandle> llHandles(numRanks_);
-    for (int r = 0; r < numRanks_; ++r) {
-      if (r == rank_ || !isIpcPeer(r)) continue;
-      auto sema = std::make_shared<mscclpp::MemoryDevice2DeviceSemaphore>(*communicator_, llIpcConnections[r]);
-      llMemoryChannels_.emplace_back(sema, remoteMemories[r], rdmaMemIpc);
-      llHandles[r] = llMemoryChannels_.rbegin()->deviceHandle();
-    }
-    llMemoryChannelHandlesDevicePtr_ =
-        mscclpp::detail::gpuCallocShared<mscclpp::BaseMemoryChannelDeviceHandle>(numRanks_);
-    mscclpp::gpuMemcpy<mscclpp::BaseMemoryChannelDeviceHandle>(llMemoryChannelHandlesDevicePtr_.get(), llHandles.data(),
-                                                               numRanks_, cudaMemcpyHostToDevice);
-    llRanksPerIpcDomain_ = ipcDomainSize;
-    llIpcReady_ = ipcDomainSize >= numRanks_;
+  constexpr int IpcTag = 1;
+  peerRdmaMemories_.resize(numRanks_);
+  peerRdmaMemories_[rank_] = communicator_->registerMemory(rdmaBufferPtr_, numRdmaBytes_, ipcTransport);
+  std::vector<std::shared_future<mscclpp::RegisteredMemory>> remoteFutures(numRanks_);
+  for (int r = 0; r < numRanks_; ++r) {
+    if (!isIpcPeer(r)) continue;
+    communicator_->sendMemory(peerRdmaMemories_[rank_], r, IpcTag);
+    remoteFutures[r] = communicator_->recvMemory(r, IpcTag);
   }
 
-  available_ = true;
+  peerRdmaBases_.assign(numRanks_, nullptr);
+  peerRdmaBases_[rank_] = rdmaBufferPtr_;
+  for (int r = 0; r < numRanks_; ++r) {
+    if (!isIpcPeer(r)) continue;
+    peerRdmaMemories_[r] = remoteFutures[r].get();
+    peerRdmaBases_[r] = peerRdmaMemories_[r].data();
+  }
+
+  CUDA_CHECK(cudaMalloc(&peerRdmaBasesGpu_, sizeof(void*) * numRanks_));
+  CUDA_CHECK(cudaMemcpy(peerRdmaBasesGpu_, peerRdmaBases_.data(), sizeof(void*) * numRanks_, cudaMemcpyHostToDevice));
+
+  int maxSharedMemoryPerBlock;
+  int numSms;
+  CUDA_CHECK(cudaDeviceGetAttribute(&maxSharedMemoryPerBlock, cudaDevAttrMaxSharedMemoryPerBlockOptin, deviceId_));
+  CUDA_CHECK(cudaDeviceGetAttribute(&numSms, cudaDevAttrMultiProcessorCount, deviceId_));
+  commContext_ = {.rdmaBufferBase_ = rdmaBufferPtr_,
+                  .peerBases_ = peerRdmaBasesGpu_,
+                  .maxSharedMemoryPerBlock_ = maxSharedMemoryPerBlock,
+                  .numSms_ = numSms,
+                  .deviceId_ = deviceId_,
+                  .rank_ = rank_,
+                  .numRanks_ = numRanks_};
+  available_ = ipcDomainSize >= numRanks_;
 }
 
-void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
-                          int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
-                          int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
-                          bool requiresQuantization, DispatchLayout dispatchLayout, int numSms, cudaStream_t stream) {
+void MoERuntime::dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
+                          const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
+                          int maxTokensPerRank, int numExperts, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
-  EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
-  EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
+  EP_HOST_ASSERT(available_);
+  EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
-  EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
-  EP_HOST_ASSERT(llIpcReady_ && "low-latency rank-dedup dispatch currently requires IPC/NVLink reachability");
-  EP_HOST_ASSERT(numSms >= numRanks_ && numSms <= 128);
+  EP_HOST_ASSERT(numBlocks - low_latency::DispatchControlBlocks >= numRanks_ &&
+                 numBlocks <= low_latency::MaxDispatchBlocks);
 
-  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
-  EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
-  auto buffer = layout.buffers[lowLatencyBufferIdx_];
+  low_latency::Layout layout(rdmaBufferPtr_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
+  EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(numRdmaBytes_));
+  void* recvBuffer = layout.buffers_[lowLatencyBufferIdx_].dispatchData_;
   lowLatencyBufferIdx_ ^= 1;
 
-  low_latency::DispatchConfig config{
-      .numTokens_ = numTokens,
-      .hidden_ = hidden,
-      .numTopk_ = numTopk,
-      .numExperts_ = numExperts,
-      .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
-      .inputDType_ = low_latency::DType::BF16,
-      .outputDType_ = requiresQuantization ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
-      .outputLayout_ = dispatchLayout};
-  low_latency::BufferSet currentBuffer{.sendDataBuffer_ = buffer.dispatchRdmaSendBuffer,
-                                       .sendCountBuffer_ = nullptr,
-                                       .recvDataBuffer_ = buffer.dispatchRdmaRecvDataBuffer,
-                                       .recvCountBuffer_ = buffer.dispatchRdmaRecvCountBuffer,
-                                       .cleanupRegion_ = nullptr,
-                                       .cleanupSize_ = 0};
-  low_latency::TransportContext transport{
-      .rdmaBufferBase_ = rdmaBufferPtr_,
-      .portChannels_ = portChannelHandlesDevicePtr_.get(),
-      .memoryChannels_ = llMemoryChannelHandlesDevicePtr_ ? llMemoryChannelHandlesDevicePtr_.get() : nullptr,
-      .memoryChannelStride_ = 1,
-      .peerBases_ = peerRdmaBasesGpu_,
-      .ipcReady_ = llIpcReady_,
-      .deviceId_ = deviceId_,
-      .rank_ = rank_,
-      .numRanks_ = numRanks_,
-      .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  if (!requiresQuantization) {
-    const size_t optWorkspaceBytes =
-        static_cast<size_t>(3 * numRanks_ + numExperts + 3 * 128 + 4) * sizeof(int) + sizeof(mscclpp::DeviceSyncer);
-    EP_HOST_ASSERT(optWorkspaceBytes <= NUM_WORKSPACE_BYTES - kLowLatencyOptWorkspaceOffset);
-    auto* optWorkspace = reinterpret_cast<uint8_t*>(workspace_) + kLowLatencyOptWorkspaceOffset;
-    low_latency::dispatchOptimized(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
-                                   config, currentBuffer, transport, optWorkspace, numSms, stream);
-  } else {
-    auto nextCleanMeta = layout.buffers[lowLatencyBufferIdx_].cleanMeta();
-    low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
-                                         .sendCountBuffer_ = nullptr,
-                                         .recvDataBuffer_ = nullptr,
-                                         .recvCountBuffer_ = nullptr,
-                                         .cleanupRegion_ = nextCleanMeta.first,
-                                         .cleanupSize_ = nextCleanMeta.second};
-    low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
-                          config, currentBuffer, nextBufferSet, transport, workspace_, stream,
-                          low_latency::SEND_AND_RECV);
-  }
-  optimizedDispatchMetadataReady_ = !requiresQuantization;
+  const low_latency::Workload workload{.numTokens_ = numTokens,
+                                       .hidden_ = hidden,
+                                       .numTopk_ = numTopk,
+                                       .numExperts_ = numExperts,
+                                       .maxTokensPerRank_ = maxTokensPerRank};
+  const size_t workspaceBytes =
+      static_cast<size_t>(3 * numRanks_ + numExperts + 3 * 128 + 3) * sizeof(int) + sizeof(mscclpp::DeviceSyncer);
+  EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
+  low_latency::dispatch(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, workload,
+                        recvBuffer, commContext_, workspace_, numBlocks, stream);
 }
 
-void MoERuntime::combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-                         const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens,
-                         int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
-                         bool requiresDequantization, low_latency::OptimizedCombineMode optimizedMode, int numBlocks,
+void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                         const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
+                         int maxTokensPerRank, int numExperts, low_latency::CombineMode mode, int numBlocks,
                          cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
-  EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
+  EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
-  EP_HOST_ASSERT(llIpcReady_ && "low-latency combine currently requires IPC/NVLink reachability");
-  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= 128);
+  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= low_latency::MaxWorkerBlocks);
 
-  LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
-  EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
-  auto buffer = layout.buffers[lowLatencyBufferIdx_];
+  low_latency::Layout layout(rdmaBufferPtr_, maxTokensPerRank, hidden, numRanks_, numExperts, numTopk);
+  EP_HOST_ASSERT(layout.totalBytes_ <= static_cast<size_t>(numRdmaBytes_));
+  auto& combineBuffer = layout.buffers_[lowLatencyBufferIdx_];
+  void* recvBuffer = combineBuffer.combineData_;
+  auto* readyPackets = combineBuffer.combineReadyPackets_;
   lowLatencyBufferIdx_ ^= 1;
+  void* dispatchRecvBuffer = layout.buffers_[lowLatencyBufferIdx_].dispatchData_;
 
-  low_latency::CombineConfig config{
-      .numCombinedTokens_ = numTokens,
-      .hidden_ = hidden,
-      .numTopk_ = numTopk,
-      .numExperts_ = numExperts,
-      .numMaxTokensPerRank_ = numMaxDispatchTokensPerRank,
-      .inputDType_ = requiresDequantization ? low_latency::DType::F8E4M3 : low_latency::DType::BF16,
-      .outputDType_ = low_latency::DType::BF16,
-      .zeroCopy_ = false};
-  low_latency::BufferSet currentBuffer{.sendDataBuffer_ = buffer.combineRdmaSendBuffer,
-                                       .sendCountBuffer_ = nullptr,
-                                       .recvDataBuffer_ = buffer.combineRdmaRecvDataBuffer,
-                                       .recvCountBuffer_ = buffer.combineRdmaRecvFlagBuffer,
-                                       .cleanupRegion_ = nullptr,
-                                       .cleanupSize_ = 0};
-  low_latency::TransportContext transport{
-      .rdmaBufferBase_ = rdmaBufferPtr_,
-      .portChannels_ = portChannelHandlesDevicePtr_.get(),
-      .memoryChannels_ = llMemoryChannelHandlesDevicePtr_ ? llMemoryChannelHandlesDevicePtr_.get() : nullptr,
-      .memoryChannelStride_ = 1,
-      .peerBases_ = peerRdmaBasesGpu_,
-      .ipcReady_ = llIpcReady_,
-      .deviceId_ = deviceId_,
-      .rank_ = rank_,
-      .numRanks_ = numRanks_,
-      .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  const auto effectiveOptimizedMode =
-      optimizedMode == low_latency::OptimizedCombineMode::DISABLED ? optimizedCombineMode_ : optimizedMode;
-  if (effectiveOptimizedMode != low_latency::OptimizedCombineMode::DISABLED && optimizedDispatchMetadataReady_ &&
-      !requiresDequantization) {
-    auto* optWorkspace = reinterpret_cast<uint8_t*>(workspace_) + kLowLatencyOptWorkspaceOffset;
-    auto dispatchRecvBuffer = layout.buffers[lowLatencyBufferIdx_].dispatchRdmaRecvDataBuffer;
-    low_latency::combineOptimized(output, input, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
-                                  dispatchRecvBuffer, transport, optWorkspace, numBlocks, effectiveOptimizedMode,
-                                  stream);
-  } else {
-    auto nextCleanMeta = layout.buffers[lowLatencyBufferIdx_].cleanMeta();
-    low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
-                                         .sendCountBuffer_ = nullptr,
-                                         .recvDataBuffer_ = nullptr,
-                                         .recvCountBuffer_ = nullptr,
-                                         .cleanupRegion_ = nextCleanMeta.first,
-                                         .cleanupSize_ = nextCleanMeta.second};
-    low_latency::combine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
-                         nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
-  }
-  optimizedDispatchMetadataReady_ = false;
+  const low_latency::Workload workload{.numTokens_ = numTokens,
+                                       .hidden_ = hidden,
+                                       .numTopk_ = numTopk,
+                                       .numExperts_ = numExperts,
+                                       .maxTokensPerRank_ = maxTokensPerRank};
+  low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer, readyPackets,
+                       dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);
 }
 
 }  // namespace ep

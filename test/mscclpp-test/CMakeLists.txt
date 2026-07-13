@@ -24,7 +24,9 @@ add_mscclpp_test_executable(alltoall_test_perf alltoall_test.cu)
 add_mscclpp_test_executable(ep_low_latency_opt_signal_perf ep_low_latency_opt_signal_perf.cu)
 target_sources(ep_low_latency_opt_signal_perf PRIVATE
     ${PROJECT_SOURCE_DIR}/src/ext/ep/low_latency/dispatch.cu)
-target_include_directories(ep_low_latency_opt_signal_perf PRIVATE ${PROJECT_SOURCE_DIR}/src/ext/ep)
+target_include_directories(ep_low_latency_opt_signal_perf PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/ext/ep
+    ${PROJECT_SOURCE_DIR}/src/ext/ep/include)
 if(MSCCLPP_USE_CUDA)
     set(_mscclpp_ep_test_gpu_archs "")
     foreach(_arch IN LISTS CMAKE_CUDA_ARCHITECTURES)

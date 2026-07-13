@@ -34,8 +34,8 @@
 #include <string>
 #include <unordered_map>
 
-#include "kernels/api.cuh"
-#include "kernels/configs.cuh"
+#include "api.cuh"
+#include "constants.cuh"
 
 namespace mscclpp {
 namespace ep {

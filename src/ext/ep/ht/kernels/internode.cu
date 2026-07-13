@@ -5,11 +5,11 @@
 #include <mscclpp/port_channel_device.hpp>
 #include <type_traits>
 
-#include "../../kernels/configs.cuh"
-#include "../../kernels/exception.cuh"
-#include "../../kernels/launch.cuh"
-#include "../../kernels/utils.cuh"
 #include "buffer.cuh"
+#include "constants.cuh"
+#include "device_helpers.cuh"
+#include "exception.cuh"
+#include "launch.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -973,11 +973,11 @@ __global__ void __launch_bounds__(((kNumDispatchRDMASenderWarps + 1 + NUM_MAX_NV
         if ((slot_idx = __shfl_sync(0xffffffff, rdma_tail_idx, i)) >= 0) {
           slot_idx = slot_idx % num_max_rdma_chunked_recv_tokens;
           topk_ranks[num_topk_ranks] = i;
-          auto recv_is_token_in_rank_uint64 = broadcast(is_token_in_rank_uint64, i);
+          auto recv_is_token_in_rank_uint64 = warpBroadcast(is_token_in_rank_uint64, i);
           auto recv_is_token_in_rank_values = reinterpret_cast<const bool*>(&recv_is_token_in_rank_uint64);
           if (lane_id == num_topk_ranks) src_meta = SourceMeta(rdma_rank, recv_is_token_in_rank_values);
           dst_send_buffers[num_topk_ranks++] =
-              reinterpret_cast<uint8_t*>(broadcast(send_buffer, i)) + slot_idx * num_bytes_per_rdma_token;
+              reinterpret_cast<uint8_t*>(warpBroadcast(send_buffer, i)) + slot_idx * num_bytes_per_rdma_token;
         }
       EP_DEVICE_ASSERT(num_topk_ranks <= kNumTopkRDMARanks);
 
@@ -2109,7 +2109,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
       if (lane_id == 0) {
         const uint32_t mbar_a = static_cast<uint32_t>(__cvta_generic_to_shared(&my_mbar[s]));
         asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(mbar_a));
-        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+        fenceProxyAsyncSharedCta();
         const uint32_t cbytes = static_cast<uint32_t>(csize_int4 * static_cast<int>(sizeof(int4)));
         for (int j = 0; j < num_topk_ranks; ++j) {
           const uint8_t* src =
@@ -2142,7 +2142,7 @@ __global__ void __launch_bounds__(kWarps * 32, 1)
         }
       }
       __syncwarp();
-      asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+      fenceProxyAsyncSharedCta();
     };
 
     auto reduce_store = [&](int s, int c0, int csize_int4) {

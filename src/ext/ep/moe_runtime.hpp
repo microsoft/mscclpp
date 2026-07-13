@@ -8,15 +8,11 @@
 #include <memory>
 #include <mscclpp/core.hpp>
 #include <mscclpp/gpu_utils.hpp>
-#include <mscclpp/memory_channel.hpp>
-#include <mscclpp/port_channel.hpp>
-#include <optional>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
+#include "api.cuh"
 #include "config.hpp"
-#include "kernels/api.cuh"
 
 namespace mscclpp {
 namespace ep {
@@ -34,15 +30,13 @@ class MoERuntime {
   int getLocalDeviceId() const;
   std::string getLocalIpcHandle() const;
 
-  void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-                const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden,
-                int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresQuantization,
-                DispatchLayout dispatchLayout, int numSms, cudaStream_t stream);
+  void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
+                const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
+                int maxTokensPerRank, int numExperts, int numBlocks, cudaStream_t stream);
 
-  void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
-               const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
-               int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresDequantization,
-               low_latency::OptimizedCombineMode optimizedMode, int numBlocks, cudaStream_t stream);
+  void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
+               const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
+               low_latency::CombineMode mode, int numBlocks, cudaStream_t stream);
 
  private:
   int lowLatencyBufferIdx_ = 0;
@@ -57,26 +51,15 @@ class MoERuntime {
   int64_t numRdmaBytes_;
   MoEMode mode_;
   bool available_ = false;
-  int numProxyServices_ = 1;
-  int llRanksPerIpcDomain_ = 0;
-  bool llIpcReady_ = false;
-  bool optimizedDispatchMetadataReady_ = false;
-  low_latency::OptimizedCombineMode optimizedCombineMode_ = low_latency::OptimizedCombineMode::DISABLED;
-
   void* rdmaBufferPtr_ = nullptr;
   void* workspace_ = nullptr;
-  cudaStream_t commStream_ = nullptr;
+  low_latency::CommContext commContext_{};
 
   mscclpp::Communicator* communicator_ = nullptr;
-  std::vector<std::shared_ptr<mscclpp::ProxyService>> proxyServices_;
-  std::vector<mscclpp::PortChannel> portChannels_;
-  std::shared_ptr<mscclpp::PortChannelDeviceHandle> portChannelHandlesDevicePtr_;
 
   std::vector<void*> peerRdmaBases_;
+  std::vector<mscclpp::RegisteredMemory> peerRdmaMemories_;
   void** peerRdmaBasesGpu_ = nullptr;
-  std::vector<mscclpp::MemoryChannel> llMemoryChannels_;
-  std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> llMemoryChannelHandlesDevicePtr_;
-  // std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> llMemoryChannelHandlesForExpertDevicePtr_;
 
   void setup();
 };

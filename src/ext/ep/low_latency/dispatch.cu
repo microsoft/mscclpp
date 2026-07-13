@@ -2,59 +2,58 @@
 // Licensed under the MIT License.
 #include <mscclpp/memory_channel_device.hpp>
 
-#include "../kernels/api.cuh"
-#include "../kernels/exception.cuh"
-#include "../kernels/utils.cuh"
+#include "api.cuh"
 #include "config.cuh"
+#include "device_helpers.cuh"
+#include "exception.cuh"
 
 namespace mscclpp {
 namespace ep {
 namespace low_latency_opt {
 
-template <int kHidden>
-MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMemoryChannelDeviceHandle* signalChannels,
-                                        int nExperts, int rank, int nRanks, int signalChannelStride,
+template <int Hidden>
+MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, int nExperts, int rank, int nRanks,
                                         const int64_t* topkIndices, const float* topkWeights, int nTokens, int nTopk,
                                         int maxTokensPerRank, void* recvBuffer, void* const* peerRecvBuffers,
                                         void* rdmaBufferBase, void* workspace, uint32_t metadataFlag, int* sharedMem) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
   const int laneId = get_lane_id();
-  const int nSms = static_cast<int>(gridDim.x) - 2;
-  const int notifyBlockIdx = nSms + 1;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - low_latency::DispatchControlBlocks;
+  const int notifyBlockIdx = nWorkerBlocks + 1;
   const int nLocalExperts = nExperts / nRanks;
   const size_t metadataBytes = dispatchMetadataBytes(nRanks, nExperts);
-  DispatchWorkspaceView workspaceView(workspace, nRanks, nExperts, nSms);
-  if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nSms) {
+  WorkspaceView workspaceView(workspace, nRanks, nExperts);
+  if (static_cast<int>(blockIdx.x) > 0 && static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
     const int senderBlockIdx = static_cast<int>(blockIdx.x) - 1;
-    const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nSms);
-    const int nWarpGroups = kDispatchNWarps / nWarpsPerGroup;
+    const int nWarpsPerGroup = dispatchNWarpsPerGroup(nTokens, nWorkerBlocks);
+    const int nWarpGroups = DispatchNWarps / nWarpsPerGroup;
     const int warpGroupId = warpId / nWarpsPerGroup;
     const int subWarpId = warpId % nWarpsPerGroup;
-    const LowLatencyPayloadView<nv_bfloat16> payloadView(kHidden, nTopk);
-    const size_t payloadStride = dispatchPayloadStride(kHidden, nTopk);
-    constexpr size_t kHiddenBytes = static_cast<size_t>(kHidden) * sizeof(nv_bfloat16);
-    constexpr int kHiddenInt4Count = kHiddenBytes / sizeof(int4);
+    const low_latency::PayloadView<__bfloat16> payloadView(Hidden, nTopk);
+    const size_t payloadStride = dispatchPayloadStride(Hidden, nTopk);
+    constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(__bfloat16);
+    constexpr int HiddenInt4Count = HiddenBytes / sizeof(int4);
     auto* sharedPayloadBase = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
-    auto* sendTmaBarriers = reinterpret_cast<uint64_t*>(sharedPayloadBase + kDispatchMaxNWarpGroups * payloadStride);
+    auto* sendTmaBarriers = reinterpret_cast<uint64_t*>(sharedPayloadBase + DispatchMaxNWarpGroups * payloadStride);
 
     if (subWarpId == 0) {
-      const int tokenStride = nSms * nWarpGroups;
+      const int tokenStride = nWorkerBlocks * nWarpGroups;
       const int firstTokenIdx = senderBlockIdx * nWarpGroups + warpGroupId;
       auto* stagedPayload = sharedPayloadBase + static_cast<size_t>(warpGroupId) * payloadStride;
       auto* destinationSlots = sharedMem + warpGroupId * WARP_SIZE;
       auto* tmaBarrier = sendTmaBarriers + warpGroupId;
       uint32_t sendTmaPhase = 0;
       if (firstTokenIdx < nTokens) {
-        if (laneId == 0) initTmaBarrier(tmaBarrier);
+        if (laneId == 0) initTmaLoadBarrier(tmaBarrier);
         __syncwarp();
       }
 
       for (int tokenIdx = firstTokenIdx; tokenIdx < nTokens; tokenIdx += tokenStride) {
         const auto* inputData =
-            reinterpret_cast<const int4*>(inputTokens) + static_cast<size_t>(tokenIdx) * kHiddenInt4Count;
+            reinterpret_cast<const int4*>(inputTokens) + static_cast<size_t>(tokenIdx) * HiddenInt4Count;
         if (laneId == 0) {
-          issueTmaG2S(inputData, stagedPayload, tmaBarrier, static_cast<uint32_t>(kHiddenBytes));
+          issueTmaLoad(inputData, stagedPayload, tmaBarrier, static_cast<uint32_t>(HiddenBytes));
         }
         const int routedExpertIdx =
             laneId < nTopk ? static_cast<int>(__ldg(topkIndices + tokenIdx * nTopk + laneId)) : -1;
@@ -74,10 +73,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMe
         }
         if (laneId == 0) {
           *payloadView.srcTokenGlobalIdx(stagedPayload) = rank * maxTokensPerRank + tokenIdx;
-          waitTmaG2S(tmaBarrier, sendTmaPhase);
+          waitTmaLoad(tmaBarrier, sendTmaPhase);
         }
         __syncwarp();
-        asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+        fenceProxyAsyncSharedCta();
         bool hasPendingStore = false;
         const int destinationSlot = laneId < nTopk ? destinationSlots[laneId] : -1;
         if (destinationSlot >= 0) {
@@ -86,11 +85,11 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMe
               dstRank == rank ? recvBuffer : peerBufferPtr(recvBuffer, rdmaBufferBase, peerRecvBuffers[dstRank]);
           auto* destinationPayload = reinterpret_cast<uint8_t*>(destinationBuffer) + metadataBytes +
                                      (static_cast<size_t>(rank) * maxTokensPerRank + destinationSlot) * payloadStride;
-          issueTmaS2G(destinationPayload, stagedPayload, static_cast<uint32_t>(payloadView.numBytes_));
+          issueTmaStore(destinationPayload, stagedPayload, static_cast<uint32_t>(payloadView.numBytes_));
           hasPendingStore = true;
         }
         if (hasPendingStore) {
-          waitTmaS2G();
+          waitBulkGroup();
         }
         __syncwarp();
         if (destinationSlot >= 0) {
@@ -99,7 +98,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMe
                                                                    mscclpp::memoryOrderRelease);
         }
       }
-      asm volatile("bar.sync %0, %1;" ::"r"(kDispatchMaxNWarpGroups + 1), "r"(nWarpGroups * WARP_SIZE) : "memory");
+      asm volatile("bar.sync %0, %1;" ::"r"(DispatchMaxNWarpGroups + 1), "r"(nWarpGroups * WARP_SIZE) : "memory");
     }
   } else if (static_cast<int>(blockIdx.x) == notifyBlockIdx) {
     int* sharedRankTokenCounts = sharedMem;
@@ -108,7 +107,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMe
       sharedRankTokenCounts[idx] = 0;
     }
     __syncthreads();
-    for (int tokenIdx = warpId; tokenIdx < nTokens; tokenIdx += kDispatchNWarps) {
+    for (int tokenIdx = warpId; tokenIdx < nTokens; tokenIdx += DispatchNWarps) {
       const int routedExpertIdx =
           laneId < nTopk ? static_cast<int>(__ldg(topkIndices + tokenIdx * nTopk + laneId)) : -1;
       const int dstRank = routedExpertIdx >= 0 ? routedExpertIdx / nLocalExperts : -1;
@@ -144,12 +143,10 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(const void* inputTokens, mscclpp::BaseMe
       }
       workspaceView.rankPayloadSlots_[dstRank] = 0;
       workspaceView.rankPayloadCompletions_[dstRank] = 0;
-      if (expectedPayloadCount == 0) continue;
-      if (dstRank == rank) {
-        workspaceView.localPayloadReady_->release();
-      } else {
-        signalChannels[rankSignalChannelIndex(dstRank, signalChannelStride)].signal();
-      }
+      void* destinationBuffer =
+          dstRank == rank ? recvBuffer : peerBufferPtr(recvBuffer, rdmaBufferBase, peerRecvBuffers[dstRank]);
+      auto* readyPackets = dispatchReadyPackets(destinationBuffer, nRanks, nExperts);
+      publishLl8Packet(readyPackets + rank, 1, metadataFlag);
     }
     __syncthreads();
   }
@@ -159,21 +156,20 @@ MSCCLPP_DEVICE_INLINE int proportionalTaskBoundary(int nTokens, int nTasks, int 
   return nTotalTokens == 0 ? 0 : static_cast<int>(static_cast<int64_t>(nTokens) * nTasks / nTotalTokens);
 }
 
-MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* outputCount,
-                                                 mscclpp::BaseMemoryChannelDeviceHandle* signalChannels, int nExperts,
-                                                 int rank, int nRanks, int signalChannelStride, void* recvBuffer,
-                                                 void* workspace, uint32_t metadataFlag, int* sharedMem) {
+MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* outputCount, int nExperts, int rank,
+                                                 int nRanks, void* recvBuffer, void* workspace, uint32_t metadataFlag,
+                                                 int* sharedMem) {
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
   const int laneId = get_lane_id();
-  const int nSms = static_cast<int>(gridDim.x) - 2;
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - low_latency::DispatchControlBlocks;
   auto* rankTokenCounts = reinterpret_cast<mscclpp::LL8Packet*>(recvBuffer);
   const int nLocalExperts = nExperts / nRanks;
-  DispatchWorkspaceView workspaceView(workspace, nRanks, nExperts, nSms);
+  WorkspaceView workspaceView(workspace, nRanks, nExperts);
 
   const int nRankWarps = (nRanks + WARP_SIZE - 1) / WARP_SIZE;
   const int requestedNLayoutWarps = (nLocalExperts + WARP_SIZE - 1) / WARP_SIZE;
-  const int maxNLayoutWarps = kDispatchNWarps - nRankWarps;
+  const int maxNLayoutWarps = DispatchNWarps - nRankWarps;
   const int nLayoutWarps = requestedNLayoutWarps < maxNLayoutWarps ? requestedNLayoutWarps : maxNLayoutWarps;
 
   if (warpId < nRankWarps) {
@@ -187,7 +183,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
       sharedMem[warpId] = rankTokenPrefix;
       sharedMem[nRankWarps + warpId] = activeRankPrefix;
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(kDispatchMaxNWarpGroups + 1), "r"(nRankWarps * WARP_SIZE) : "memory");
+    asm volatile("bar.sync %0, %1;" ::"r"(DispatchMaxNWarpGroups + 1), "r"(nRankWarps * WARP_SIZE) : "memory");
 
     if (warpId == 0) {
       const int tokenTotal = laneId < nRankWarps ? sharedMem[laneId] : 0;
@@ -203,13 +199,13 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
         sharedMem[2 * nRankWarps + 1] = activePrefix;
       }
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(kDispatchMaxNWarpGroups + 1), "r"(nRankWarps * WARP_SIZE) : "memory");
+    asm volatile("bar.sync %0, %1;" ::"r"(DispatchMaxNWarpGroups + 1), "r"(nRankWarps * WARP_SIZE) : "memory");
 
     rankTokenPrefix += sharedMem[warpId];
     activeRankPrefix += sharedMem[nRankWarps + warpId];
     const int nTotalTokens = sharedMem[2 * nRankWarps];
     const int nActiveRanks = sharedMem[2 * nRankWarps + 1];
-    const int nTasks = nTotalTokens < nSms ? nTotalTokens : nSms;
+    const int nTasks = nTotalTokens < nWorkerBlocks ? nTotalTokens : nWorkerBlocks;
 
     // Reserve one task for every active rank. Distribute the remaining tasks
     // proportionally after removing one token per active rank from the pool.
@@ -234,7 +230,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
     }
     if (threadId == 0) *workspaceView.nRecvTasks_ = nTasks;
 
-    asm volatile("bar.sync %0, %1;" ::"r"(kDispatchMaxNWarpGroups + 2), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
+    asm volatile("bar.sync %0, %1;" ::"r"(DispatchMaxNWarpGroups + 2), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
                  : "memory");
     if (threadId == 0) {
       mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.tasksAssignedEpoch_, metadataFlag,
@@ -242,11 +238,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
     }
 
     if (sourceRank < nRanks && nRankTokens > 0) {
-      if (sourceRank == rank) {
-        workspaceView.localPayloadReady_->acquire();
-      } else {
-        signalChannels[rankSignalChannelIndex(sourceRank, signalChannelStride)].wait(-1);
-      }
+      waitLl8Packet(dispatchReadyPackets(recvBuffer, nRanks, nExperts) + sourceRank, metadataFlag);
       mscclpp::atomicStore<uint32_t, mscclpp::scopeDevice>(workspaceView.rankReadyEpochs_ + sourceRank, metadataFlag,
                                                            mscclpp::memoryOrderRelease);
     }
@@ -264,12 +256,12 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvScheduler(int64_t* outputLayout, int* out
       }
       outputCount[localExpertIdx] = outputOffset;
     }
-    asm volatile("bar.sync %0, %1;" ::"r"(kDispatchMaxNWarpGroups + 2), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
+    asm volatile("bar.sync %0, %1;" ::"r"(DispatchMaxNWarpGroups + 2), "r"((nRankWarps + nLayoutWarps) * WARP_SIZE)
                  : "memory");
   }
 }
 
-MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, DispatchWorkspaceView& workspaceView, uint32_t metadataFlag,
+MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, WorkspaceView& workspaceView, uint32_t metadataFlag,
                                            int* sharedMem) {
   auto* sharedTask = reinterpret_cast<RecvTask*>(sharedMem);
   const int taskIdx = static_cast<int>(blockIdx.x) - 1;
@@ -290,7 +282,7 @@ MSCCLPP_DEVICE_INLINE bool acquireRecvTask(RecvTask& task, DispatchWorkspaceView
   return task.sourceRank_ >= 0;
 }
 
-template <int kHidden>
+template <int Hidden>
 MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, int* outputSrcInfo, int64_t* outputLayout, int nExperts,
                                               int rank, int nRanks, int nTopk, int maxTokensPerRank, void* recvBuffer,
                                               void* workspace, uint32_t metadataFlag, int* sharedMem) {
@@ -300,43 +292,42 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, int* outputSrcInfo, 
   const int threadId = static_cast<int>(threadIdx.x);
   const int warpId = threadId / WARP_SIZE;
   const int laneId = get_lane_id();
-  const int nSms = static_cast<int>(gridDim.x) - 2;
-  DispatchWorkspaceView workspaceView(workspace, nRanks, nExperts, nSms);
+  WorkspaceView workspaceView(workspace, nRanks, nExperts);
   RecvTask task;
   if (!acquireRecvTask(task, workspaceView, metadataFlag, sharedMem)) return;
-  constexpr int kNRecvTmaWorkers = tmaWorkerCount<kHidden, kDispatchMaxNRecvTmaWorkers>();
-  if (warpId >= kNRecvTmaWorkers) return;
+  constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, DispatchMaxNRecvTmaWorkers>();
+  if (warpId >= NRecvTmaWorkers) return;
 
   const int nLocalExperts = nExperts / nRanks;
   const int sourceRank = task.sourceRank_;
   const int globalExpertBase = rank * nLocalExperts;
   const int globalExpertEnd = globalExpertBase + nLocalExperts;
-  const LowLatencyPayloadView<nv_bfloat16> payloadView(kHidden, nTopk);
-  const size_t payloadStride = dispatchPayloadStride(kHidden, nTopk);
-  constexpr size_t kHiddenBytes = static_cast<size_t>(kHidden) * sizeof(nv_bfloat16);
-  constexpr size_t kTileBytes = kHiddenBytes;
+  const low_latency::PayloadView<__bfloat16> payloadView(Hidden, nTopk);
+  const size_t payloadStride = dispatchPayloadStride(Hidden, nTopk);
+  constexpr size_t HiddenBytes = static_cast<size_t>(Hidden) * sizeof(__bfloat16);
+  constexpr size_t TileBytes = HiddenBytes;
   const int nOutputSlotsPerExpert = nRanks * maxTokensPerRank;
   auto* sourcePayloadBase = reinterpret_cast<uint8_t*>(recvBuffer) + dispatchMetadataBytes(nRanks, nExperts) +
                             static_cast<size_t>(sourceRank) * maxTokensPerRank * payloadStride;
   auto* tmaTiles = reinterpret_cast<uint8_t*>(sharedMem) + dispatchSharedControlBytes(nRanks);
-  auto* sharedTile = tmaTiles + static_cast<size_t>(warpId) * kTileBytes;
-  auto* tmaBarriers = reinterpret_cast<uint64_t*>(tmaTiles + static_cast<size_t>(kNRecvTmaWorkers) * kTileBytes);
+  auto* sharedTile = tmaTiles + static_cast<size_t>(warpId) * TileBytes;
+  auto* tmaBarriers = reinterpret_cast<uint64_t*>(tmaTiles + static_cast<size_t>(NRecvTmaWorkers) * TileBytes);
   auto* tmaBarrier = tmaBarriers + warpId;
   bool hasPendingStore = false;
   uint32_t recvTmaPhase = 0;
-  if (laneId == 0) initTmaBarrier(tmaBarrier);
+  if (laneId == 0) initTmaLoadBarrier(tmaBarrier);
 
   for (int sourceTokenSlot = task.tokenBegin_ + warpId; sourceTokenSlot < task.tokenEnd_;
-       sourceTokenSlot += kNRecvTmaWorkers) {
+       sourceTokenSlot += NRecvTmaWorkers) {
     if (hasPendingStore) {
-      waitTmaS2GRead();
+      waitBulkGroupRead();
     }
     __syncwarp();
 
     auto* sourcePayload = sourcePayloadBase + static_cast<size_t>(sourceTokenSlot) * payloadStride;
     if (laneId == 0) {
-      issueTmaG2S(payloadView.template data<int4>(sourcePayload), sharedTile, tmaBarrier,
-                  static_cast<uint32_t>(kHiddenBytes));
+      issueTmaLoad(payloadView.template data<int4>(sourcePayload), sharedTile, tmaBarrier,
+                   static_cast<uint32_t>(HiddenBytes));
     }
     __syncwarp();
 
@@ -344,8 +335,7 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, int* outputSrcInfo, 
     const int localExpertIdx = routedExpertIdx >= globalExpertBase && routedExpertIdx < globalExpertEnd
                                    ? routedExpertIdx - globalExpertBase
                                    : -1;
-    const int sourceTokenIdx = __shfl_sync(
-        0xffffffff,
+    const int sourceTokenIdx = warpBroadcast(
         laneId == 0 ? ld_nc_global(payloadView.srcTokenGlobalIdx(sourcePayload)) - sourceRank * maxTokensPerRank : 0,
         0);
     int outputTokenIdx = -1;
@@ -366,14 +356,14 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, int* outputSrcInfo, 
     }
     if (laneId < nTopk) payloadView.topKIndices(sourcePayload)[laneId] = combineInputOffset;
 
-    if (laneId == 0) waitTmaG2S(tmaBarrier, recvTmaPhase);
+    if (laneId == 0) waitTmaLoad(tmaBarrier, recvTmaPhase);
     __syncwarp();
-    asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+    fenceProxyAsyncSharedCta();
 
     if (localExpertIdx >= 0) {
       auto* outputData = reinterpret_cast<uint8_t*>(output) +
-                         (static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx) * kHiddenBytes;
-      issueTmaS2G(outputData, sharedTile, static_cast<uint32_t>(kHiddenBytes));
+                         (static_cast<size_t>(localExpertIdx) * nOutputSlotsPerExpert + outputTokenIdx) * HiddenBytes;
+      issueTmaStore(outputData, sharedTile, static_cast<uint32_t>(HiddenBytes));
       hasPendingStore = true;
     } else {
       hasPendingStore = false;
@@ -381,128 +371,101 @@ MSCCLPP_DEVICE_INLINE void dispatchRecvWorker(void* output, int* outputSrcInfo, 
     __syncwarp();
   }
 
-  if (hasPendingStore) {
-    waitTmaS2G();
-  }
+  if (hasPendingStore) waitBulkGroup();
 }
 
-template <int kHidden>
-__global__ __launch_bounds__(kDispatchNThreads, 1) void dispatchKernel(
-    void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
-    mscclpp::BaseMemoryChannelDeviceHandle* signalChannels, int nExperts, int rank, int nRanks, int signalChannelStride,
+template <int Hidden>
+__global__ __launch_bounds__(DispatchNThreads, 1) void dispatchKernel(
+    void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, int nExperts, int rank, int nRanks,
     const int64_t* topkIndices, const float* topkWeights, const void* inputTokens, int nTokens, int nTopk,
     int maxTokensPerRank, void* recvBuffer, void* rdmaBufferBase, void* const* peerRecvBuffers, void* workspace) {
   extern __shared__ __align__(128) uint8_t sharedMemory[];
   auto* sharedMem = reinterpret_cast<int*>(sharedMemory);
-  const int nSms = static_cast<int>(gridDim.x) - 2;
-  DispatchWorkspaceView workspaceView(workspace, nRanks, nExperts, nSms);
+  const int nWorkerBlocks = static_cast<int>(gridDim.x) - low_latency::DispatchControlBlocks;
+  WorkspaceView workspaceView(workspace, nRanks, nExperts);
   const uint32_t metadataFlag = *workspaceView.metadataEpoch_ + 1;
 
-  dispatchSend<kHidden>(inputTokens, signalChannels, nExperts, rank, nRanks, signalChannelStride, topkIndices,
-                        topkWeights, nTokens, nTopk, maxTokensPerRank, recvBuffer, peerRecvBuffers, rdmaBufferBase,
-                        workspace, metadataFlag, sharedMem);
+  dispatchSend<Hidden>(inputTokens, nExperts, rank, nRanks, topkIndices, topkWeights, nTokens, nTopk, maxTokensPerRank,
+                       recvBuffer, peerRecvBuffers, rdmaBufferBase, workspace, metadataFlag, sharedMem);
 
   if (static_cast<int>(blockIdx.x) == 0) {
-    dispatchRecvScheduler(outputLayout, outputCount, signalChannels, nExperts, rank, nRanks, signalChannelStride,
-                          recvBuffer, workspace, metadataFlag, sharedMem);
-  } else if (static_cast<int>(blockIdx.x) <= nSms) {
-    dispatchRecvWorker<kHidden>(output, outputSrcInfo, outputLayout, nExperts, rank, nRanks, nTopk, maxTokensPerRank,
-                                recvBuffer, workspace, metadataFlag, sharedMem);
+    dispatchRecvScheduler(outputLayout, outputCount, nExperts, rank, nRanks, recvBuffer, workspace, metadataFlag,
+                          sharedMem);
+  } else if (static_cast<int>(blockIdx.x) <= nWorkerBlocks) {
+    dispatchRecvWorker<Hidden>(output, outputSrcInfo, outputLayout, nExperts, rank, nRanks, nTopk, maxTokensPerRank,
+                               recvBuffer, workspace, metadataFlag, sharedMem);
   }
   if (blockIdx.x == 0 && threadIdx.x == 0) {
     *workspaceView.metadataEpoch_ = metadataFlag;
   }
 }
 
-template <int kHidden>
+template <int Hidden>
 inline void dispatchHidden(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-                           const int64_t* topkIdx, const float* topkWeights, const low_latency::DispatchConfig& config,
-                           const low_latency::BufferSet& currentBuffer, const low_latency::TransportContext& transport,
-                           void* workspace, int maxSms, cudaStream_t stream) {
-  static_assert(kHidden == 4096 || kHidden == 7168 || kHidden == 8192 || kHidden == 9216);
-  constexpr int kNRecvTmaWorkers = tmaWorkerCount<kHidden, kDispatchMaxNRecvTmaWorkers>();
-  static_assert(kNRecvTmaWorkers > 0);
-  const int nExperts = config.numExperts_;
-  const int rank = transport.rank_;
-  const int nRanks = transport.numRanks_;
-  const int signalChannelStride = transport.memoryChannelStride_;
-  const int nTokens = config.numTokens_;
-  const int nTopk = config.numTopk_;
+                           const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
+                           void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
+                           cudaStream_t stream) {
+  static_assert(Hidden == 4096 || Hidden == 7168 || Hidden == 8192 || Hidden == 9216);
+  constexpr int NRecvTmaWorkers = tmaWorkerCount<Hidden, DispatchMaxNRecvTmaWorkers>();
+  static_assert(NRecvTmaWorkers > 0);
+  const int nExperts = workload.numExperts_;
+  const int rank = comm.rank_;
+  const int nRanks = comm.numRanks_;
+  const int nTokens = workload.numTokens_;
+  const int nTopk = workload.numTopk_;
 
-  static thread_local int sharedMemoryLimitDevice = -1;
-  static thread_local size_t sharedMemoryLimit = 0;
-  if (sharedMemoryLimitDevice != transport.deviceId_) {
-    int sharedMemoryLimitInt;
-    cudaFuncAttributes attributes;
-    CUDA_CHECK(
-        cudaDeviceGetAttribute(&sharedMemoryLimitInt, cudaDevAttrMaxSharedMemoryPerBlockOptin, transport.deviceId_));
-    CUDA_CHECK(cudaFuncGetAttributes(&attributes, dispatchKernel<kHidden>));
-    EP_HOST_ASSERT(sharedMemoryLimitInt > static_cast<int>(attributes.sharedSizeBytes));
-    sharedMemoryLimitDevice = transport.deviceId_;
-    sharedMemoryLimit = static_cast<size_t>(sharedMemoryLimitInt) - attributes.sharedSizeBytes;
-  }
-
-  const size_t dynamicSharedBytes = dispatchSharedBytes<kHidden>(nRanks, nExperts, nTopk);
-  EP_HOST_ASSERT(dynamicSharedBytes <= sharedMemoryLimit);
-
-  cudaLaunchConfig_t cfg = {dim3(maxSms + 2), dim3(kDispatchNThreads), dynamicSharedBytes, stream, nullptr, 0};
-  static thread_local int configuredDevice = -1;
-  static thread_local size_t configuredDynamicSharedBytes = 0;
-  if (configuredDevice != transport.deviceId_ || configuredDynamicSharedBytes < dynamicSharedBytes) {
-    CUDA_CHECK(cudaFuncSetAttribute(dispatchKernel<kHidden>, cudaFuncAttributeMaxDynamicSharedMemorySize,
-                                    static_cast<int>(dynamicSharedBytes)));
-    configuredDevice = transport.deviceId_;
-    configuredDynamicSharedBytes = dynamicSharedBytes;
-  }
-  CUDA_CHECK(cudaLaunchKernelEx(&cfg, dispatchKernel<kHidden>, output, outputSrcInfo, outputLayout, outputCount,
-                                transport.memoryChannels_, nExperts, rank, nRanks, signalChannelStride, topkIdx,
-                                topkWeights, input, nTokens, nTopk, config.numMaxTokensPerRank_,
-                                currentBuffer.recvDataBuffer_, transport.rdmaBufferBase_, transport.peerBases_,
-                                workspace));
+  const size_t dynamicSharedBytes = dispatchSharedBytes<Hidden>(nRanks, nExperts, nTopk);
+  static thread_local KernelConfigCache kernelConfig;
+  const int residentBlocks =
+      configureKernel(dispatchKernel<Hidden>, DispatchNThreads, dynamicSharedBytes, comm, kernelConfig);
+  EP_HOST_ASSERT(residentBlocks >= numBlocks);
+  dispatchKernel<Hidden><<<dim3(numBlocks), dim3(DispatchNThreads), dynamicSharedBytes, stream>>>(
+      output, outputSrcInfo, outputLayout, outputCount, nExperts, rank, nRanks, topkIdx, topkWeights, input, nTokens,
+      nTopk, workload.maxTokensPerRank_, recvBuffer, comm.rdmaBufferBase_, comm.peerBases_, workspace);
+  CUDA_CHECK(cudaGetLastError());
 }
 
 inline void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-                     const int64_t* topkIdx, const float* topkWeights, const low_latency::DispatchConfig& config,
-                     const low_latency::BufferSet& currentBuffer, const low_latency::TransportContext& transport,
-                     void* workspace, int maxSms, cudaStream_t stream) {
-  const int nExperts = config.numExperts_;
-  const int rank = transport.rank_;
-  const int nRanks = transport.numRanks_;
+                     const int64_t* topkIdx, const float* topkWeights, const low_latency::Workload& workload,
+                     void* recvBuffer, const low_latency::CommContext& comm, void* workspace, int numBlocks,
+                     cudaStream_t stream) {
+  const int nExperts = workload.numExperts_;
+  const int rank = comm.rank_;
+  const int nRanks = comm.numRanks_;
+  const int numWorkerBlocks = numBlocks - low_latency::DispatchControlBlocks;
 
   EP_HOST_ASSERT(nRanks > 0);
   EP_HOST_ASSERT(nExperts > 0);
   EP_HOST_ASSERT(nExperts % nRanks == 0);
   EP_HOST_ASSERT(rank >= 0 && rank < nRanks);
-  EP_HOST_ASSERT(transport.memoryChannels_ != nullptr);
-  EP_HOST_ASSERT(transport.memoryChannelStride_ >= 1);
-  EP_HOST_ASSERT(config.numTokens_ >= 0);
-  EP_HOST_ASSERT(config.numTopk_ > 0 && config.numTopk_ <= WARP_SIZE);
+  EP_HOST_ASSERT(workload.numTokens_ >= 0);
+  EP_HOST_ASSERT(workload.numTopk_ > 0 && workload.numTopk_ <= WARP_SIZE);
   EP_HOST_ASSERT(nRanks <= 2 * WARP_SIZE);
-  EP_HOST_ASSERT(maxSms >= nRanks && maxSms <= kDispatchMaxNSms);
+  EP_HOST_ASSERT(numWorkerBlocks >= nRanks && numWorkerBlocks <= low_latency::MaxWorkerBlocks);
   EP_HOST_ASSERT(output != nullptr);
   EP_HOST_ASSERT(outputSrcInfo != nullptr);
   EP_HOST_ASSERT(outputLayout != nullptr);
   EP_HOST_ASSERT(outputCount != nullptr);
   EP_HOST_ASSERT(input != nullptr);
   EP_HOST_ASSERT(topkIdx != nullptr);
-  EP_HOST_ASSERT(currentBuffer.recvDataBuffer_ != nullptr);
-  EP_HOST_ASSERT(transport.peerBases_ != nullptr);
+  EP_HOST_ASSERT(recvBuffer != nullptr);
+  EP_HOST_ASSERT(comm.rdmaBufferBase_ != nullptr);
+  EP_HOST_ASSERT(comm.peerBases_ != nullptr);
   EP_HOST_ASSERT(workspace != nullptr);
-  EP_HOST_ASSERT(config.outputDType_ == low_latency::DType::BF16);
 
-  switch (config.hidden_) {
+  switch (workload.hidden_) {
     case 4096:
-      return dispatchHidden<4096>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, config,
-                                  currentBuffer, transport, workspace, maxSms, stream);
+      return dispatchHidden<4096>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                                  workload, recvBuffer, comm, workspace, numBlocks, stream);
     case 7168:
-      return dispatchHidden<7168>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, config,
-                                  currentBuffer, transport, workspace, maxSms, stream);
+      return dispatchHidden<7168>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                                  workload, recvBuffer, comm, workspace, numBlocks, stream);
     case 8192:
-      return dispatchHidden<8192>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, config,
-                                  currentBuffer, transport, workspace, maxSms, stream);
+      return dispatchHidden<8192>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                                  workload, recvBuffer, comm, workspace, numBlocks, stream);
     case 9216:
-      return dispatchHidden<9216>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, config,
-                                  currentBuffer, transport, workspace, maxSms, stream);
+      return dispatchHidden<9216>(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                                  workload, recvBuffer, comm, workspace, numBlocks, stream);
     default:
       EP_HOST_ASSERT(false && "unsupported optimized low-latency hidden size");
   }
@@ -512,12 +475,11 @@ inline void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, in
 
 namespace low_latency {
 
-void dispatchOptimized(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-                       const int64_t* topkIdx, const float* topkWeights, const DispatchConfig& config,
-                       const BufferSet& currentBuffer, const TransportContext& transport, void* workspace, int maxSms,
-                       cudaStream_t stream) {
-  low_latency_opt::dispatch(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, config,
-                            currentBuffer, transport, workspace, maxSms, stream);
+void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
+              const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
+              const CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream) {
+  low_latency_opt::dispatch(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, workload,
+                            recvBuffer, comm, workspace, numBlocks, stream);
 }
 
 }  // namespace low_latency

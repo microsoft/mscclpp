@@ -28,12 +28,11 @@
 
 #include "../config.hpp"
 #include "api.cuh"
-#include "common.cuh"
-#include "configs.cuh"
+#include "constants.cuh"
 #include "exception.cuh"
 #include "launch.cuh"
 #include "quantization.cuh"
-#include "utils.cuh"
+#include "transport_helpers.cuh"
 
 namespace cg = cooperative_groups;
 

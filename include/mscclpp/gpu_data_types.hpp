@@ -4,6 +4,7 @@
 #ifndef MSCCLPP_GPU_DATA_TYPES_HPP_
 #define MSCCLPP_GPU_DATA_TYPES_HPP_
 
+#include <cstdint>
 #include <mscclpp/device.hpp>
 
 #if defined(MSCCLPP_DEVICE_HIP)
@@ -685,6 +686,18 @@ MSCCLPP_DEVICE_INLINE To to(const From& v) {
     }
     return result;
   }
+}
+
+/// Convert a packed BF16 pair to a packed FP32 pair.
+template <>
+MSCCLPP_DEVICE_INLINE f32x2 to<f32x2, bf16x2>(const bf16x2& v) {
+  return __bfloat1622float2(v.storage);
+}
+
+/// Convert a packed FP32 pair to a packed BF16 pair using round-to-nearest.
+template <>
+MSCCLPP_DEVICE_INLINE bf16x2 to<bf16x2, f32x2>(const f32x2& v) {
+  return __float22bfloat162_rn(v.storage);
 }
 
 #if defined(__FP8_TYPES_EXIST__)
