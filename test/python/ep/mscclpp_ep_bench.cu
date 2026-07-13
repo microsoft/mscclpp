@@ -242,6 +242,11 @@ int main(int argc, char** argv) {
     constexpr int kSeed = 1;
     std::mt19937 gen(kSeed + rank);
     std::normal_distribution<float> dist(0.0f, 1.0f);
+    if (E <= 0 || K <= 0 || K > E) {
+      if (rank == 0)
+        fprintf(stderr, "num_topk (%d) must satisfy 1 <= num_topk <= num_experts (%d)\n", K, E);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
     std::vector<std::pair<float, int>> scoreIdx(E);
     for (int t = 0; t < T; ++t) {
       for (int e = 0; e < E; ++e) scoreIdx[e] = {std::abs(dist(gen)) + 1.0f, e};
@@ -250,7 +255,7 @@ int main(int argc, char** argv) {
       for (int j = 0; j < K; ++j) h_topk[(size_t)t * K + j] = scoreIdx[j].second;
     }
     // Randomly mask 10 positions with -1 (simulates dropped tokens); mirrors
-    // ep_bench. Guarded on T > 0 so the unsigned distribution bound is valid.
+    // ep_bench. Guarded on T > 0 so the distribution bound is valid.
     if (T > 0) {
       std::uniform_int_distribution<int> tokenDist(0, T - 1);
       std::uniform_int_distribution<int> topkDist(0, K - 1);
