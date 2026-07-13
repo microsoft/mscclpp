@@ -862,28 +862,7 @@ void combine(void* output, const void* input, const float* inputScales, const in
 
   const auto numWarps = kNumWarpGroups * kNumWarpsPerGroup;
   const auto numSmsBase = cell_div(numExperts, kNumWarpGroups);
-  // combineRecv's per-token weighted-reduction loop strides by smId over
-  // numCombinedTokens, so extra blocks parallelize it ~linearly. Grow the grid
-  // from ceil(numExperts / kNumWarpGroups) toward numCombinedTokens; the
-  // send-side expert work is guarded by responsibleExpertIdx < numExperts, so
-  // the extra blocks run recv-only and stay correct. (The feature/ep
-  // restructure capped the grid at numSmsBase, which regressed the LL combine
-  // on the intranode/IPC path.)
-  //
-  // Cap the grid at the device SM count: combine is launched cooperatively
-  // (cg::this_grid().sync()), so every block must be co-resident on the GPU --
-  // requesting more blocks than SMs would fail the cooperative launch. The SM
-  // count is a device constant, so query it once and cache it (one GPU per
-  // process in this EP topology).
-  static const int deviceNumSms = [] {
-    int curDev = 0, sms = 0;
-    CUDA_CHECK(cudaGetDevice(&curDev));
-    CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, curDev));
-    return sms;
-  }();
-  int numSmsWanted = numCombinedTokens > numSmsBase ? numCombinedTokens : numSmsBase;
-  if (numSmsWanted > deviceNumSms) numSmsWanted = deviceNumSms;
-  const auto numSms = numSmsWanted;
+  const auto numSms = numSmsBase;
 
   auto atomicCleanFlag = reinterpret_cast<int*>(workspace);
   EP_HOST_ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);

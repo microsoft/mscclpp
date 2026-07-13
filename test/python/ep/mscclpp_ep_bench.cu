@@ -5,8 +5,7 @@
 // mscclpp::ep::MoERuntime::dispatch / ::combine directly (no Python), so mscclpp
 // EP can be compared with NVIDIA NCCL-EP's ep_bench on an equal footing --
 // C++ host launch, and CUPTI kernel timing via CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL
-// (the same activity kind ep_bench uses; unlike the torch/Kineto in-process path
-// it does report mscclpp's cooperative-launch LL kernels).
+// (the same activity kind ep_bench uses).
 //
 // It mirrors ep_bench's LL measurement methodology and emits the identical
 // "=== Summary (Low Latency, across N ranks) ===" block so the unified driver
@@ -16,7 +15,6 @@
 // (the bootstrap uses an MPI_Bcast of a TcpBootstrap UniqueId).
 
 #include <cuda.h>
-#include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <cupti.h>
 #include <mpi.h>
@@ -28,12 +26,14 @@
 #include <cstring>
 #include <map>
 #include <mscclpp/core.hpp>
+#include <mscclpp/gpu_data_types.hpp>
+#include <random>
 #include <string>
 #include <vector>
 
-#include "config.hpp"       // mscclpp::ep::getLowLatencyRdmaSizeHint
-#include "kernels/api.cuh"  // mscclpp::ep::MoEMode, DispatchLayout
-#include "moe_runtime.hpp"  // mscclpp::ep::MoERuntime
+#include "api.cuh"
+#include "config.hpp"
+#include "moe_runtime.hpp"
 
 #define CUDA_CHECK(x)                                                                          \
   do {                                                                                         \
@@ -56,7 +56,7 @@
 
 // ---------------------------------------------------------------------------
 // KernelTimer: per-kernel GPU timing via the CUPTI Activity API, a faithful
-// analog of ep_bench's KernelTimer. Uses CONCURRENT_KERNEL (ep_bench's kind).
+// analog of ep_bench's KernelTimer.
 // Records are bucketed by mangled-name substring ("dispatch"/"combine").
 // ---------------------------------------------------------------------------
 namespace {
@@ -79,7 +79,7 @@ void CUPTIAPI bufferCompleted(CUcontext, uint32_t, uint8_t* buffer, size_t, size
   CUpti_Activity* record = nullptr;
   while (cuptiActivityGetNextRecord(buffer, validSize, &record) == CUPTI_SUCCESS) {
     if (record->kind == CUPTI_ACTIVITY_KIND_CONCURRENT_KERNEL || record->kind == CUPTI_ACTIVITY_KIND_KERNEL) {
-      auto* k = reinterpret_cast<CUpti_ActivityKernel10*>(record);
+      auto* k = reinterpret_cast<CUpti_ActivityKernel9*>(record);
       if (k->name) {
         auto& e = g_kernel_stats[k->name];
         e.total_ns += (k->end - k->start);
@@ -132,6 +132,11 @@ struct Args {
   int num_experts = 256;
   int num_warmup = 10;
   int num_iters = 50;
+  int num_blocks = mscclpp::ep::low_latency::MaxDispatchBlocks;
+  int seed = 0xB3C4;
+  bool kernel_timing = false;
+  std::string dispatch_dtype = "bf16";
+  std::string combine_mode = "rank_local_reduce";
 };
 
 Args parse_args(int argc, char** argv) {
@@ -153,6 +158,16 @@ Args parse_args(int argc, char** argv) {
       a.num_warmup = next();
     else if (s == "-i" || s == "--num-iters")
       a.num_iters = next();
+    else if (s == "--num-blocks")
+      a.num_blocks = next();
+    else if (s == "--seed")
+      a.seed = next();
+    else if (s == "--kernel-timing")
+      a.kernel_timing = true;
+    else if (s == "--dispatch-dtype" && i + 1 < argc)
+      a.dispatch_dtype = argv[++i];
+    else if (s == "--combine-mode" && i + 1 < argc)
+      a.combine_mode = argv[++i];
   }
   return a;
 }
@@ -185,11 +200,47 @@ int main(int argc, char** argv) {
   Args args = parse_args(argc, argv);
   const int T = args.num_tokens, H = args.hidden, K = args.num_topk, E = args.num_experts;
   const int W = nRanks, warmup = args.num_warmup, iters = args.num_iters;
+  if (T <= 0 || E <= 0 || warmup < 0 || iters <= 0) {
+    if (rank == 0) fprintf(stderr, "tokens, experts, and iters must be positive; warmup must be non-negative\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  if (H != 4096 && H != 7168 && H != 8192 && H != 9216) {
+    if (rank == 0) fprintf(stderr, "hidden must be one of 4096, 7168, 8192, 9216\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  if (K <= 0 || K > 9) {
+    if (rank == 0) fprintf(stderr, "num_topk must be in [1, 9]\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  if (K > E) {
+    if (rank == 0) fprintf(stderr, "num_topk must not exceed num_experts\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
   if (E % W != 0) {
     if (rank == 0) fprintf(stderr, "num_experts (%d) must be divisible by world_size (%d)\n", E, W);
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
   const int Elocal = E / W;
+  const auto dispatchDataType = args.dispatch_dtype == "fp8_e4m3" ? mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3
+                                                                  : mscclpp::ep::low_latency::DispatchDataType::BF16;
+  const auto combineMode = args.combine_mode == "direct_send"
+                               ? mscclpp::ep::low_latency::CombineMode::DIRECT_SEND
+                               : mscclpp::ep::low_latency::CombineMode::RANK_LOCAL_REDUCE;
+  if (args.dispatch_dtype != "bf16" && args.dispatch_dtype != "fp8_e4m3") {
+    if (rank == 0) fprintf(stderr, "unsupported --dispatch-dtype=%s\n", args.dispatch_dtype.c_str());
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  if (args.combine_mode != "rank_local_reduce" && args.combine_mode != "direct_send") {
+    if (rank == 0) fprintf(stderr, "unsupported --combine-mode=%s\n", args.combine_mode.c_str());
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  if (args.num_blocks < W + mscclpp::ep::low_latency::DispatchControlBlocks ||
+      args.num_blocks > mscclpp::ep::low_latency::MaxDispatchBlocks) {
+    if (rank == 0) fprintf(stderr, "--num-blocks must be in [world_size + 2, 130]\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  const bool fp8Dispatch = dispatchDataType == mscclpp::ep::low_latency::DispatchDataType::FP8_E4M3;
+  const char* dispatchLabel = fp8Dispatch ? "FP8_E4M3" : "BF16";
 
   // --- Bootstrap mscclpp::Communicator (TcpBootstrap + MPI_Bcast of UniqueId). ---
   auto bootstrap = std::make_shared<mscclpp::TcpBootstrap>(rank, nRanks);
@@ -199,7 +250,7 @@ int main(int argc, char** argv) {
   bootstrap->initialize(uid);
   mscclpp::Communicator comm(bootstrap);
 
-  const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::getLowLatencyRdmaSizeHint(T, H, W, E));
+  const int64_t numRdmaBytes = static_cast<int64_t>(mscclpp::ep::low_latency::getRdmaSizeHint(T, H, W, E, K));
   mscclpp::ep::MoERuntime rt(comm, /*numNvlBytes=*/0, numRdmaBytes, mscclpp::ep::MoEMode::LOW_LATENCY);
   if (!rt.isAvailable()) {
     if (rank == 0) fprintf(stderr, "MoERuntime not available\n");
@@ -208,50 +259,81 @@ int main(int argc, char** argv) {
   if (rank == 0) {
     printf(
         "[cfg] algorithm=LOW_LATENCY num_ranks=%d tokens/rank=%d hidden=%d num_experts=%d "
-        "top_k=%d warmup=%d iters=%d num_rdma_bytes=%lld is_internode=%d\n",
-        W, T, H, E, K, warmup, iters, (long long)numRdmaBytes, (int)rt.isInternodeAvailable());
+        "top_k=%d warmup=%d iters=%d dispatch_dtype=%s combine_mode=%s num_rdma_bytes=%lld is_internode=%d\n",
+        W, T, H, E, K, warmup, iters, args.dispatch_dtype.c_str(), args.combine_mode.c_str(), (long long)numRdmaBytes,
+        (int)rt.isInternodeAvailable());
     fflush(stdout);
   }
 
   // --- Device buffers (hoisted out of the timed loop). ---
   const size_t slots = (size_t)W * T;  // recv slots per local expert
-  __nv_bfloat16 *d_x = nullptr, *d_out = nullptr, *d_recv = nullptr;
+  using Bf16 = mscclpp::ep::low_latency::Bf16;
+  using Fp8E4M3 = mscclpp::ep::low_latency::Fp8E4M3;
+  Bf16 *d_x = nullptr, *d_out = nullptr, *d_expert_output = nullptr;
+  void* d_recv = nullptr;
+  float* d_scales = nullptr;
   int64_t *d_topk = nullptr, *d_layout = nullptr;
   float* d_weights = nullptr;
   int *d_srcinfo = nullptr, *d_count = nullptr;
-  CUDA_CHECK(cudaMalloc(&d_x, (size_t)T * H * sizeof(__nv_bfloat16)));
-  CUDA_CHECK(cudaMalloc(&d_out, (size_t)T * H * sizeof(__nv_bfloat16)));
-  CUDA_CHECK(cudaMalloc(&d_recv, (size_t)Elocal * slots * H * sizeof(__nv_bfloat16)));
+  CUDA_CHECK(cudaMalloc(&d_x, (size_t)T * H * sizeof(Bf16)));
+  CUDA_CHECK(cudaMalloc(&d_out, (size_t)T * H * sizeof(Bf16)));
+  const size_t recvBytes = (size_t)Elocal * slots * H * (fp8Dispatch ? sizeof(Fp8E4M3) : sizeof(Bf16));
+  CUDA_CHECK(cudaMalloc(&d_recv, recvBytes));
+  if (fp8Dispatch) {
+    CUDA_CHECK(cudaMalloc(&d_scales, (size_t)Elocal * slots * (H / 128) * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_expert_output, (size_t)Elocal * slots * H * sizeof(Bf16)));
+    CUDA_CHECK(cudaMemset(d_expert_output, 0, (size_t)Elocal * slots * H * sizeof(Bf16)));
+  } else {
+    d_expert_output = static_cast<Bf16*>(d_recv);
+  }
   CUDA_CHECK(cudaMalloc(&d_topk, (size_t)T * K * sizeof(int64_t)));
   CUDA_CHECK(cudaMalloc(&d_weights, (size_t)T * K * sizeof(float)));
   CUDA_CHECK(cudaMalloc(&d_srcinfo, (size_t)Elocal * slots * sizeof(int)));
   CUDA_CHECK(cudaMalloc(&d_layout, (size_t)Elocal * W * sizeof(int64_t)));
   CUDA_CHECK(cudaMalloc(&d_count, (size_t)Elocal * sizeof(int)));
 
-  // Inputs (content is immaterial to timing; give every token K distinct experts).
-  CUDA_CHECK(cudaMemset(d_x, 0, (size_t)T * H * sizeof(__nv_bfloat16)));
+  // Inputs (content is immaterial to timing). Route each rank independently to
+  // random distinct experts so top-k selections span destination ranks.
+  CUDA_CHECK(cudaMemset(d_x, 0, (size_t)T * H * sizeof(Bf16)));
   std::vector<int64_t> h_topk((size_t)T * K);
-  std::vector<float> h_weights((size_t)T * K, 1.0f);
-  for (int t = 0; t < T; ++t)
-    for (int j = 0; j < K; ++j) h_topk[(size_t)t * K + j] = ((int64_t)t * K + j) % E;
+  std::vector<float> h_weights((size_t)T * K);
+  std::mt19937 rng(args.seed + rank);
+  std::uniform_int_distribution<int> expertDist(0, E - 1);
+  std::uniform_real_distribution<float> weightDist(0.5f, 1.5f);
+  for (int t = 0; t < T; ++t) {
+    for (int j = 0; j < K; ++j) {
+      int expert;
+      bool duplicate;
+      do {
+        expert = expertDist(rng);
+        duplicate = false;
+        for (int previous = 0; previous < j; ++previous) {
+          duplicate |= h_topk[(size_t)t * K + previous] == expert;
+        }
+      } while (duplicate);
+      h_topk[(size_t)t * K + j] = expert;
+      h_weights[(size_t)t * K + j] = weightDist(rng);
+    }
+  }
   CUDA_CHECK(cudaMemcpy(d_topk, h_topk.data(), h_topk.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(d_weights, h_weights.data(), h_weights.size() * sizeof(float), cudaMemcpyHostToDevice));
 
   const long long num_valid_selections = (long long)T * K;
-  const double disp_bytes = (double)num_valid_selections * H * 2.0;  // BF16
-  const double comb_bytes = disp_bytes;
+  const double dispatchBytesPerToken = fp8Dispatch ? H + (H / 128) * sizeof(float) : H * sizeof(Bf16);
+  const double disp_bytes = (double)num_valid_selections * dispatchBytesPerToken;
+  const double comb_bytes = (double)num_valid_selections * H * sizeof(Bf16);
 
   cudaStream_t stream;
   CUDA_CHECK(cudaStreamCreate(&stream));
 
   auto dispatch = [&]() {
-    rt.dispatch(d_recv, /*outputScales=*/nullptr, d_srcinfo, d_layout, d_count, d_x, d_topk, T, H, K,
-                /*numMaxDispatchTokensPerRank=*/T, E, /*requiresQuantization=*/false,
-                mscclpp::ep::DispatchLayout::EXPERT_MAJOR, stream);
+    rt.dispatch(d_recv, d_scales, d_srcinfo, d_layout, d_count, d_x, d_topk, d_weights, T, H, K,
+                /*maxTokensPerRank=*/T, E, dispatchDataType, args.num_blocks, stream);
   };
   auto combine = [&]() {
-    rt.combine(d_out, d_recv, /*inputScales=*/nullptr, d_topk, d_weights, d_srcinfo, d_layout, T, H, K,
-               /*numMaxDispatchTokensPerRank=*/T, E, /*requiresDequantization=*/false, stream);
+    rt.combine(d_out, d_expert_output, d_topk, d_weights, d_srcinfo, d_layout, T, H, K,
+               /*maxTokensPerRank=*/T, E, dispatchDataType, combineMode,
+               args.num_blocks - mscclpp::ep::low_latency::DispatchControlBlocks, stream);
   };
 
   // --- Warmup (paired), then per-iter timed (paired), matching ep_bench. ---
@@ -266,7 +348,15 @@ int main(int argc, char** argv) {
   KernelTimer ktimer;
   CUDA_CHECK(cudaDeviceSynchronize());
   MPI_Barrier(MPI_COMM_WORLD);
-  int kt_rc = ktimer.start();
+  int kt_rc = args.kernel_timing ? ktimer.start() : -1;
+  int localTimerStarted = kt_rc == CUPTI_SUCCESS;
+  int allTimersStarted = 0;
+  MPI_Allreduce(&localTimerStarted, &allTimersStarted, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+  if (!allTimersStarted) {
+    if (localTimerStarted) ktimer.stop();
+    kt_rc = -1;
+  }
+  MPI_Barrier(MPI_COMM_WORLD);
 
   std::vector<cudaEvent_t> ds(iters), de(iters), cs(iters), ce(iters);
   for (int i = 0; i < iters; ++i) {
@@ -287,7 +377,7 @@ int main(int argc, char** argv) {
     MPI_Barrier(MPI_COMM_WORLD);
   }
   CUDA_CHECK(cudaDeviceSynchronize());
-  if (kt_rc == CUPTI_SUCCESS) ktimer.stop();
+  if (args.kernel_timing && kt_rc == CUPTI_SUCCESS) ktimer.stop();
 
   // --- Collect per-iter host times (ms->us), trim first (warmup outlier). ---
   std::vector<double> disp_us, comb_us, tot_us;
@@ -318,10 +408,21 @@ int main(int argc, char** argv) {
   // Kernel-only (CUPTI). Per-rank mean, then cross-rank avg/min/max.
   double kd = (kt_rc == CUPTI_SUCCESS) ? ktimer.get_avg_us("dispatch") : 0.0;
   double kc = (kt_rc == CUPTI_SUCCESS) ? ktimer.get_avg_us("combine") : 0.0;
+  int localKernelOk = (kt_rc == CUPTI_SUCCESS) && (kd > 0.0) && (kc > 0.0);
+  int allKernelsOk = 0;
+  MPI_Allreduce(&localKernelOk, &allKernelsOk, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
   double gkda, gkdmn, gkdmx, gkca, gkcmn, gkcmx;
-  reduce3(kd, kd, kd, gkda, gkdmn, gkdmx);
-  reduce3(kc, kc, kc, gkca, gkcmn, gkcmx);
-  bool kernel_ok = (kt_rc == CUPTI_SUCCESS) && (kd > 0.0) && (kc > 0.0);
+  double kdMinInput = localKernelOk ? kd : 1e30;
+  double kcMinInput = localKernelOk ? kc : 1e30;
+  MPI_Reduce(&kd, &gkda, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&kdMinInput, &gkdmn, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&kd, &gkdmx, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&kc, &gkca, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&kcMinInput, &gkcmn, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD);
+  MPI_Reduce(&kc, &gkcmx, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  gkda /= W;
+  gkca /= W;
+  bool kernel_ok = allKernelsOk != 0;
 
   if (std::getenv("MSCCLPP_EP_KDEBUG") && rank == 0) {
     printf("[kdebug] kt_start rc=%d dispatch=%.1fus x%llu combine=%.1fus x%llu (kind=%s)\n", kt_rc, kd,
@@ -332,7 +433,7 @@ int main(int argc, char** argv) {
   if (rank == 0) {
     printf("\n=== Summary (Low Latency, across %d ranks) ===\n", W);
     printf("\n--- Host-observed performance ---\n");
-    printf("Dispatch (BF16):  avg=%.2f us, min=%.2f us, max=%.2f us\n", gda, gdmn, gdmx);
+    printf("Dispatch (%s):  avg=%.2f us, min=%.2f us, max=%.2f us\n", dispatchLabel, gda, gdmn, gdmx);
     printf("                  throughput: avg=%.2f GB/s\n", (disp_bytes / 1e9) / (gda * 1e-6));
     printf("Combine (BF16):   avg=%.2f us, min=%.2f us, max=%.2f us\n", gca, gcmn, gcmx);
     printf("                  throughput: avg=%.2f GB/s\n", (comb_bytes / 1e9) / (gca * 1e-6));
@@ -341,17 +442,16 @@ int main(int argc, char** argv) {
 
     printf("\n--- Kernel-only performance ---\n");
     if (kernel_ok) {
-      printf("Dispatch:    avg=%.2f us, min=%.2f us, max=%.2f us\n", gkda, gkdmn, gkdmx);
-      printf("                  throughput: avg=%.2f GB/s\n", (disp_bytes / 1e9) / (gkda * 1e-6));
-      printf("Combine:     avg=%.2f us, min=%.2f us, max=%.2f us\n", gkca, gkcmn, gkcmx);
-      printf("                  throughput: avg=%.2f GB/s\n", (comb_bytes / 1e9) / (gkca * 1e-6));
-      printf("Total (D+C): %.2f us (kernel dispatch avg + combine avg)\n", gkda + gkca);
+      printf("Dispatch:    min=%.2f us (representative)  [avg=%.2f, max=%.2f us -- rank skew]\n", gkdmn, gkda, gkdmx);
+      printf("                  throughput @min: %.2f GB/s\n", (disp_bytes / 1e9) / (gkdmn * 1e-6));
+      printf("Combine:     min=%.2f us (representative)  [avg=%.2f, max=%.2f us -- rank skew]\n", gkcmn, gkca, gkcmx);
+      printf("                  throughput @min: %.2f GB/s\n", (comb_bytes / 1e9) / (gkcmn * 1e-6));
     } else {
       printf("  NOTE: CUPTI kernel timing unavailable (rc=%d) or captured 0 LL kernels.\n", kt_rc);
     }
 
-    printf("\nByte counts: dispatch=%.2f MB (BF16), combine=%.2f MB (BF16), selections=%lld\n", disp_bytes / 1e6,
-           comb_bytes / 1e6, num_valid_selections);
+    printf("\nByte counts: dispatch=%.2f MB (%s), combine=%.2f MB (BF16), selections=%lld\n", disp_bytes / 1e6,
+           dispatchLabel, comb_bytes / 1e6, num_valid_selections);
     fflush(stdout);
   }
 
@@ -365,6 +465,8 @@ int main(int argc, char** argv) {
   cudaFree(d_x);
   cudaFree(d_out);
   cudaFree(d_recv);
+  if (fp8Dispatch) cudaFree(d_expert_output);
+  cudaFree(d_scales);
   cudaFree(d_topk);
   cudaFree(d_weights);
   cudaFree(d_srcinfo);
