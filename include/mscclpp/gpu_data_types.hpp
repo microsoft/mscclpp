@@ -189,7 +189,7 @@ template <int Bytes, bool Enabled = (Bytes >= 4 && Bytes % 4 == 0)>
 struct alignas(Bytes) Words {
   uint32_t w[Bytes / 4];
 
-  MSCCLPP_HOST_DEVICE_INLINE Words() {}
+  Words() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE uint32_t& operator[](int i) { return w[i]; }
 
@@ -212,7 +212,7 @@ union alignas(sizeof(T) * N) VectorTypeImpl {
   using ElementType = T;
   constexpr static int Size = N;
 
-  MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl() {}
+  VectorTypeImpl() = default;
 
   MSCCLPP_HOST_DEVICE_INLINE VectorTypeImpl(const StorageT& value) : storage(value) {}
 
@@ -871,7 +871,7 @@ MSCCLPP_DEVICE_INLINE f32x4 to<f32x4, f8_e5m2x4>(const f8_e5m2x4& v) {
 
 /// f32x2 -> f8_e4m3x2.
 /// HIP gfx942: float -> fp8 (via __builtin_amdgcn_cvt_pk_fp8_f32).
-/// NVIDIA SM90+: float -> half -> fp8 (via __nv_cvt_halfraw2_to_fp8x2).
+/// NVIDIA SM90+: float -> fp8 (via __nv_cvt_float2_to_fp8x2).
 /// NVIDIA pre-SM90: float -> half -> fp8 (via __nv_cvt_halfraw_to_fp8, element-wise).
 template <>
 MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f32x2>(const f32x2& v) {
@@ -879,10 +879,7 @@ MSCCLPP_DEVICE_INLINE f8_e4m3x2 to<f8_e4m3x2, f32x2>(const f32x2& v) {
   uint32_t packed = __builtin_amdgcn_cvt_pk_fp8_f32(v.data[0], v.data[1], 0, false);
   return bit_cast<f8_e4m3x2>(static_cast<__hip_fp8x2_storage_t>(packed));
 #elif defined(MSCCLPP_DEVICE_CUDA) && __CUDA_ARCH__ >= 900
-  __half2_raw h2;
-  h2.x = bit_cast<unsigned short>(__float2half_rn(v.data[0]));
-  h2.y = bit_cast<unsigned short>(__float2half_rn(v.data[1]));
-  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_halfraw2_to_fp8x2(h2, __NV_SATFINITE, __NV_E4M3);
+  __nv_fp8x2_storage_t fp8x2 = __nv_cvt_float2_to_fp8x2(v.storage, __NV_SATFINITE, __NV_E4M3);
   return bit_cast<f8_e4m3x2>(fp8x2);
 #elif defined(MSCCLPP_DEVICE_CUDA)
   __half_raw h0, h1;

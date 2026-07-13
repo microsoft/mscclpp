@@ -15,6 +15,7 @@ except ImportError as exc:  # pragma: no cover
 DispatchLayout = _cpp.DispatchLayout
 MoEMode = _cpp.MoEMode
 CombineMode = _cpp.CombineMode
+DispatchDataType = _cpp.DispatchDataType
 Config = getattr(_cpp, "Config", None)
 
 

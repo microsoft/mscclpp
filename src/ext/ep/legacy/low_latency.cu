@@ -86,21 +86,19 @@ struct DispatchDTypeTraits {};
 
 template <>
 struct DispatchDTypeTraits<DType::BF16> {
-  using Type = nv_bfloat16;
+  using Type = low_latency::Bf16;
 };
 
 template <>
 struct DispatchDTypeTraits<DType::F8E4M3> {
-  using Type = __nv_fp8_storage_t;
+  using Type = low_latency::Fp8E4M3;
 };
 
 // Keep input and output dtype separate. Current launch path only instantiates
 // BF16 input, but this keeps room for pre-quantized input with explicit scales.
 template <DType kInputDType, DType kOutputDType>
 struct DispatchOutputVec {
-  using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
-  using Type =
-      typename std::conditional<kInputDType == kOutputDType, int4, typename Fp8VectorType<SourceType>::Type>::type;
+  using Type = typename std::conditional<kInputDType == kOutputDType, int4, mscclpp::f8_e4m3x8>::type;
 };
 
 template <DType kInputDType, DType kOutputDType>
@@ -114,7 +112,6 @@ using LowLatencyDispatchPayloadView =
 template <DType kInputDType, DType kOutputDType, int kNumPerChannels>
 MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Type dispatchConvert(
     const int4& inputValue, float* scaleOut, int laneId) {
-  using SourceType = typename DispatchDTypeTraits<kInputDType>::Type;
   using OutputVec = typename DispatchOutputVec<kInputDType, kOutputDType>::Type;
 
   if constexpr (kInputDType == kOutputDType) {
@@ -122,7 +119,7 @@ MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Typ
   } else {
     static_assert(kInputDType == DType::BF16 && kOutputDType == DType::F8E4M3,
                   "Unsupported low-latency dispatch dtype conversion");
-    return static_cast<OutputVec>(quantizeToFp8<SourceType, kNumPerChannels, __NV_E4M3>(inputValue, scaleOut, laneId));
+    return quantizeBf16x8ToFp8E4M3<kNumPerChannels>(mscclpp::bit_cast<mscclpp::bf16x8>(inputValue), scaleOut, laneId);
   }
 }
 
@@ -639,7 +636,7 @@ MSCCLPP_DEVICE_INLINE void copyCombineInputToBf16(int4* dst, const uint8_t* src,
         const int elemIdx = i * kNumBf16PerInt4 + j;
         const int scaleIdx = elemIdx / 128;
         bf16Values[j] =
-            static_cast<nv_bfloat16>(dequantizeFp8<__NV_E4M3>(srcFp8[elemIdx], scales[scaleIdx * scaleStride]));
+            static_cast<low_latency::Bf16>(dequantizeFp8E4M3(srcFp8[elemIdx], scales[scaleIdx * scaleStride]));
       }
       st_na_global(dst + i, bf16Pack);
     }

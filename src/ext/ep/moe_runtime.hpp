@@ -31,13 +31,15 @@ class MoERuntime {
   int getLocalDeviceId() const;
   std::string getLocalIpcHandle() const;
 
-  void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-                const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
-                int maxTokensPerRank, int numExperts, int numBlocks, cudaStream_t stream);
+  void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
+                const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden,
+                int numTopk, int maxTokensPerRank, int numExperts, low_latency::DispatchDataType dispatchDataType,
+                int numBlocks, cudaStream_t stream);
 
   void combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights, const int* srcInfo,
                const int64_t* layoutRange, int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
-               low_latency::CombineMode mode, int numBlocks, cudaStream_t stream);
+               low_latency::DispatchDataType dispatchDataType, low_latency::CombineMode mode, int numBlocks,
+               cudaStream_t stream);
 
  private:
   int lowLatencyBufferIdx_ = 0;

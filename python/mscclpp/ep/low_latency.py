@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import CombineMode, DispatchLayout, MoEMode, _cpp, get_low_latency_rdma_size_hint
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode, _cpp, get_low_latency_rdma_size_hint
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -20,6 +20,24 @@ from .types import (
     QuantConfig,
 )
 from .utils import cuda_stream_ptr, resolve_expert_placement
+
+
+def _resolve_dispatch_data_type(quant: Optional[QuantConfig]) -> DispatchDataType:
+    if quant is None:
+        return DispatchDataType.BF16
+
+    quant_format = quant.format
+    if quant_format is not None and not isinstance(quant_format, DispatchDataType):
+        raise TypeError("quant.format must be a DispatchDataType")
+    if quant_format is None:
+        raise ValueError("quant.format is required")
+    if quant_format == DispatchDataType.MXFP8_E4M3:
+        raise NotImplementedError("MXFP8 dispatch is reserved but not implemented")
+    if quant_format != DispatchDataType.FP8_E4M3:
+        raise ValueError("unsupported low-latency quantization format")
+    if quant.block_scales is not None or quant.global_scale is not None:
+        raise ValueError("communicator quant config must not contain precomputed scales")
+    return DispatchDataType.FP8_E4M3
 
 
 class LowLatencyRuntime:
@@ -109,12 +127,12 @@ class LowLatencyBackend:
 
         if config.max_recv_tokens_per_rank not in (None, self.max_tokens_per_rank):
             raise NotImplementedError("low-latency mode currently uses max_tokens_per_rank as recv capacity")
-        if config.quant is not None:
-            raise NotImplementedError("low-latency quantization is not implemented yet")
+        self.dispatch_data_type = _resolve_dispatch_data_type(config.quant)
 
         num_rdma_bytes = get_low_latency_rdma_size_hint(
             self.max_tokens_per_rank, self.hidden_size, self.world_size, self.num_experts, self.topk
         )
+        self._dispatch_scales: Optional[torch.Tensor] = None
         self._dispatch_src_info: Optional[torch.Tensor] = None
         self._dispatch_layout_range: Optional[torch.Tensor] = None
         self._dispatch_count: Optional[torch.Tensor] = None
@@ -151,12 +169,13 @@ class LowLatencyBackend:
         del previous_handle
         self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer)
 
-        out_buf, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
+        out_buf, scales, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
         self._runtime.cpp_runtime.dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
             0 if weights is None else weights.data_ptr(),
             out_buf.data_ptr(),
+            0 if scales is None else scales.data_ptr(),
             src_info.data_ptr(),
             layout_range.data_ptr(),
             count.data_ptr(),
@@ -165,12 +184,21 @@ class LowLatencyBackend:
             self.topk,
             self.max_tokens_per_rank,
             self.num_experts,
+            self.dispatch_data_type,
             self.num_blocks,
             cuda_stream_ptr(stream),
         )
+        output_quant = (
+            None
+            if scales is None
+            else QuantConfig(
+                format=self.dispatch_data_type,
+                block_scales=scales,
+            )
+        )
         output_info = DispatchOutputInfo(
             layout=DispatchLayoutInfo(kind=self.output_layout, num_tokens_per_expert=count),
-            quant=None,
+            quant=output_quant,
         )
         dispatch_out = DispatchOutput(
             tokens=out_buf,
@@ -218,6 +246,7 @@ class LowLatencyBackend:
             self.topk,
             context.num_max_dispatch_tokens_per_rank,
             context.num_experts,
+            self.dispatch_data_type,
             self.combine_mode,
             self.num_blocks - 2,
             cuda_stream_ptr(stream),
@@ -235,8 +264,16 @@ class LowLatencyBackend:
                 (self.num_local_experts, self.world_size), dtype=torch.int64, device=device
             )
             self._dispatch_count = torch.empty((self.num_local_experts,), dtype=torch.int32, device=device)
+            self._dispatch_scales = None
+            if self.dispatch_data_type == DispatchDataType.FP8_E4M3:
+                num_scales = self.hidden_size // 128
+                scale_storage = torch.empty(
+                    (self.num_local_experts, num_scales, slots_per_expert), dtype=torch.float32, device=device
+                )
+                self._dispatch_scales = scale_storage.transpose(1, 2)
         return (
             output_buffer,
+            self._dispatch_scales,
             self._dispatch_src_info,
             self._dispatch_layout_range,
             self._dispatch_count,
@@ -246,7 +283,9 @@ class LowLatencyBackend:
         if output_buffer is None:
             raise ValueError("output_buffer is required for low-latency dispatch")
         if quant is not None:
-            raise NotImplementedError("low-latency quantization is not implemented yet")
+            raise NotImplementedError(
+                "per-call input quant metadata is not supported; configure dispatch output quantization on the communicator"
+            )
         if input.dim() != 2 or not input.is_contiguous():
             raise ValueError("input must be a contiguous [num_tokens, hidden_size] tensor")
         if input.device.type != "cuda" or input.dtype != torch.bfloat16:
@@ -275,8 +314,9 @@ class LowLatencyBackend:
             expected_shape = (self.num_local_experts * slots_per_expert, self.hidden_size)
         if output_buffer.dim() != len(expected_shape) or not output_buffer.is_contiguous():
             raise ValueError(f"output_buffer must be a contiguous {self.output_layout} tensor")
-        if output_buffer.device != input.device or output_buffer.dtype != torch.bfloat16:
-            raise ValueError("output_buffer must be a BF16 CUDA tensor on the same device as input")
+        expected_dtype = torch.float8_e4m3fn if self.dispatch_data_type == DispatchDataType.FP8_E4M3 else torch.bfloat16
+        if output_buffer.device != input.device or output_buffer.dtype != expected_dtype:
+            raise ValueError(f"output_buffer must be a {expected_dtype} CUDA tensor on the same device as input")
         if tuple(output_buffer.shape) != expected_shape:
             raise ValueError(f"output_buffer shape must be {expected_shape}")
 
@@ -286,6 +326,10 @@ class LowLatencyBackend:
         context = handle.combine_context
         if context.num_experts != self.num_experts or context.hidden_size != self.hidden_size:
             raise ValueError("DispatchHandle does not belong to this MoECommunicator configuration")
+        output_quant = handle.output_info.quant
+        handle_data_type = DispatchDataType.BF16 if output_quant is None else output_quant.format
+        if handle_data_type != self.dispatch_data_type:
+            raise ValueError("DispatchHandle quantization does not match this MoECommunicator configuration")
         slots_per_expert = self.world_size * self.max_tokens_per_rank
         if handle.output_info.layout.kind == DispatchLayout.EXPERT_MAJOR:
             expected_shape = (self.num_local_experts, slots_per_expert, self.hidden_size)

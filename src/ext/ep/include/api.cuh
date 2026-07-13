@@ -204,6 +204,16 @@ enum class CombineMode {
   DIRECT_SEND
 };
 
+/// Dispatch payload data format.
+enum class DispatchDataType {
+  /// Unquantized BF16 payload.
+  BF16,
+  /// FP8 E4M3 payload with one floating-point scale per 128 hidden elements.
+  FP8_E4M3,
+  /// Reserved for MXFP8 E4M3 payloads with micro-scales.
+  MXFP8_E4M3
+};
+
 /// Per-call low-latency workload dimensions.
 struct Workload {
   /// Number of local input or output tokens.
@@ -216,6 +226,8 @@ struct Workload {
   int numExperts_;
   /// Maximum tokens per rank in the packed layout.
   int maxTokensPerRank_;
+  /// Dispatch payload data format.
+  DispatchDataType dispatchDataType_;
 };
 
 /// Persistent communication resources shared by low-latency operations.
@@ -247,6 +259,9 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// Low-latency dispatch that distributes tokens to experts across ranks.
 /// @param[out] output Expert-major packed output
 /// [num_local_experts, num_ranks * max_tokens_per_rank, hidden].
+/// @param[out] outputScales FP8 block scales in
+/// [num_local_experts, hidden / 128, num_ranks * max_tokens_per_rank],
+/// or nullptr for BF16 dispatch.
 /// @param[out] outputSrcInfo Original source-token index for every packed expert row.
 /// @param[out] outputLayout Per-[local expert, source rank] packed count and offset.
 /// @param[out] outputCount Total packed token count for every local expert.
@@ -259,9 +274,9 @@ size_t workspaceSize(int numRanks, int numExperts);
 /// @param[in,out] workspace Persistent counters, task storage, semaphores, and device barriers.
 /// @param[in] numBlocks Total dispatch grid size, including one scheduler and one metadata-notify block.
 /// @param[in] stream CUDA stream.
-void dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-              const int64_t* topkIdx, const float* topkWeights, const Workload& workload, void* recvBuffer,
-              const CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream);
+void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
+              const void* input, const int64_t* topkIdx, const float* topkWeights, const Workload& workload,
+              void* recvBuffer, const CommContext& comm, void* workspace, int numBlocks, cudaStream_t stream);
 
 /// Low-latency combine that aggregates expert outputs back to tokens.
 /// @param[out] output Combined local tokens [num_tokens, hidden].

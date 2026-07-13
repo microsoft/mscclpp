@@ -10,19 +10,22 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import CombineMode, DispatchLayout, MoEMode
+from ._cpp import CombineMode, DispatchDataType, DispatchLayout, MoEMode
 
 # Quantization metadata.
 
 
 @dataclass
 class QuantConfig:
-    """Quantization metadata associated with an activation tensor."""
+    """Quantization metadata associated with an activation tensor.
 
-    dtype: Optional[torch.dtype] = None
+    Low-latency FP8 dispatch returns ``block_scales`` with the activation's
+    leading dimensions and a format-defined final scale dimension.
+    """
+
+    format: Optional[DispatchDataType] = None
     block_scales: Optional[torch.Tensor] = None
     global_scale: Optional[torch.Tensor] = None
-    block_size: Optional[int] = None
 
 
 # Communicator construction.

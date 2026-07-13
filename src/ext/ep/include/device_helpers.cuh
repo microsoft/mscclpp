@@ -66,6 +66,10 @@ __device__ __forceinline__ void memory_fence_gpu() { asm volatile("fence.acq_rel
 
 __device__ __forceinline__ void memory_fence_cta() { asm volatile("fence.acq_rel.cta;" ::: "memory"); }
 
+__device__ __forceinline__ void syncNamedBarrier(int barrierId, int numThreads) {
+  asm volatile("bar.sync %0, %1;" ::"r"(barrierId), "r"(numThreads) : "memory");
+}
+
 __device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBufferBase, void *peerBufferBase) {
   if (localBufferBase == nullptr) return peerBufferBase;
   const auto offset = reinterpret_cast<uint8_t *>(localBuffer) - reinterpret_cast<uint8_t *>(localBufferBase);

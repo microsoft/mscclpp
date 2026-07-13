@@ -166,9 +166,10 @@ void MoERuntime::setup() {
   available_ = ipcDomainSize >= numRanks_;
 }
 
-void MoERuntime::dispatch(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
-                          const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden, int numTopk,
-                          int maxTokensPerRank, int numExperts, int numBlocks, cudaStream_t stream) {
+void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
+                          int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                          int numTokens, int hidden, int numTopk, int maxTokensPerRank, int numExperts,
+                          low_latency::DispatchDataType dispatchDataType, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numTokens <= maxTokensPerRank);
@@ -185,17 +186,18 @@ void MoERuntime::dispatch(void* output, int* outputSrcInfo, int64_t* outputLayou
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
-                                       .maxTokensPerRank_ = maxTokensPerRank};
+                                       .maxTokensPerRank_ = maxTokensPerRank,
+                                       .dispatchDataType_ = dispatchDataType};
   const size_t workspaceBytes = low_latency::workspaceSize(numRanks_, numExperts);
   EP_HOST_ASSERT(workspaceBytes <= NUM_WORKSPACE_BYTES);
-  low_latency::dispatch(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights, workload,
-                        recvBuffer, commContext_, workspace_, numBlocks, stream);
+  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                        workload, recvBuffer, commContext_, workspace_, numBlocks, stream);
 }
 
 void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
                          const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden, int numTopk,
-                         int maxTokensPerRank, int numExperts, low_latency::CombineMode mode, int numBlocks,
-                         cudaStream_t stream) {
+                         int maxTokensPerRank, int numExperts, low_latency::DispatchDataType dispatchDataType,
+                         low_latency::CombineMode mode, int numBlocks, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(available_);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
@@ -211,7 +213,8 @@ void MoERuntime::combine(void* output, const void* input, const int64_t* topkIdx
                                        .hidden_ = hidden,
                                        .numTopk_ = numTopk,
                                        .numExperts_ = numExperts,
-                                       .maxTokensPerRank_ = maxTokensPerRank};
+                                       .maxTokensPerRank_ = maxTokensPerRank,
+                                       .dispatchDataType_ = dispatchDataType};
   low_latency::combine(output, input, topkIdx, topkWeights, srcInfo, layoutRange, workload, recvBuffer,
                        dispatchRecvBuffer, commContext_, workspace_, numBlocks, mode, stream);
 }

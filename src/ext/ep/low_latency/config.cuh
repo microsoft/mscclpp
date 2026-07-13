@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <mscclpp/concurrency_device.hpp>
+#include <mscclpp/gpu_data_types.hpp>
 #include <mscclpp/memory_channel_device.hpp>
 
 #include "../config.hpp"
@@ -20,6 +21,9 @@ constexpr int DispatchMinNWarpsPerGroup = 8;
 constexpr int DispatchMaxNWarpGroups = DispatchNWarps / DispatchMinNWarpsPerGroup;
 constexpr int DispatchNThreads = DispatchNWarps * WARP_SIZE;
 constexpr int DispatchMaxNRecvTmaWorkers = DispatchNWarps;
+constexpr int DispatchWarpGroupBarrierBase = 1;
+constexpr int DispatchSchedulerPrefixBarrier = DispatchWarpGroupBarrierBase + DispatchMaxNWarpGroups;
+constexpr int DispatchSchedulerReadyBarrier = DispatchSchedulerPrefixBarrier + 1;
 constexpr size_t OptimizedDynamicSharedMemoryBytes = 226 * 1024;
 constexpr size_t TmaWorkerControlBytes = DispatchMaxNWarpGroups * WARP_SIZE * sizeof(int);
 static_assert(DispatchNWarps % DispatchMinNWarpsPerGroup == 0);
@@ -32,8 +36,37 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchMetadataBytes(int nRanks, int nExperts
   return configAlign<size_t>(static_cast<size_t>(nRanks + nExperts) * sizeof(mscclpp::LL8Packet), 128);
 }
 
-MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk) {
-  return configAlign<size_t>(low_latency::PayloadView<__bfloat16>(hidden, nTopk).numBytes_, 128);
+template <DispatchDataType DataType>
+struct DispatchDataTypeTraits;
+
+template <>
+struct DispatchDataTypeTraits<DispatchDataType::BF16> {
+  using ElementType = Bf16;
+  using ScaleType = void;
+};
+
+template <>
+struct DispatchDataTypeTraits<DispatchDataType::FP8_E4M3> {
+  using ElementType = Fp8E4M3;
+  using ScaleType = float;
+};
+
+template <DispatchDataType DataType>
+using DispatchElementType = typename DispatchDataTypeTraits<DataType>::ElementType;
+
+template <DispatchDataType DataType>
+using DispatchScaleType = typename DispatchDataTypeTraits<DataType>::ScaleType;
+
+template <DispatchDataType DataType>
+using DispatchPayloadView = PayloadView<DispatchElementType<DataType>, DispatchScaleType<DataType>>;
+
+MSCCLPP_HOST_DEVICE_INLINE constexpr bool isSupportedDispatchDataType(DispatchDataType dataType) {
+  return dataType == DispatchDataType::BF16 || dataType == DispatchDataType::FP8_E4M3;
+}
+
+template <DispatchDataType DataType>
+MSCCLPP_HOST_DEVICE_INLINE size_t dispatchPayloadStride(int hidden, int nTopk, int scaleBlockSize) {
+  return configAlign<size_t>(DispatchPayloadView<DataType>(hidden, nTopk, scaleBlockSize).numBytes_, 128);
 }
 
 MSCCLPP_HOST_DEVICE_INLINE constexpr int dispatchNWarpsPerGroup(int nTokens, int nBlocks) {
@@ -128,31 +161,32 @@ MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedControlBytes(int nRanks) {
   return configAlign<size_t>(static_cast<size_t>(nSlots) * sizeof(int), 128);
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSendTmaBytes(int nTopk) {
-  return DispatchMaxNWarpGroups * (dispatchPayloadStride(Hidden, nTopk) + sizeof(uint64_t));
+  return DispatchMaxNWarpGroups * (dispatchPayloadStride<DataType>(Hidden, nTopk, ScaleBlockSize) + sizeof(uint64_t));
 }
 
-template <int Hidden, int MaxWorkers>
+template <int Hidden, typename ElementType, int MaxWorkers>
 MSCCLPP_HOST_DEVICE_INLINE constexpr int tmaWorkerCount() {
   static_assert(Hidden % 128 == 0);
-  constexpr size_t workerBytes = static_cast<size_t>(Hidden) * sizeof(__bfloat16) + sizeof(uint64_t);
+  constexpr size_t workerBytes = static_cast<size_t>(Hidden) * sizeof(ElementType) + sizeof(uint64_t);
   constexpr int nWorkers = static_cast<int>((OptimizedDynamicSharedMemoryBytes - TmaWorkerControlBytes) / workerBytes);
   return nWorkers < MaxWorkers ? nWorkers : MaxWorkers;
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchRecvTmaBytes() {
-  constexpr int NWorkers = tmaWorkerCount<Hidden, DispatchMaxNRecvTmaWorkers>();
-  constexpr size_t tileBytes = static_cast<size_t>(Hidden) * sizeof(__bfloat16);
+  using ElementType = DispatchElementType<DataType>;
+  constexpr int NWorkers = tmaWorkerCount<Hidden, ElementType, DispatchMaxNRecvTmaWorkers>();
+  constexpr size_t tileBytes = static_cast<size_t>(Hidden) * sizeof(ElementType);
   return static_cast<size_t>(NWorkers) * (tileBytes + sizeof(uint64_t));
 }
 
-template <int Hidden>
+template <int Hidden, DispatchDataType DataType, int ScaleBlockSize>
 MSCCLPP_HOST_DEVICE_INLINE size_t dispatchSharedBytes(int nRanks, int nExperts, int nTopk) {
   const size_t controlBytes = dispatchSharedControlBytes(nRanks);
-  const size_t sendBytes = dispatchSendTmaBytes<Hidden>(nTopk);
-  const size_t recvBytes = dispatchRecvTmaBytes<Hidden>();
+  const size_t sendBytes = dispatchSendTmaBytes<Hidden, DataType, ScaleBlockSize>(nTopk);
+  const size_t recvBytes = dispatchRecvTmaBytes<Hidden, DataType>();
   const size_t tmaBytes = controlBytes + (sendBytes > recvBytes ? sendBytes : recvBytes);
   const size_t metadataBytes = static_cast<size_t>(nRanks + nExperts) * sizeof(int);
   return tmaBytes > metadataBytes ? tmaBytes : metadataBytes;
