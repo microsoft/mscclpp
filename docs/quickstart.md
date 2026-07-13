@@ -14,10 +14,15 @@
             * [NDm_A100_v4](https://learn.microsoft.com/en-us/azure/virtual-machines/ndm-a100-v4-series)
             * [ND_H100_v5](https://learn.microsoft.com/en-us/azure/virtual-machines/nd-h100-v5-series)
         * Non-Azure Systems
-            * NVIDIA A100 GPUs + CUDA >= 11.8
+            * NVIDIA A100 GPUs + CUDA >= 12.0
             * NVIDIA H100 GPUs + CUDA >= 12.0
             * AMD MI250X GPUs + ROCm >= 5.7
             * AMD MI300X GPUs + ROCm >= 6.0
+* Toolchain
+    * MSCCL++ is built as **C++20** (both host and device code), so a C++20-capable toolchain is required.
+    * [CMake](https://cmake.org/) >= 3.25
+    * A C++20-capable host compiler, e.g., GCC >= 11 or Clang >= 14
+    * On NVIDIA platforms, **CUDA Toolkit >= 12.0** is required. `nvcc` first added `-std=c++20` support in CUDA 12.0, so earlier toolkits (11.x and below) cannot build the project.
 * OS
     * Tested on Ubuntu 20.04 and later
 * Libraries
@@ -47,7 +52,7 @@ We provide docker images which package all prerequisites for MSCCL++. You can se
 # For NVIDIA platforms
 $ docker run -it --privileged --net=host --ipc=host --gpus all --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9 bash
 # For AMD platforms
-$ docker run -it --privileged --net=host --ipc=host --security-opt=seccomp=unconfined --group-add=video --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm6.2 bash
+$ docker run -it --privileged --net=host --ipc=host --security-opt=seccomp=unconfined --group-add=video --name mscclpp-dev ghcr.io/microsoft/mscclpp/mscclpp:base-dev-rocm7.2 bash
 ```
 
 See all available images [here](https://github.com/microsoft/mscclpp/pkgs/container/mscclpp%2Fmscclpp).
@@ -108,19 +113,16 @@ $ python -m pip install ".[cuda12]"
 # For NVIDIA platforms with the Expert Parallel (MoE dispatch/combine) extension
 $ python -m pip install ".[cuda12,ep]"
 # For AMD platforms
-$ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm6]"
+$ CXX=/opt/rocm/bin/hipcc python -m pip install ".[rocm7]"
 ```
 
-> **Note:** A platform extra (`cuda11`, `cuda12`, `cuda13`, or `rocm6`) is required to install CuPy.
-> The CUDA extras install pre-built CuPy wheels. The `rocm6` extra installs CuPy from source,
-> which requires ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
+> **Note:** A platform extra (`cuda12`, `cuda13`, `rocm6`, or `rocm7`) is required to install CuPy.
+> The CUDA extras install pre-built CuPy wheels and CUDA Python bindings. The ROCm extras install CuPy from source
+> and HIP Python for the matching ROCm major version, which require ROCm and may take longer. Running `pip install .` without an extra will not install CuPy.
 
 Optional extras can be installed by specifying them in brackets. Available extras:
-- **`cuda11`**, **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package for your CUDA version.
-- **`rocm6`**: Install CuPy from source for AMD ROCm platforms.
-- **`ep`**: Build and install the Expert Parallel extension (`mscclpp.ep`). The extension itself does
-  not add a PyTorch dependency, but the high-level Python API expects user-provided `torch.Tensor` inputs.
-  CUDA architectures 90 or newer are required for EP kernels.
+- **`cuda12`**, **`cuda13`**: Install a pre-built CuPy package and CUDA Python bindings for your CUDA version.
+- **`rocm6`**, **`rocm7`**: Install CuPy from source and HIP Python for AMD ROCm platforms.
 - **`benchmark`**: Install benchmark dependencies (mpi4py, prettytable, netifaces, matplotlib).
 - **`test`**: Install test dependencies (pytest, mpi4py, netifaces).
 
@@ -216,15 +218,37 @@ $ mpirun -np 16 -npernode 8 -hostfile hostfile ./bin/mp_unit_tests -ip_port 10.0
 
 ## Performance Benchmark
 
-### Python Benchmark
+### Python Benchmark and Tuning
 
-[Install the MSCCL++ Python package](#install-from-source-python-module) and run our Python AllReduce benchmark as follows. It requires MPI on the system.
+[Install the MSCCL++ Python package](#install-from-source-python-module) and run the Python collective benchmark as follows. It requires MPI on the system.
 
 ```bash
 # Install with benchmark dependencies and the appropriate CUDA/ROCm extras.
-# Replace `cuda12` with your platform: cuda11, cuda12, cuda13, or rocm6.
+# Replace `cuda12` with your platform: cuda12, cuda13, rocm6, or rocm7.
 $ python3 -m pip install ".[cuda12,benchmark,test]"
-$ mpirun -tag-output -np 8 python3 ./python/mscclpp_benchmark/allreduce_bench.py
+
+```
+
+To autotune launch parameters and save a tuned config:
+
+```bash
+$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
+    python3 -m mscclpp_benchmark.bench_collective \
+    --collective allreduce \
+    --dtype float16 \
+    --batch-sizes 1,2,4,8 \
+    --autotune \
+    --write-config /tmp/mscclpp_tuned_configs.json
+```
+
+Use the tuned config in a benchmark:
+
+```bash
+$ PYTHONPATH=$PWD/python mpirun -np 8 --allow-run-as-root \
+    python3 -m mscclpp_benchmark.bench_collective \
+    --collective allreduce \
+    --dtype float16 \
+    --config-path /tmp/mscclpp_tuned_configs.json
 ```
 
 (nccl-benchmark)=
