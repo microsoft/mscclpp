@@ -8,7 +8,7 @@ from typing import Optional, Tuple
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode
+from ._cpp import DispatchLayout, MoEMode, OptimizedCombineMode
 from .high_throughput import HighThroughputBackend
 from .low_latency import LowLatencyBackend
 from .types import (
@@ -44,6 +44,7 @@ __all__ = [
     "MoECommunicator",
     "MoECommunicatorConfig",
     "MoEMode",
+    "OptimizedCombineMode",
     "OperationOverlapConfig",
     "QuantConfig",
     "RowMajorInternodeDispatchHandle",

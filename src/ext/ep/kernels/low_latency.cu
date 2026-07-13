@@ -109,8 +109,8 @@ constexpr bool kDispatchNeedsScales = kInputDType != kOutputDType;
 
 template <DType kOutputDType>
 using LowLatencyDispatchPayloadView =
-    LowLatencyPackedPayloadView<typename DispatchDTypeTraits<kOutputDType>::Type,
-                                std::conditional_t<kOutputDType == DType::F8E4M3, float, void>>;
+    LowLatencyPayloadView<typename DispatchDTypeTraits<kOutputDType>::Type,
+                          std::conditional_t<kOutputDType == DType::F8E4M3, float, void>>;
 
 template <DType kInputDType, DType kOutputDType, int kNumPerChannels>
 MSCCLPP_DEVICE_INLINE typename DispatchOutputVec<kInputDType, kOutputDType>::Type dispatchConvert(
@@ -250,9 +250,8 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerRank, int* ou
                                         int* atomicFinishCounterPerRank, int64_t* nextClean, int numNextCleanInt,
                                         int numTokens, int numMaxDispatchTokensPerRank, int numTopk, int hidden,
                                         int numExperts, int rank, int numRanks, void* rdmaBufferPtr,
-                                        mscclpp::PortChannelDeviceHandle* portChannelHandles,
+                                        [[maybe_unused]] PortChannelDeviceHandle* portChannelHandles,
                                         void* const* peerRdmaBases, int ranksPerIpcDomain) {
-  (void)portChannelHandles;
   const auto smId = static_cast<int>(blockIdx.x);
   const auto threadId = static_cast<int>(threadIdx.x);
   const auto warpId = threadId / WARP_SIZE;
@@ -268,7 +267,7 @@ MSCCLPP_DEVICE_INLINE void dispatchSend(int* sharedNumTokensSentPerRank, int* ou
   constexpr int kNumPerChannels = 128;
   using VecType = typename DispatchOutputVec<kInputDType, kOutputDType>::Type;
   const LowLatencyDispatchPayloadView<kOutputDType> payload(hidden, numTopk);
-  const size_t numBytesPerMsg = payload.numBytes;
+  const size_t numBytesPerMsg = payload.numBytes_;
   const size_t numInt4PerMsg = numBytesPerMsg / sizeof(int4);
 
   if (warpId < numWarps - 1) {
@@ -444,7 +443,7 @@ __global__ __launch_bounds__(kNumWarpGroups* kNumWarpsPerGroup* WARP_SIZE, 1) vo
 
   // Message package: hidden data, optional quantization scales, index at source
   const LowLatencyDispatchPayloadView<kOutputDType> payload(hidden, numTopk);
-  const size_t numBytesPerMsg = payload.numBytes;
+  const size_t numBytesPerMsg = payload.numBytes_;
   EP_DEVICE_ASSERT(numBytesPerMsg % sizeof(int4) == 0);
 
   if (phases & LOW_LATENCY_SEND_PHASE) {
@@ -776,7 +775,7 @@ MSCCLPP_DEVICE_INLINE void combineRecv(void* output, void* stagedRecv, int64_t* 
       float regTopkWeights[kNumMaxTopk];
       for (int i = 0; i < numTopk; ++i) {
         regTopkIdx[i] = static_cast<int>(__ldg(topkIdx + tokenIdx * numTopk + i));
-        regTopkWeights[i] = __ldg(topkWeights + tokenIdx * numTopk + i);
+        regTopkWeights[i] = topkWeights == nullptr ? 1.0f : __ldg(topkWeights + tokenIdx * numTopk + i);
       }
 
       float combinedValues[kNumBf16PerInt4] = {0.0f};

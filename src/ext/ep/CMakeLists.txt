@@ -41,6 +41,8 @@ set(EP_SOURCES
     moe_runtime.cc
     bindings.cpp
     kernels/low_latency.cu
+    low_latency/dispatch.cu
+    low_latency/combine.cu
     # High-throughput (DeepEP-style) backend (torch-free, raw-pointer API).
     ht_runtime.cc
     ht/kernels/internode.cu

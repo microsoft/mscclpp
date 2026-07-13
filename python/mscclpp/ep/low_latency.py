@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import torch
 
-from ._cpp import DispatchLayout, MoEMode, _cpp, get_low_latency_rdma_size_hint
+from ._cpp import DispatchLayout, MoEMode, OptimizedCombineMode, _cpp, get_low_latency_rdma_size_hint
 from .types import (
     DispatchHandle,
     DispatchLayoutInfo,
@@ -25,7 +25,7 @@ from .utils import cuda_stream_ptr, requires_dequantization, resolve_expert_plac
 class LowLatencyRuntime:
     """Private low-level low-latency runtime wrapper (wraps ``_cpp.MoERuntime``)."""
 
-    num_sms: int = 20
+    num_sms: int = 64
 
     def __init__(
         self,
@@ -90,13 +90,21 @@ class LowLatencyBackend:
         self.hidden_size = config.hidden_size
         self.topk = config.topk
         self.max_tokens_per_rank = config.max_tokens_per_rank
-        self.num_sms = config.num_sms
+        self.num_sms = config.low_latency_dispatch_num_sms
+        self.combine_num_sms = config.low_latency_combine_num_sms
+        self.combine_mode = config.low_latency_combine_mode
         self.enable_overlap = config.enable_overlap
 
         if self.output_layout != DispatchLayout.EXPERT_MAJOR:
             raise NotImplementedError("low-latency mode currently supports only DispatchLayout.EXPERT_MAJOR")
         if self.num_experts % self.world_size != 0:
             raise ValueError("low-latency mode requires num_experts divisible by world_size")
+        if not self.world_size <= self.num_sms <= 128:
+            raise ValueError("low_latency_dispatch_num_sms must be between world_size and 128")
+        if not 1 <= self.combine_num_sms <= 128:
+            raise ValueError("low_latency_combine_num_sms must be between 1 and 128")
+        if not isinstance(self.combine_mode, OptimizedCombineMode):
+            raise TypeError("low_latency_combine_mode must be an OptimizedCombineMode")
 
         self.num_local_experts, self.local_expert_start = resolve_expert_placement(
             num_experts=self.num_experts,
@@ -158,14 +166,12 @@ class LowLatencyBackend:
     ) -> tuple[DispatchOutput, DispatchHandle]:
         del previous_handle
         self._validate_dispatch_inputs(input, topk_ids, weights, quant, output_buffer)
-        if weights is None:
-            weights = torch.ones(topk_ids.shape, dtype=torch.float32, device=topk_ids.device)
 
         out_buf, packed_scales, src_info, layout_range, count = self._get_dispatch_output_tensors(output_buffer)
         self._runtime.cpp_runtime.dispatch(
             input.data_ptr(),
             topk_ids.data_ptr(),
-            weights.data_ptr(),
+            0 if weights is None else weights.data_ptr(),
             out_buf.data_ptr(),
             0 if packed_scales is None else packed_scales.data_ptr(),
             src_info.data_ptr(),
@@ -178,6 +184,7 @@ class LowLatencyBackend:
             self.num_experts,
             self.dispatch_requires_quantization,
             self.output_layout,
+            self.num_sms,
             cuda_stream_ptr(stream),
         )
         dispatched_quant = None
@@ -231,16 +238,18 @@ class LowLatencyBackend:
             expert_output.data_ptr(),
             0 if x_scales is None else x_scales.data_ptr(),
             context.topk_ids.data_ptr(),
-            context.weights.data_ptr(),
+            0 if context.weights is None else context.weights.data_ptr(),
             context.src_info.data_ptr(),
             context.layout_range.data_ptr(),
             out.data_ptr(),
             context.num_tokens,
             self.hidden_size,
-            context.weights.size(1),
+            self.topk,
             context.num_max_dispatch_tokens_per_rank,
             context.num_experts,
             combine_requires_dequantization,
+            self.combine_mode,
+            self.combine_num_sms,
             cuda_stream_ptr(stream),
         )
         return out

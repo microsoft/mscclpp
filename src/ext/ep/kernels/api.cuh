@@ -196,6 +196,16 @@ enum class DType {
   F8E4M3
 };
 
+/// Optimized low-latency combine algorithm.
+enum class OptimizedCombineMode {
+  /// Use the original combine implementation.
+  DISABLED,
+  /// Reduce expert rows on each destination rank before sending one partial per rank and token.
+  RANK_LOCAL_REDUCE,
+  /// Send every expert row directly and perform the full weighted reduction on the source rank.
+  DIRECT_SEND
+};
+
 /// Transport context that encapsulates all transport-related state.
 struct TransportContext {
   /// Base address of the locally-registered RDMA buffer.
@@ -204,10 +214,14 @@ struct TransportContext {
   mscclpp::PortChannelDeviceHandle* portChannels_;
   /// Base memory channel handles for IPC transport barrier (nullable).
   mscclpp::BaseMemoryChannelDeviceHandle* memoryChannels_;
+  /// Number of expert channel slots reserved per peer rank.
+  int memoryChannelStride_;
   /// Peer-mapped base addresses for IPC path (nullable).
   void* const* peerBases_;
   /// True if IPC path is ready, false to use RDMA.
   bool ipcReady_;
+  /// CUDA device ID associated with this transport.
+  int deviceId_;
   /// Current rank ID.
   int rank_;
   /// Total number of ranks.
@@ -314,6 +328,18 @@ void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* ou
               const void* input, const int64_t* topkIdx, const float* topkWeights, const DispatchConfig& config,
               const BufferSet& currentBuffer, const BufferSet& nextBuffer, const TransportContext& transport,
               void* workspace, cudaStream_t stream, Phase phase = SEND_AND_RECV);
+
+/// Optimized BF16 IPC dispatch compatible with the expert-major combine metadata contract.
+void dispatchOptimized(void* output, int* outputSrcInfo, int64_t* outputLayout, int* outputCount, const void* input,
+                       const int64_t* topkIdx, const float* topkWeights, const DispatchConfig& config,
+                       const BufferSet& currentBuffer, const TransportContext& transport, void* workspace, int maxSms,
+                       cudaStream_t stream);
+
+/// Experimental BF16 IPC combine.
+void combineOptimized(void* output, const void* input, const int64_t* topkIdx, const float* topkWeights,
+                      const int* srcInfo, const int64_t* layoutRange, const CombineConfig& config,
+                      const BufferSet& currentBuffer, void* dispatchRecvBuffer, const TransportContext& transport,
+                      void* workspace, int numBlocks, OptimizedCombineMode mode, cudaStream_t stream);
 
 /// Low-latency combine kernel that aggregates expert outputs back to tokens.
 /// @param output Combined output [num_combined_tokens, hidden].

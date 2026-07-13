@@ -10,7 +10,7 @@ from typing import Any, List, Optional, Union
 
 import torch
 import mscclpp
-from ._cpp import DispatchLayout, MoEMode
+from ._cpp import DispatchLayout, MoEMode, OptimizedCombineMode
 
 # Quantization metadata.
 
@@ -56,6 +56,9 @@ class MoECommunicatorConfig:
     # Transport / launch tuning
     num_rdma_qps_per_rank: int = 12
     num_sms: int = 20
+    low_latency_dispatch_num_sms: int = 64
+    low_latency_combine_num_sms: int = 64
+    low_latency_combine_mode: OptimizedCombineMode = OptimizedCombineMode.DISABLED
     enable_overlap: bool = False
 
     # HT-only buffer/launch tuning (advanced)
@@ -103,7 +106,7 @@ class ExpertMajorCombineContext:
     """Combine context for expert-major dispatch output."""
 
     topk_ids: torch.Tensor
-    weights: torch.Tensor
+    weights: Optional[torch.Tensor]
     num_experts: int
     num_tokens: int
     hidden_size: int

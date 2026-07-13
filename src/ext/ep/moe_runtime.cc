@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <future>
 #include <map>
+#include <mscclpp/concurrency_device.hpp>
 #include <string>
 
 #include "kernels/api.cuh"
@@ -22,6 +23,8 @@ namespace ep {
 namespace {
 
 using EPProxyService = mscclpp::ProxyService;
+
+constexpr size_t kLowLatencyOptWorkspaceOffset = NUM_WORKSPACE_BYTES / 2;
 
 int localWorldSize() {
   int localWorldSize = NUM_MAX_NVL_PEERS;
@@ -68,6 +71,21 @@ bool resolveFabricIpcSupported() {
   return prop.major >= 10;
 }
 
+low_latency::OptimizedCombineMode resolveOptimizedCombineMode() {
+  const char* env = std::getenv("MSCCLPP_EP_OPTIMIZED_COMBINE");
+  if (env == nullptr) return low_latency::OptimizedCombineMode::DISABLED;
+  std::string value(env);
+  for (auto& c : value) c = std::tolower(static_cast<unsigned char>(c));
+  if (value == "1" || value == "on" || value == "true" || value == "yes" || value == "rank_local_reduce" ||
+      value == "local_reduce") {
+    return low_latency::OptimizedCombineMode::RANK_LOCAL_REDUCE;
+  }
+  if (value == "direct_send" || value == "direct" || value == "no_local_reduce") {
+    return low_latency::OptimizedCombineMode::DIRECT_SEND;
+  }
+  return low_latency::OptimizedCombineMode::DISABLED;
+}
+
 }  // namespace
 
 MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes, int64_t numRdmaBytes, MoEMode mode)
@@ -91,6 +109,7 @@ MoERuntime::MoERuntime(mscclpp::Communicator& communicator, int64_t numNvlBytes,
   numNvlRanks_ = std::min(numRanks_, lws);
 
   numProxyServices_ = resolveNumProxyServices(numRanks_, lws);
+  optimizedCombineMode_ = resolveOptimizedCombineMode();
   proxyServices_.reserve(numProxyServices_);
   for (int i = 0; i < numProxyServices_; ++i) proxyServices_.emplace_back(std::make_shared<EPProxyService>());
 
@@ -268,19 +287,19 @@ void MoERuntime::setup() {
 void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout,
                           int* outputCount, const void* input, const int64_t* topkIdx, const float* topkWeights,
                           int numTokens, int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
-                          bool requiresQuantization, DispatchLayout dispatchLayout, cudaStream_t stream) {
+                          bool requiresQuantization, DispatchLayout dispatchLayout, int numSms, cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numTokens <= numMaxDispatchTokensPerRank);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(dispatchLayout == DispatchLayout::EXPERT_MAJOR || dispatchLayout == DispatchLayout::FLAT);
   EP_HOST_ASSERT(llIpcReady_ && "low-latency rank-dedup dispatch currently requires IPC/NVLink reachability");
+  EP_HOST_ASSERT(numSms >= numRanks_ && numSms <= 128);
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
   auto buffer = layout.buffers[lowLatencyBufferIdx_];
-  auto nextBuffer = layout.buffers[lowLatencyBufferIdx_ ^= 1];
-  auto nextCleanMeta = nextBuffer.cleanMeta();
+  lowLatencyBufferIdx_ ^= 1;
 
   low_latency::DispatchConfig config{
       .numTokens_ = numTokens,
@@ -297,40 +316,54 @@ void MoERuntime::dispatch(void* output, float* outputScales, int* outputSrcInfo,
                                        .recvCountBuffer_ = buffer.dispatchRdmaRecvCountBuffer,
                                        .cleanupRegion_ = nullptr,
                                        .cleanupSize_ = 0};
-  low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
-                                       .sendCountBuffer_ = nullptr,
-                                       .recvDataBuffer_ = nullptr,
-                                       .recvCountBuffer_ = nullptr,
-                                       .cleanupRegion_ = nextCleanMeta.first,
-                                       .cleanupSize_ = nextCleanMeta.second};
   low_latency::TransportContext transport{
       .rdmaBufferBase_ = rdmaBufferPtr_,
       .portChannels_ = portChannelHandlesDevicePtr_.get(),
       .memoryChannels_ = llMemoryChannelHandlesDevicePtr_ ? llMemoryChannelHandlesDevicePtr_.get() : nullptr,
+      .memoryChannelStride_ = 1,
       .peerBases_ = peerRdmaBasesGpu_,
       .ipcReady_ = llIpcReady_,
+      .deviceId_ = deviceId_,
       .rank_ = rank_,
       .numRanks_ = numRanks_,
       .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
-                        config, currentBuffer, nextBufferSet, transport, workspace_, stream,
-                        low_latency::SEND_AND_RECV);
+  if (!requiresQuantization) {
+    const size_t optWorkspaceBytes =
+        static_cast<size_t>(3 * numRanks_ + numExperts + 3 * 128 + 4) * sizeof(int) + sizeof(mscclpp::DeviceSyncer);
+    EP_HOST_ASSERT(optWorkspaceBytes <= NUM_WORKSPACE_BYTES - kLowLatencyOptWorkspaceOffset);
+    auto* optWorkspace = reinterpret_cast<uint8_t*>(workspace_) + kLowLatencyOptWorkspaceOffset;
+    low_latency::dispatchOptimized(output, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                                   config, currentBuffer, transport, optWorkspace, numSms, stream);
+  } else {
+    auto nextCleanMeta = layout.buffers[lowLatencyBufferIdx_].cleanMeta();
+    low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
+                                         .sendCountBuffer_ = nullptr,
+                                         .recvDataBuffer_ = nullptr,
+                                         .recvCountBuffer_ = nullptr,
+                                         .cleanupRegion_ = nextCleanMeta.first,
+                                         .cleanupSize_ = nextCleanMeta.second};
+    low_latency::dispatch(output, outputScales, outputSrcInfo, outputLayout, outputCount, input, topkIdx, topkWeights,
+                          config, currentBuffer, nextBufferSet, transport, workspace_, stream,
+                          low_latency::SEND_AND_RECV);
+  }
+  optimizedDispatchMetadataReady_ = !requiresQuantization;
 }
 
 void MoERuntime::combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
                          const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens,
                          int hidden, int numTopk, int numMaxDispatchTokensPerRank, int numExperts,
-                         bool requiresDequantization, cudaStream_t stream) {
+                         bool requiresDequantization, low_latency::OptimizedCombineMode optimizedMode, int numBlocks,
+                         cudaStream_t stream) {
   EP_HOST_ASSERT(mode_ == MoEMode::LOW_LATENCY);
   EP_HOST_ASSERT(hidden % sizeof(int4) == 0 && hidden % 128 == 0);
   EP_HOST_ASSERT(numExperts % numRanks_ == 0);
   EP_HOST_ASSERT(llIpcReady_ && "low-latency combine currently requires IPC/NVLink reachability");
+  EP_HOST_ASSERT(numBlocks > 0 && numBlocks <= 128);
 
   LowLatencyLayout layout(rdmaBufferPtr_, numMaxDispatchTokensPerRank, hidden, numRanks_, numExperts, numTopk);
   EP_HOST_ASSERT(layout.totalBytes <= static_cast<size_t>(numRdmaBytes_));
   auto buffer = layout.buffers[lowLatencyBufferIdx_];
-  auto nextBuffer = layout.buffers[lowLatencyBufferIdx_ ^= 1];
-  auto nextCleanMeta = nextBuffer.cleanMeta();
+  lowLatencyBufferIdx_ ^= 1;
 
   low_latency::CombineConfig config{
       .numCombinedTokens_ = numTokens,
@@ -347,23 +380,38 @@ void MoERuntime::combine(void* output, const void* input, const float* inputScal
                                        .recvCountBuffer_ = buffer.combineRdmaRecvFlagBuffer,
                                        .cleanupRegion_ = nullptr,
                                        .cleanupSize_ = 0};
-  low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
-                                       .sendCountBuffer_ = nullptr,
-                                       .recvDataBuffer_ = nullptr,
-                                       .recvCountBuffer_ = nullptr,
-                                       .cleanupRegion_ = nextCleanMeta.first,
-                                       .cleanupSize_ = nextCleanMeta.second};
   low_latency::TransportContext transport{
       .rdmaBufferBase_ = rdmaBufferPtr_,
       .portChannels_ = portChannelHandlesDevicePtr_.get(),
       .memoryChannels_ = llMemoryChannelHandlesDevicePtr_ ? llMemoryChannelHandlesDevicePtr_.get() : nullptr,
+      .memoryChannelStride_ = 1,
       .peerBases_ = peerRdmaBasesGpu_,
       .ipcReady_ = llIpcReady_,
+      .deviceId_ = deviceId_,
       .rank_ = rank_,
       .numRanks_ = numRanks_,
       .ranksPerIpcDomain_ = llRanksPerIpcDomain_};
-  low_latency::combine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
-                       nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
+  const auto effectiveOptimizedMode =
+      optimizedMode == low_latency::OptimizedCombineMode::DISABLED ? optimizedCombineMode_ : optimizedMode;
+  if (effectiveOptimizedMode != low_latency::OptimizedCombineMode::DISABLED && optimizedDispatchMetadataReady_ &&
+      !requiresDequantization) {
+    auto* optWorkspace = reinterpret_cast<uint8_t*>(workspace_) + kLowLatencyOptWorkspaceOffset;
+    auto dispatchRecvBuffer = layout.buffers[lowLatencyBufferIdx_].dispatchRdmaRecvDataBuffer;
+    low_latency::combineOptimized(output, input, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
+                                  dispatchRecvBuffer, transport, optWorkspace, numBlocks, effectiveOptimizedMode,
+                                  stream);
+  } else {
+    auto nextCleanMeta = layout.buffers[lowLatencyBufferIdx_].cleanMeta();
+    low_latency::BufferSet nextBufferSet{.sendDataBuffer_ = nullptr,
+                                         .sendCountBuffer_ = nullptr,
+                                         .recvDataBuffer_ = nullptr,
+                                         .recvCountBuffer_ = nullptr,
+                                         .cleanupRegion_ = nextCleanMeta.first,
+                                         .cleanupSize_ = nextCleanMeta.second};
+    low_latency::combine(output, input, inputScales, topkIdx, topkWeights, srcInfo, layoutRange, config, currentBuffer,
+                         nextBufferSet, transport, workspace_, stream, low_latency::SEND_AND_RECV);
+  }
+  optimizedDispatchMetadataReady_ = false;
 }
 
 }  // namespace ep

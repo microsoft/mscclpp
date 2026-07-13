@@ -65,6 +65,63 @@ __device__ __forceinline__ void memory_fence_gpu() { asm volatile("fence.acq_rel
 
 __device__ __forceinline__ void memory_fence_cta() { asm volatile("fence.acq_rel.cta;" ::: "memory"); }
 
+__device__ __forceinline__ void *peerBufferPtr(void *localBuffer, void *localBufferBase, void *peerBufferBase) {
+  if (localBufferBase == nullptr) return peerBufferBase;
+  const auto offset = reinterpret_cast<uint8_t *>(localBuffer) - reinterpret_cast<uint8_t *>(localBufferBase);
+  return reinterpret_cast<uint8_t *>(peerBufferBase) + offset;
+}
+
+#if defined(__CUDACC__)
+__device__ __forceinline__ void initTmaBarrier(uint64_t *sharedBarrier) {
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
+  asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"(barrierAddress));
+  asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
+}
+
+__device__ __forceinline__ void issueTmaG2S(const void *source, void *sharedTile, uint64_t *sharedBarrier,
+                                            uint32_t nBytes) {
+  const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
+  asm volatile(
+      "cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes "
+      "[%0], [%1], %2, [%3];" ::"r"(tileAddress),
+      "l"(source), "r"(nBytes), "r"(barrierAddress)
+      : "memory");
+  [[maybe_unused]] uint64_t state;
+  asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 %0, [%1], %2;"
+               : "=l"(state)
+               : "r"(barrierAddress), "r"(nBytes));
+}
+
+__device__ __forceinline__ void waitTmaG2S(uint64_t *sharedBarrier, uint32_t &phase) {
+  const uint32_t barrierAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedBarrier));
+  uint32_t done = 0;
+  while (!done) {
+    asm volatile(
+        "{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;"
+        " selp.u32 %0, 1, 0, p; }"
+        : "=r"(done)
+        : "r"(barrierAddress), "r"(phase));
+  }
+  phase ^= 1;
+}
+
+__device__ __forceinline__ void issueTmaS2G(void *destination, void *sharedTile, uint32_t nBytes) {
+  const uint32_t tileAddress = static_cast<uint32_t>(__cvta_generic_to_shared(sharedTile));
+  asm volatile("cp.async.bulk.global.shared::cta.bulk_group [%0], [%1], %2;" ::"l"(destination), "r"(tileAddress),
+               "r"(nBytes)
+               : "memory");
+  asm volatile("cp.async.bulk.commit_group;");
+}
+
+template <int kNumPendingGroups = 0>
+__device__ __forceinline__ void waitTmaS2GRead() {
+  asm volatile("cp.async.bulk.wait_group.read %0;" ::"n"(kNumPendingGroups) : "memory");
+}
+
+__device__ __forceinline__ void waitTmaS2G() { asm volatile("cp.async.bulk.wait_group 0;" ::: "memory"); }
+#endif
+
 __device__ __forceinline__ void st_relaxed_sys_global(const int *ptr, int val) {
   asm volatile("st.relaxed.sys.global.s32 [%0], %1;" ::"l"(ptr), "r"(val) : "memory");
 }
@@ -349,6 +406,20 @@ __forceinline__ __device__ int warp_reduce_sum(int value) {
   value += __shfl_xor_sync(0xffffffff, value, 2);
   value += __shfl_xor_sync(0xffffffff, value, 1);
   return value;
+}
+
+__forceinline__ __device__ int warpInclusiveSum(int value, int laneId) {
+#pragma unroll
+  for (int offset = 1; offset < WARP_SIZE; offset *= 2) {
+    const int previous = __shfl_up_sync(0xffffffff, value, offset);
+    if (laneId >= offset) value += previous;
+  }
+  return value;
+}
+
+__forceinline__ __device__ bool isFirstLaneForRank(int rank, int laneId) {
+  const unsigned matchMask = __match_any_sync(0xffffffff, rank);
+  return (__ffs(matchMask) - 1) == laneId;
 }
 
 __forceinline__ __device__ float half_warp_reduce_max(float value) {

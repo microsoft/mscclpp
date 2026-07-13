@@ -20,17 +20,13 @@ Launch with (2 nodes, 1 GPU per node -- DeepEP's recommended LL topology):
         torchrun --nnodes=2 --nproc_per_node=1 --rdzv-backend=c10d \
             --rdzv-endpoint=<master>:29600 test/python/ep/test_low_latency_multirank.py
 
-Exercises the LL dispatch + combine round-trip on a single node. The
-minimal correctness check:
+Exercises the optimized BF16 LL dispatch plus the default combine path on a
+single node. The experimental optimized combine performs rank-local partial
+reduction, TMA send, and source-rank reduction. The minimal correctness check:
   - dispatch: per-expert received token counts agree with an all-gathered
     reference computed from topk_idx across all ranks;
   - combine: the reconstructed x matches the analytical sum
     ``x * sum(topk_weights, masked by topk_idx == -1)``.
-
-Known limitation (see src/ext/ep/README.md): the LL kernels drive every
-peer via MSCCL++ PortChannel. Intra-node IB loopback between two HCAs on
-the same host (what an 8-GPU single-node launch exercises) currently hangs
-during dispatch; cross-node LL with one GPU per node works as designed.
 
 Adapted from DeepEP/tests/test_low_latency.py stripped to the bare checks
 we need for an LL port smoke test. BF16-only (no FP8 check).
@@ -55,9 +51,24 @@ import torch.distributed as dist
 def parse_args():
     parser = argparse.ArgumentParser(description="MSCCL++ EP low-latency multi-rank correctness/benchmark test")
     parser.add_argument("--num-tokens", type=int, default=128)
-    parser.add_argument("--hidden", type=int, default=7168, help="LL kernels are compiled for a fixed hidden set")
+    parser.add_argument(
+        "--hidden",
+        type=int,
+        default=7168,
+        choices=(4096, 7168, 8192, 9216),
+        help="BF16 hidden size compiled into the optimized low-latency kernels",
+    )
     parser.add_argument("--num-topk", type=int, default=8)
     parser.add_argument("--num-experts", type=int, default=256)
+    parser.add_argument("--num-active-ranks", type=int, default=0, help="Limit routing to the first N ranks")
+    parser.add_argument("--no-weights", action="store_true", help="Use implicit unit routing weights")
+    parser.add_argument("--dispatch-num-sms", type=int, default=64)
+    parser.add_argument("--combine-num-sms", type=int, default=64)
+    parser.add_argument(
+        "--optimized-combine-mode",
+        choices=("disabled", "rank_local_reduce", "direct_send"),
+        default="disabled",
+    )
     parser.add_argument("--bench", action="store_true", help="Run dispatch/combine benchmark after correctness")
     parser.add_argument(
         "--cuda-graph",
@@ -102,6 +113,11 @@ def main():
     num_experts = args.num_experts
     assert num_experts % num_ranks == 0
     num_local_experts = num_experts // num_ranks
+    combine_mode = {
+        "disabled": ep.OptimizedCombineMode.DISABLED,
+        "rank_local_reduce": ep.OptimizedCombineMode.RANK_LOCAL_REDUCE,
+        "direct_send": ep.OptimizedCombineMode.DIRECT_SEND,
+    }[args.optimized_combine_mode]
 
     torch.manual_seed(0xB3C4 + rank)
     random.seed(0xB3C4 + rank)
@@ -111,8 +127,13 @@ def main():
     # can verify which source token it is looking at.
     x[:, -128:] = torch.arange(num_tokens, device="cuda").to(torch.bfloat16).view(-1, 1)
     scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="cuda").abs() + 1
+    if args.num_active_ranks:
+        assert num_topk <= args.num_active_ranks * num_local_experts
+        scores[:, args.num_active_ranks * num_local_experts :] = float("-inf")
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
-    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    topk_weights = (
+        None if args.no_weights else torch.randn((num_tokens, num_topk), dtype=torch.float32, device="cuda").abs()
+    )
 
     # Randomly mask some positions
     for _ in range(min(10, num_tokens)):
@@ -127,6 +148,9 @@ def main():
         max_tokens_per_rank=num_tokens,
         mode=ep.MoEMode.LOW_LATENCY,
         num_rdma_qps_per_rank=max(1, num_experts // num_ranks),
+        low_latency_dispatch_num_sms=args.dispatch_num_sms,
+        low_latency_combine_num_sms=args.combine_num_sms,
+        low_latency_combine_mode=combine_mode,
     )
     if rank == 0:
         print(
@@ -208,7 +232,11 @@ def main():
     expected_f = torch.zeros_like(x, dtype=torch.float32)
     x_f = x.float()
     for j in range(num_topk):
-        weight_j = topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0).view(-1, 1)
+        weight_j = (
+            (topk_idx[:, j] != -1).float()
+            if topk_weights is None
+            else topk_weights[:, j].masked_fill(topk_idx[:, j] == -1, 0.0)
+        ).view(-1, 1)
         expected_f += x_f * weight_j
     expected = expected_f.to(torch.bfloat16)
     diff = (combined_x.float() - expected.float()).abs().max().item()
@@ -218,7 +246,8 @@ def main():
         flush=True,
     )
     assert torch.isnan(combined_x).any().item() is False
-    assert diff < 1e-2, f"rank{rank}: LL combine mismatch diff={diff}"
+    combine_tolerance = 8.0 if combine_mode == ep.OptimizedCombineMode.RANK_LOCAL_REDUCE else 1e-2
+    assert diff <= combine_tolerance, f"rank{rank}: LL combine mismatch diff={diff}"
 
     dist.barrier(group=group)
     if rank == 0:
@@ -247,7 +276,7 @@ def main():
 
         graph_diff = (graph_combined_x.float() - expected.float()).abs().max().item()
         assert torch.isnan(graph_combined_x).any().item() is False
-        assert graph_diff < 1e-2, f"rank{rank}: LL CUDA graph combine mismatch diff={graph_diff}"
+        assert graph_diff <= combine_tolerance, f"rank{rank}: LL CUDA graph combine mismatch diff={graph_diff}"
         dist.barrier(group=group)
         if rank == 0:
             print(f"[cuda graph dispatch+combine] OK max|got-expected|={graph_diff:.4e}", flush=True)

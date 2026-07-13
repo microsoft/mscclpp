@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <mscclpp/device.hpp>
 #include <type_traits>
 
 #include "kernels/configs.cuh"
@@ -34,10 +35,19 @@ __host__ __device__ constexpr dtype_t configAlign(dtype_t a, dtype_t b) {
 // The payload is 32-byte aligned as a whole. ScaleType=void means the payload is
 // not quantized and has no scale section.
 template <typename DataType, typename ScaleType = void>
-struct LowLatencyPackedPayloadFormat {
+struct LowLatencyPayloadView {
   static constexpr bool kHasScales = !std::is_void_v<ScaleType>;
 
-  __host__ __device__ static constexpr int numScales([[maybe_unused]] int hidden, [[maybe_unused]] int scaleBlockSize) {
+  int hidden;
+  int topK;
+  int scaleBlockSize;
+  int numScales;
+  size_t hiddenBytes_;
+  size_t scaleOffset_;
+  size_t metadataOffset_;
+  size_t numBytes_;
+
+  MSCCLPP_HOST_DEVICE_INLINE static int nScales([[maybe_unused]] int hidden, [[maybe_unused]] int scaleBlockSize) {
     if constexpr (kHasScales) {
       return hidden / scaleBlockSize;
     } else {
@@ -45,11 +55,11 @@ struct LowLatencyPackedPayloadFormat {
     }
   }
 
-  __host__ __device__ static constexpr size_t hiddenBytes(int hidden) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t hiddenBytes(int hidden) {
     return static_cast<size_t>(hidden) * sizeof(DataType);
   }
 
-  __host__ __device__ static constexpr size_t scaleOffset(int hidden) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t scaleOffset(int hidden) {
     if constexpr (kHasScales) {
       return configAlign<size_t>(hiddenBytes(hidden), alignof(ScaleType));
     } else {
@@ -57,16 +67,16 @@ struct LowLatencyPackedPayloadFormat {
     }
   }
 
-  __host__ __device__ static constexpr size_t scaleBytes([[maybe_unused]] int hidden,
-                                                         [[maybe_unused]] int scaleBlockSize) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t scaleBytes([[maybe_unused]] int hidden,
+                                                      [[maybe_unused]] int scaleBlockSize) {
     if constexpr (kHasScales) {
-      return static_cast<size_t>(numScales(hidden, scaleBlockSize)) * sizeof(ScaleType);
+      return static_cast<size_t>(nScales(hidden, scaleBlockSize)) * sizeof(ScaleType);
     } else {
       return 0;
     }
   }
 
-  __host__ __device__ static constexpr size_t metadataOffset(int hidden, [[maybe_unused]] int scaleBlockSize) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t metadataOffset(int hidden, [[maybe_unused]] int scaleBlockSize) {
     if constexpr (kHasScales) {
       return configAlign<size_t>(scaleOffset(hidden) + scaleBytes(hidden, scaleBlockSize), alignof(int));
     } else {
@@ -74,72 +84,61 @@ struct LowLatencyPackedPayloadFormat {
     }
   }
 
-  __host__ __device__ static constexpr size_t metadataBytes(int topK) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t metadataBytes(int topK) {
     return static_cast<size_t>(topK) * sizeof(int) + static_cast<size_t>(topK) * sizeof(float) + sizeof(int);
   }
 
-  __host__ __device__ static constexpr size_t numBytes(int hidden, int topK, int scaleBlockSize) {
+  MSCCLPP_HOST_DEVICE_INLINE static size_t numBytes(int hidden, int topK, int scaleBlockSize) {
     return configAlign<size_t>(metadataOffset(hidden, scaleBlockSize) + metadataBytes(topK), 32);
   }
-};
 
-template <typename DataType, typename ScaleType = void>
-struct LowLatencyPackedPayloadView {
-  using Format = LowLatencyPackedPayloadFormat<DataType, ScaleType>;
-
-  int hidden;
-  int topK;
-  int scaleBlockSize;
-  int numScales;
-  size_t hiddenBytes;
-  size_t scaleOffset;
-  size_t metadataOffset;
-  size_t numBytes;
-
-  __host__ __device__ __forceinline__ LowLatencyPackedPayloadView(int hidden, int topK,
-                                                                  int scaleBlockSize = (Format::kHasScales ? 128 : 0))
+  MSCCLPP_HOST_DEVICE_INLINE LowLatencyPayloadView(int hidden, int topK, int scaleBlockSize = (kHasScales ? 128 : 0))
       : hidden(hidden),
         topK(topK),
         scaleBlockSize(scaleBlockSize),
-        numScales(Format::numScales(hidden, scaleBlockSize)),
-        hiddenBytes(Format::hiddenBytes(hidden)),
-        scaleOffset(Format::scaleOffset(hidden)),
-        metadataOffset(Format::metadataOffset(hidden, scaleBlockSize)),
-        numBytes(Format::numBytes(hidden, topK, scaleBlockSize)) {}
+        numScales(nScales(hidden, scaleBlockSize)),
+        hiddenBytes_(hiddenBytes(hidden)),
+        scaleOffset_(scaleOffset(hidden)),
+        metadataOffset_(metadataOffset(hidden, scaleBlockSize)),
+        numBytes_(numBytes(hidden, topK, scaleBlockSize)) {}
 
   template <typename T>
-  __device__ __forceinline__ T* data(void* base) const {
+  MSCCLPP_HOST_DEVICE_INLINE T* data(void* base) const {
     return reinterpret_cast<T*>(base);
   }
 
-  __device__ __forceinline__ ScaleType* scaleFactors(void* base) const {
-    static_assert(Format::kHasScales, "Payload has no scale factors");
-    return reinterpret_cast<ScaleType*>(reinterpret_cast<uint8_t*>(base) + scaleOffset);
+  MSCCLPP_HOST_DEVICE_INLINE ScaleType* scaleFactors(void* base) const {
+    static_assert(kHasScales, "Payload has no scale factors");
+    return reinterpret_cast<ScaleType*>(reinterpret_cast<uint8_t*>(base) + scaleOffset_);
   }
 
-  __device__ __forceinline__ const ScaleType* scaleFactors(const void* base) const {
-    static_assert(Format::kHasScales, "Payload has no scale factors");
-    return reinterpret_cast<const ScaleType*>(reinterpret_cast<const uint8_t*>(base) + scaleOffset);
+  MSCCLPP_HOST_DEVICE_INLINE const ScaleType* scaleFactors(const void* base) const {
+    static_assert(kHasScales, "Payload has no scale factors");
+    return reinterpret_cast<const ScaleType*>(reinterpret_cast<const uint8_t*>(base) + scaleOffset_);
   }
 
-  __device__ __forceinline__ int* topKIndices(void* base) const {
-    return reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(base) + metadataOffset);
+  MSCCLPP_HOST_DEVICE_INLINE int* topKIndices(void* base) const {
+    return reinterpret_cast<int*>(reinterpret_cast<uint8_t*>(base) + metadataOffset_);
   }
 
-  __device__ __forceinline__ const int* topKIndices(const void* base) const {
-    return reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(base) + metadataOffset);
+  MSCCLPP_HOST_DEVICE_INLINE const int* topKIndices(const void* base) const {
+    return reinterpret_cast<const int*>(reinterpret_cast<const uint8_t*>(base) + metadataOffset_);
   }
 
-  __device__ __forceinline__ float* topKValues(void* base) const {
+  MSCCLPP_HOST_DEVICE_INLINE float* topKValues(void* base) const {
     return reinterpret_cast<float*>(topKIndices(base) + topK);
   }
 
-  __device__ __forceinline__ const float* topKValues(const void* base) const {
+  MSCCLPP_HOST_DEVICE_INLINE const float* topKValues(const void* base) const {
     return reinterpret_cast<const float*>(topKIndices(base) + topK);
   }
 
-  __device__ __forceinline__ int* srcTokenGlobalIdx(void* base) const {
+  MSCCLPP_HOST_DEVICE_INLINE int* srcTokenGlobalIdx(void* base) const {
     return reinterpret_cast<int*>(topKValues(base) + topK);
+  }
+
+  MSCCLPP_HOST_DEVICE_INLINE const int* srcTokenGlobalIdx(const void* base) const {
+    return reinterpret_cast<const int*>(topKValues(base) + topK);
   }
 };
 
@@ -185,13 +184,18 @@ struct LowLatencyLayout {
 
     // Message sizes
     // NOTES: you should add a control `int4` for combine messages if you want to do data transformation
-    const LowLatencyPackedPayloadView<nv_bfloat16> bf16DispatchPayload(hidden, numTopk);
-    const LowLatencyPackedPayloadView<__nv_fp8_storage_t, float> fp8DispatchPayload(hidden, numTopk, 128);
-    size_t numBytesPerDispatchMsg = std::max(bf16DispatchPayload.numBytes, fp8DispatchPayload.numBytes);
+    const LowLatencyPayloadView<nv_bfloat16> bf16DispatchPayload(hidden, numTopk);
+    const LowLatencyPayloadView<__nv_fp8_storage_t, float> fp8DispatchPayload(hidden, numTopk, 128);
+    size_t numBytesPerDispatchMsg = std::max(bf16DispatchPayload.numBytes_, fp8DispatchPayload.numBytes_);
+    const size_t optDispatchMetadataBytes =
+        configAlign<size_t>(static_cast<size_t>(numRanks + numExperts) * sizeof(uint64_t), 128);
+    const size_t optDispatchPayloadStride = configAlign<size_t>(bf16DispatchPayload.numBytes_, 128);
     size_t numBytesPerCombineMsg = hidden * sizeof(nv_bfloat16);
 
     // Send buffer
-    size_t dispatchSendBufferBytes = numMaxDispatchTokensPerRank * numBytesPerDispatchMsg;
+    size_t dispatchSendBufferBytes = std::max(
+        static_cast<size_t>(numMaxDispatchTokensPerRank) * numBytesPerDispatchMsg,
+        optDispatchMetadataBytes + static_cast<size_t>(numMaxDispatchTokensPerRank) * optDispatchPayloadStride);
     size_t combineSendBufferBytes = numExperts * numMaxDispatchTokensPerRank * numBytesPerCombineMsg;
     size_t sendBufferBytes = std::max(dispatchSendBufferBytes, combineSendBufferBytes);
     EP_HOST_ASSERT(sendBufferBytes % sizeof(int4) == 0);
@@ -199,7 +203,10 @@ struct LowLatencyLayout {
 
     // Symmetric receive buffers
     // TODO: optimize memory usages
-    size_t dispatchRecvDataBufferBytes = numRanks * numMaxDispatchTokensPerRank * numBytesPerDispatchMsg;
+    size_t dispatchRecvDataBufferBytes =
+        std::max(static_cast<size_t>(numRanks) * numMaxDispatchTokensPerRank * numBytesPerDispatchMsg,
+                 optDispatchMetadataBytes +
+                     static_cast<size_t>(numRanks) * numMaxDispatchTokensPerRank * optDispatchPayloadStride);
     size_t combineRecvBufferBytes = numExperts * numMaxDispatchTokensPerRank * numBytesPerCombineMsg;
     size_t recvBufferBytes = std::max(dispatchRecvDataBufferBytes, combineRecvBufferBytes);
     EP_HOST_ASSERT(recvBufferBytes % sizeof(int4) == 0);

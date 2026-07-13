@@ -37,12 +37,12 @@ class MoERuntime {
   void dispatch(void* output, float* outputScales, int* outputSrcInfo, int64_t* outputLayout, int* outputCount,
                 const void* input, const int64_t* topkIdx, const float* topkWeights, int numTokens, int hidden,
                 int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresQuantization,
-                DispatchLayout dispatchLayout, cudaStream_t stream);
+                DispatchLayout dispatchLayout, int numSms, cudaStream_t stream);
 
   void combine(void* output, const void* input, const float* inputScales, const int64_t* topkIdx,
                const float* topkWeights, const int* srcInfo, const int64_t* layoutRange, int numTokens, int hidden,
                int numTopk, int numMaxDispatchTokensPerRank, int numExperts, bool requiresDequantization,
-               cudaStream_t stream);
+               low_latency::OptimizedCombineMode optimizedMode, int numBlocks, cudaStream_t stream);
 
  private:
   int lowLatencyBufferIdx_ = 0;
@@ -60,6 +60,8 @@ class MoERuntime {
   int numProxyServices_ = 1;
   int llRanksPerIpcDomain_ = 0;
   bool llIpcReady_ = false;
+  bool optimizedDispatchMetadataReady_ = false;
+  low_latency::OptimizedCombineMode optimizedCombineMode_ = low_latency::OptimizedCombineMode::DISABLED;
 
   void* rdmaBufferPtr_ = nullptr;
   void* workspace_ = nullptr;
@@ -74,6 +76,7 @@ class MoERuntime {
   void** peerRdmaBasesGpu_ = nullptr;
   std::vector<mscclpp::MemoryChannel> llMemoryChannels_;
   std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> llMemoryChannelHandlesDevicePtr_;
+  // std::shared_ptr<mscclpp::BaseMemoryChannelDeviceHandle> llMemoryChannelHandlesForExpertDevicePtr_;
 
   void setup();
 };

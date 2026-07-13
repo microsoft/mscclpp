@@ -557,6 +557,8 @@ slots even when the non-hybrid path does not use them. After a GPU barrier
 guarantees data arrival, the copy epilogue copies data into `recv_x`, `recv_sf`,
 `recv_topk_idx`, `recv_topk_weights`, and source metadata.
 
+The optimized BF16 low-latency dispatch/combine kernels are instantiated for
+`hidden = 4096`, `7168`, `8192`, and `9216`; other hidden sizes are rejected.
 For BF16 dispatch with `num_tokens = 128`, `hidden = 7168`, and
 `num_experts = 256`, the expected per-source-rank dispatch payload is:
 
