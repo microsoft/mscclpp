@@ -128,6 +128,8 @@ Utilities
 .. doxygenclass:: mscclpp::GpuBuffer
    :members:
 
+.. doxygenenum:: mscclpp::GpuBufferGranularity
+
 .. doxygenclass:: mscclpp::GpuStream
    :members:
 

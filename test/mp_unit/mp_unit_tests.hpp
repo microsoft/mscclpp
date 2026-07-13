@@ -56,6 +56,8 @@ class BootstrapTest : public MultiProcessTest {
 
   void bootstrapTestSendRecv(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
+  void bootstrapTestIpcDomain(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
+
   void bootstrapTestAll(std::shared_ptr<mscclpp::Bootstrap> bootstrap);
 
   // Each test case should finish within 30 seconds.

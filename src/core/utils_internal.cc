@@ -6,6 +6,10 @@
 #include <signal.h>
 #include <unistd.h>
 
+#if defined(MSCCLPP_USE_CUDA)
+#include <nvml.h>
+#endif
+
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -173,6 +177,83 @@ uint64_t getPidHash(void) {
     pidHash = std::make_unique<uint64_t>(computePidHash());
   }
   return *pidHash;
+}
+
+#if defined(MSCCLPP_USE_CUDA) && defined(NVML_GPU_FABRIC_UUID_LEN)
+namespace {
+
+class NvmlState {
+ public:
+  NvmlState() : initialized_(nvmlInit_v2() == NVML_SUCCESS) {}
+
+  NvmlState(const NvmlState&) = delete;
+  NvmlState& operator=(const NvmlState&) = delete;
+  NvmlState(NvmlState&&) = delete;
+  NvmlState& operator=(NvmlState&&) = delete;
+
+  ~NvmlState() {
+    if (initialized_) {
+      (void)nvmlShutdown();
+    }
+  }
+
+  bool isInitialized() const { return initialized_; }
+
+ private:
+  bool initialized_ = false;
+};
+
+template <typename FabricInfo>
+uint64_t getFabricHash(const FabricInfo& fabricInfo) {
+  char hashData[NVML_GPU_FABRIC_UUID_LEN + sizeof(fabricInfo.cliqueId)];
+  std::memcpy(hashData, fabricInfo.clusterUuid, NVML_GPU_FABRIC_UUID_LEN);
+  std::memcpy(hashData + NVML_GPU_FABRIC_UUID_LEN, &fabricInfo.cliqueId, sizeof(fabricInfo.cliqueId));
+  return getHash(hashData, sizeof(hashData));
+}
+
+bool tryGetNvmlIpcDomainHash(uint64_t& ipcDomainHash) {
+  // Use the current CUDA device; callers must set the rank's device before querying.
+  int deviceId;
+  char pciBusId[] = "00000000:00:00.0";
+  if (cudaGetDevice(&deviceId) != cudaSuccess ||
+      cudaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), deviceId) != cudaSuccess) {
+    return false;
+  }
+
+  static NvmlState nvml;
+  nvmlDevice_t nvmlDevice;
+  if (!nvml.isInitialized() || nvmlDeviceGetHandleByPciBusId_v2(pciBusId, &nvmlDevice) != NVML_SUCCESS) {
+    return false;
+  }
+
+#if defined(nvmlGpuFabricInfo_v2)
+  nvmlGpuFabricInfoV_t fabricInfo = {};
+  fabricInfo.version = nvmlGpuFabricInfo_v2;
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfoV(nvmlDevice, &fabricInfo);
+#else
+  nvmlGpuFabricInfo_t fabricInfo = {};
+  nvmlReturn_t result = nvmlDeviceGetGpuFabricInfo(nvmlDevice, &fabricInfo);
+#endif
+  if (result != NVML_SUCCESS || fabricInfo.state != NVML_GPU_FABRIC_STATE_COMPLETED ||
+      fabricInfo.status != NVML_SUCCESS) {
+    return false;
+  }
+
+  ipcDomainHash = getFabricHash(fabricInfo);
+  return true;
+}
+
+}  // namespace
+#endif
+
+uint64_t getIpcDomainHash(void) {
+#if defined(MSCCLPP_USE_CUDA) && defined(NVML_GPU_FABRIC_UUID_LEN)
+  uint64_t ipcDomainHash;
+  if (tryGetNvmlIpcDomainHash(ipcDomainHash)) {
+    return ipcDomainHash;
+  }
+#endif
+  return getHostHash();
 }
 
 int parseStringList(const char* string, netIf* ifList, int maxList) {

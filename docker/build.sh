@@ -4,34 +4,35 @@ set -e
 
 declare -A baseImageTable
 baseImageTable=(
-    ["cuda11.8"]="nvidia/cuda:11.8.0-devel-ubuntu22.04"
     ["cuda12.4"]="nvidia/cuda:12.4.1-devel-ubuntu22.04"
     ["cuda12.8"]="nvidia/cuda:12.8.1-devel-ubuntu22.04"
     ["cuda12.9"]="nvidia/cuda:12.9.1-devel-ubuntu24.04"
     ["cuda13.0"]="nvidia/cuda:13.0.2-devel-ubuntu24.04"
     ["rocm6.2"]="rocm/dev-ubuntu-22.04:6.2.2"
+    ["rocm7.2"]="rocm/dev-ubuntu-24.04:7.2.4"
 )
 
 declare -A extraLdPathTable
 extraLdPathTable=(
     ["rocm6.2"]="/opt/rocm/lib"
+    ["rocm7.2"]="/opt/rocm/lib"
 )
 
 declare -A ofedVersionTable
 ofedVersionTable=(
-    ["cuda11.8"]="23.07-0.5.1.2"
     ["cuda12.4"]="23.07-0.5.1.2"
     ["cuda12.8"]="24.10-1.1.4.0"
     ["cuda12.9"]="24.10-1.1.4.0"
     ["cuda13.0"]="24.10-3.2.5.0"
     ["rocm6.2"]="24.10-1.1.4.0"
+    ["rocm7.2"]="24.10-3.2.5.0"
 )
 
 TARGET=${1}
 OS_ARCH=$(uname -m)
 
 print_usage() {
-    echo "Usage: $0 [cuda11.8|cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2]"
+    echo "Usage: $0 [cuda12.4|cuda12.8|cuda12.9|cuda13.0|rocm6.2|rocm7.2]"
 }
 
 if [[ ! -v "baseImageTable[${TARGET}]" ]]; then
@@ -74,6 +75,7 @@ docker build -t ${TAG_BASE_DEV} \
     -f docker/base-dev-x.dockerfile \
     --build-arg BASE_IMAGE=${TAG_BASE} \
     --build-arg TARGET=${TARGET} .
+
 
 GHCR="ghcr.io/microsoft/mscclpp/mscclpp"
 GHCR_TAG_BASE_DEV=${GHCR}:base-dev-${TARGET}

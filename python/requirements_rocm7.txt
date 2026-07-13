@@ -1,5 +1,5 @@
 mpi4py
-cupy-cuda11x
+cupy
 prettytable
 netifaces
 pytest
@@ -8,3 +8,4 @@ matplotlib
 sortedcontainers
 blake3
 pybind11
+hip-python>=7,<8

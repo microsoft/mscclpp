@@ -235,6 +235,18 @@ CommResult AllreducePacket::allreduceKernelFunc(const std::shared_ptr<void> ctx_
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, ctx->workSize, ctx->nRanksPerNode, dtype);
   }
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
+  }
+  const int nPeers = ctx->nRanksPerNode - 1;
+  if (blockAndThreadNum.first < nPeers) {
+    WARN(ALGO,
+         "AllreducePacket requires block number to be at least peer count, but got nBlocks=", blockAndThreadNum.first,
+         " and nPeers=", nPeers, ".");
+    return CommResult::CommInvalidArgument;
+  }
 
   size_t sendBytes;
   CUdeviceptr sendBasePtr;

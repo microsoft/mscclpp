@@ -6,6 +6,7 @@
 #include <mscclpp/env.hpp>
 #include <mscclpp/utils.hpp>
 
+#include "collective_utils.hpp"
 #include "debug.h"
 
 namespace mscclpp {
@@ -20,24 +21,15 @@ static bool isNvlsSupportedForDataType(const AlgorithmSelectorConfig& config, Da
     return false;
   }
 
-  const bool isFp8 = dtype == DataType::FLOAT8_E4M3FN || dtype == DataType::FLOAT8_E4M3FNUZ ||
-                     dtype == DataType::FLOAT8_E5M2 || dtype == DataType::FLOAT8_E5M2FNUZ;
-
-  if (!isFp8) {
+  if (!collective::isFp8DataType(dtype)) {
     return nvlsSupported;
   }
 
-  // FP8 handling
 #if !defined(__HIP_PLATFORM_AMD__)
-  // NVLS does not support FP8 on devices with compute capability < 10
-  if (config.computeCapability.first < 10) {
+  if (!collective::isNativeFp8DataType(dtype)) {
     return false;
   }
-#if (defined(__CUDA_ARCH_SPECIFIC__) || defined(__CUDA_ARCH_FAMILY_SPECIFIC__))
-  return true;
-#else
-  return false;
-#endif
+  return nvlsSupported && config.fp8NvlsSupported;
 #else
   return nvlsSupported;
 #endif

@@ -70,12 +70,12 @@ class CustomizedComm:
     _TUNE_N_WARMUP = 5
     _TUNE_N_GRAPH_LAUNCHES = 10
     _TUNE_N_OPS_PER_GRAPH = 100
-    _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 64, 128]
+    _CANDIDATE_NBLOCKS = [4, 8, 16, 24, 32, 48, 56, 64, 128]
     _CANDIDATE_NTHREADS = [512, 768, 1024]
     _NBLOCKS_LIMIT = {
         "default_allreduce_nvls_packet": 16,
         "default_allreduce_packet": 56,
-        "default_allreduce_allpair_packet": 56,
+        "default_allreduce_allpair_packet": 64,
         "default_allreduce_fullmesh": 64,
         "default_allgather_fullmesh2": 32,
     }

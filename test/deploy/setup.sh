@@ -61,14 +61,14 @@ if [ -f "${PIP_CMAKE_ARGS_FILE}" ]; then
 fi
 
 cd /root/mscclpp
-if [[ "${CUDA_VERSION}" == *"11."* ]]; then
-    pip3 install ".[cuda11,benchmark,test]"
-elif [[ "${CUDA_VERSION}" == *"12."* ]]; then
+if [[ "${CUDA_VERSION}" == *"12."* ]]; then
     pip3 install ".[cuda12,benchmark,test]"
 elif [[ "${CUDA_VERSION}" == *"13."* ]]; then
     pip3 install ".[cuda13,benchmark,test]"
 elif [ "${PLATFORM}" == "rocm" ]; then
-    pip3 install ".[rocm6,benchmark,test]"
+    ROCM_VERSION=$(cat /opt/rocm/.info/version)
+    ROCM_MAJOR="${ROCM_VERSION%%.*}"
+    pip3 install ".[rocm${ROCM_MAJOR},benchmark,test]"
 else
     pip3 install ".[benchmark,test]"
 fi

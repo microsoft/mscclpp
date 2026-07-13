@@ -7,7 +7,7 @@
 #include "allreduce/allreduce_allpair_packet.hpp"
 #include "allreduce/common.hpp"
 #include "collective_utils.hpp"
-#include "debug.h"
+#include "logger.hpp"
 
 namespace mscclpp {
 namespace collective {
@@ -27,22 +27,30 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
   size_t scratchBaseOffset = (flag % numScratchBuff) ? (scratchBufferSize / numScratchBuff) : 0;
   size_t channelScratchOffset = scratchBaseOffset;
 
-  const int nBlocksPerPeer = gridDim.x / nPeers;
-  const int localBlockIdx = blockIdx.x % nBlocksPerPeer;
-  const int tid = threadIdx.x + localBlockIdx * blockDim.x;
-  const int peerIdx = blockIdx.x / nBlocksPerPeer;
-  size_t srcOffset = channelDataOffset;
+  const int tid = threadIdx.x + blockIdx.x * blockDim.x;
   size_t scratchOffset = channelScratchOffset + rank * nelems * sizeof(LL8Packet);
   void* scratchBuff = (void*)((char*)scratch + channelScratchOffset);
   uint32_t* src = (uint32_t*)((char*)buff);
   uint32_t* dst = (uint32_t*)((char*)resultBuff);
 
-  // step 1: write data to each peer's scratch buffer
-  memoryChannels[peerIdx].putPackets<LL8Packet>(scratchOffset, srcOffset, nelems * sizeof(uint32_t), tid,
-                                                blockDim.x * nBlocksPerPeer, flag);
+  const int warpId = threadIdx.x / WARP_SIZE;
+  const int lane = threadIdx.x % WARP_SIZE;
+  const int nWarpsPerBlock = blockDim.x / WARP_SIZE;
+  // Assign one warp in every block to each peer. Each peer warp sends the
+  // same block-owned stripe, so nBlocks only partitions data and no longer
+  // needs to be grouped by nPeers.
+  if (warpId < nPeers) {
+    memoryChannels[warpId].putPackets<LL8Packet>(scratchOffset, channelDataOffset, nelems * sizeof(uint32_t),
+                                                 lane + blockIdx.x * WARP_SIZE, gridDim.x * WARP_SIZE, flag);
+  }
+  // Safe for in-place allreduce: all peer warps must finish reading src for
+  // this block's stripe before any warp writes reduced data back to dst/src.
+  __syncthreads();
 
-  // step 2: Reduce Data
-  for (size_t idx = threadIdx.x + blockIdx.x * blockDim.x; idx < nelems; idx += blockDim.x * gridDim.x) {
+  // Split the same sent stream across all warps for reduction. warpId selects
+  // which strided subset to reduce while lane preserves coalesced packet reads.
+  for (size_t idx = lane + blockIdx.x * WARP_SIZE + warpId * WARP_SIZE * gridDim.x; idx < nelems;
+       idx += nWarpsPerBlock * WARP_SIZE * gridDim.x) {
     uint32_t data = src[idx];
     using AccRaw = std::conditional_t<std::is_same_v<T, AccumT>, uint32_t,
                                       mscclpp::VectorType<AccumT, sizeof(uint32_t) / sizeof(T)>>;
@@ -55,18 +63,17 @@ __global__ void allreduceAllPairs(T* buff, T* scratch, T* resultBuff, DeviceHand
     }
     dst[idx] = mscclpp::downcastVector<T, AccumT, uint32_t>(acc);
   }
-  __syncthreads();
   if (threadIdx.x == 0) {
     ((uint32_t*)flags)[blockIdx.x] = flag + 1;
   }
-  if (blockIdx.x == 0 && threadIdx.x >= gridDim.x && threadIdx.x < flagSize / sizeof(uint32_t)) {
-    ((uint32_t*)flags)[threadIdx.x] = flag + 1;
+  if (tid >= gridDim.x && tid < flagSize / sizeof(uint32_t)) {
+    ((uint32_t*)flags)[tid] = flag + 1;
   }
 }
 
 inline std::pair<int, int> getDefaultBlockNumAndThreadNum(size_t inputSize, int worldSize) {
   if (inputSize < worldSize * sizeof(int)) {
-    return {worldSize - 1, 32};
+    return {worldSize - 1, (worldSize - 1) * WARP_SIZE};
   }
   return {(worldSize - 1) * 4, 512};
 }
@@ -80,11 +87,6 @@ struct AllpairAdapter {
                           int nThreadsPerBlock = 0) {
     using ChannelType = DeviceHandle<MemoryChannel>;
     const size_t nelems = inputSize / sizeof(T);
-    // Round nBlocks to multiple of nPeers so every block maps to a valid peer.
-    const int nPeers = worldSize - 1;
-    if (nPeers > 0) {
-      nBlocks = (nBlocks / nPeers) * nPeers;
-    }
     allreduceAllPairs<OpType, T, AccumT><<<nBlocks, nThreadsPerBlock, 0, stream>>>(
         (T*)buff, (T*)scratch, (T*)resultBuff, (ChannelType*)memoryChannels, channelInOffset, scratchBufferSize, rank,
         nRanksPerNode, worldSize, nelems, numScratchBuff, flags, flagSize);
@@ -110,9 +112,17 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
   if (blockAndThreadNum.first == 0 || blockAndThreadNum.second == 0) {
     blockAndThreadNum = getDefaultBlockNumAndThreadNum(inputSize, algoCtx->workSize);
   }
-  // nBlocks must be at least nPeers for allpair — each block maps to one peer.
+  if (blockAndThreadNum.first > maxBlockNum_) {
+    WARN(ALGO, "Requested block number ", blockAndThreadNum.first, " exceeds the maximum supported block number ",
+         maxBlockNum_, ".");
+    return CommResult::CommInvalidArgument;
+  }
   const int nPeers = algoCtx->nRanksPerNode - 1;
-  if (nPeers > 0 && blockAndThreadNum.first < nPeers) {
+  // The kernel maps peer sends by warpId, so every peer needs a full warp.
+  if (blockAndThreadNum.second % WARP_SIZE != 0 || blockAndThreadNum.second / WARP_SIZE < nPeers) {
+    WARN(ALGO,
+         "Allpair packet requires at least one full warp per peer, but got nThreadsPerBlock=", blockAndThreadNum.second,
+         " and nPeers=", nPeers, ".");
     return CommResult::CommInvalidArgument;
   }
   size_t sendBytes;
@@ -122,7 +132,8 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
 
   AllreduceFunc allreduce = dispatch<AllpairAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
-    WARN("Unsupported operation or data type for allreduce: op=%d, dtype=%d", op, static_cast<int>(dtype));
+    WARN(ALGO, "Unsupported operation or data type for allreduce: op=", static_cast<int>(op),
+         ", dtype=", static_cast<int>(dtype));
     return CommResult::CommInvalidArgument;
   }
   cudaError_t error =
@@ -131,7 +142,7 @@ CommResult AllreduceAllpairPacket::allreduceKernelFunc(const std::shared_ptr<voi
                 algoCtx->workSize, inputSize, stream, (void*)flagBuffer_, (uint32_t)flagBufferSize_,
                 this->nSegmentsForScratchBuffer_, blockAndThreadNum.first, blockAndThreadNum.second);
   if (error != cudaSuccess) {
-    WARN("AllreducePacket failed with error: %s", cudaGetErrorString(error));
+    WARN(ALGO, "AllreducePacket failed with error: ", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
   }
   return CommResult::CommSuccess;

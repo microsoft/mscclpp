@@ -69,6 +69,10 @@ auto getOpType = [](const std::string& str) {
     return mscclpp::OperationType::REDUCE_COPY_SEND_PACKETS;
   } else if (str == "glres") {
     return mscclpp::OperationType::MULTI_LOAD_REDUCE_STORE;
+  } else if (str == "gstore") {
+    return mscclpp::OperationType::MULTI_STORE;
+  } else if (str == "gstorepkt") {
+    return mscclpp::OperationType::MULTI_STORE_PKT;
   } else if (str == "rlxsignal") {
     return mscclpp::OperationType::RELAXED_SIGNAL;
   } else if (str == "rlxwait") {
@@ -232,7 +236,7 @@ void ExecutionPlan::Impl::loadExecutionPlan(size_t inputSize, size_t outputSize,
                                             size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  if (this->name != obj["name"]) {
+  if (this->name != obj["name"].get<std::string>()) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   this->collective = obj["collective"];
@@ -268,7 +272,7 @@ void ExecutionPlan::Impl::lightLoadExecutionPlan(size_t inputSize, size_t output
                                                  size_t constDstOffset) {
   std::ifstream file(this->planPath);
   json obj = json::parse(file);
-  if (this->name != obj["name"]) {
+  if (this->name != obj["name"].get<std::string>()) {
     throw Error("Plan name does not match", ErrorCode::ExecutorError);
   }
   std::string protocol = obj["protocol"];

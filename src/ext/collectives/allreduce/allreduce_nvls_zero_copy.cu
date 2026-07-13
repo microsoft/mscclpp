@@ -13,7 +13,7 @@ namespace collective {
 
 constexpr int MAX_NBLOCKS = 32;
 
-template <typename T>
+template <typename T, typename AccumT = T>
 __global__ void __launch_bounds__(1024, 1)
     allreduceNvls([[maybe_unused]] mscclpp::DeviceHandle<mscclpp::BaseMemoryChannel>* memoryChannels,
                   [[maybe_unused]] mscclpp::DeviceHandle<mscclpp::SwitchChannel>* multicast,
@@ -56,8 +56,8 @@ __global__ void __launch_bounds__(1024, 1)
   T* src = (T*)multicastPtr->mcPtr;
   T* dst = (T*)multicastOutPtr->mcPtr;
   if (curBlockSize > 0) {
-    handleMultiLoadReduceStore(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset, curBlockSize,
-                               threadIdx.x, blockDim.x);
+    handleMultiLoadReduceStore<T, AccumT>(src, dst, blockOffset + channelInOffset, blockOffset + channelOutOffset,
+                                          curBlockSize, threadIdx.x, blockDim.x);
   }
   __syncthreads();
   if (threadIdx.x < nPeers) {
@@ -80,17 +80,11 @@ struct NvlsAdapter {
     } else if constexpr (std::is_same_v<T, __fp8_e4m3b15>) {
       // fp8_e4m3b15 is a software-only type with no hardware NVLS support.
       return cudaErrorNotSupported;
-    } else
-#if (!defined(__CUDA_ARCH_SPECIFIC__) && !defined(__CUDA_ARCH_FAMILY_SPECIFIC__)) || (__CUDA_ARCH__ < 1000)
-        if constexpr (std::is_same_v<T, __fp8_e4m3> || std::is_same_v<T, __fp8_e5m2>) {
-      return cudaErrorNotSupported;
-    } else
-#endif
-    {
+    } else {
       using ChannelType = DeviceHandle<mscclpp::BaseMemoryChannel>;
-      allreduceNvls<T><<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels,
-                                                                 nvlsOutChannels, channelInOffset, channelOutOffset,
-                                                                 inputSize, rank, nRanksPerNode);
+      allreduceNvls<T, AccumT>
+          <<<nBlocks, nThreadsPerBlock, 0, stream>>>((ChannelType*)memoryChannels, nvlsChannels, nvlsOutChannels,
+                                                     channelInOffset, channelOutOffset, inputSize, rank, nRanksPerNode);
       return cudaGetLastError();
     }
   }
@@ -102,6 +96,7 @@ void AllreduceNvls::initialize(std::shared_ptr<mscclpp::Communicator> comm) {
   cudaDeviceProp deviceProp;
   MSCCLPP_CUDATHROW(cudaGetDeviceProperties(&deviceProp, device));
   computeCapabilityMajor_ = deviceProp.major;
+  fp8NvlsSupported_ = isFp8NvlsSupported();
   nSwitchChannels_ = 32;
   this->conns_ = setupConnections(comm);
   // setup semaphores
@@ -124,6 +119,10 @@ CommResult AllreduceNvls::allreduceKernelFunc(const std::shared_ptr<void> ctx_vo
     return CommResult::CommInvalidArgument;
   }
   auto ctx = std::static_pointer_cast<AlgorithmCtx>(ctx_void);
+  if (isNativeFp8DataType(dtype) && !fp8NvlsSupported_) {
+    WARN("FP8 NVLS allreduce requires device support for FP8 multimem reduction.");
+    return CommResult::CommInvalidArgument;
+  }
   AllreduceFunc allreduce = dispatch<NvlsAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
     WARN("Unsupported operation or data type for allreduce, dtype=%d", static_cast<int>(dtype));

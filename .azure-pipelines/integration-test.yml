@@ -19,21 +19,21 @@ pr:
   drafts: false
   paths:
     exclude:
-      - .devcontainer/**
-      - .github/**
-      - docker/**
-      - docs/**
-      - '**/*.md'
+    - .devcontainer/**
+    - .github/**
+    - docker/**
+    - docs/**
+    - '**/*.md'
 
 jobs:
 - job: IntegrationTestA100
   displayName: Integration test A100
   strategy:
     matrix:
-      cuda11:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda11.8
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   pool:
     name: msccl-ci
@@ -43,9 +43,9 @@ jobs:
   steps:
   - template: templates/integration-test.yml
     parameters:
-      subscription:     mscclpp-ci
-      vmssName:         mscclpp-ci
-      gpuArch:          '80'
+      subscription: mscclpp-ci
+      vmssName: mscclpp-ci
+      gpuArch: '80'
 
 - job: IntegrationTestH100
   displayName: Integration test H100
@@ -53,6 +53,8 @@ jobs:
     matrix:
       cuda12:
         containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.9
+      cuda13:
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda13.0
 
   pool:
     name: msccl-ci-h100
@@ -62,7 +64,7 @@ jobs:
   steps:
   - template: templates/integration-test.yml
     parameters:
-      subscription:     mscclpp-ci-h100
-      vmssName:         mscclpp-h100-ci
+      subscription: mscclpp-ci-h100
+      vmssName: mscclpp-h100-ci
       perfBaselineFile: test/deploy/perf_ndmv5.jsonl
-      gpuArch:          '90'
+      gpuArch: '90'

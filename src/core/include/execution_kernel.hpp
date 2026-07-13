@@ -174,11 +174,11 @@ MSCCLPP_DEVICE_INLINE void handlePut(const Operation& op, void* input, void* out
       uint32_t dstOffset =
           dstOffsets[tid] + getOffset<ReuseScratch>(portChannelBufferTypes_[op.outputBufferRefs[tid].id], offset);
       uint32_t srcOffset = srcOffsets[tid] + getOffset<ReuseScratch>(op.inputBufferRefs[tid].type, offset);
-      if constexpr (PutWithSignal) {
-        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
-      } else if constexpr (PutWithSignalAndFlush) {
+      if constexpr (PutWithSignalAndFlush) {
         portChannels_[channelIndexes[tid]].putWithSignalAndFlush(dstMemoryId, (uint64_t)dstOffset, srcMemoryId,
-                                                                 (uint64_t)srcOffsets, size);
+                                                                 (uint64_t)srcOffset, size);
+      } else if constexpr (PutWithSignal) {
+        portChannels_[channelIndexes[tid]].putWithSignal(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       } else {
         portChannels_[channelIndexes[tid]].put(dstMemoryId, dstOffset, srcMemoryId, srcOffset, size);
       }
@@ -575,6 +575,65 @@ MSCCLPP_DEVICE_INLINE void handleMultiLoadReduceStore(const Operation& op, uint3
     }
   }
 }
+
+template <bool ReuseScratch>
+MSCCLPP_DEVICE_INLINE void handleMultiStore(const Operation& op, void* input, void* output, void* scratch,
+                                            uint32_t offset, uint32_t unitSize) {
+  const uint32_t size = min(op.inputBufferSizes[0] - offset, unitSize);
+  if (size == 0) {
+    return;
+  }
+
+  const uint32_t srcOffset = op.inputOffsets[0] + getOffset<ReuseScratch>(op.inputBufferRefs[0].type, offset);
+  const uint32_t dstOffset = op.outputOffsets[0] + getOffset<ReuseScratch>(op.nvlsOutputBufferType, offset);
+  char* srcBase = static_cast<char*>(getBuffer(input, output, scratch, op.inputBufferRefs[0].type)) + srcOffset;
+  char* dstBase = reinterpret_cast<char*>(nvlsChannels_[op.nvlsOutputIndex].mcPtr) + dstOffset;
+
+  size_t processed = 0;
+  const bool alignedf32x4 = (reinterpret_cast<uintptr_t>(srcBase) % sizeof(f32x4) == 0) &&
+                            (reinterpret_cast<uintptr_t>(dstBase) % sizeof(f32x4) == 0);
+  if (alignedf32x4) {
+    const size_t nf32x4 = size / sizeof(f32x4);
+    f32x4* src16 = reinterpret_cast<f32x4*>(srcBase);
+    f32x4* dst16 = reinterpret_cast<f32x4*>(dstBase);
+    for (size_t idx = threadIdx.x; idx < nf32x4; idx += blockDim.x) {
+      SwitchChannelDeviceHandle::multimemStore(src16[idx], dst16 + idx);
+    }
+    processed = nf32x4 * sizeof(f32x4);
+  }
+
+  // Handle remaining data
+  const size_t startIdx = processed / sizeof(u32x1);
+  const size_t endIdx = size / sizeof(u32x1);
+  u32x1* src4 = reinterpret_cast<u32x1*>(srcBase);
+  u32x1* dst4 = reinterpret_cast<u32x1*>(dstBase);
+  for (size_t idx = threadIdx.x + startIdx; idx < endIdx; idx += blockDim.x) {
+    SwitchChannelDeviceHandle::multimemStore(src4[idx], dst4 + idx);
+  }
+}
+#endif
+
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+template <typename T, typename PacketType>
+MSCCLPP_DEVICE_INLINE void handleMultiStorePkt(const Operation& op, void* input, void* output, void* scratch) {
+  const uint32_t srcOffset = op.inputOffsets[0];
+  const uint32_t dstOffset = op.outputOffsets[0];
+  const uint32_t size = op.inputBufferSizes[0];
+  uint32_t nPackets = size / sizeof(PacketPayload<PacketType>);
+
+  PacketType* srcPackets =
+      (PacketType*)((char*)getBuffer(input, output, scratch, op.inputBufferRefs[0].type) + (srcOffset << 1));
+  PacketType* multiPkt =
+      (PacketType*)((char*)nvlsChannels_[op.nvlsOutputIndex].mcPtr + scratchOffset_ + (dstOffset << 1));
+
+  static_assert(sizeof(PacketType) == 16 || sizeof(PacketType) == 8, "Unsupported packet size for MULTI_STORE_PKT");
+  using StoreVec = std::conditional_t<sizeof(PacketType) == 16, mscclpp::f32x4, mscclpp::f32x2>;
+  for (size_t idx = threadIdx.x; idx < nPackets; idx += blockDim.x) {
+    PacketPayload<PacketType> data = srcPackets[idx].read(flag_);
+    PacketType pkt(data, flag_);
+    mscclpp::SwitchChannelDeviceHandle::multimemStore(*(StoreVec*)(&pkt), multiPkt + idx);
+  }
+}
 #endif
 
 template <typename T, typename PacketType, bool ReuseScratch>
@@ -708,6 +767,10 @@ MSCCLPP_DEVICE_INLINE void executeDeviceFunction(const Operation& op, T* input, 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
   else if (opType == OperationType::MULTI_LOAD_REDUCE_STORE) {
     handleMultiLoadReduceStore<T, ReuseScratch>(op, offset, unitSize);
+  } else if (opType == OperationType::MULTI_STORE) {
+    handleMultiStore<ReuseScratch>(op, input, output, scratch, offset, unitSize);
+  } else if (opType == OperationType::MULTI_STORE_PKT) {
+    handleMultiStorePkt<T, PacketType>(op, input, output, scratch);
   }
 #endif
   else if (opType == OperationType::PIPELINE) {

@@ -1,0 +1,87 @@
+# =============================================================================
+# SGLang single-node test template.
+#
+# Runs on the pipeline agent and dispatches remote steps to a single VMSS GPU
+# node (via run-remote-task.yml). Steps:
+#   1. Deploy: build the test container and bring the VMSS node online.
+#   2. Build and install MSCCL++ on the node.
+#   3. Install a (currently forked) SGLang.
+#   4. Run sglang.bench_one_batch at several batch sizes.
+#   5. Run a longer end-to-end validation: bring up an sglang server and
+#      drive it with sglang.bench_serving.
+#   6. Run the MSCCL++ all-reduce micro-benchmark via torchrun.
+#   7. Stop / deallocate the VMSS node.
+# =============================================================================
+
+parameters:
+- name: subscription
+  type: string
+- name: vmssName
+  type: string
+- name: gpuArch
+  type: string
+- name: containerName
+  type: string
+  default: 'sglang-mscclpp-test'
+- name: sglangImage
+  type: string
+  default: 'lmsysorg/sglang:latest'
+
+steps:
+# deployArgs positional fields: <test-mode> <use-gpu> <cuda|rocm>
+- template: deploy.yml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName: ${{ parameters.vmssName }}
+    gpuArch: ${{ parameters.gpuArch }}
+    deployArgs: 'single-node-test true cuda'
+    containerName: ${{ parameters.containerName }}
+    sglangImage: ${{ parameters.sglangImage }}
+
+# TODO: Switch to the official upstream sglang repo once Caio's PR is merged.
+# Tracking: the fork below (`caiomcbr/sglang` @ caiorocha/mscclpp) is a personal branch and
+# should not remain a long-term CI dependency. Also consider pinning to a
+# release branch or commit SHA for reproducibility.
+- template: run-remote-task.yml
+  parameters:
+    name: InstallSGLang
+    displayName: Install SGLang
+    runRemoteArgs: '--container ${{ parameters.containerName }}'
+    remoteScript: |
+      git clone -b main https://github.com/caiomcbr/sglang.git
+      cd sglang/python
+      pip install -e .
+
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangBenchOneBatch
+    displayName: Run SGLang Bench One Batch
+    runRemoteArgs: '--container ${{ parameters.containerName }}'
+    remoteScript: |
+      export FLASHINFER_DISABLE_VERSION_CHECK=1
+      python -m sglang.bench_one_batch --model-path Qwen/Qwen3-8B --batch 1 2 4 8 16 32 64 128 256 512 --input-len 256 --output-len 256 --tp-size 8 --enable-mscclpp
+
+# Depends on the `sglang/` source tree cloned by the InstallSGLang step above
+# (steps on the same remote share a working directory).
+- template: run-remote-task.yml
+  parameters:
+    name: RunSGLangTestAllReduce
+    displayName: Run SGLang Test All Reduce
+    runRemoteArgs: '--container ${{ parameters.containerName }}'
+    remoteScript: |
+      export FLASHINFER_DISABLE_VERSION_CHECK=1
+      export NODE_SIZE=1
+      export WORLD_SIZE=8
+      export RANK=0
+
+      cd sglang
+
+      torchrun --nproc_per_node $WORLD_SIZE \
+      --nnodes $NODE_SIZE \
+      --node_rank $RANK \
+      benchmark/kernels/all_reduce/benchmark_mscclpp.py
+
+- template: stop.yml
+  parameters:
+    subscription: ${{ parameters.subscription }}
+    vmssName: ${{ parameters.vmssName }}

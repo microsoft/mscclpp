@@ -667,22 +667,19 @@ __global__ void kernelPortChannelAtomicAddConcurrent(int64_t* localBuff, int nTr
 static constexpr int kMaxQps = 4;
 __constant__ DeviceHandle<mscclpp::PortChannel> gMultiQpPortChans[kMaxQps];
 
-// Multi-QP bandwidth kernel: barrier on QP 0 only, then putWithSignal on all QPs.
-// Only one signal/wait pair is needed for sync between two GPU kernels.
+// Multi-QP bandwidth kernel: one thread per QP, putWithSignal per QP, parallel waits.
 __global__ void kernelMultiQpBandwidth(int nElemPerChan, int nIters, int numQps) {
-  if (threadIdx.x != 0) return;
+  int q = threadIdx.x;
+  if (q >= numQps) return;
   for (int i = 0; i < nIters; i++) {
-    // Barrier on QP 0 only — syncs both ranks
-    gMultiQpPortChans[0].signal();
-    gMultiQpPortChans[0].wait();
-    // Data transfer: put on all QPs simultaneously
-    for (int q = 0; q < numQps; q++) {
-      gMultiQpPortChans[q].putWithSignal(0, nElemPerChan * sizeof(int));
+    if (q == 0) {
+      gMultiQpPortChans[0].signal();
+      gMultiQpPortChans[0].wait();
     }
-    // Wait for all remote data arrivals
-    for (int q = 0; q < numQps; q++) {
-      gMultiQpPortChans[q].wait();
-    }
+    __syncthreads();
+    gMultiQpPortChans[q].putWithSignal(0, nElemPerChan * sizeof(int));
+    gMultiQpPortChans[q].wait();
+    __syncthreads();
   }
 }
 
@@ -840,15 +837,15 @@ void PortChannelOneToOneTest::testMultiQpBandwidth(IbMode ibMode, int numQps) {
 
   for (int nElemPerChan :
        {256, 16 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024, 32 * 1024 * 1024}) {
-    int nIters = 10000;
+    int nIters = 200;
     // Warm-up
-    kernelMultiQpBandwidth<<<1, 1>>>(nElemPerChan, 10, numQps);
+    kernelMultiQpBandwidth<<<1, numQps>>>(nElemPerChan, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
 
     // Measure
     mscclpp::Timer timer;
-    kernelMultiQpBandwidth<<<1, 1>>>(nElemPerChan, nIters, numQps);
+    kernelMultiQpBandwidth<<<1, numQps>>>(nElemPerChan, nIters, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     double elapsedUs = timer.elapsed();
     communicator->bootstrap()->barrier();
@@ -873,20 +870,46 @@ void PortChannelOneToOneTest::testMultiQpBandwidth(IbMode ibMode, int numQps) {
   for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
+PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testMultiQpBandwidth(IbMode::Host, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, TwoQpBandwidthIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testMultiQpBandwidth(IbMode::Host, /*numQps=*/2);
+}
+
 PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbHostMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
-  for (int numQps : {1, 2, 4}) {
-    testMultiQpBandwidth(IbMode::Host, numQps);
-  }
+  testMultiQpBandwidth(IbMode::Host, /*numQps=*/4);
+}
+
+PERF_TEST(PortChannelOneToOneTest, SingleQpBandwidthIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testMultiQpBandwidth(IbMode::HostNoAtomic, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, TwoQpBandwidthIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testMultiQpBandwidth(IbMode::HostNoAtomic, /*numQps=*/2);
+}
+
+PERF_TEST(PortChannelOneToOneTest, ThreeQpBandwidthIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testMultiQpBandwidth(IbMode::HostNoAtomic, /*numQps=*/3);
 }
 
 PERF_TEST(PortChannelOneToOneTest, MultiQpBandwidthIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
-  for (int numQps : {1, 2, 4}) {
-    testMultiQpBandwidth(IbMode::HostNoAtomic, numQps);
-  }
+  testMultiQpBandwidth(IbMode::HostNoAtomic, /*numQps=*/4);
 }
 
 // Multi-QP flush-stress kernel: one thread per QP, all calling putWithSignalAndFlush
@@ -911,7 +934,7 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
   if (gEnv->rank >= numRanksToUse) return;
 
   const int rank = communicator->bootstrap()->getRank();
-  const int maxElemPerChan = 64 * 1024;
+  const int maxElemPerChan = 8 * 1024 * 1024;
 
   std::vector<std::shared_ptr<int>> sendBuffs;
   std::vector<mscclpp::RegisteredMemory> localMems;
@@ -930,8 +953,8 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
 
   const std::string qpLabel = std::to_string(numQps) + " QP" + (numQps > 1 ? "s" : "");
 
-  for (int nElemPerChan : {256, 4 * 1024, 64 * 1024}) {
-    int nIters = 2000;
+  for (int nElemPerChan : {256, 4 * 1024, 64 * 1024, 256 * 1024, 1024 * 1024, 4 * 1024 * 1024, 8 * 1024 * 1024}) {
+    int nIters = (nElemPerChan >= 256 * 1024) ? 200 : 2000;
     kernelMultiQpFlushStress<<<1, numQps>>>(nElemPerChan, 10, numQps);
     MSCCLPP_CUDATHROW(cudaDeviceSynchronize());
     communicator->bootstrap()->barrier();
@@ -948,8 +971,10 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
       int bytesPerChan = nElemPerChan * (int)sizeof(int);
       std::string sizeLabel = (bytesPerChan >= 1024) ? (std::to_string(bytesPerChan / 1024) + " KB")
                                                      : (std::to_string(bytesPerChan) + " B");
+      double aggGbps = ((double)bytesPerChan * numQps) / usPerIter * 1e-3;  // bytes/us = MB/s × 1e-3 = GB/s
       ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") per-iter", usPerIter, "us");
       ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") per-iter/QP", usPerIterPerQp, "us");
+      ::mscclpp::test::reportPerfResult(sizeLabel + " (" + qpLabel + ") aggregate", aggGbps, "GB/s");
     }
   }
 
@@ -959,20 +984,40 @@ void PortChannelOneToOneTest::testMultiQpFlushStress(IbMode ibMode, int numQps) 
   for (auto& m : remoteMems) registeredMemories.push_back(m);
 }
 
+PERF_TEST(PortChannelOneToOneTest, SingleQpFlushStressIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testMultiQpFlushStress(IbMode::Host, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, TwoQpFlushStressIbHostMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
+  testMultiQpFlushStress(IbMode::Host, /*numQps=*/2);
+}
+
 PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::Host);
-  for (int numQps : {1, 2, 4}) {
-    testMultiQpFlushStress(IbMode::Host, numQps);
-  }
+  testMultiQpFlushStress(IbMode::Host, /*numQps=*/4);
+}
+
+PERF_TEST(PortChannelOneToOneTest, SingleQpFlushStressIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testMultiQpFlushStress(IbMode::HostNoAtomic, /*numQps=*/1);
+}
+
+PERF_TEST(PortChannelOneToOneTest, TwoQpFlushStressIbHostNoAtomicMode) {
+  REQUIRE_IBVERBS;
+  REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
+  testMultiQpFlushStress(IbMode::HostNoAtomic, /*numQps=*/2);
 }
 
 PERF_TEST(PortChannelOneToOneTest, MultiQpFlushStressIbHostNoAtomicMode) {
   REQUIRE_IBVERBS;
   REQUIRE_GDR_FOR_IB_MODE(IbMode::HostNoAtomic);
-  for (int numQps : {1, 2, 4}) {
-    testMultiQpFlushStress(IbMode::HostNoAtomic, numQps);
-  }
+  testMultiQpFlushStress(IbMode::HostNoAtomic, /*numQps=*/4);
 }
 
 // Same-channel concurrent-flush kernel: N GPU threads on the same PortChannel each call

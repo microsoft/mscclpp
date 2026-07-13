@@ -8,3 +8,4 @@ matplotlib
 sortedcontainers
 blake3
 pybind11
+hip-python>=6,<7

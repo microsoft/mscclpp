@@ -20,6 +20,7 @@
 #include <mscclpp/algorithm.hpp>
 
 #include "algorithm_selector.hpp"
+#include "collective_utils.hpp"
 #include "datatype_conversion.hpp"
 
 static constexpr auto MSCCLPP_NCCL = mscclpp::LogSubsys::NCCL;
@@ -239,6 +240,8 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
   static const bool isNvlsSupported = mscclpp::isNvlsSupported();
   static const std::pair<int, int> deviceComputeCapability = getDeviceComputeCapability();
   static const bool ncclSymmetricMemory = mscclpp::env()->ncclSymmetricMemory;
+  const bool fp8NvlsSupported =
+      mscclpp::collective::isNativeFp8DataType(request.dtype) ? mscclpp::collective::isFp8NvlsSupported() : false;
 
   const bool isCuMemMapAllocated = mscclpp::isCuMemMapAllocated(const_cast<void*>(request.inputBuffer)) &&
                                    mscclpp::isCuMemMapAllocated(request.outputBuffer);
@@ -249,6 +252,7 @@ static std::shared_ptr<mscclpp::Algorithm> algoSelector(
 
   mscclpp::nccl::AlgorithmSelectorConfig config{.symmetricMemory = ncclSymmetricMemory,
                                                 .nvlsSupported = isNvlsSupported,
+                                                .fp8NvlsSupported = fp8NvlsSupported,
                                                 .isCuMemMapAllocated = isCuMemMapAllocated,
                                                 .inCaptureMode = inCaptureMode,
                                                 .computeCapability = deviceComputeCapability,

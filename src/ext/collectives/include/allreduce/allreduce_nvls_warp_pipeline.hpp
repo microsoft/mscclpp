@@ -33,6 +33,7 @@ class AllreduceNvlsWarpPipeline : public AlgorithmBuilder {
   std::vector<BaseMemoryChannel> baseChannels_;
   std::vector<Connection> conns_;
   std::vector<std::shared_ptr<NvlsConnection>> nvlsConnections_;
+  bool fp8NvlsSupported_{false};
 };
 }  // namespace collective
 }  // namespace mscclpp

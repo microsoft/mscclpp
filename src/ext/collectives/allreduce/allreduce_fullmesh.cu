@@ -10,7 +10,7 @@ namespace mscclpp {
 namespace collective {
 
 template <ReduceOp OpType, typename T, typename AccumT = T>
-__global__ void __launch_bounds__(512, 1)
+__global__ void __launch_bounds__(1024, 1)
     allreduceFullmesh(T* buff, T* scratch, T* resultBuff, DeviceHandle<MemoryChannel>* memoryChannels,
                       DeviceHandle<MemoryChannel>* memoryOutChannels, size_t channelOutDataOffset, int rank,
                       int nRanksPerNode, int worldSize, size_t nelems) {
@@ -194,17 +194,6 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
     MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
     channelOutOffset = (char*)output - (char*)recvBasePtr;
   }
-  std::shared_ptr<DeviceHandle<MemoryChannel>> inputChannelHandles;
-  if (this->memoryChannelsMap_.find(input) != this->memoryChannelsMap_.end()) {
-    inputChannelHandles = this->memoryChannelsMap_[input].second;
-  } else {
-    RegisteredMemory localMemory = comm_->registerMemory(const_cast<void*>(input), inputSize, Transport::CudaIpc);
-    std::vector<MemoryChannel> channels =
-        setupMemoryChannels(this->conns_, this->inputScratchSemaphores_, this->remoteScratchMemories_, localMemory,
-                            nChannelsPerConnection_);
-    this->memoryChannelsMap_[input] = std::make_pair(channels, setupMemoryChannelDeviceHandles(channels));
-  }
-  inputChannelHandles = this->memoryChannelsMap_[input].second;
 
   AllreduceFunc allreduce = dispatch<AllreduceAllconnectAdapter>(op, dtype, accumDtype);
   if (!allreduce) {
@@ -220,10 +209,12 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
   if (numBlocksAndThreads.first == 0 || numBlocksAndThreads.second == 0) {
     numBlocksAndThreads = {35, 512};
   }
+  auto inputChannelDeviceHandles = ctx->memoryChannelDeviceHandles.get();
+  auto outputChannelDeviceHandles = inputChannelDeviceHandles + ctx->memoryChannels.size() / 2;
   cudaError_t error =
-      allreduce(input, this->scratchBuffer_, output, inputChannelHandles.get(), ctx->memoryChannelDeviceHandles.get(),
-                nullptr, nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize,
-                stream, nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
+      allreduce(input, this->scratchBuffer_, output, inputChannelDeviceHandles, outputChannelDeviceHandles, nullptr,
+                nullptr, 0, channelOutOffset, 0, ctx->rank, ctx->nRanksPerNode, ctx->workSize, inputSize, stream,
+                nullptr, 0, 0, numBlocksAndThreads.first, numBlocksAndThreads.second);
   if (error != cudaSuccess) {
     WARN("AllreduceAllconnect failed with error: %s", cudaGetErrorString(error));
     return CommResult::CommUnhandledCudaError;
@@ -231,20 +222,21 @@ CommResult AllreduceFullmesh::allreduceKernelFunc(
   return CommResult::CommSuccess;
 }
 
-AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void*, void* output, size_t, DataType,
+AlgorithmCtxKey AllreduceFullmesh::generateAllreduceContextKey(const void* input, void* output, size_t size, DataType,
                                                                bool symmetricMemory) {
-  static int tag = 0;
-  size_t recvBytes;
-  CUdeviceptr recvBasePtr;
-  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
   symmetricMemory_ = symmetricMemory;
   if (!symmetricMemory_) {
-    return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, tag++};
+    return AlgorithmCtxKey{const_cast<void*>(input), output, size, size, 0};
   }
-  return AlgorithmCtxKey{nullptr, (void*)recvBasePtr, 0, recvBytes, 0};
+
+  size_t sendBytes, recvBytes;
+  CUdeviceptr sendBasePtr, recvBasePtr;
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&sendBasePtr, &sendBytes, (CUdeviceptr)input));
+  MSCCLPP_CUTHROW(cuMemGetAddressRange(&recvBasePtr, &recvBytes, (CUdeviceptr)output));
+  return AlgorithmCtxKey{(void*)sendBasePtr, (void*)recvBasePtr, sendBytes, recvBytes, 0};
 }
 
-std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void*,
+std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Communicator> comm, const void* input,
                                                               void* output, size_t size, DataType) {
   auto ctx = std::make_shared<AlgorithmCtx>();
   ctx->rank = comm->bootstrap()->getRank();
@@ -263,8 +255,19 @@ std::shared_ptr<void> AllreduceFullmesh::initAllreduceContext(std::shared_ptr<Co
   }
   RegisteredMemory localMemory = comm->registerMemory((void*)recvBasePtr, recvBytes, Transport::CudaIpc);
   ctx->registeredMemories = setupRemoteMemories(comm, ctx->rank, localMemory);
-  ctx->memoryChannels = setupMemoryChannels(this->conns_, ctx->memorySemaphores, ctx->registeredMemories, localMemory,
-                                            nChannelsPerConnection_);
+
+  RegisteredMemory inputMemory = comm->registerMemory(const_cast<void*>(input), size, TransportFlags());
+  std::vector<MemoryChannel> inputMemoryChannels = setupMemoryChannels(
+      this->conns_, this->inputScratchSemaphores_, this->remoteScratchMemories_, inputMemory, nChannelsPerConnection_);
+  std::vector<MemoryChannel> outputMemoryChannels = setupMemoryChannels(
+      this->conns_, this->outputSemaphores_, ctx->registeredMemories, localMemory, nChannelsPerConnection_);
+  ctx->memoryChannels.reserve(inputMemoryChannels.size() + outputMemoryChannels.size());
+  for (auto& channel : inputMemoryChannels) {
+    ctx->memoryChannels.emplace_back(std::move(channel));
+  }
+  for (auto& channel : outputMemoryChannels) {
+    ctx->memoryChannels.emplace_back(std::move(channel));
+  }
   ctx->memoryChannelDeviceHandles = setupMemoryChannelDeviceHandles(ctx->memoryChannels);
   return ctx;
 }
