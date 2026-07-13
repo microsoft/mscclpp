@@ -28,7 +28,9 @@
 #include <cstring>
 #include <map>
 #include <mscclpp/core.hpp>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "config.hpp"       // mscclpp::ep::getLowLatencyRdmaSizeHint
@@ -228,16 +230,49 @@ int main(int argc, char** argv) {
   CUDA_CHECK(cudaMalloc(&d_layout, (size_t)Elocal * W * sizeof(int64_t)));
   CUDA_CHECK(cudaMalloc(&d_count, (size_t)Elocal * sizeof(int)));
 
-  // Inputs (content is immaterial to timing; give every token K distinct experts).
+  // Inputs. Token payloads are immaterial to timing, but the top-k routing is
+  // generated with the SAME scheme as NCCL-EP's ep_bench (generateRandomTopkIndicesLL):
+  // per-token abs(randn)+1 scores, take the top-k experts by score, then mask 10
+  // random (token, slot) positions with -1 to simulate dropped tokens. Seeded
+  // (1 + rank) for cross-rank reproducibility, matching ep_bench's default seed=1.
   CUDA_CHECK(cudaMemset(d_x, 0, (size_t)T * H * sizeof(__nv_bfloat16)));
   std::vector<int64_t> h_topk((size_t)T * K);
   std::vector<float> h_weights((size_t)T * K, 1.0f);
-  for (int t = 0; t < T; ++t)
-    for (int j = 0; j < K; ++j) h_topk[(size_t)t * K + j] = ((int64_t)t * K + j) % E;
+  {
+    constexpr int kSeed = 1;
+    std::mt19937 gen(kSeed + rank);
+    std::normal_distribution<float> dist(0.0f, 1.0f);
+    if (E <= 0 || K <= 0 || K > E) {
+      if (rank == 0)
+        fprintf(stderr, "num_topk (%d) must satisfy 1 <= num_topk <= num_experts (%d)\n", K, E);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    std::vector<std::pair<float, int>> scoreIdx(E);
+    for (int t = 0; t < T; ++t) {
+      for (int e = 0; e < E; ++e) scoreIdx[e] = {std::abs(dist(gen)) + 1.0f, e};
+      std::partial_sort(scoreIdx.begin(), scoreIdx.begin() + K, scoreIdx.end(),
+                        [](const auto& a, const auto& b) { return a.first > b.first; });
+      for (int j = 0; j < K; ++j) h_topk[(size_t)t * K + j] = scoreIdx[j].second;
+    }
+    // Randomly mask 10 positions with -1 (simulates dropped tokens); mirrors
+    // ep_bench. Guarded on T > 0 so the distribution bound is valid.
+    if (T > 0) {
+      std::uniform_int_distribution<int> tokenDist(0, T - 1);
+      std::uniform_int_distribution<int> topkDist(0, K - 1);
+      for (int i = 0; i < 10; ++i) {
+        int ti = tokenDist(gen), ki = topkDist(gen);
+        h_topk[(size_t)ti * K + ki] = -1;
+      }
+    }
+  }
   CUDA_CHECK(cudaMemcpy(d_topk, h_topk.data(), h_topk.size() * sizeof(int64_t), cudaMemcpyHostToDevice));
   CUDA_CHECK(cudaMemcpy(d_weights, h_weights.data(), h_weights.size() * sizeof(float), cudaMemcpyHostToDevice));
 
-  const long long num_valid_selections = (long long)T * K;
+  // Byte accounting counts only valid selections (topk >= 0), matching ep_bench's
+  // calculateLowLatencyBytes after the -1 masking above.
+  long long num_valid_selections = 0;
+  for (size_t i = 0; i < h_topk.size(); ++i)
+    if (h_topk[i] >= 0) ++num_valid_selections;
   const double disp_bytes = (double)num_valid_selections * H * 2.0;  // BF16
   const double comb_bytes = disp_bytes;
 
