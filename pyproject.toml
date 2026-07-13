@@ -25,7 +25,6 @@ cuda11 = ["cupy-cuda11x"]
 cuda12 = ["cupy-cuda12x"]
 cuda13 = ["cupy-cuda13x"]
 rocm6 = ["cupy"]
-ep = []
 benchmark = [
     "mpi4py",
     "prettytable",
